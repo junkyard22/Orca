@@ -1,0 +1,46 @@
+{
+  "name": "@yakstacks/workbench-core",
+  "version": "1.0.0",
+  "description": "Core runtime foundation for building tool-execution apps",
+  "author": "YakStacks",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/junkyard22/workbench-core.git"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:all": "npm run build && npm run build:cjs",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run clean && npm run build:all",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "workbench",
+    "runtime",
+    "tool-execution",
+    "ai-tools",
+    "runner"
+  ]
+}
