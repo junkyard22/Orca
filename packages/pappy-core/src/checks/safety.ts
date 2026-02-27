@@ -15,8 +15,8 @@ const DANGEROUS_PATTERNS: RegExp[] = [
   /rmdir\s+\/s/i,
 ];
 
-export function runSafetyChecks(input: PappyInput): Issue[] {
-  const issues: Issue[] = [];
+export function runSafetyChecks(input: PappyInput): Omit<Issue, "issueId">[] {
+  const issues: Omit<Issue, "issueId">[] = [];
 
   if (input.constraints?.forbidDeletes) {
     for (const file of input.filesChanged ?? []) {

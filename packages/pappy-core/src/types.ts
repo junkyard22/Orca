@@ -3,6 +3,12 @@ export type Verdict = "PASS" | "WARN" | "FAIL";
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 
 export interface Issue {
+  /**
+   * Stable identifier: `${code}:${fnv1a32(evidence ?? message)}`.
+   * Deterministic for the same defect — lets Maestro and Doctor track
+   * which specific issues were fixed across repair passes.
+   */
+  issueId: string;
   severity: Severity;
   code: string;
   message: string;

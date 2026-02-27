@@ -34,7 +34,7 @@ export async function handleRepairLoop(
   let currentQC = initialQCResult;
 
   for (let pass = 1; pass <= maxPasses; pass++) {
-    emitter.emit({ type: "repair:start", pass, maxPasses });
+    emitter.emit({ type: "repair:start", taskId: ctx.runId, pass, maxPasses });
 
     // Build a first-class repair task so Maestro understands it as work,
     // not a raw blob of text.  Context carries everything Maestro needs to
@@ -64,15 +64,20 @@ export async function handleRepairLoop(
       },
     };
 
-    emitter.emit({ type: "maestro:start" });
+    emitter.emit({ type: "maestro:start", taskId: ctx.runId, attempt: pass, isRepair: true });
     const maestroResult = await maestro.run(repairSpec, ctx);
-    emitter.emit({ type: "maestro:done", hasOutput: !!maestroResult.outputText });
+    emitter.emit({ type: "maestro:done", taskId: ctx.runId, attempt: pass, isRepair: true, hasOutput: !!maestroResult.outputText });
 
-    // Always re-evaluate against the ORIGINAL task constraints, not the
-    // repair spec — we're checking if the output satisfies the user's goal.
+    // Evaluate THIS pass's maestroResult (latest artifacts) against the
+    // ORIGINAL task constraints — the benchmark is always the user's goal,
+    // never the repair spec.  "attempt: pass" lets Doctor correlate which
+    // repair run produced which verdict.
     const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
     emitter.emit({
       type: "qc:result",
+      taskId: ctx.runId,
+      attempt: pass,
+      isRepair: true,
       verdict: nextQC.verdict,
       issueCount: nextQC.issues.length,
     });

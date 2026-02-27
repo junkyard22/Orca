@@ -1,7 +1,7 @@
 import type { Issue, PappyInput } from "../types.js";
 
-export function runCompletenessChecks(input: PappyInput): Issue[] {
-  const issues: Issue[] = [];
+export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">[] {
+  const issues: Omit<Issue, "issueId">[] = [];
 
   const required = input.constraints?.requireFiles ?? [];
   if (required.length === 0) return issues;

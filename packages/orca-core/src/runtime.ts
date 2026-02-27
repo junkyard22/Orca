@@ -32,35 +32,43 @@ function generateRunId(): string {
  *
  * orca-core has NO dependency on benson-core.
  * Benson is injected the other way: createBenson({ executeTask: runtime.executeTask }).
+ *
+ * Event lineage:
+ *   Every event carries taskId (= ctx.runId), attempt, and isRepair so
+ *   Doctor / logging can answer: "which tasks needed repairs?", "how many
+ *   passes per task?", "which specific issues were resolved?"
  */
 export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
   const { maestro, pappy, llm, maxRepairPasses = 2 } = deps;
   const emitter = new OrcaEmitter();
 
   async function executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult> {
-    emitter.emit({ type: "task:start", intent: taskSpec.intent });
-
     const ctx: OrcaRunCtx = { llm, runId: generateRunId() };
+    const taskId = ctx.runId; // stable across all passes for this task
+
+    emitter.emit({ type: "task:start", taskId, intent: taskSpec.intent });
 
     try {
-      // ── 1. Maestro runs the task ──────────────────────────────────────────
+      // ── 1. Maestro runs the task (attempt 0, not a repair) ────────────────
       //    Maestro uses ctx.llm (Miranda-backed) for all model calls.
-      //    It can also use ctx for tools/storage when Workbench is wired.
-      emitter.emit({ type: "maestro:start" });
+      emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
       const maestroResult = await maestro.run(taskSpec, ctx);
-      emitter.emit({ type: "maestro:done", hasOutput: !!maestroResult.outputText });
+      emitter.emit({ type: "maestro:done", taskId, attempt: 0, isRepair: false, hasOutput: !!maestroResult.outputText });
 
       // ── 2. Pappy evaluates ────────────────────────────────────────────────
       const qcResult = pappy.evaluate(buildPappyInput(taskSpec, maestroResult));
       emitter.emit({
         type: "qc:result",
+        taskId,
+        attempt: 0,
+        isRepair: false,
         verdict: qcResult.verdict,
         issueCount: qcResult.issues.length,
       });
 
       // ── 3. PASS or WARN → done ────────────────────────────────────────────
       if (qcResult.verdict !== "FAIL") {
-        emitter.emit({ type: "task:done", status: "SUCCESS" });
+        emitter.emit({ type: "task:done", taskId, status: "SUCCESS" });
         return {
           status: "SUCCESS",
           userFacingText: maestroResult.outputText,
@@ -71,7 +79,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
       // ── 4. FAIL → repair loop ─────────────────────────────────────────────
       if (!qcResult.repairTask) {
-        emitter.emit({ type: "task:done", status: "FAIL" });
+        emitter.emit({ type: "task:done", taskId, status: "FAIL" });
         return { status: "FAIL", summary: qcResult.internalSummary };
       }
 
@@ -84,12 +92,12 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         emitter,
         maxRepairPasses,
       );
-      emitter.emit({ type: "task:done", status: repaired.status });
+      emitter.emit({ type: "task:done", taskId, status: repaired.status });
       return repaired;
 
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      emitter.emit({ type: "task:done", status: "FAIL" });
+      emitter.emit({ type: "task:done", taskId, status: "FAIL" });
       return { status: "FAIL", summary: `Runtime error: ${message}` };
     }
   }

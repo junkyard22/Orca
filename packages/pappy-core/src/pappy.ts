@@ -5,13 +5,36 @@ import { runCompletenessChecks } from "./checks/completeness.js";
 import { runStructureChecks } from "./checks/structure.js";
 import { buildRepairTask } from "./repair.js";
 
+// ---------------------------------------------------------------------------
+// Stable issue ID — FNV-1a 32-bit, no external dependencies.
+// Same defect (same code + evidence/message) always hashes to the same ID
+// so Maestro can report "fixed 3/5 issues" across repair passes.
+// ---------------------------------------------------------------------------
+
+function fnv1a32(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+function stampIssueIds(issues: Omit<Issue, "issueId">[]): Issue[] {
+  return issues.map((issue) => ({
+    ...issue,
+    issueId: `${issue.code}:${fnv1a32(issue.evidence ?? issue.message)}`,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+
 export function evaluateWithPappy(input: PappyInput): PappyResult {
-  const issues: Issue[] = [
+  const issues: Issue[] = stampIssueIds([
     ...runSafetyChecks(input),
     ...runToolResultChecks(input),
     ...runCompletenessChecks(input),
     ...runStructureChecks(input),
-  ];
+  ]);
 
   const verdict = deriveVerdict(issues);
   const confidence = deriveConfidence(input, issues);

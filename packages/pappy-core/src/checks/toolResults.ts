@@ -1,7 +1,7 @@
 import type { Issue, PappyInput } from "../types.js";
 
-export function runToolResultChecks(input: PappyInput): Issue[] {
-  const issues: Issue[] = [];
+export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[] {
+  const issues: Omit<Issue, "issueId">[] = [];
 
   for (const event of input.toolEvents ?? []) {
     if (!event.ok) {

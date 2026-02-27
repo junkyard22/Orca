@@ -4,8 +4,8 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function runStructureChecks(input: PappyInput): Issue[] {
-  const issues: Issue[] = [];
+export function runStructureChecks(input: PappyInput): Omit<Issue, "issueId">[] {
+  const issues: Omit<Issue, "issueId">[] = [];
 
   const sections = input.constraints?.requireSections ?? [];
   if (sections.length === 0 || !input.outputText) return issues;

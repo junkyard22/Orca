@@ -108,9 +108,19 @@ export interface OrcaRuntime {
 export type OrcaEventType = OrcaEvent["type"];
 
 export type OrcaEvent =
-  | { type: "task:start";    intent: string }
-  | { type: "maestro:start" }
-  | { type: "maestro:done";  hasOutput: boolean }
-  | { type: "qc:result";     verdict: "PASS" | "WARN" | "FAIL"; issueCount: number }
-  | { type: "repair:start";  pass: number; maxPasses: number }
-  | { type: "task:done";     status: "SUCCESS" | "FAIL" };
+  /**
+   * taskId  — stable per-task identifier (= ctx.runId).
+   * attempt — 0 for initial generation, 1..n for repair passes.
+   * isRepair — false on attempt 0, true on all repair passes.
+   *
+   * Doctor query examples:
+   *   "Which models fail most on PLAN stage?" → group maestro:done by model
+   *   "Average repairs per task?"             → count repair:start per taskId
+   *   "Did issue X get fixed?"                → track issueId across qc:result events
+   */
+  | { type: "task:start";    taskId: string; intent: string }
+  | { type: "maestro:start"; taskId: string; attempt: number; isRepair: boolean }
+  | { type: "maestro:done";  taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean }
+  | { type: "qc:result";     taskId: string; attempt: number; isRepair: boolean; verdict: "PASS" | "WARN" | "FAIL"; issueCount: number }
+  | { type: "repair:start";  taskId: string; pass: number; maxPasses: number }
+  | { type: "task:done";     taskId: string; status: "SUCCESS" | "FAIL" };
