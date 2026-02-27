@@ -5,6 +5,7 @@ import type {
   MaestroPort,
   PappyPort,
 } from "./types.js";
+import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput } from "./helpers.js";
 
@@ -12,57 +13,81 @@ import { buildPappyInput } from "./helpers.js";
  * Called when Pappy returns FAIL on the initial generation pass.
  *
  * Each pass:
- *   1. Wrap Pappy's repairTask string as a new OrcaTaskSpec
- *   2. Maestro.run() produces a fresh OrcaMaestroResult
- *   3. Pappy re-evaluates — if PASS/WARN, return SUCCESS
- *   4. If still FAIL and Pappy has another repairTask, repeat
- *   5. Cap at maxPasses → return FAIL
+ *   1. Build a proper "repair" OrcaTaskSpec — intent: "repair", structured
+ *      context carries the original task + every issue Pappy found.
+ *   2. maestro.run(repairSpec, ctx) — Maestro is always the "doer".
+ *   3. pappy.evaluate() re-judges — Pappy is always the "judge".
+ *   4. PASS/WARN → return SUCCESS. FAIL → next pass or cap out.
+ *
+ * Maestro never calls Miranda directly; ctx.llm (Miranda-backed) is the
+ * only model surface it touches.
  */
 export async function handleRepairLoop(
   originalTask: OrcaTaskSpec,
-  initialRepairTask: string,
+  initialQCResult: PappyResult,
   ctx: OrcaRunCtx,
   maestro: MaestroPort,
   pappy: PappyPort,
   emitter: OrcaEmitter,
   maxPasses: number,
 ): Promise<OrcaExecutionResult> {
-  let repairTaskText = initialRepairTask;
+  let currentQC = initialQCResult;
 
   for (let pass = 1; pass <= maxPasses; pass++) {
     emitter.emit({ type: "repair:start", pass, maxPasses });
 
-    // Repair prompt becomes a new task; inherit original constraints
+    // Build a first-class repair task so Maestro understands it as work,
+    // not a raw blob of text.  Context carries everything Maestro needs to
+    // know: what the original intent was, and exactly which issues to fix.
     const repairSpec: OrcaTaskSpec = {
-      originalUserMessage: repairTaskText,
-      intent: `repair:${originalTask.intent}`,
-      goals: ["Resolve all issues identified in the QC evaluation"],
+      originalUserMessage: currentQC.repairTask!,
+      intent: "repair",
+      goals: ["Fix all issues identified in the quality check"],
       constraints: originalTask.constraints,
-      context: originalTask.context,
+      context: {
+        ...originalTask.context,
+        repair: {
+          pass,
+          maxPasses,
+          original: {
+            intent: originalTask.intent,
+            goals: originalTask.goals,
+            message: originalTask.originalUserMessage,
+          },
+          issues: currentQC.issues.map((i) => ({
+            severity:    i.severity,
+            code:        i.code,
+            message:     i.message,
+            suggestedFix: i.suggestedFix,
+          })),
+        },
+      },
     };
 
     emitter.emit({ type: "maestro:start" });
     const maestroResult = await maestro.run(repairSpec, ctx);
     emitter.emit({ type: "maestro:done", hasOutput: !!maestroResult.outputText });
 
-    const qcResult = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
+    // Always re-evaluate against the ORIGINAL task constraints, not the
+    // repair spec — we're checking if the output satisfies the user's goal.
+    const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
     emitter.emit({
       type: "qc:result",
-      verdict: qcResult.verdict,
-      issueCount: qcResult.issues.length,
+      verdict: nextQC.verdict,
+      issueCount: nextQC.issues.length,
     });
 
-    if (qcResult.verdict !== "FAIL") {
+    if (nextQC.verdict !== "FAIL") {
       return {
         status: "SUCCESS",
         userFacingText: maestroResult.outputText,
-        summary: qcResult.internalSummary,
+        summary: nextQC.internalSummary,
         artifacts: maestroResult,
       };
     }
 
-    if (!qcResult.repairTask) break; // Pappy can't guide further — give up
-    repairTaskText = qcResult.repairTask;
+    if (!nextQC.repairTask) break; // Pappy can't produce further guidance
+    currentQC = nextQC;
   }
 
   return {

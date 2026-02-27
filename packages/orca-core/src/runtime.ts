@@ -77,7 +77,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
       const repaired = await handleRepairLoop(
         taskSpec,
-        qcResult.repairTask,
+        qcResult,        // full PappyResult — issues + repairTask go into repair context
         ctx,
         maestro,
         pappy,
