@@ -1,21 +1,11 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "Node16",
-    "moduleResolution": "Node16",
-    "outDir": "dist",
-    "rootDir": "src",
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "composite": true
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "dist", "node_modules"]
+  "files": [],
+  "references": [
+    { "path": "packages/miranda-core" },
+    { "path": "packages/maestro-core" },
+    { "path": "packages/workbench-core" },
+    { "path": "packages/pappy-core" },
+    { "path": "packages/benson-core" },
+    { "path": "packages/orca-core" }
+  ]
 }

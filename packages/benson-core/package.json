@@ -1,0 +1,28 @@
+{
+  "name": "@clawde/benson-core",
+  "version": "0.1.0",
+  "description": "User-facing speaker layer for Orca pod — the only component that produces chat text",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.12.0",
+    "vitest": "^2.1.8"
+  },
+  "license": "MIT"
+}

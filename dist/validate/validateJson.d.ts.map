@@ -1,1 +1,0 @@
-{"version":3,"file":"validateJson.d.ts","sourceRoot":"","sources":["../../src/validate/validateJson.ts"],"names":[],"mappings":"AAAA;;;GAGG;AAEH,OAAO,KAAK,EAAE,CAAC,EAAE,MAAM,KAAK,CAAC;AAC7B,OAAO,KAAK,EAAE,gBAAgB,EAAE,MAAM,sBAAsB,CAAC;AAkB7D;;;GAGG;AACH,wBAAgB,YAAY,CAAC,CAAC,EAC5B,GAAG,EAAE,MAAM,EACX,MAAM,EAAE,CAAC,CAAC,OAAO,CAAC,CAAC,CAAC,GACnB,gBAAgB,CAwClB"}
