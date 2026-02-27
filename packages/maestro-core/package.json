@@ -1,0 +1,29 @@
+{
+  "name": "maestro-core",
+  "version": "0.1.0",
+  "description": "Portable orchestration logic layer for Maestro — Orca pod member",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YakStacks/maestro"
+  },
+  "keywords": [
+    "maestro",
+    "orca",
+    "orchestration",
+    "ai",
+    "agent",
+    "pod-member"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "node dist/example-usage.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0"
+  }
+}
