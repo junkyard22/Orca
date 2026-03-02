@@ -1,0 +1,23 @@
+{
+  "name": "@clawde/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc --build",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@clawde/benson-core": "workspace:*",
+    "@clawde/miranda-core": "workspace:*",
+    "@clawde/orca-core": "workspace:*",
+    "maestro-core": "workspace:*",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

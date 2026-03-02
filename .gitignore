@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment files (never commit real keys)
+.env
+
+# Logs
+*.log
+miranda-runs.jsonl
