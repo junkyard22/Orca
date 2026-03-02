@@ -1,7 +1,6 @@
 /* ── Orca desktop renderer ───────────────────────────────────────────────── */
 "use strict";
 
-const orca       = window.orca;
 const messages   = document.getElementById("messages");
 const welcome    = document.getElementById("welcome");
 const inputEl    = document.getElementById("input");
