@@ -19,6 +19,8 @@ import type {
 } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
 import { createMaestroCore } from "maestro-core";
+import { loadSettings, saveSettings } from "./settings";
+import type { OrcaSettings } from "./settings";
 
 // ── Maestro adapter ────────────────────────────────────────────────────────
 
@@ -58,25 +60,27 @@ type BensonHandle = ReturnType<typeof createBenson>;
 let runtime: OrcaRuntime | null = null;
 let benson: BensonHandle | null = null;
 
-function initOrca(): string | null {
-  const apiKey = process.env["OPENROUTER_API_KEY"]?.trim();
-  if (!apiKey)
-    return "OPENROUTER_API_KEY is not set.\nCreate a .env file next to the app with your OpenRouter key.";
+function initOrca(s: OrcaSettings): string | null {
+  runtime = null;
+  benson  = null;
+
+  if (!s.apiKey)
+    return "No API key set.\nClick ⚙ Settings to add your OpenRouter key.";
 
   try {
     const llm = createMirandaLLMService(
       new OpenRouterAdapter({
-        apiKey,
-        siteUrl: process.env["OPENROUTER_SITE_URL"] ?? "http://localhost",
-        appName: process.env["OPENROUTER_APP_NAME"] ?? "orca-desktop",
+        apiKey:  s.apiKey,
+        siteUrl: s.siteUrl,
+        appName: s.appName,
       }),
-      createDefaultConfig(),
+      createDefaultConfig({ budgetUsd: s.budgetUsd, verbose: s.verbose }),
     );
     const pappy   = createPappyPort();
     const maestro = buildMaestroAdapter();
-    runtime = createOrcaRuntime({ maestro, pappy, llm });
+    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: s.maxRepairPasses });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
-    return null; // success
+    return null;
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
   }
@@ -88,17 +92,17 @@ let win: BrowserWindow | null = null;
 
 function createWindow(): void {
   win = new BrowserWindow({
-    width:          660,
-    height:         820,
-    minWidth:       480,
-    minHeight:      500,
-    frame:          false,
-    transparent:    false,
+    width:           660,
+    height:          820,
+    minWidth:        480,
+    minHeight:       500,
+    frame:           false,
+    transparent:     false,
     backgroundColor: "#0f0f0f",
-    roundedCorners: true,
-    hasShadow:      true,
-    show:           false,
-    center:         true,
+    roundedCorners:  true,
+    hasShadow:       true,
+    show:            false,
+    center:          true,
     webPreferences: {
       preload:          join(__dirname, "preload.js"),
       nodeIntegration:  false,
@@ -112,7 +116,8 @@ function createWindow(): void {
   win.once("ready-to-show", () => {
     win!.show();
     win!.focus();
-    const err = initOrca();
+    const settings = loadSettings();
+    const err = initOrca(settings);
     win!.webContents.send("init-status", { ok: err === null, error: err });
   });
 
@@ -124,9 +129,22 @@ function createWindow(): void {
 ipcMain.on("win:minimize", () => win?.minimize());
 ipcMain.on("win:close",    () => win?.close());
 
+ipcMain.handle("settings:get", () => loadSettings());
+
+ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
+  try {
+    saveSettings(s);
+    const err = initOrca(s);
+    win?.webContents.send("init-status", { ok: err === null, error: err });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!benson || !runtime)
-    return { ok: false, error: "Orca is not initialized — check your OPENROUTER_API_KEY." };
+    return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
