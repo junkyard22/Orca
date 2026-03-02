@@ -3,7 +3,11 @@ node_modules/
 
 # Build output
 dist/
+dist-exe/
 *.tsbuildinfo
+
+# Compiled executables
+orca.exe
 
 # Environment files (never commit real keys)
 .env
