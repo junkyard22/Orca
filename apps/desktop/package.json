@@ -1,0 +1,23 @@
+{
+  "name": "@clawde/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist-main/main.js",
+  "scripts": {
+    "dev": "node build-main.mjs && electron .",
+    "build": "node build-main.mjs"
+  },
+  "dependencies": {
+    "@clawde/benson-core": "workspace:*",
+    "@clawde/miranda-core": "workspace:*",
+    "@clawde/orca-core": "workspace:*",
+    "maestro-core": "workspace:*",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "electron": "^33.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}

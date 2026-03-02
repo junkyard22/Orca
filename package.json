@@ -16,6 +16,6 @@
   },
   "license": "MIT",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": ["esbuild", "electron"]
   }
 }

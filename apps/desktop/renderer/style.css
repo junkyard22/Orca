@@ -1,0 +1,365 @@
+/* ── Reset & tokens ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #0f0f0f;
+  --surface:     #171717;
+  --surface-2:   #1f1f1f;
+  --border:      #2a2a2a;
+  --text:        #e5e5e5;
+  --text-muted:  #737373;
+  --text-dim:    #3f3f3f;
+  --accent:      #10b981;
+  --accent-dark: #059669;
+  --user-bg:     #1a1a2e;
+  --user-text:   #c7d2fe;
+  --danger:      #ef4444;
+  --warn-bg:     #1c1209;
+  --warn-text:   #fbbf24;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── App shell ──────────────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── Title bar ──────────────────────────────────────────────────────────── */
+#titlebar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.brand-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px #10b98166;
+}
+
+.brand-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.win-controls {
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.win-btn {
+  width: 32px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
+}
+.win-btn:hover       { background: var(--surface-2); color: var(--text); }
+.win-btn.close:hover { background: var(--danger);    color: #fff; }
+
+/* ── Content (welcome / messages) ──────────────────────────────────────── */
+#content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Welcome screen */
+#welcome {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px;
+  pointer-events: none;
+}
+
+.welcome-glyph svg { opacity: 0.9; }
+
+.welcome-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+}
+
+.welcome-sub {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-align: center;
+  max-width: 280px;
+}
+
+/* Message feed */
+#messages {
+  flex: 1;
+  display: none;  /* shown via JS once first message arrives */
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  padding: 20px 18px 12px;
+}
+
+#messages::-webkit-scrollbar       { width: 4px; }
+#messages::-webkit-scrollbar-track { background: transparent; }
+#messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Message bubble ─────────────────────────────────────────────────────── */
+.msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 88%;
+  animation: fadeUp 0.18s ease;
+}
+
+.msg.user  { align-self: flex-end;   align-items: flex-end; }
+.msg.orca  { align-self: flex-start; align-items: flex-start; }
+
+.msg-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 5px;
+}
+
+.msg-bubble {
+  padding: 10px 14px;
+  border-radius: 14px;
+  line-height: 1.65;
+  word-break: break-word;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.msg.user .msg-bubble {
+  background: var(--user-bg);
+  color: var(--user-text);
+  border-bottom-right-radius: 4px;
+}
+
+.msg.orca .msg-bubble {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+  white-space: normal;  /* allow HTML rendering */
+}
+
+/* Markdown content inside orca bubbles */
+.msg.orca .msg-bubble h2,
+.msg.orca .msg-bubble h3,
+.msg.orca .msg-bubble h4 {
+  margin: 12px 0 4px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+.msg.orca .msg-bubble h2 { font-size: 15px; }
+.msg.orca .msg-bubble p  { margin: 4px 0; }
+.msg.orca .msg-bubble ul,
+.msg.orca .msg-bubble ol { margin: 6px 0 6px 20px; }
+.msg.orca .msg-bubble li { margin: 2px 0; }
+.msg.orca .msg-bubble strong { color: var(--text); }
+
+.msg.orca .msg-bubble pre {
+  background: #0a0a0a;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.msg.orca .msg-bubble code {
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+  background: #0a0a0a;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--accent);
+}
+.msg.orca .msg-bubble pre code {
+  background: transparent;
+  padding: 0;
+  color: #86efac;
+  white-space: pre;
+}
+
+/* ── Thinking animation ─────────────────────────────────────────────────── */
+.thinking-dots {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  height: 20px;
+}
+.thinking-dots span {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: dot-pop 1.4s ease infinite;
+}
+.thinking-dots span:nth-child(2) { animation-delay: 0.18s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes dot-pop {
+  0%, 60%, 100% { transform: translateY(0);    opacity: 0.3; }
+  30%            { transform: translateY(-5px); opacity: 1; }
+}
+
+/* ── System / error messages ────────────────────────────────────────────── */
+.sys-msg {
+  align-self: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 14px;
+  max-width: 90%;
+  text-align: center;
+  user-select: text;
+  white-space: pre-wrap;
+  animation: fadeUp 0.18s ease;
+}
+.sys-msg.error {
+  color: #fca5a5;
+  background: #190a0a;
+  border-color: #3f1515;
+}
+.sys-msg.warn {
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border-color: #3d2910;
+}
+
+/* ── Status bar ─────────────────────────────────────────────────────────── */
+#statusbar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+.status-dot.active {
+  background: var(--accent);
+  animation: status-pulse 1.3s ease infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.2; }
+}
+
+/* ── Input area ─────────────────────────────────────────────────────────── */
+#input-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+#input {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 9px 13px;
+  resize: none;
+  outline: none;
+  min-height: 38px;
+  max-height: 140px;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+  user-select: text;
+}
+#input::placeholder { color: var(--text-dim); }
+#input:focus        { border-color: var(--accent); }
+#input:disabled     { opacity: 0.45; }
+
+#send-btn {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, transform 0.1s, opacity 0.15s;
+}
+#send-btn:hover:not(:disabled)  { background: var(--accent-dark); }
+#send-btn:active:not(:disabled) { transform: scale(0.92); }
+#send-btn:disabled              { opacity: 0.3; cursor: default; }
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
