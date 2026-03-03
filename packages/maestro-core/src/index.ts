@@ -103,6 +103,9 @@ export {
   shouldAttachConfigSnapshot,
   formatEffectiveConfigForBrain,
 } from './modelUtils';
+
+// ── Role Prompts ─────────────────────────────────────────────────────────────
+export { ROLE_PROMPTS, getRolePrompt } from './prompts/rolePrompts';
 export type {
   NormalizedModelId,
   RoleEffectiveConfig,

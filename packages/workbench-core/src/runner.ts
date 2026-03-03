@@ -1,12 +1,14 @@
 /**
  * Runner Interface - Foundation for language-agnostic tool execution
- * 
+ *
  * Runners execute tools in specific environments (shell, Python, Node, Go, etc.)
  * Core does not implement language logic. Runners do.
- * 
+ *
  * Phase 1: Only ShellRunner exists. All tools route through it.
  * Future: PythonRunner, NodeRunner, GoRunner, etc.
  */
+
+import { spawn } from 'child_process';
 
 export interface ToolSpec {
   name: string;
@@ -100,10 +102,66 @@ export class ShellRunner implements Runner {
   }
 
   async execute(plan: ExecutionPlan): Promise<ExecutionResult> {
-    // Phase 1: This will be called by tool-dispatch.ts
-    // For now, this is a placeholder - actual execution still happens in tool-dispatch
-    // This allows gradual migration without breaking existing code
-    throw new Error('ShellRunner.execute() - not yet migrated. Execution still in tool-dispatch.ts');
+    const start = Date.now();
+
+    return new Promise<ExecutionResult>((resolve) => {
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      let timedOut = false;
+
+      const child = spawn(plan.command, plan.args, {
+        cwd: plan.cwd ?? process.cwd(),
+        env: { ...process.env, ...(plan.env ?? {}) },
+        shell: plan.shell,
+        // Prevent the child from inheriting the parent's stdio so we can
+        // capture output cleanly without interleaving with the main process.
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+
+      const timeout = plan.timeout > 0 ? plan.timeout : 30_000;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, timeout);
+
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf8'),
+          exitCode: -1,
+          duration: Date.now() - start,
+          error: err.message,
+        });
+      });
+
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+        const stderr = Buffer.concat(stderrChunks).toString('utf8');
+        const exitCode = code ?? -1;
+
+        if (timedOut) {
+          resolve({
+            stdout,
+            stderr,
+            exitCode: -1,
+            duration: Date.now() - start,
+            error: `Command timed out after ${timeout}ms`,
+          });
+        } else {
+          resolve({
+            stdout,
+            stderr,
+            exitCode,
+            duration: Date.now() - start,
+          });
+        }
+      });
+    });
   }
 
   verify(result: ExecutionResult, toolSpec: ToolSpec): VerificationOutcome {
