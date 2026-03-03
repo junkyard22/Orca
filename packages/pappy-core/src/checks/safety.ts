@@ -24,8 +24,12 @@ export function runSafetyChecks(input: PappyInput): Omit<Issue, "issueId">[] {
         issues.push({
           severity: "CRITICAL",
           code: "SAFETY_FORBIDDEN_DELETE",
+          category: "Safety",
+          description: `File deletion is forbidden by constraints but "${file.path}" was deleted.`,
+          expected_receipt: "No deletion entries in filesChanged.",
+          evidence: `changeType=D path=${file.path}`,
+          fix_hint: `Restore "${file.path}" or remove the deletion from the changeset.`,
           message: `File deletion is forbidden but "${file.path}" was deleted.`,
-          evidence: `changeType: D, path: ${file.path}`,
           suggestedFix: `Restore "${file.path}" or remove the deletion from the changeset.`,
         });
       }
@@ -39,8 +43,12 @@ export function runSafetyChecks(input: PappyInput): Omit<Issue, "issueId">[] {
         issues.push({
           severity: "CRITICAL",
           code: "SAFETY_DANGEROUS_COMMAND",
+          category: "Safety",
+          description: `Output contains a potentially destructive command pattern: ${match[0]}`,
+          expected_receipt: "No destructive command patterns in output. If required, explicit user-approval gate must exist.",
+          evidence: `Matched: "${match[0]}" (pattern: ${pattern.source})`,
+          fix_hint: "Remove or replace the dangerous command. If intentional, add an explicit user-confirmation gate and note it in the output.",
           message: `Output contains a potentially destructive command pattern (${pattern.source}).`,
-          evidence: match[0],
           suggestedFix: "Remove or replace the dangerous command with a safe alternative.",
         });
       }

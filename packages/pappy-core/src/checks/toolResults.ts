@@ -8,8 +8,12 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
       issues.push({
         severity: "HIGH",
         code: "TOOL_FAILURE",
-        message: `Tool "${event.tool}" reported a failure.`,
+        category: "Tooling",
+        description: `Tool "${event.tool}" reported a failure. Downstream results cannot be trusted.`,
+        expected_receipt: `tool_event for "${event.tool}" with ok=true.`,
         evidence: event.summary,
+        fix_hint: `Investigate and resolve the failure in "${event.tool}". Re-run and confirm ok=true in the tool event.`,
+        message: `Tool "${event.tool}" reported a failure.`,
         suggestedFix: `Investigate and resolve the failure in "${event.tool}" before proceeding.`,
       });
     }

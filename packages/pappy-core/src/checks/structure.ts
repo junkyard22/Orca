@@ -16,8 +16,12 @@ export function runStructureChecks(input: PappyInput): Omit<Issue, "issueId">[] 
       issues.push({
         severity: "MEDIUM",
         code: "STRUCTURE_MISSING_SECTION",
+        category: "Completeness",
+        description: `Required section heading "${section}" is absent from the output.`,
+        expected_receipt: `Markdown heading matching "${section}" present in outputText.`,
+        evidence: `Searched outputText for /^#{1,6}\\s+${section}/im — not found.`,
+        fix_hint: `Add a markdown heading for "${section}" to the output.`,
         message: `Required section heading "${section}" was not found in outputText.`,
-        evidence: `Expected heading: "${section}"`,
         suggestedFix: `Add a markdown heading for "${section}" to the output.`,
       });
     }
