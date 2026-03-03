@@ -1,10 +1,12 @@
 # Dependencies
 node_modules/
+**/node_modules/
 
-# Build output
+# Build outputs
 dist/
-dist-exe/
 dist-main/
+dist-exe/
+build/
 *.tsbuildinfo
 
 # Compiled executables
@@ -12,7 +14,19 @@ orca.exe
 
 # Environment files (never commit real keys)
 .env
+.env.local
+.env.*.local
 
 # Logs
 *.log
+npm-debug.log*
+pnpm-debug.log*
 miranda-runs.jsonl
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
