@@ -208,46 +208,259 @@ inputEl.addEventListener("keydown", (e) => {
 
 // ── Settings panel ────────────────────────────────────────────────────────
 
-const setApiKey   = document.getElementById("set-apikey");
-const setShowKey  = document.getElementById("btn-show-key");
-const setBudget   = document.getElementById("set-budget");
-const setRepairs  = document.getElementById("set-repairs");
-const setVerbose  = document.getElementById("set-verbose");
-const setSaveBtn  = document.getElementById("btn-save-settings");
-const setStatus2  = document.getElementById("settings-status");
+const setBudget  = document.getElementById("set-budget");
+const setRepairs = document.getElementById("set-repairs");
+const setVerbose = document.getElementById("set-verbose");
+const setSaveBtn = document.getElementById("btn-save-settings");
+const setStatus2 = document.getElementById("settings-status");
+
+// ── Provider & role metadata ───────────────────────────────────────────────
+
+const PROVIDER_TYPES = [
+  { value: "openrouter",  label: "OpenRouter",  defaultUrl: "https://openrouter.ai/api/v1",  needsKey: true  },
+  { value: "ollama",      label: "Ollama",       defaultUrl: "http://localhost:11434",         needsKey: false },
+  { value: "deepseek",    label: "DeepSeek",     defaultUrl: "https://api.deepseek.com/v1",   needsKey: true  },
+  { value: "siliconflow", label: "SiliconFlow",  defaultUrl: "https://api.siliconflow.cn/v1", needsKey: true  },
+  { value: "openai",      label: "OpenAI",       defaultUrl: "https://api.openai.com/v1",     needsKey: true  },
+  { value: "anthropic",   label: "Anthropic",    defaultUrl: "https://api.anthropic.com/v1",  needsKey: true  },
+  { value: "zai",         label: "ZAI",          defaultUrl: "https://api.z.ai/v1",           needsKey: true  },
+  { value: "custom",      label: "Custom",       defaultUrl: "",                              needsKey: true  },
+];
+
+const MODEL_HINTS = {
+  openrouter:  "e.g. anthropic/claude-3.5-sonnet",
+  ollama:      "e.g. llama3.2, deepseek-r1:14b",
+  deepseek:    "e.g. deepseek-chat",
+  siliconflow: "e.g. Qwen/Qwen2.5-72B-Instruct",
+  openai:      "e.g. gpt-4o",
+  anthropic:   "e.g. claude-3-5-sonnet-20241022",
+  zai:         "e.g. gpt-4o",
+  custom:      "model name",
+};
+
+const CORE_ROLES = [
+  { id: "brain",        label: "Brain",          hint: "Primary intelligence — drives all LLM calls" },
+  { id: "coder_strong", label: "Coder (Strong)",  hint: "High-quality code generation" },
+  { id: "coder_cheap",  label: "Coder (Cheap)",   hint: "Fast / cheap code for simple tasks" },
+  { id: "utility",      label: "Utility",         hint: "General purpose helper" },
+  { id: "reviewer",     label: "Reviewer",        hint: "Code review and critique" },
+  { id: "narrator",     label: "Narrator",        hint: "Explanations and documentation" },
+];
+
+const OPTIONAL_ROLES = [
+  { id: "planner_deep", label: "Planner (Deep)",  hint: "Multi-file refactors — fallback: brain" },
+  { id: "debugger",     label: "Debugger",         hint: "Error diagnosis — fallback: coder_strong" },
+  { id: "reader",       label: "Reader",           hint: "Summarize long text / logs — fallback: narrator" },
+  { id: "vision",       label: "Vision",           hint: "Image interpretation — fallback: brain" },
+];
+
+// ── In-memory state ────────────────────────────────────────────────────────
+
+let editingSettings = null;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function genId(prefix) {
+  return `${prefix}_${Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0")}`;
+}
+
+function escHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function getProviderType(id) {
+  return editingSettings?.providers?.find((p) => p.id === id)?.type ?? "openrouter";
+}
+
+// ── Render providers ───────────────────────────────────────────────────────
+
+function renderProviders() {
+  const list = document.getElementById("providers-list");
+  if (!list || !editingSettings) return;
+
+  if (!editingSettings.providers.length) {
+    list.innerHTML = '<p class="setting-hint" style="padding:6px 0">No providers yet — click <strong>+ Add</strong> to add one.</p>';
+    return;
+  }
+
+  list.innerHTML = editingSettings.providers.map((p, i) => {
+    const needsKey = PROVIDER_TYPES.find((t) => t.value === p.type)?.needsKey ?? true;
+    const typeOpts = PROVIDER_TYPES.map((t) =>
+      `<option value="${t.value}"${t.value === p.type ? " selected" : ""}>${t.label}</option>`
+    ).join("");
+    return `
+      <div class="provider-item" data-prov-idx="${i}">
+        <div class="provider-row-top">
+          <input class="setting-input prov-name" placeholder="Display name" value="${escHtml(p.name)}" />
+          <select class="prov-type">${typeOpts}</select>
+          <button class="btn-remove" data-remove-prov="${i}" title="Remove">✕</button>
+        </div>
+        <input class="setting-input prov-url" placeholder="Base URL" value="${escHtml(p.baseUrl)}" />
+        <div class="provider-key-row"${needsKey ? "" : ' style="display:none"'}>
+          <input type="password" class="setting-input prov-key" placeholder="API key" value="${escHtml(p.apiKey)}" autocomplete="off" />
+          <button class="setting-show-btn prov-show-key" type="button">Show</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  list.querySelectorAll(".prov-type").forEach((sel) => {
+    sel.addEventListener("change", function () {
+      const idx = +this.closest(".provider-item").dataset.provIdx;
+      const meta = PROVIDER_TYPES.find((t) => t.value === this.value);
+      editingSettings.providers[idx].type = this.value;
+      if (meta?.defaultUrl) editingSettings.providers[idx].baseUrl = meta.defaultUrl;
+      renderProviders();
+      renderRoles();
+    });
+  });
+
+  list.querySelectorAll(".prov-name").forEach((inp) => {
+    inp.addEventListener("input", function () {
+      editingSettings.providers[+this.closest(".provider-item").dataset.provIdx].name = this.value;
+      rebuildRoleSelects();
+    });
+  });
+
+  list.querySelectorAll(".prov-url").forEach((inp) => {
+    inp.addEventListener("input", function () {
+      editingSettings.providers[+this.closest(".provider-item").dataset.provIdx].baseUrl = this.value;
+    });
+  });
+
+  list.querySelectorAll(".prov-key").forEach((inp) => {
+    inp.addEventListener("input", function () {
+      editingSettings.providers[+this.closest(".provider-item").dataset.provIdx].apiKey = this.value;
+    });
+  });
+
+  list.querySelectorAll(".prov-show-key").forEach((btn) => {
+    btn.addEventListener("click", function () {
+      const inp = this.previousElementSibling;
+      const showing = inp.type === "text";
+      inp.type = showing ? "password" : "text";
+      this.textContent = showing ? "Show" : "Hide";
+    });
+  });
+
+  list.querySelectorAll("[data-remove-prov]").forEach((btn) => {
+    btn.addEventListener("click", function () {
+      editingSettings.providers.splice(+this.dataset.removeProv, 1);
+      renderProviders();
+      renderRoles();
+    });
+  });
+}
+
+// ── Render roles ───────────────────────────────────────────────────────────
+
+function buildProviderOptions(currentProviderId) {
+  if (!editingSettings?.providers?.length) {
+    return '<option value="">— add a provider first —</option>';
+  }
+  const blank = currentProviderId ? "" : '<option value="">— select —</option>';
+  return blank + editingSettings.providers
+    .map((p) => `<option value="${p.id}"${p.id === currentProviderId ? " selected" : ""}>${escHtml(p.name)}</option>`)
+    .join("");
+}
+
+function renderRoleList(containerId, roles, badgeClass) {
+  const el = document.getElementById(containerId);
+  if (!el || !editingSettings) return;
+
+  el.innerHTML = roles.map((role) => {
+    const entry = editingSettings.roles[role.id] ?? { providerId: "", model: "" };
+    const hint  = MODEL_HINTS[getProviderType(entry.providerId)] ?? "model";
+    return `
+      <div class="role-row" data-role-id="${role.id}">
+        <div class="role-label" title="${escHtml(role.hint)}">
+          <span class="role-name">${escHtml(role.label)}</span>
+          <span class="role-badge ${badgeClass}">${badgeClass}</span>
+        </div>
+        <select class="role-select role-provider-sel">
+          ${buildProviderOptions(entry.providerId)}
+        </select>
+        <input class="setting-input role-model-inp" placeholder="${escHtml(hint)}" value="${escHtml(entry.model)}" />
+      </div>`;
+  }).join("");
+
+  el.querySelectorAll(".role-provider-sel").forEach((sel) => {
+    sel.addEventListener("change", function () {
+      const roleId = this.closest(".role-row").dataset.roleId;
+      if (!editingSettings.roles[roleId]) editingSettings.roles[roleId] = { providerId: "", model: "" };
+      editingSettings.roles[roleId].providerId = this.value;
+      const modelInp = this.closest(".role-row").querySelector(".role-model-inp");
+      modelInp.placeholder = MODEL_HINTS[getProviderType(this.value)] ?? "model";
+    });
+  });
+
+  el.querySelectorAll(".role-model-inp").forEach((inp) => {
+    inp.addEventListener("input", function () {
+      const roleId = this.closest(".role-row").dataset.roleId;
+      if (!editingSettings.roles[roleId]) editingSettings.roles[roleId] = { providerId: "", model: "" };
+      editingSettings.roles[roleId].model = this.value;
+    });
+  });
+}
+
+function renderRoles() {
+  renderRoleList("roles-core-list",     CORE_ROLES,     "core");
+  renderRoleList("roles-optional-list", OPTIONAL_ROLES, "optional");
+}
+
+function rebuildRoleSelects() {
+  document.querySelectorAll(".role-provider-sel").forEach((sel) => {
+    const current = editingSettings?.roles[sel.closest(".role-row").dataset.roleId]?.providerId ?? "";
+    sel.innerHTML = buildProviderOptions(current);
+  });
+}
+
+// ── Open / close settings ──────────────────────────────────────────────────
 
 function openSettings() {
   chatView.style.display     = "none";
   settingsView.style.display = "flex";
+
   orca.getSettings().then((s) => {
-    setApiKey.value       = s.apiKey ?? "";
-    setBudget.value       = String(s.budgetUsd ?? 0.10);
-    setRepairs.value      = String(s.maxRepairPasses ?? 2);
-    setVerbose.checked    = !!s.verbose;
+    editingSettings        = JSON.parse(JSON.stringify(s)); // deep clone
+    setBudget.value        = String(s.budgetUsd       ?? 0.10);
+    setRepairs.value       = String(s.maxRepairPasses ?? 2);
+    setVerbose.checked     = !!s.verbose;
     setStatus2.textContent = "";
     setStatus2.className   = "settings-status";
+    renderProviders();
+    renderRoles();
   });
 }
 
 function closeSettings() {
   settingsView.style.display = "none";
   chatView.style.display     = "flex";
+  editingSettings = null;
   inputEl.focus();
 }
 
-setShowKey.addEventListener("click", () => {
-  const showing = setApiKey.type === "text";
-  setApiKey.type       = showing ? "password" : "text";
-  setShowKey.textContent = showing ? "Show" : "Hide";
+document.getElementById("btn-add-provider").addEventListener("click", () => {
+  if (!editingSettings) return;
+  editingSettings.providers.push({
+    id:      genId("prov"),
+    name:    "",
+    type:    "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey:  "",
+  });
+  renderProviders();
+  renderRoles();
 });
 
 setSaveBtn.addEventListener("click", async () => {
+  if (!editingSettings) return;
+
   const s = {
-    apiKey:          setApiKey.value.trim(),
+    ...editingSettings,
     budgetUsd:       parseFloat(setBudget.value)   || 0.10,
     maxRepairPasses: parseInt(setRepairs.value, 10) || 0,
-    siteUrl:         "http://localhost",
-    appName:         "orca-desktop",
     verbose:         setVerbose.checked,
   };
 

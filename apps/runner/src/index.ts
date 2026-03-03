@@ -17,7 +17,7 @@
 
 import "dotenv/config";
 
-import { OpenRouterAdapter, createDefaultConfig } from "@clawde/miranda-core";
+import { OpenRouterAdapter, OllamaAdapter, createDefaultConfig } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createMirandaLLMService,
@@ -56,25 +56,37 @@ async function main(): Promise<void> {
   // 1. Read user prompt from argv or stdin
   const userText = await readPrompt();
 
-  // 2. Require OPENROUTER_API_KEY (only the runner loads .env — never core libs)
-  const apiKey = process.env["OPENROUTER_API_KEY"]?.trim();
-  if (!apiKey) {
-    console.error(
-      "Error: OPENROUTER_API_KEY is not set.\n" +
-        "  → Copy apps/runner/.env.example → apps/runner/.env and add your key.\n" +
-        "  → Get a free key at https://openrouter.ai/keys",
-    );
-    process.exit(1);
+  // 2. Build LLM adapter — set LLM_PROVIDER=ollama in .env to use Ollama locally
+  const provider = process.env["LLM_PROVIDER"]?.trim().toLowerCase();
+
+  let adapter;
+  if (provider === "ollama") {
+    adapter = new OllamaAdapter({
+      baseUrl:      process.env["OLLAMA_BASE_URL"]  ?? "http://localhost:11434",
+      defaultModel: process.env["OLLAMA_MODEL"]     ?? "llama3.2",
+    });
+  } else {
+    const apiKey = process.env["OPENROUTER_API_KEY"]?.trim();
+    if (!apiKey) {
+      console.error(
+        "Error: OPENROUTER_API_KEY is not set.\n" +
+          "  → Copy apps/runner/.env.example → apps/runner/.env and add your key.\n" +
+          "  → Get a free key at https://openrouter.ai/keys\n" +
+          "  → Or set LLM_PROVIDER=ollama to use a local Ollama model instead.",
+      );
+      process.exit(1);
+    }
+    adapter = new OpenRouterAdapter({
+      apiKey,
+      siteUrl: process.env["OPENROUTER_SITE_URL"] ?? "http://localhost",
+      appName: process.env["OPENROUTER_APP_NAME"] ?? "orca-runner",
+    });
   }
 
   // 3. Wire the pod ──────────────────────────────────────────────────────────
 
   const llm = createMirandaLLMService(
-    new OpenRouterAdapter({
-      apiKey,
-      siteUrl: process.env["OPENROUTER_SITE_URL"] ?? "http://localhost",
-      appName: process.env["OPENROUTER_APP_NAME"] ?? "orca-runner",
-    }),
+    adapter,
     createDefaultConfig(),
   );
 

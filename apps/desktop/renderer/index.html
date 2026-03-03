@@ -75,39 +75,61 @@
 
       <div class="settings-body">
 
-        <div class="setting-group">
-          <label class="setting-label" for="set-apikey">OpenRouter API Key</label>
-          <p class="setting-hint">Get a key at openrouter.ai — saved locally, never sent anywhere else.</p>
-          <div class="setting-key-row">
-            <input type="password" id="set-apikey" class="setting-input"
-                   placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false" />
-            <button class="setting-show-btn" id="btn-show-key" type="button">Show</button>
+        <!-- Providers ─────────────────────────────────────────────── -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <span class="settings-section-title">Providers</span>
+            <button class="btn-sm-add" id="btn-add-provider" type="button">+ Add</button>
           </div>
+          <p class="setting-hint">Define API sources. Each role is assigned to one of these.</p>
+          <div id="providers-list"></div>
         </div>
 
-        <div class="setting-group">
-          <label class="setting-label" for="set-budget">Budget per request (USD)</label>
-          <p class="setting-hint">Miranda stops spending when this limit is reached.</p>
-          <input type="number" id="set-budget" class="setting-input setting-input--sm"
-                 min="0.01" max="10" step="0.01" />
-        </div>
-
-        <div class="setting-group">
-          <label class="setting-label" for="set-repairs">Max repair passes</label>
-          <p class="setting-hint">How many times Orca retries after a QC failure (0 = no repair).</p>
-          <input type="number" id="set-repairs" class="setting-input setting-input--sm"
-                 min="0" max="10" step="1" />
-        </div>
-
-        <div class="setting-group setting-group--row">
-          <div>
-            <label class="setting-label">Verbose logging</label>
-            <p class="setting-hint">Log LLM calls to miranda-runs.jsonl.</p>
+        <!-- Core Roles ──────────────────────────────────────────────── -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <span class="settings-section-title">Core Roles</span>
           </div>
-          <label class="toggle">
-            <input type="checkbox" id="set-verbose" />
-            <span class="toggle-track"></span>
-          </label>
+          <p class="setting-hint"><strong style="color:var(--text)">Brain</strong> drives all current LLM calls. Others are routed in future builds.</p>
+          <div id="roles-core-list" class="roles-list"></div>
+        </div>
+
+        <!-- Optional Roles ──────────────────────────────────────────── -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <span class="settings-section-title">Optional Roles</span>
+          </div>
+          <p class="setting-hint">Auto-selected by context. Falls back to a core role if unset — hover role name for details.</p>
+          <div id="roles-optional-list" class="roles-list"></div>
+        </div>
+
+        <!-- General ─────────────────────────────────────────────────── -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <span class="settings-section-title">General</span>
+          </div>
+          <div class="setting-group">
+            <label class="setting-label" for="set-budget">Budget per request (USD)</label>
+            <p class="setting-hint">Miranda stops spending when this limit is reached.</p>
+            <input type="number" id="set-budget" class="setting-input setting-input--sm"
+                   min="0.01" max="10" step="0.01" />
+          </div>
+          <div class="setting-group" style="margin-top:14px">
+            <label class="setting-label" for="set-repairs">Max repair passes</label>
+            <p class="setting-hint">How many times Orca retries after a QC failure (0 = no repair).</p>
+            <input type="number" id="set-repairs" class="setting-input setting-input--sm"
+                   min="0" max="10" step="1" />
+          </div>
+          <div class="setting-group setting-group--row" style="margin-top:14px">
+            <div>
+              <label class="setting-label">Verbose logging</label>
+              <p class="setting-hint">Log LLM calls to miranda-runs.jsonl.</p>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="set-verbose" />
+              <span class="toggle-track"></span>
+            </label>
+          </div>
         </div>
 
         <button class="save-btn" id="btn-save-settings" type="button">Save &amp; Apply</button>

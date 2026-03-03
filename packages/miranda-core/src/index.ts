@@ -60,6 +60,10 @@ export { HealthTracker } from "./route/health.js";
 export type { LLMAdapter } from "./llm/adapter.js";
 export { OpenRouterAdapter } from "./llm/openrouter.js";
 export type { OpenRouterConfig } from "./llm/openrouter.js";
+export { OllamaAdapter } from "./llm/ollama.js";
+export type { OllamaConfig } from "./llm/ollama.js";
+export { OpenAICompatAdapter } from "./llm/openaiCompat.js";
+export type { OpenAICompatConfig } from "./llm/openaiCompat.js";
 
 // Metrics
 export { estimateTokens, resolveTokenUsage } from "./metrics/tokens.js";

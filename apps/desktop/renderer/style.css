@@ -489,6 +489,126 @@ html, body {
 }
 .setting-show-btn:hover { color: var(--text); border-color: var(--accent); }
 
+/* ── Settings sections ───────────────────────────────────────────────────── */
+.settings-section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-section-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+.btn-sm-add {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: border-color 0.12s;
+}
+.btn-sm-add:hover { border-color: var(--accent); }
+
+/* ── Provider items ──────────────────────────────────────────────────────── */
+.provider-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 6px;
+}
+.provider-row-top {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+.prov-name { flex: 1; }
+.prov-type {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  width: 126px;
+  flex-shrink: 0;
+}
+.prov-type:focus { border-color: var(--accent); outline: none; }
+.btn-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  transition: color 0.12s, background 0.12s;
+}
+.btn-remove:hover { color: var(--danger); background: rgba(239,68,68,0.1); }
+.provider-key-row { display: flex; gap: 7px; }
+.provider-key-row input { flex: 1; }
+
+/* ── Role rows ───────────────────────────────────────────────────────────── */
+.roles-list { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.role-row {
+  display: grid;
+  grid-template-columns: 136px 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.role-label { display: flex; align-items: center; gap: 5px; overflow: hidden; }
+.role-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.role-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.role-badge.core     { background: rgba(16,185,129,0.12); color: var(--accent); }
+.role-badge.optional { background: rgba(107,114,128,0.12); color: var(--text-muted); }
+.role-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  width: 100%;
+}
+.role-select:focus { border-color: var(--accent); outline: none; }
+.role-model-inp { font-size: 12px; padding: 6px 9px; }
+
 /* ── Toggle switch ───────────────────────────────────────────────────────── */
 .toggle {
   position: relative;

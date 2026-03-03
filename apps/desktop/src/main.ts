@@ -2,7 +2,8 @@ import "dotenv/config";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { join } from "node:path";
 
-import { OpenRouterAdapter, createDefaultConfig } from "@clawde/miranda-core";
+import { OllamaAdapter, OpenAICompatAdapter, createDefaultConfig } from "@clawde/miranda-core";
+import type { LLMAdapter } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createMirandaLLMService,
@@ -20,7 +21,7 @@ import type {
 import { createBenson } from "@clawde/benson-core";
 import { createMaestroCore } from "maestro-core";
 import { loadSettings, saveSettings } from "./settings";
-import type { OrcaSettings } from "./settings";
+import type { OrcaSettings, ProviderEntry } from "./settings";
 
 // ── Maestro adapter ────────────────────────────────────────────────────────
 
@@ -60,21 +61,62 @@ type BensonHandle = ReturnType<typeof createBenson>;
 let runtime: OrcaRuntime | null = null;
 let benson: BensonHandle | null = null;
 
+function buildAdapterForProvider(provider: ProviderEntry, model: string): LLMAdapter {
+  if (provider.type === 'ollama') {
+    return new OllamaAdapter({
+      baseUrl:      provider.baseUrl || 'http://localhost:11434',
+      defaultModel: model,
+    });
+  }
+  // openrouter, deepseek, siliconflow, openai, anthropic, zai, custom
+  return new OpenAICompatAdapter({
+    baseUrl:      provider.baseUrl,
+    apiKey:       provider.apiKey || undefined,
+    defaultModel: model,
+  });
+}
+
 function initOrca(s: OrcaSettings): string | null {
   runtime = null;
   benson  = null;
 
-  if (!s.apiKey)
-    return "No API key set.\nClick ⚙ Settings to add your OpenRouter key.";
+  const brainRole = s.roles?.['brain'];
+  if (!brainRole?.providerId || !brainRole?.model) {
+    return "Brain role not configured.\nClick ⚙ Settings → add a provider and assign it to the Brain role.";
+  }
+
+  const provider = s.providers?.find((p) => p.id === brainRole.providerId);
+  if (!provider) {
+    return "Brain role points to an unknown provider.\nClick ⚙ Settings to re-configure.";
+  }
+
+  if (provider.type !== 'ollama' && !provider.apiKey) {
+    return `Provider "${provider.name}" has no API key.\nClick ⚙ Settings to add it.`;
+  }
 
   try {
+    const model = brainRole.model;
+    const modelSpec = { id: model, label: model };
+    const stg = (maxTokens: number) => ({
+      models: [modelSpec],
+      maxRetriesPerModel: 2,
+      maxTotalAttempts: 3,
+      baseTemperature: 0.4,
+      maxTokens,
+      timeoutMs: 120_000,
+    });
     const llm = createMirandaLLMService(
-      new OpenRouterAdapter({
-        apiKey:  s.apiKey,
-        siteUrl: s.siteUrl,
-        appName: s.appName,
+      buildAdapterForProvider(provider, model),
+      createDefaultConfig({
+        budgetUsd: s.budgetUsd,
+        verbose:   s.verbose,
+        stages: {
+          plan:     stg(2048),
+          answer:   stg(8192),
+          critique: stg(2048),
+          rewrite:  stg(8192),
+        },
       }),
-      createDefaultConfig({ budgetUsd: s.budgetUsd, verbose: s.verbose }),
     );
     const pappy   = createPappyPort();
     const maestro = buildMaestroAdapter();
