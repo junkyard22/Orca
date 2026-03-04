@@ -565,6 +565,21 @@ html, body {
   transition: color 0.12s, background 0.12s;
 }
 .btn-remove:hover { color: var(--danger); background: rgba(239,68,68,0.1); }
+.btn-fetch-models {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+.btn-fetch-models:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.btn-fetch-models:disabled { opacity: 0.5; cursor: default; }
 .provider-key-row { display: flex; gap: 7px; }
 .provider-key-row input { flex: 1; }
 

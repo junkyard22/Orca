@@ -34,12 +34,26 @@ orca.onInitStatus((s) => {
   if (s.ok) {
     setInputEnabled(true);
     setStatus("ready", false);
+    // Clear any init-error sys-msgs and restore welcome if no real conversation yet
+    const sysMsgs = Array.from(messages.querySelectorAll(".sys-msg"));
+    const hasRealMsgs = Array.from(messages.children).some(el => !el.classList.contains("sys-msg"));
+    if (!hasRealMsgs && sysMsgs.length) {
+      sysMsgs.forEach(el => el.remove());
+    }
+    if (!messages.hasChildNodes()) {
+      welcome.style.display  = "";
+      messages.style.display = "none";
+    }
   } else {
     setInputEnabled(false);
     setStatus("no API key", false);
-    // Only show the error once in chat if there's no messages yet
-    if (!messages.hasChildNodes()) {
-      appendSys((s.error ?? "Initialization failed.") + "\n\nClick ⚙ Settings to add your key.", "warn");
+    // Update existing warn or append new one
+    const existing = messages.querySelector(".sys-msg.warn");
+    const msg = (s.error ?? "Initialization failed.") + "\n\nClick ⚙ Settings to add your key.";
+    if (existing) {
+      existing.textContent = msg;
+    } else {
+      appendSys(msg, "warn");
     }
   }
 });
@@ -87,7 +101,9 @@ orca.onOrcaEvent((e) => {
     "task:done":     "done",
   };
   const label = labels[e.type] ?? e.type;
-  setStatus(label, e.type !== "task:done");
+  // Only update the status bar while a task is actively running;
+  // late-arriving events after the task resolves should not override "ready".
+  if (busy) setStatus(label, e.type !== "task:done");
 });
 
 // ── Chat helpers ──────────────────────────────────────────────────────────
@@ -291,6 +307,7 @@ async function sendMessage() {
   appendThinking();
   setStatus("planning…", true);
 
+  let finalStatus = "ready";
   try {
     const result = await orca.sendMessage(text);
     removeThinking();
@@ -316,15 +333,16 @@ async function sendMessage() {
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
 
-    setStatus(result.ok ? "ready" : "error", false);
+    if (!result.ok) finalStatus = "error";
   } catch (err) {
     removeThinking();
     if (streamBubble) { streamBubble.remove(); streamBubble = null; streamText = ""; }
     appendSys(String(err), "error");
-    setStatus("error", false);
+    finalStatus = "error";
   } finally {
     currentRole  = null;
-    busy = false;
+    busy = false;          // clear busy FIRST so late events won't override status
+    setStatus(finalStatus, false);
     setInputEnabled(true);
     inputEl.focus();
   }
@@ -399,6 +417,10 @@ const OPTIONAL_ROLES = [
 
 let editingSettings = null;
 
+// Model lists fetched from each provider, keyed by provider id.
+// Used to drive datalist autocomplete on role model inputs.
+const fetchedModels = new Map();
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function genId(prefix) {
@@ -436,6 +458,7 @@ function renderProviders() {
         <div class="provider-row-top">
           <input class="setting-input prov-name" placeholder="Display name" value="${escHtml(p.name)}" />
           <select class="prov-type">${typeOpts}</select>
+          <button class="btn-fetch-models" data-prov-idx="${i}" title="Fetch available models from this provider">Fetch models</button>
           <button class="btn-remove" data-remove-prov="${i}" title="Remove">✕</button>
         </div>
         <input class="setting-input prov-url" placeholder="Base URL" value="${escHtml(p.baseUrl)}" />
@@ -443,6 +466,7 @@ function renderProviders() {
           <input type="password" class="setting-input prov-key" placeholder="API key" value="${escHtml(p.apiKey)}" autocomplete="off" />
           <button class="setting-show-btn prov-show-key" type="button">Show</button>
         </div>
+        <div class="fetch-models-status" style="display:none;font-size:11px;color:var(--muted);margin-top:4px"></div>
       </div>`;
   }).join("");
 
@@ -482,6 +506,31 @@ function renderProviders() {
       const showing = inp.type === "text";
       inp.type = showing ? "password" : "text";
       this.textContent = showing ? "Show" : "Hide";
+    });
+  });
+
+  list.querySelectorAll(".btn-fetch-models").forEach((btn) => {
+    btn.addEventListener("click", async function () {
+      const idx = +this.dataset.provIdx;
+      const prov = editingSettings.providers[idx];
+      if (!prov) return;
+      const statusEl = this.closest(".provider-item").querySelector(".fetch-models-status");
+      this.disabled = true;
+      this.textContent = "Fetching…";
+      statusEl.style.display = "block";
+      statusEl.textContent = "Contacting provider…";
+      const result = await orca.fetchModels({ type: prov.type, baseUrl: prov.baseUrl, apiKey: prov.apiKey });
+      this.disabled = false;
+      this.textContent = "Fetch models";
+      if (result.ok && result.models?.length) {
+        fetchedModels.set(prov.id, result.models);
+        statusEl.textContent = `${result.models.length} model(s) loaded — type in a role field to autocomplete.`;
+        statusEl.style.color = "var(--green, #10b981)";
+        updateModelDataLists();
+      } else {
+        statusEl.textContent = result.error ?? "No models returned.";
+        statusEl.style.color = "var(--red, #ef4444)";
+      }
     });
   });
 
@@ -533,6 +582,7 @@ function renderRoleList(containerId, roles, badgeClass) {
       editingSettings.roles[roleId].providerId = this.value;
       const modelInp = this.closest(".role-row").querySelector(".role-model-inp");
       modelInp.placeholder = MODEL_HINTS[getProviderType(this.value)] ?? "model";
+      updateModelDataLists();
     });
   });
 
@@ -548,6 +598,7 @@ function renderRoleList(containerId, roles, badgeClass) {
 function renderRoles() {
   renderRoleList("roles-core-list",     CORE_ROLES,     "core");
   renderRoleList("roles-optional-list", OPTIONAL_ROLES, "optional");
+  updateModelDataLists();
 }
 
 function rebuildRoleSelects() {
@@ -561,6 +612,45 @@ function rebuildRoleSelects() {
     const idx     = +row.dataset.fbIdx;
     const current = editingSettings?.roles[roleId]?.fallbacks?.[idx]?.providerId ?? "";
     sel.innerHTML = buildProviderOptions(current);
+  });
+}
+
+/**
+ * Rebuild (or create) <datalist> elements inside #settings-view for each
+ * provider that has a fetched model list, and attach them to role model inputs.
+ */
+function updateModelDataLists() {
+  const settingsBody = document.querySelector(".settings-body");
+  if (!settingsBody) return;
+
+  // Remove old datalists
+  settingsBody.querySelectorAll("datalist[data-ml]").forEach((dl) => dl.remove());
+
+  // Create one datalist per provider that has fetched models
+  fetchedModels.forEach((models, provId) => {
+    const dl = document.createElement("datalist");
+    dl.id = `ml-${provId}`;
+    dl.dataset.ml = "1";
+    models.forEach((m) => {
+      const opt = document.createElement("option");
+      opt.value = m;
+      dl.appendChild(opt);
+    });
+    settingsBody.appendChild(dl);
+  });
+
+  // Wire up role model inputs to the right datalist
+  document.querySelectorAll(".role-row").forEach((row) => {
+    const roleId   = row.dataset.roleId;
+    const provSel  = row.querySelector(".role-provider-sel");
+    const modelInp = row.querySelector(".role-model-inp");
+    if (!provSel || !modelInp) return;
+    const provId = provSel.value || (editingSettings?.roles?.[roleId]?.providerId ?? "");
+    if (provId && fetchedModels.has(provId)) {
+      modelInp.setAttribute("list", `ml-${provId}`);
+    } else {
+      modelInp.removeAttribute("list");
+    }
   });
 }
 

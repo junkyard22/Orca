@@ -356,6 +356,51 @@ export function requestToolApproval(
 
 ipcMain.handle("settings:get", () => loadSettings());
 
+// ── Model discovery ────────────────────────────────────────────────────────
+
+async function fetchModelsFromProvider(
+  p: { type: string; baseUrl: string; apiKey: string },
+): Promise<string[]> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (p.apiKey) headers["Authorization"] = `Bearer ${p.apiKey}`;
+
+  if (p.type === "ollama") {
+    const base = (p.baseUrl || "http://localhost:11434").replace(/\/$/, "");
+    const res  = await fetch(`${base}/api/tags`);
+    if (!res.ok) throw new Error(`Ollama returned ${res.status}`);
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    return (data.models ?? []).map((m) => m.name).sort();
+  }
+
+  if (p.type === "anthropic") {
+    // Anthropic does not expose a public /models listing; return known models.
+    return [
+      "claude-opus-4-5",
+      "claude-sonnet-4-5",
+      "claude-haiku-4-5",
+      "claude-3-5-sonnet-20241022",
+      "claude-3-5-haiku-20241022",
+      "claude-3-opus-20240229",
+    ];
+  }
+
+  // OpenAI-compatible: GET /models
+  const base = (p.baseUrl || "").replace(/\/$/, "");
+  const res  = await fetch(`${base}/models`, { headers });
+  if (!res.ok) throw new Error(`Provider returned ${res.status}`);
+  const data = (await res.json()) as { data?: Array<{ id: string }> };
+  return (data.data ?? []).map((m) => m.id).sort();
+}
+
+ipcMain.handle("models:fetch", async (_ev, p: { type: string; baseUrl: string; apiKey: string }) => {
+  try {
+    const models = await fetchModelsFromProvider(p);
+    return { ok: true, models };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
   try {
     saveSettings(s);

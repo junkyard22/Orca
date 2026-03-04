@@ -54,4 +54,10 @@ contextBridge.exposeInMainWorld("orca", {
   // Send the user's approve/deny decision back to main.
   approveToolCall: (id: string, approved: boolean): void =>
     ipcRenderer.send("tool:approve", { id, approved }),
+
+  // ── Model discovery ──────────────────────────────────────────────────────
+  // Fetch available models from a provider using its current (possibly unsaved)
+  // connection details. Returns { ok, models?, error? }.
+  fetchModels: (p: { type: string; baseUrl: string; apiKey: string }): Promise<{ ok: boolean; models?: string[]; error?: string }> =>
+    ipcRenderer.invoke("models:fetch", p),
 });
