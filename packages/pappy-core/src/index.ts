@@ -1,5 +1,6 @@
 export { evaluateWithPappy } from "./pappy.js";
 export { buildRepairTask } from "./repair.js";
+export { traceEvaluation } from "./pappy-trace.js";
 export type {
   PappyInput,
   PappyResult,
