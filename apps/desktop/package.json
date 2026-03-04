@@ -1,11 +1,14 @@
 {
   "name": "@clawde/desktop",
   "version": "0.1.0",
+  "description": "Orca — AI coding assistant desktop app",
+  "author": "Clawde",
   "private": true,
   "main": "dist-main/main.js",
   "scripts": {
     "dev": "node build-main.mjs && electron .",
-    "build": "node build-main.mjs"
+    "build": "node build-main.mjs",
+    "dist": "node build-dist.mjs"
   },
   "dependencies": {
     "@clawde/benson-core": "workspace:*",
@@ -17,7 +20,34 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "com.clawde.orca",
+    "productName": "Orca",
+    "copyright": "Copyright © 2026",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-main/**",
+      "renderer/**",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis",     "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }

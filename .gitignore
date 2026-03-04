@@ -12,6 +12,9 @@ build/
 # Compiled executables
 orca.exe
 
+# Electron-builder output
+release/
+
 # Environment files (never commit real keys)
 .env
 .env.local
