@@ -159,6 +159,28 @@
   </div>
 
 </div>
+
+  <!-- ── Tool approval dialog ───────────────────────────────────────── -->
+  <div id="tool-approval-dialog" style="display:none">
+    <div class="approval-card">
+      <div class="approval-title">Tool call request</div>
+      <div class="approval-body">
+        <div class="approval-row">
+          <span class="approval-label">Tool</span>
+          <code class="approval-value" id="approval-tool-name"></code>
+        </div>
+        <div class="approval-row approval-args-row">
+          <span class="approval-label">Args</span>
+          <pre class="approval-args" id="approval-args"></pre>
+        </div>
+      </div>
+      <div class="approval-actions">
+        <button class="btn-deny"    id="btn-deny-tool">Deny</button>
+        <button class="btn-approve" id="btn-approve-tool">Approve</button>
+      </div>
+    </div>
+  </div>
+
 <script src="app.js"></script>
 </body>
 </html>

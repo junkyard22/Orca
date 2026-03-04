@@ -23,6 +23,12 @@ export interface StageExecutionContext {
   stageConfig: StageConfig;
   pricingTable: Record<string, import("../pipeline/types.js").ModelPricing>;
   verbose: boolean;
+  /**
+   * Called for each streamed token on answer/rewrite stages.
+   * Only fires on the first attempt (before any repair), using adapter.stream()
+   * if the adapter supports it.
+   */
+  onToken?: (chunk: string) => void;
 }
 
 /**
@@ -39,7 +45,7 @@ export async function executeStage(
   initialMessages: LLMMessage[],
   ctx: StageExecutionContext
 ): Promise<StageResult> {
-  const { adapter, router, stageConfig, pricingTable, verbose } = ctx;
+  const { adapter, router, stageConfig, pricingTable, verbose, onToken } = ctx;
   const attempts: StageAttempt[] = [];
   const triedModels = new Set<string>();
 
@@ -84,12 +90,20 @@ export async function executeStage(
       }
 
       try {
-        const response = await adapter.complete({
-          model: model.id,
-          messages: currentMessages,
-          temperature,
-          maxTokens: stageConfig.maxTokens,
-        });
+        // Stream the first attempt if the adapter supports it and an onToken
+        // callback is available (set only on answer/rewrite stages by the pipeline).
+        const useStream = totalAttempts === 1 && onToken != null && adapter.stream != null;
+        const response = useStream
+          ? await adapter.stream!(
+              { model: model.id, messages: currentMessages, temperature, maxTokens: stageConfig.maxTokens },
+              onToken!,
+            )
+          : await adapter.complete({
+              model: model.id,
+              messages: currentMessages,
+              temperature,
+              maxTokens: stageConfig.maxTokens,
+            });
 
         // Build prompt text for token estimation
         const promptText = currentMessages.map((m) => m.content).join("\n");

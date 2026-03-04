@@ -61,10 +61,14 @@ export interface OrcaLLMService {
    * Generate text for a prompt.
    * Implemented using Miranda's pipeline (PLAN→ANSWER→CRITIQUE→REWRITE)
    * so Maestro never calls a model directly.
+   *
+   * Pass `onToken` to receive incremental chunks as they stream from the LLM.
+   * Falls back to a single buffered response when the adapter does not support
+   * SSE streaming.
    */
   complete(
     prompt: string,
-    opts?: { maxTokens?: number; temperature?: number },
+    opts?: { maxTokens?: number; temperature?: number; onToken?: (chunk: string) => void },
   ): Promise<{ text: string }>;
 }
 
@@ -189,6 +193,7 @@ export type OrcaEvent =
   | { type: "qc:result";          taskId: string; attempt: number; isRepair: boolean; verdict: "PASS" | "WARN" | "FAIL"; issueCount: number }
   | { type: "repair:start";       taskId: string; pass: number; maxPasses: number }
   | { type: "task:done";          taskId: string; status: "SUCCESS" | "FAIL" }
+  | { type: "stream:token";       taskId: string; chunk: string }
   | { type: "subagent:spawned";   taskId: string; subagentId: string; role: string; task: string }
   | { type: "subagent:done";      taskId: string; subagentId: string; role: string; ok: boolean }
   | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string };

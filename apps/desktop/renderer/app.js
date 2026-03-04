@@ -16,6 +16,11 @@ const settingsView  = document.getElementById("settings-view");
 
 let busy = false;
 
+// Streaming: active bubble element + accumulated raw text while tokens arrive.
+// Finalised (markdown-rendered) when sendMessage resolves.
+let streamBubble = null;
+let streamText   = "";
+
 // ── Init ──────────────────────────────────────────────────────────────────
 
 orca.onInitStatus((s) => {
@@ -33,12 +38,33 @@ orca.onInitStatus((s) => {
 });
 
 orca.onOrcaEvent((e) => {
+  // Stream tokens arrive here during the sendMessage await.
+  // Build a live bubble and append each chunk as raw text;
+  // sendMessage's finally block replaces the raw text with rendered markdown.
+  if (e.type === "stream:token") {
+    if (!streamBubble) {
+      removeThinking();
+      showMessages();
+      const div = document.createElement("div");
+      div.className = "msg orca streaming";
+      div.innerHTML = `<div class="msg-label">Orca</div><div class="msg-bubble stream-content"></div>`;
+      messages.appendChild(div);
+      streamBubble = div;
+      streamText   = "";
+    }
+    streamText += e.chunk;
+    const bubbleEl = streamBubble.querySelector(".stream-content");
+    if (bubbleEl) bubbleEl.textContent = streamText;
+    scrollToBottom();
+    return;
+  }
+
   const labels = {
-    "task:start":    "planning…",
-    "maestro:start": e.isRepair ? `repairing (pass ${e.attempt})…` : "generating…",
-    "maestro:done":  e.isRepair ? `repair pass ${e.attempt} done` : "reviewing…",
-    "qc:result":     e.verdict === "pass" ? "QC passed ✓" : `QC found ${e.issueCount} issue(s)`,
-    "repair:start":  `starting repair pass ${e.pass}/${e.maxPasses}…`,
+    "task:start":    "planning\u2026",
+    "maestro:start": e.isRepair ? `repairing (pass ${e.attempt})\u2026` : "generating\u2026",
+    "maestro:done":  e.isRepair ? `repair pass ${e.attempt} done` : "reviewing\u2026",
+    "qc:result":     e.verdict === "pass" ? "QC passed \u2713" : `QC found ${e.issueCount} issue(s)`,
+    "repair:start":  `starting repair pass ${e.pass}/${e.maxPasses}\u2026`,
     "task:done":     "done",
   };
   const label = labels[e.type] ?? e.type;
@@ -170,7 +196,16 @@ async function sendMessage() {
   try {
     const result = await orca.sendMessage(text);
     removeThinking();
-    if (result.ok) {
+
+    if (streamBubble) {
+      // Streaming delivered the content — replace raw text with rendered markdown
+      const bubbleEl = streamBubble.querySelector(".stream-content");
+      if (bubbleEl && streamText) bubbleEl.innerHTML = renderContent(streamText);
+      streamBubble.classList.remove("streaming");
+      streamBubble = null;
+      streamText   = "";
+      setStatus("ready", false);
+    } else if (result.ok) {
       const replyText = result.reply?.text ?? result.reply?.outputText ?? JSON.stringify(result.reply);
       appendMsg("orca", replyText);
       setStatus("ready", false);
@@ -180,6 +215,7 @@ async function sendMessage() {
     }
   } catch (err) {
     removeThinking();
+    if (streamBubble) { streamBubble.remove(); streamBubble = null; streamText = ""; }
     appendSys(String(err), "error");
     setStatus("error", false);
   } finally {
@@ -410,8 +446,15 @@ function renderRoles() {
 }
 
 function rebuildRoleSelects() {
-  document.querySelectorAll(".role-provider-sel").forEach((sel) => {
+  document.querySelectorAll(".role-row:not(.role-fallback-row) .role-provider-sel").forEach((sel) => {
     const current = editingSettings?.roles[sel.closest(".role-row").dataset.roleId]?.providerId ?? "";
+    sel.innerHTML = buildProviderOptions(current);
+  });
+  document.querySelectorAll(".fb-provider-sel").forEach((sel) => {
+    const row     = sel.closest(".role-fallback-row");
+    const roleId  = row.dataset.roleId;
+    const idx     = +row.dataset.fbIdx;
+    const current = editingSettings?.roles[roleId]?.fallbacks?.[idx]?.providerId ?? "";
     sel.innerHTML = buildProviderOptions(current);
   });
 }
@@ -487,6 +530,31 @@ document.getElementById("btn-settings").addEventListener("click",      openSetti
 document.getElementById("btn-settings-back").addEventListener("click", closeSettings);
 document.getElementById("btn-minimize").addEventListener("click", () => orca.minimize());
 document.getElementById("btn-close").addEventListener("click",    () => orca.close());
+
+// ── Tool approval dialog ────────────────────────────────────────────
+
+orca.onToolRequest((id, tool, args) => {
+  const dialog = document.getElementById("tool-approval-dialog");
+  document.getElementById("approval-tool-name").textContent = tool;
+  document.getElementById("approval-args").textContent =
+    typeof args === "object" && args !== null
+      ? JSON.stringify(args, null, 2)
+      : String(args);
+  dialog.dataset.approvalId = id;
+  dialog.style.display      = "flex";
+});
+
+document.getElementById("btn-approve-tool").addEventListener("click", () => {
+  const dialog = document.getElementById("tool-approval-dialog");
+  orca.approveToolCall(dialog.dataset.approvalId, true);
+  dialog.style.display = "none";
+});
+
+document.getElementById("btn-deny-tool").addEventListener("click", () => {
+  const dialog = document.getElementById("tool-approval-dialog");
+  orca.approveToolCall(dialog.dataset.approvalId, false);
+  dialog.style.display = "none";
+});
 
 // ── Focus input on load ───────────────────────────────────────────────────
 

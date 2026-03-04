@@ -50,6 +50,11 @@ export interface RoleEntry {
   providerId: string;
   /** Model name/ID as the provider expects, e.g. "llama3.2" or "anthropic/claude-3.5-sonnet" */
   model: string;
+  /**
+   * Ordered fallback models tried when the primary fails.
+   * Miranda attempts primary first, then each fallback in order.
+   */
+  fallbacks?: Array<{ providerId: string; model: string }>;
 }
 
 // ── Settings ────────────────────────────────────────────────────────────────

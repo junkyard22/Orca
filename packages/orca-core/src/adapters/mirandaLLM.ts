@@ -38,8 +38,10 @@ export function createMirandaLLMService(
   config: MirandaConfig,
 ): OrcaLLMService {
   return {
-    async complete(prompt) {
-      const { record } = await runPipeline(prompt, adapter, config);
+    async complete(prompt, opts) {
+      const { record } = await runPipeline(prompt, adapter, config, {
+        onToken: opts?.onToken,
+      });
       return { text: extractText(record) ?? "" };
     },
   };

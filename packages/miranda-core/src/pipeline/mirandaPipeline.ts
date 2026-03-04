@@ -89,7 +89,8 @@ function buildStageMessages(
 export async function runPipeline(
   userPrompt: string,
   adapter: LLMAdapter,
-  config: MirandaConfig
+  config: MirandaConfig,
+  callbacks?: { onToken?: (chunk: string) => void },
 ): Promise<PipelineResult> {
   const runId = randomUUID();
   const startTime = Date.now();
@@ -141,6 +142,8 @@ export async function runPipeline(
       stageConfig,
       pricingTable: config.pricing,
       verbose: config.verbose,
+      // Only stream on answer/rewrite — the user-visible stages.
+      onToken: (stage === "answer" || stage === "rewrite") ? callbacks?.onToken : undefined,
     };
 
     if (config.verbose) {

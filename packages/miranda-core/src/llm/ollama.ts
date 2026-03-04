@@ -119,4 +119,79 @@ export class OllamaAdapter implements LLMAdapter {
       durationMs,
     };
   }
+
+  async stream(
+    request: LLMRequest,
+    onToken: (chunk: string) => void,
+  ): Promise<LLMResponse> {
+    const startMs = Date.now();
+    const model = request.model || this.defaultModel;
+    const url = `${this.baseUrl}/v1/chat/completions`;
+
+    const body = {
+      model,
+      messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
+      temperature: request.temperature,
+      max_tokens: request.maxTokens,
+      stream: true,
+    };
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(request.maxTokens > 4096 ? 180_000 : 90_000),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "unknown error");
+      throw new Error(`Ollama API error ${response.status}: ${errorText}`);
+    }
+    if (!response.body) throw new Error("Response body is null");
+
+    let fullContent = "";
+    let finalModel = model;
+    let completionTokens = 0;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const data = trimmed.slice(6);
+          if (data === "[DONE]") break;
+          try {
+            const chunk = JSON.parse(data) as {
+              choices: Array<{ delta?: { content?: string } }>;
+              model?: string;
+            };
+            const token = chunk.choices[0]?.delta?.content ?? "";
+            if (token) { fullContent += token; completionTokens++; onToken(token); }
+            if (chunk.model) finalModel = chunk.model;
+          } catch { /* skip malformed chunks */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return {
+      content: fullContent,
+      model: finalModel,
+      usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
+      durationMs: Date.now() - startMs,
+    };
+  }
 }

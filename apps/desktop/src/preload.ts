@@ -36,4 +36,22 @@ contextBridge.exposeInMainWorld("orca", {
 
   minimize: (): void => ipcRenderer.send("win:minimize"),
   close:    (): void => ipcRenderer.send("win:close"),
+
+  // ── Tool approval ────────────────────────────────────────────────────────
+  // Called by the renderer to subscribe to tool-call approval requests.
+  // The callback fires whenever an agent loop wants to execute a tool.
+  onToolRequest: (
+    cb: (id: string, tool: string, args: Record<string, unknown>) => void,
+  ): (() => void) => {
+    const handler = (
+      _: Electron.IpcRendererEvent,
+      data: { id: string; tool: string; args: Record<string, unknown> },
+    ) => cb(data.id, data.tool, data.args);
+    ipcRenderer.on("tool:request", handler);
+    return () => ipcRenderer.removeListener("tool:request", handler);
+  },
+
+  // Send the user's approve/deny decision back to main.
+  approveToolCall: (id: string, approved: boolean): void =>
+    ipcRenderer.send("tool:approve", { id, approved }),
 });

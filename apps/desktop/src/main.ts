@@ -3,7 +3,7 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { join } from "node:path";
 
 import { OllamaAdapter, OpenAICompatAdapter, createDefaultConfig } from "@clawde/miranda-core";
-import type { LLMAdapter } from "@clawde/miranda-core";
+import type { LLMAdapter, ModelSpec } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createMirandaLLMService,
@@ -30,7 +30,7 @@ import type {
   TaskContext as RoleSelectorContext,
 } from "maestro-core";
 import { loadSettings, saveSettings } from "./settings";
-import type { OrcaSettings, ProviderEntry } from "./settings";
+import type { OrcaSettings, ProviderEntry, RoleEntry } from "./settings";
 
 // ── Maestro adapter ────────────────────────────────────────────────────────
 // Uses shared maestro-core orchestration with RoleSelector integration.
@@ -73,9 +73,17 @@ function buildMaestroAdapter(): MaestroPort {
 
       // 6. Delegate to ctx.llm — the Miranda PLAN→ANSWER→CRITIQUE→REWRITE
       //    pipeline. This is the ONLY model surface Maestro touches.
+      //    Pass onToken so streaming tokens are forwarded to the renderer
+      //    via the stream:token event, letting the UI show live output.
       const { text } = await ctx.llm.complete(
         `${systemPrompt}\n\n---\n\n${taskPrompt}`,
-        { maxTokens: 4096 },
+        {
+          maxTokens: 4096,
+          onToken: ctx.emit
+            ? (chunk: string) =>
+                ctx.emit!({ type: "stream:token", taskId: ctx.runId, chunk })
+            : undefined,
+        },
       );
 
       return {
@@ -213,11 +221,29 @@ function initOrca(s: OrcaSettings): string | null {
 
   try {
     const model = brainRole.model;
-    const modelSpec = { id: model, label: model };
+
+    // Build model ladder: primary + any fallback models configured for the brain role.
+    // Miranda tries each model in order — if the primary fails (network / quota),
+    // it escalates through the fallbacks automatically.
+    function buildModelLadder(entry: RoleEntry): ModelSpec[] {
+      const primaryProv = s.providers?.find((p) => p.id === entry.providerId);
+      const primary: ModelSpec = {
+        id: entry.model,
+        label: primaryProv ? `${entry.model} (${primaryProv.name})` : entry.model,
+      };
+      const fallbacks = (entry.fallbacks ?? []).flatMap((f) => {
+        const prov = s.providers?.find((p) => p.id === f.providerId);
+        if (!prov || !f.model) return [];
+        return [{ id: f.model, label: `${f.model} (${prov.name}) [fallback]` } as ModelSpec];
+      });
+      return [primary, ...fallbacks];
+    }
+
+    const modelLadder = buildModelLadder(brainRole);
     const stg = (maxTokens: number) => ({
-      models: [modelSpec],
+      models: modelLadder,
       maxRetriesPerModel: 2,
-      maxTotalAttempts: 3,
+      maxTotalAttempts: Math.max(3, modelLadder.length * 2),
       baseTemperature: 0.4,
       maxTokens,
       timeoutMs: 120_000,
@@ -288,6 +314,38 @@ function createWindow(): void {
 ipcMain.on("win:minimize", () => win?.minimize());
 ipcMain.on("win:close",    () => win?.close());
 
+// ── Tool approval: renderer approves/denies each tool call before it runs ──
+// When the desktop app runs tools (agent-loop mode), each call sends a
+// "tool:request" event to the renderer and blocks until the user responds.
+const pendingApprovals = new Map<string, (approved: boolean) => void>();
+
+ipcMain.on("tool:approve", (_ev, { id, approved }: { id: string; approved: boolean }) => {
+  pendingApprovals.get(id)?.(approved);
+  pendingApprovals.delete(id);
+});
+
+/**
+ * Ask the renderer to approve a tool call. Returns true if approved.
+ * Used by the tool service wiring when tools are added to the desktop adapter.
+ */
+export function requestToolApproval(
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const id = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    pendingApprovals.set(id, resolve);
+    win?.webContents.send("tool:request", { id, tool, args });
+    // Auto-deny after 60 s if the user doesn't respond
+    setTimeout(() => {
+      if (pendingApprovals.has(id)) {
+        pendingApprovals.delete(id);
+        resolve(false);
+      }
+    }, 60_000);
+  });
+}
+
 ipcMain.handle("settings:get", () => loadSettings());
 
 ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
@@ -307,7 +365,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
 
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
-    "qc:result",  "repair:start",  "task:done",
+    "qc:result",  "repair:start",  "task:done", "stream:token",
   ];
   const unsubs = EVENT_TYPES.map((type) =>
     runtime!.on(type, (e: OrcaEvent) => win?.webContents.send("orca-event", e)),
