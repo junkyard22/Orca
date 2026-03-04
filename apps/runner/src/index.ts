@@ -135,6 +135,19 @@ async function main(): Promise<void> {
     console.error(`[orca]   repair:start   pass=${e.pass}/${e.maxPasses}`);
   });
 
+  listenFor(runtime, "subagent:spawned", (e) => {
+    console.error(`[orca]   subagent:▶     id=${e.subagentId}  role=${e.role}`);
+  });
+
+  listenFor(runtime, "subagent:done", (e) => {
+    const icon = e.ok ? "✓" : "✗";
+    console.error(`[orca]   subagent:■  ${icon}  id=${e.subagentId}`);
+  });
+
+  listenFor(runtime, "subagent:failed", (e) => {
+    console.error(`[orca]   subagent:✗     id=${e.subagentId}  error=${e.error}`);
+  });
+
   listenFor(runtime, "task:done", (e) => {
     console.error(`[orca] ■ task:done    status=${e.status}\n`);
   });

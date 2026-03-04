@@ -63,52 +63,31 @@ Each "role" is a named model slot. Maestro's `RoleSelector` already handles rout
 
 ---
 
-## Phase 2 — Subagent Architecture
+## Phase 2 — Subagent Architecture ✅ COMPLETE
 
 **Goal:** Maestro can spawn subagents for parallel or delegated work.
 
-This is the "each department head has employees" part. Right now there's no subagent concept.
+### 2.1 — Define the SubAgent interface ✅
 
-### 2.1 — Define the SubAgent interface
+`maestro-core/src/subagent.ts` — `SubAgent`, `SubAgentResult`, `SubAgentStatus`, `SubAgentSpawner` interfaces defined and exported. No external dependencies.
 
-```typescript
-// In maestro-core/src/subagent.ts
-export interface SubAgent {
-  id: string;
-  role: RoleName;
-  task: string;
-  parentRunId: string;
-  status: 'pending' | 'running' | 'done' | 'failed';
-  result?: OrcaMaestroResult;
-}
+### 2.2 — Implement parallel subagent execution ✅
 
-export interface SubAgentSpawner {
-  spawn(task: string, role: RoleName, parentCtx: OrcaRunCtx): Promise<SubAgent>;
-  await(agentId: string): Promise<OrcaMaestroResult>;
-  awaitAll(agentIds: string[]): Promise<OrcaMaestroResult[]>;
-}
-```
+`apps/runner/src/adapters/maestroAdapter.ts` — when `orch.classification.multiStep === true` at depth 0:
 
-### 2.2 — Implement parallel subagent execution
+1. `decomposeTask()` calls `planner_deep` to break the task into a JSON array of `{role, task}` subtasks (max 5, fully independent).
+2. `runSubagentPool()` runs all subtasks concurrently via `Promise.all()`, each as an isolated `runSingleAgent()` call with the assigned role and `subagentDepth: 1` (prevents recursive decomposition).
+3. `synthesizeResults()` merges multiple successful outputs using the `brain` role into a single coherent response.
+4. Full `subagentRuns` array recorded in `OrcaMaestroResult` for Doctor/UI visibility.
 
-For tasks where Maestro detects independent subtasks (e.g. "implement feature X and write tests for it"), it should:
+Decomposition is best-effort: if parsing fails or returns a single item, falls through to normal single-agent execution.
 
-1. Break the task into subtasks (use `planner_deep` role)
-2. Spawn a subagent per subtask with the appropriate role
-3. Await all results
-4. Synthesize into a final output
+### 2.3 — Add subagent events to the EventBus ✅
 
-### 2.3 — Add subagent events to the EventBus
-
-Extend `OrchestrationEvent` in `types/orchestration.ts`:
-
-```typescript
-| "subagent:spawned"
-| "subagent:done"
-| "subagent:failed"
-```
-
-This is what lets the UI (and Doctor) answer "what subagents ran for this task?"
+`maestro-core/src/types/orchestration.ts` — `OrchestrationEvent` extended with `"subagent:spawned" | "subagent:done" | "subagent:failed"`.
+`orca-core/src/types.ts` — `OrcaEvent` union extended with three new typed variants (carrying `subagentId`, `role`, `task`/`ok`/`error`).
+`orca-core/src/runtime.ts` — `ctx.emit` populated from the internal `OrcaEmitter` so adapters can fire events upward without importing runtime internals.
+`apps/runner/src/index.ts` — listeners for all three events log to stderr with role and id.
 
 ---
 
@@ -296,9 +275,9 @@ A simple registry in `orca-core` that loads extensions at startup and makes thei
 |---|---|
 | ~~Week 1–2~~ | ~~**Phase 1** entirely.~~ ✅ **DONE** |
 | ~~Week 3~~ | ~~**Phase 3.1–3.3** (core tools).~~ ✅ **DONE** |
-| **Now** | **Phase 2.1–2.2** (basic subagents). Single-level subagent spawning unlocks a huge class of tasks. |
-| Week +2 | **Phase 5.1–5.3** (persistence). Without this, every session starts from scratch. |
-| Week +4 | **Phase 6** (real desktop UI). Something you can hand to a non-developer. |
+| ~~Week 4~~ | ~~**Phase 2.1–2.2** (basic subagents).~~ ✅ **DONE** |
+| **Now** | **Phase 5.1–5.3** (persistence). Without this, every session starts from scratch. |
+| Week +2 | **Phase 6** (real desktop UI). Something you can hand to a non-developer. |
 | Ongoing | **Phase 4** (Pappy QC) and **Phase 7** (extension system) in parallel with the above. |
 
 ---

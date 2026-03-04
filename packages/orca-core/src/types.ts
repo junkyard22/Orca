@@ -38,6 +38,15 @@ export interface OrcaMaestroResult {
   summary?: string;
   filesChanged?: Array<{ path: string; changeType: "A" | "M" | "D"; diff?: string }>;
   toolEvents?: Array<{ tool: string; ok: boolean; summary: string; raw?: unknown }>;
+  /** Populated when Maestro decomposed the task into parallel subagents (Phase 2). */
+  subagentRuns?: Array<{
+    subagentId: string;
+    role: string;
+    task: string;
+    status: "done" | "failed";
+    outputText?: string;
+    error?: string;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +95,17 @@ export interface OrcaRunCtx {
   runId: string;
   /** Optional — when present, Maestro runs in agent-loop mode with tool calling. */
   tools?: OrcaToolService;
+  /**
+   * Emit an OrcaEvent directly from inside an adapter.
+   * Populated by createOrcaRuntime so adapters can fire subagent events
+   * without depending on the OrcaEmitter internals.
+   */
+  emit?: (event: OrcaEvent) => void;
+  /**
+   * Subagent nesting depth. 0 = top-level task, 1+ = inside a subagent.
+   * Prevents infinite recursive decomposition.
+   */
+  subagentDepth?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,9 +166,12 @@ export type OrcaEvent =
    *   "Average repairs per task?"             → count repair:start per taskId
    *   "Did issue X get fixed?"                → track issueId across qc:result events
    */
-  | { type: "task:start";    taskId: string; intent: string }
-  | { type: "maestro:start"; taskId: string; attempt: number; isRepair: boolean }
-  | { type: "maestro:done";  taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean }
-  | { type: "qc:result";     taskId: string; attempt: number; isRepair: boolean; verdict: "PASS" | "WARN" | "FAIL"; issueCount: number }
-  | { type: "repair:start";  taskId: string; pass: number; maxPasses: number }
-  | { type: "task:done";     taskId: string; status: "SUCCESS" | "FAIL" };
+  | { type: "task:start";         taskId: string; intent: string }
+  | { type: "maestro:start";      taskId: string; attempt: number; isRepair: boolean }
+  | { type: "maestro:done";       taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean }
+  | { type: "qc:result";          taskId: string; attempt: number; isRepair: boolean; verdict: "PASS" | "WARN" | "FAIL"; issueCount: number }
+  | { type: "repair:start";       taskId: string; pass: number; maxPasses: number }
+  | { type: "task:done";          taskId: string; status: "SUCCESS" | "FAIL" }
+  | { type: "subagent:spawned";   taskId: string; subagentId: string; role: string; task: string }
+  | { type: "subagent:done";      taskId: string; subagentId: string; role: string; ok: boolean }
+  | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string };

@@ -182,7 +182,10 @@ export type OrchestrationEvent =
   | "checkpoint:created"
   | "checkpoint:rollback_started"
   | "checkpoint:rollback_completed"
-  | "tool:terminated";
+  | "tool:terminated"
+  | "subagent:spawned"
+  | "subagent:done"
+  | "subagent:failed";
 
 export interface OrchestrationEventPayload {
   run_id: string;

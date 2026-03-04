@@ -43,7 +43,12 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
   const emitter = new OrcaEmitter();
 
   async function executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult> {
-    const ctx: OrcaRunCtx = { llm, runId: generateRunId(), tools };
+    const ctx: OrcaRunCtx = {
+      llm,
+      runId: generateRunId(),
+      tools,
+      emit: (event) => emitter.emit(event),
+    };
     const taskId = ctx.runId; // stable across all passes for this task
 
     emitter.emit({ type: "task:start", taskId, intent: taskSpec.intent });

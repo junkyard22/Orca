@@ -104,6 +104,14 @@ export {
   formatEffectiveConfigForBrain,
 } from './modelUtils';
 
+// ── Subagent Types (Phase 2) ─────────────────────────────────────────────────
+export type {
+  SubAgent,
+  SubAgentResult,
+  SubAgentStatus,
+  SubAgentSpawner,
+} from './subagent';
+
 // ── Role Prompts ─────────────────────────────────────────────────────────────
 export { ROLE_PROMPTS, getRolePrompt } from './prompts/rolePrompts';
 export type {

@@ -7,6 +7,7 @@ import type {
   RoleName,
   OptionalRoleName,
   TaskContext as RoleSelectorContext,
+  OrchestrationResult,
 } from "maestro-core";
 import type {
   MaestroPort,
@@ -14,6 +15,7 @@ import type {
   OrcaRunCtx,
   OrcaTaskSpec,
   OrcaToolService,
+  OrcaLLMService,
 } from "@clawde/orca-core";
 
 // ---------------------------------------------------------------------------
@@ -61,43 +63,19 @@ export function createMaestroAdapter(): MaestroPort {
         console.warn(`[MaestroAdapter] Role warning: ${warning}`);
       }
 
-      // 4. Load system prompt for the selected role.
-      const systemPrompt = getRolePrompt(role as RoleName);
-
-      // 5. Build the full task prompt.
-      const taskPrompt = buildTaskPrompt(task, role, isFallback);
-
-      // 6. Run with tools (agent loop) or without (single call).
-      let outputText: string;
-      let toolEvents: OrcaMaestroResult["toolEvents"] = [];
-
-      if (ctx.tools) {
-        // Agent-loop mode: model can call tools until it produces a final answer.
-        const result = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, ctx);
-        outputText = result.text;
-        toolEvents = result.toolEvents;
-      } else {
-        // Plain mode: single Miranda call, no tool calling.
-        const { text } = await ctx.llm.complete(
-          `${systemPrompt}\n\n---\n\n${taskPrompt}`,
-          { maxTokens: 4096 },
-        );
-        outputText = text;
+      // 4. Subagent decomposition — only at top level, only for multiStep tasks.
+      //    planner_deep breaks the task into independent parallel subtasks.
+      //    subagentDepth guard prevents recursive subagent spawning.
+      const depth = ctx.subagentDepth ?? 0;
+      if (depth === 0 && orch.classification.multiStep) {
+        const subtasks = await decomposeTask(task.originalUserMessage, ctx.llm);
+        if (subtasks !== null && subtasks.length > 1) {
+          return runSubagentPool(task, subtasks, orch, ctx);
+        }
       }
 
-      return {
-        outputText,
-        toolEvents,
-        summary: [
-          `run_id=${orch.run_id}`,
-          `role=${role}${isFallback ? "(fallback)" : ""}`,
-          `type=${String(orch.classification.type)}`,
-          `risk=${orch.risk.riskScore.toFixed(2)}`,
-          ...(toolEvents && toolEvents.length > 0
-            ? [`tools=${toolEvents.length}`]
-            : []),
-        ].join(" "),
-      };
+      // 5. Single-agent path.
+      return runSingleAgent(task, role, isFallback, orch, ctx);
     },
   };
 }
@@ -182,13 +160,311 @@ function buildTaskPrompt(task: OrcaTaskSpec, role: string, isFallback: boolean):
 
   if (task.context != null && Object.keys(task.context).length > 0) {
     // Strip internal routing keys before showing to the model
-    const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, ...userCtx } = task.context as Record<string, unknown>;
+    const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, forcedRole: _fr, ...userCtx } = task.context as Record<string, unknown>;
     if (Object.keys(userCtx).length > 0) {
       lines.push("", "### Context", JSON.stringify(userCtx, null, 2));
     }
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Single-agent execution — the shared workhorse used both for top-level tasks
+// (when no decomposition fires) and for individual subagents.
+// ---------------------------------------------------------------------------
+
+async function runSingleAgent(
+  task: OrcaTaskSpec,
+  role: string,
+  isFallback: boolean,
+  orch: OrchestrationResult,
+  ctx: OrcaRunCtx,
+): Promise<OrcaMaestroResult> {
+  // Subagents may carry a forcedRole in context (set by runSubagentPool).
+  const effectiveRole = (
+    typeof task.context?.["forcedRole"] === "string"
+      ? task.context["forcedRole"]
+      : role
+  ) as RoleName;
+
+  const systemPrompt = getRolePrompt(effectiveRole);
+  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback);
+
+  let outputText: string;
+  let toolEvents: OrcaMaestroResult["toolEvents"] = [];
+
+  if (ctx.tools) {
+    const result = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, ctx);
+    outputText = result.text;
+    toolEvents = result.toolEvents;
+  } else {
+    const { text } = await ctx.llm.complete(
+      `${systemPrompt}\n\n---\n\n${taskPrompt}`,
+      { maxTokens: 4096 },
+    );
+    outputText = text;
+  }
+
+  return {
+    outputText,
+    toolEvents,
+    summary: [
+      `run_id=${orch.run_id}`,
+      `role=${effectiveRole}${isFallback ? "(fallback)" : ""}`,
+      `type=${String(orch.classification.type)}`,
+      `risk=${orch.risk.riskScore.toFixed(2)}`,
+      ...(toolEvents && toolEvents.length > 0 ? [`tools=${toolEvents.length}`] : []),
+    ].join(" "),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Subagent decomposition + parallel pool
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask planner_deep to break a multi-step task into independent parallel
+ * subtasks. Returns an array of {role, task} objects, or null if decomposition
+ * fails or produces a single-item list (fall through to single-agent).
+ */
+async function decomposeTask(
+  originalMessage: string,
+  llm: OrcaLLMService,
+): Promise<Array<{ role: string; task: string }> | null> {
+  const systemPrompt = getRolePrompt("planner_deep");
+  const decompositionPrompt = [
+    "## Task Decomposition",
+    "",
+    "Break the following request into the smallest set of INDEPENDENT parallel subtasks.",
+    "Respond with ONLY a valid JSON array — no markdown fences, no explanation.",
+    "",
+    'Format: [{"role":"ROLE","task":"DESCRIPTION"},...]',
+    "",
+    "Available roles: brain, coder_strong, coder_cheap, reviewer, narrator, debugger, reader",
+    "Rules:",
+    "- Maximum 5 subtasks",
+    "- Each subtask MUST be fully independent (no subtask requires another's output)",
+    "- If the task is a single unit of work, return exactly one item",
+    "- Assign the most appropriate role to each subtask",
+    "",
+    "Task to decompose:",
+    originalMessage,
+  ].join("\n");
+
+  try {
+    const { text } = await llm.complete(
+      `${systemPrompt}\n\n---\n\n${decompositionPrompt}`,
+      { maxTokens: 1024 },
+    );
+
+    // Strip markdown code fences the model may wrap the JSON in.
+    const stripped = text
+      .replace(/^```(?:json)?\s*/m, "")
+      .replace(/\s*```\s*$/m, "")
+      .trim();
+
+    const parsed = JSON.parse(stripped) as unknown;
+    if (!Array.isArray(parsed)) return null;
+
+    const subtasks = (parsed as unknown[])
+      .filter(
+        (item): item is { role: string; task: string } =>
+          typeof item === "object" &&
+          item !== null &&
+          typeof (item as Record<string, unknown>)["role"] === "string" &&
+          typeof (item as Record<string, unknown>)["task"] === "string",
+      )
+      .slice(0, 5);
+
+    return subtasks.length > 0 ? subtasks : null;
+  } catch {
+    // Decomposition is best-effort. Fall back to single-agent on any error.
+    return null;
+  }
+}
+
+/**
+ * Run multiple subtasks in parallel, each as an independent single-agent
+ * call. Emits subagent events via ctx.emit. Synthesizes results when > 1
+ * subagent completes successfully.
+ */
+async function runSubagentPool(
+  task: OrcaTaskSpec,
+  subtasks: Array<{ role: string; task: string }>,
+  orch: OrchestrationResult,
+  ctx: OrcaRunCtx,
+): Promise<OrcaMaestroResult> {
+  const allToolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
+  const subagentRuns: NonNullable<OrcaMaestroResult["subagentRuns"]> = [];
+
+  // Build a child ctx that prevents recursive decomposition.
+  const childCtx: OrcaRunCtx = {
+    ...ctx,
+    subagentDepth: (ctx.subagentDepth ?? 0) + 1,
+  };
+
+  console.error(
+    `[MaestroAdapter] decompose  subtasks=${subtasks.length}  run_id=${orch.run_id}`,
+  );
+
+  // Spawn all subagents (emit spawned events eagerly, before they run).
+  const agents = subtasks.map((st, i) => ({
+    subagentId: `${ctx.runId}_sa${i}`,
+    role: st.role,
+    task: st.task,
+  }));
+
+  for (const agent of agents) {
+    ctx.emit?.({
+      type: "subagent:spawned",
+      taskId: ctx.runId,
+      subagentId: agent.subagentId,
+      role: agent.role,
+      task: agent.task,
+    });
+    console.error(
+      `[MaestroAdapter] subagent:spawned  id=${agent.subagentId}  role=${agent.role}`,
+    );
+  }
+
+  // Run all agents concurrently.
+  const agentPromises = agents.map(async (agent) => {
+    const subSpec: OrcaTaskSpec = {
+      originalUserMessage: agent.task,
+      intent: agent.task,
+      goals: [agent.task],
+      constraints: task.constraints,
+      context: { ...task.context, forcedRole: agent.role },
+    };
+
+    try {
+      const result = await runSingleAgent(
+        subSpec,
+        agent.role,
+        false,
+        orch,
+        childCtx,
+      );
+
+      ctx.emit?.({
+        type: "subagent:done",
+        taskId: ctx.runId,
+        subagentId: agent.subagentId,
+        role: agent.role,
+        ok: true,
+      });
+      console.error(`[MaestroAdapter] subagent:done  id=${agent.subagentId}`);
+
+      return {
+        ...agent,
+        status: "done" as const,
+        outputText: result.outputText ?? "",
+        toolEvents: result.toolEvents ?? [],
+      };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      ctx.emit?.({
+        type: "subagent:failed",
+        taskId: ctx.runId,
+        subagentId: agent.subagentId,
+        role: agent.role,
+        error,
+      });
+      console.error(
+        `[MaestroAdapter] subagent:failed  id=${agent.subagentId}  error=${error}`,
+      );
+
+      return {
+        ...agent,
+        status: "failed" as const,
+        outputText: "",
+        toolEvents: [] as NonNullable<OrcaMaestroResult["toolEvents"]>,
+        error,
+      };
+    }
+  });
+
+  const results = await Promise.all(agentPromises);
+
+  for (const r of results) {
+    allToolEvents.push(...r.toolEvents);
+    subagentRuns.push({
+      subagentId: r.subagentId,
+      role: r.role,
+      task: r.task,
+      status: r.status,
+      outputText: r.outputText,
+      error: "error" in r ? r.error : undefined,
+    });
+  }
+
+  const successful = results.filter((r) => r.status === "done");
+
+  let finalText: string;
+  if (successful.length === 0) {
+    finalText = "All subagents failed to complete the task.";
+  } else if (successful.length === 1) {
+    finalText = successful[0]!.outputText;
+  } else {
+    finalText = await synthesizeResults(task.originalUserMessage, successful, ctx.llm);
+  }
+
+  return {
+    outputText: finalText,
+    toolEvents: allToolEvents,
+    subagentRuns,
+    summary: [
+      `run_id=${orch.run_id}`,
+      `subagents=${results.length}`,
+      `done=${successful.length}`,
+      `failed=${results.length - successful.length}`,
+      ...(allToolEvents.length > 0 ? [`tools=${allToolEvents.length}`] : []),
+    ].join(" "),
+  };
+}
+
+/**
+ * Merge multiple subagent outputs into a single coherent response using
+ * the brain role.
+ */
+async function synthesizeResults(
+  originalMessage: string,
+  results: Array<{ role: string; task: string; outputText: string }>,
+  llm: OrcaLLMService,
+): Promise<string> {
+  const brainPrompt = getRolePrompt("brain");
+
+  const resultBlocks = results
+    .map(
+      (r, i) =>
+        `### Subtask ${i + 1} (role: ${r.role})\n**Task:** ${r.task}\n\n${r.outputText}`,
+    )
+    .join("\n\n");
+
+  const synthesisPrompt = [
+    "## Synthesis Task",
+    "",
+    "Multiple specialized agents completed parallel subtasks for the following request.",
+    "Synthesize their outputs into one coherent, complete response.",
+    "Remove redundancy. Preserve all important details. Speak directly to the user.",
+    "",
+    "## Original User Request",
+    originalMessage,
+    "",
+    "## Subagent Outputs",
+    "",
+    resultBlocks,
+    "",
+    "## Your Task",
+    "Produce a single unified answer that fully addresses the original request.",
+  ].join("\n");
+
+  const { text } = await llm.complete(
+    `${brainPrompt}\n\n---\n\n${synthesisPrompt}`,
+    { maxTokens: 4096 },
+  );
+  return text;
 }
 
 // ---------------------------------------------------------------------------
