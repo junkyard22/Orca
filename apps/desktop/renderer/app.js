@@ -47,9 +47,9 @@ orca.onInitStatus((s) => {
   } else {
     setInputEnabled(false);
     setStatus("no API key", false);
-    // Update existing warn or append new one
+    // Update existing warn or append new one (avoid stacking duplicates)
     const existing = messages.querySelector(".sys-msg.warn");
-    const msg = (s.error ?? "Initialization failed.") + "\n\nClick ⚙ Settings to add your key.";
+    const msg = s.error ?? "Initialization failed. Click ⚙ Settings to configure.";
     if (existing) {
       existing.textContent = msg;
     } else {
@@ -466,7 +466,7 @@ function renderProviders() {
           <input type="password" class="setting-input prov-key" placeholder="API key" value="${escHtml(p.apiKey)}" autocomplete="off" />
           <button class="setting-show-btn prov-show-key" type="button">Show</button>
         </div>
-        <div class="fetch-models-status" style="display:none;font-size:11px;color:var(--muted);margin-top:4px"></div>
+        <div class="fetch-models-status" style="display:none;font-size:11px;color:var(--text-muted);margin-top:4px"></div>
       </div>`;
   }).join("");
 
@@ -518,6 +518,7 @@ function renderProviders() {
       this.disabled = true;
       this.textContent = "Fetching…";
       statusEl.style.display = "block";
+      statusEl.style.color   = "var(--text-muted)";
       statusEl.textContent = "Contacting provider…";
       const result = await orca.fetchModels({ type: prov.type, baseUrl: prov.baseUrl, apiKey: prov.apiKey });
       this.disabled = false;
@@ -525,11 +526,11 @@ function renderProviders() {
       if (result.ok && result.models?.length) {
         fetchedModels.set(prov.id, result.models);
         statusEl.textContent = `${result.models.length} model(s) loaded — type in a role field to autocomplete.`;
-        statusEl.style.color = "var(--green, #10b981)";
+        statusEl.style.color = "var(--accent)";
         updateModelDataLists();
       } else {
         statusEl.textContent = result.error ?? "No models returned.";
-        statusEl.style.color = "var(--red, #ef4444)";
+        statusEl.style.color = "var(--danger)";
       }
     });
   });
@@ -667,6 +668,11 @@ function openSettings() {
     setVerbose.checked     = !!s.verbose;
     setStatus2.textContent = "";
     setStatus2.className   = "settings-status";
+    // Prune stale model cache for providers that no longer exist in saved settings
+    const activeIds = new Set((s.providers ?? []).map((p) => p.id));
+    for (const id of fetchedModels.keys()) {
+      if (!activeIds.has(id)) fetchedModels.delete(id);
+    }
     renderProviders();
     renderRoles();
   });

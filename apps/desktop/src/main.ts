@@ -373,11 +373,22 @@ async function fetchModelsFromProvider(
   }
 
   if (p.type === "anthropic") {
-    // Anthropic does not expose a public /models listing; return known models.
+    // Anthropic exposes GET /v1/models; fall back to a known list if it fails.
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/models", {
+        headers: {
+          "x-api-key":         p.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { data?: Array<{ id: string }> };
+        const ids = (data.data ?? []).map((m) => m.id).sort();
+        if (ids.length) return ids;
+      }
+    } catch { /* fall through to static list */ }
     return [
-      "claude-opus-4-5",
-      "claude-sonnet-4-5",
-      "claude-haiku-4-5",
+      "claude-3-7-sonnet-20250219",
       "claude-3-5-sonnet-20241022",
       "claude-3-5-haiku-20241022",
       "claude-3-opus-20240229",
