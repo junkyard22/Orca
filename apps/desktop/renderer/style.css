@@ -798,3 +798,153 @@ html, body {
 }
 .btn-approve:hover  { background: var(--accent-dark); }
 .btn-approve:active { transform: scale(0.96); }
+
+/* ── Role badge (inline in message label) ───────────────────────────────── */
+.role-badge-inline {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--accent);
+  margin-left: 6px;
+  vertical-align: middle;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+}
+.role-badge-inline.fallback {
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--warn-text);
+}
+
+/* ── Token / cost stats pill ─────────────────────────────────────────────── */
+.stats-pill {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: right;
+  padding: 1px 14px 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* ── File diff cards ─────────────────────────────────────────────────────── */
+.diff-cards {
+  padding: 2px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.diff-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.diff-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  user-select: none;
+}
+.diff-card-header:hover { background: var(--surface); }
+
+.diff-change-type {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.diff-change-type.add { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+.diff-change-type.mod { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+.diff-change-type.del { background: rgba(239, 68, 68, 0.15);  color: #ef4444; }
+
+.diff-file-path {
+  font-size: 12px;
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-expand-icon {
+  font-size: 9px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.diff-card-body {
+  font-size: 11px;
+  padding: 8px 10px;
+  margin: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  overflow-x: auto;
+  max-height: 280px;
+  overflow-y: auto;
+  user-select: text;
+  white-space: pre;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+/* ── Tool call cards ─────────────────────────────────────────────────────── */
+.tool-card {
+  margin: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  transition: border-color 0.15s;
+}
+
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.tool-card-icon { color: var(--text-muted); font-size: 13px; }
+
+.tool-card-name {
+  font-weight: 600;
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.tool-card-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tool-card.approved                  { border-color: rgba(16, 185, 129, 0.35); }
+.tool-card.approved .tool-card-status { color: var(--accent); }
+.tool-card.denied                    { border-color: rgba(239, 68, 68, 0.35); }
+.tool-card.denied .tool-card-status  { color: var(--danger); }
+
+.tool-card-args {
+  font-size: 11px;
+  padding: 6px 12px;
+  margin: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  max-height: 120px;
+  overflow-y: auto;
+  user-select: text;
+  color: var(--text-muted);
+  white-space: pre;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}

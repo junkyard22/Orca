@@ -65,6 +65,9 @@ function buildMaestroAdapter(): MaestroPort {
         console.warn(`[MaestroAdapter] Role warning: ${warning}`);
       }
 
+      // Notify the renderer which role will handle this request.
+      win?.webContents.send("orca-event", { type: "role:selected", taskId: ctx.runId, role, isFallback });
+
       // 4. Load system prompt for the selected role.
       const systemPrompt = getRolePrompt(role as RoleName);
 
@@ -85,6 +88,11 @@ function buildMaestroAdapter(): MaestroPort {
             : undefined,
         },
       );
+
+      // Emit rough token estimate for the cost/stats pill in the renderer.
+      const inputTokensEst  = Math.ceil((systemPrompt.length + taskPrompt.length) / 4);
+      const outputTokensEst = Math.ceil(text.length / 4);
+      win?.webContents.send("orca-event", { type: "run:stats", taskId: ctx.runId, inputTokensEst, outputTokensEst });
 
       return {
         outputText: text,

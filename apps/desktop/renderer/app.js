@@ -21,6 +21,13 @@ let busy = false;
 let streamBubble = null;
 let streamText   = "";
 
+// Role selected for the current task (from role:selected event emitted by main.ts).
+let currentRole = null;
+// Token estimate for the current task (from run:stats event).
+let pendingStats = null;
+// Tool call cards keyed by pending approval id.
+const toolCallCards = new Map();
+
 // ── Init ──────────────────────────────────────────────────────────────────
 
 orca.onInitStatus((s) => {
@@ -38,6 +45,18 @@ orca.onInitStatus((s) => {
 });
 
 orca.onOrcaEvent((e) => {
+  // Role selection — cache it and annotate the thinking indicator.
+  if (e.type === "role:selected") {
+    currentRole = { role: e.role, isFallback: e.isFallback };
+    if (thinkingEl) {
+      const lbl = thinkingEl.querySelector(".msg-label");
+      if (lbl) lbl.innerHTML = `Orca <span class="role-badge-inline${e.isFallback ? " fallback" : ""}">${escapeHtml(String(e.role))}</span>`;
+    }
+    return;
+  }
+  // Token/cost estimate — saved and rendered below the completed reply.
+  if (e.type === "run:stats") { pendingStats = e; return; }
+
   // Stream tokens arrive here during the sendMessage await.
   // Build a live bubble and append each chunk as raw text;
   // sendMessage's finally block replaces the raw text with rendered markdown.
@@ -178,6 +197,85 @@ function appendSys(text, variant = "") {
   scrollToBottom();
 }
 
+// ── Role badge ────────────────────────────────────────────────────────────
+
+function attachRoleBadge(msgDiv, roleInfo) {
+  const lbl = msgDiv.querySelector(".msg-label");
+  if (!lbl) return;
+  const badge = document.createElement("span");
+  badge.className = "role-badge-inline" + (roleInfo.isFallback ? " fallback" : "");
+  badge.textContent = roleInfo.role;
+  lbl.appendChild(badge);
+}
+
+// ── Token / cost stats pill ───────────────────────────────────────────────
+
+function appendStatsPill(stats) {
+  const div = document.createElement("div");
+  div.className = "stats-pill";
+  const inTok  = Number(stats.inputTokensEst).toLocaleString();
+  const outTok = Number(stats.outputTokensEst).toLocaleString();
+  div.textContent = `~${inTok} in · ~${outTok} out (est.)`;
+  messages.appendChild(div);
+  scrollToBottom();
+}
+
+// ── File diff cards ───────────────────────────────────────────────────────
+
+function appendDiffCards(filesChanged) {
+  if (!filesChanged?.length) return;
+  const wrapper = document.createElement("div");
+  wrapper.className = "diff-cards";
+  wrapper.innerHTML = filesChanged.map((f) => {
+    const typeKey   = f.changeType === "A" ? "add" : f.changeType === "D" ? "del" : "mod";
+    const typeLabel = f.changeType === "A" ? "added" : f.changeType === "D" ? "deleted" : "modified";
+    const hasDiff   = f.diff && f.diff.trim().length > 0;
+    return `
+      <div class="diff-card">
+        <div class="diff-card-header">
+          <span class="diff-change-type ${typeKey}">${typeLabel}</span>
+          <span class="diff-file-path">${escHtml(f.path)}</span>
+          ${hasDiff ? '<span class="diff-expand-icon">\u25b6</span>' : ""}
+        </div>
+        ${hasDiff ? `<pre class="diff-card-body" style="display:none">${escapeHtml(f.diff)}</pre>` : ""}
+      </div>`;
+  }).join("");
+  wrapper.querySelectorAll(".diff-card-header").forEach((hdr) => {
+    hdr.addEventListener("click", () => {
+      const body = hdr.nextElementSibling;
+      if (!body || body.tagName !== "PRE") return;
+      const isOpen = body.style.display !== "none";
+      body.style.display = isOpen ? "none" : "block";
+      const icon = hdr.querySelector(".diff-expand-icon");
+      if (icon) icon.textContent = isOpen ? "\u25b6" : "\u25bc";
+    });
+  });
+  messages.appendChild(wrapper);
+  scrollToBottom();
+}
+
+// ── Tool call card ────────────────────────────────────────────────────────
+
+function appendToolCard(id, tool, args) {
+  showMessages();
+  const div = document.createElement("div");
+  div.className = "tool-card pending";
+  div.dataset.approvalId = id;
+  const argsStr = typeof args === "object" && args !== null
+    ? JSON.stringify(args, null, 2)
+    : String(args ?? "");
+  div.innerHTML = `
+    <div class="tool-card-header">
+      <span class="tool-card-icon">&#9881;</span>
+      <span class="tool-card-name">${escapeHtml(String(tool))}</span>
+      <span class="tool-card-status">awaiting approval…</span>
+    </div>
+    <pre class="tool-card-args">${escapeHtml(argsStr)}</pre>`;
+  messages.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
 // ── Send ──────────────────────────────────────────────────────────────────
 
 async function sendMessage() {
@@ -198,27 +296,34 @@ async function sendMessage() {
     removeThinking();
 
     if (streamBubble) {
-      // Streaming delivered the content — replace raw text with rendered markdown
+      // Attach role badge before finalising (element still accessible here).
+      if (currentRole) attachRoleBadge(streamBubble, currentRole);
+      // Replace raw stream text with rendered markdown.
       const bubbleEl = streamBubble.querySelector(".stream-content");
       if (bubbleEl && streamText) bubbleEl.innerHTML = renderContent(streamText);
       streamBubble.classList.remove("streaming");
       streamBubble = null;
       streamText   = "";
-      setStatus("ready", false);
     } else if (result.ok) {
       const replyText = result.reply?.text ?? result.reply?.outputText ?? JSON.stringify(result.reply);
-      appendMsg("orca", replyText);
-      setStatus("ready", false);
+      const msgDiv = appendMsg("orca", replyText);
+      if (currentRole) attachRoleBadge(msgDiv, currentRole);
     } else {
       appendSys(result.error ?? "Unknown error.", "error");
-      setStatus("error", false);
     }
+
+    // Post-reply metadata
+    if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
+    if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
+
+    setStatus(result.ok ? "ready" : "error", false);
   } catch (err) {
     removeThinking();
     if (streamBubble) { streamBubble.remove(); streamBubble = null; streamText = ""; }
     appendSys(String(err), "error");
     setStatus("error", false);
   } finally {
+    currentRole  = null;
     busy = false;
     setInputEnabled(true);
     inputEl.focus();
@@ -534,6 +639,11 @@ document.getElementById("btn-close").addEventListener("click",    () => orca.clo
 // ── Tool approval dialog ────────────────────────────────────────────
 
 orca.onToolRequest((id, tool, args) => {
+  // Add a tool call card to the message thread so the user can see what's running.
+  const card = appendToolCard(id, tool, args);
+  toolCallCards.set(id, card);
+
+  // Show the approval overlay dialog.
   const dialog = document.getElementById("tool-approval-dialog");
   document.getElementById("approval-tool-name").textContent = tool;
   document.getElementById("approval-args").textContent =
@@ -546,13 +656,27 @@ orca.onToolRequest((id, tool, args) => {
 
 document.getElementById("btn-approve-tool").addEventListener("click", () => {
   const dialog = document.getElementById("tool-approval-dialog");
-  orca.approveToolCall(dialog.dataset.approvalId, true);
+  const id = dialog.dataset.approvalId;
+  const card = toolCallCards.get(id);
+  if (card) {
+    card.classList.replace("pending", "approved");
+    card.querySelector(".tool-card-status").textContent = "\u2713 Approved";
+  }
+  toolCallCards.delete(id);
+  orca.approveToolCall(id, true);
   dialog.style.display = "none";
 });
 
 document.getElementById("btn-deny-tool").addEventListener("click", () => {
   const dialog = document.getElementById("tool-approval-dialog");
-  orca.approveToolCall(dialog.dataset.approvalId, false);
+  const id = dialog.dataset.approvalId;
+  const card = toolCallCards.get(id);
+  if (card) {
+    card.classList.replace("pending", "denied");
+    card.querySelector(".tool-card-status").textContent = "\u2717 Denied";
+  }
+  toolCallCards.delete(id);
+  orca.approveToolCall(id, false);
   dialog.style.display = "none";
 });
 
