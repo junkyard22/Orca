@@ -1,4 +1,6 @@
 import type { PappyInput, PappyResult } from "@clawde/pappy-core";
+import type { WorkspaceContext } from "./workspaceContext.js";
+import type { RunStore } from "./persistence/types.js";
 
 // ---------------------------------------------------------------------------
 // Task / result shapes
@@ -106,6 +108,11 @@ export interface OrcaRunCtx {
    * Prevents infinite recursive decomposition.
    */
   subagentDepth?: number;
+  /**
+   * Workspace state captured once at task start.
+   * Adapters can inject it into prompts for grounding (branch, recent files, etc.).
+   */
+  workspaceContext?: WorkspaceContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +146,16 @@ export interface OrcaRuntimeDeps {
   llm: OrcaLLMService;
   /** When supplied, ctx.tools is populated and the agent loop activates. */
   tools?: OrcaToolService;
+  /**
+   * Persist every completed run to a durable store.
+   * Inject createSqliteRunStore() from apps/runner for production use.
+   */
+  store?: RunStore;
+  /**
+   * Called once at the start of each task to capture workspace state.
+   * Inject getWorkspaceContext from orca-core for automatic git + file info.
+   */
+  getWorkspaceContext?: () => WorkspaceContext;
   /** Maximum repair passes before giving up on a FAIL verdict. Default: 2 */
   maxRepairPasses?: number;
 }

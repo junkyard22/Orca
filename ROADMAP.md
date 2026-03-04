@@ -159,34 +159,34 @@ If a task required running tests and no test runner tool event exists in the res
 
 ## Phase 5 — Persistence & Session Management
 
+> ✅ **DONE** — Committed as part of Phase 5 implementation.
+
 **Goal:** Orca remembers what it did and can continue work across sessions.
 
-### 5.1 — Run store / job database
+### 5.1 — Run store / job database ✅
 
-Miranda has a `runStore` in `miranda-core/src/metrics/runStore.ts`. Promote this concept to the full Orca level. Every run gets persisted with:
+SQLite-backed run store using `better-sqlite3` (zero-infra, desktop-appropriate).
+- **`packages/orca-core/src/persistence/types.ts`** — `PersistedRun` schema + `RunStore` port interface
+- **`apps/runner/src/store/sqliteRunStore.ts`** — concrete SQLite factory; DB at `~/.orca/runs.db` (override with `ORCA_DB_PATH`)
+- Persists per-run: task spec, role, subagent count, tool events, verdict, repair passes, duration, workspace/git info
+- `OrcaRuntimeDeps.store` threads the store into the runtime; persisted in a `finally`-style block so every run is recorded even on error
+- `OrcaRuntimeDeps.getWorkspaceContext` called once per task start (before any async work)
 
-- Task spec
-- Role used
-- Subagents spawned
-- Tool calls made
-- Files changed
-- Final verdict + output
-- Cost + tokens
+### 5.2 — Workspace context ✅
 
-Use SQLite (via `better-sqlite3`) — it's zero-infrastructure and production-appropriate for a desktop app.
+- **`packages/orca-core/src/workspaceContext.ts`** — `WorkspaceContext` type + `getWorkspaceContext(cwd?)` factory
+- Captures: `cwd`, `gitBranch`, `gitCommit`, `gitCommitMessage`, `recentlyModifiedFiles` (last 3 commits diff)
+- Threaded into `OrcaRunCtx.workspaceContext` so all adapters can access it without re-running git
+- **`apps/runner/src/adapters/maestroAdapter.ts`** renders a `### Workspace` section in the task prompt with branch/commit/recent files
+- Workspace info also written to the `runs` SQLite table for historical queries
 
-### 5.2 — Workspace context
+### 5.3 — Conversation history for multi-turn tasks ✅
 
-Maestro needs to know about the workspace between tasks. Add a `WorkspaceContext` that tracks:
-
-- Current working directory
-- Recently modified files
-- Active git branch + last commit
-- Open tasks / in-progress work
-
-### 5.3 — Conversation history for multi-turn tasks
-
-Benson currently handles one message at a time. For production, it needs to maintain conversation history so the user can say "actually, make that endpoint return JSON instead" and Maestro understands what "that endpoint" refers to.
+- **`packages/benson-core/src/types.ts`** — `ConversationTurn` type added; `BensonDependencies.maxHistoryTurns` optional (default 8)
+- **`packages/benson-core/src/benson.ts`** — closure-internal rolling `history: ConversationTurn[]` buffer; injects last N turns into `taskSpec.context.conversationHistory` before each `executeTask` call
+- **`apps/runner/src/adapters/maestroAdapter.ts`** renders a `### Conversation History` section in the task prompt (User / You previously replied blocks); truncates long replies to 400 chars to avoid prompt bloat
+- `conversationHistory` stripped from the raw JSON context dump (rendered verbatim above instead)
+- `ORCA_HISTORY_TURNS` env var controls the cap
 
 ---
 
@@ -276,8 +276,10 @@ A simple registry in `orca-core` that loads extensions at startup and makes thei
 | ~~Week 1–2~~ | ~~**Phase 1** entirely.~~ ✅ **DONE** |
 | ~~Week 3~~ | ~~**Phase 3.1–3.3** (core tools).~~ ✅ **DONE** |
 | ~~Week 4~~ | ~~**Phase 2.1–2.2** (basic subagents).~~ ✅ **DONE** |
-| **Now** | **Phase 5.1–5.3** (persistence). Without this, every session starts from scratch. |
+| ~~Now~~ | ~~**Phase 5.1–5.3** (persistence).~~ ✅ **DONE** |
+| **Now** | **Phase 4** (Pappy QC depth). Deeper repair signals → fewer passes → better output. |
 | Week +2 | **Phase 6** (real desktop UI). Something you can hand to a non-developer. |
+
 | Ongoing | **Phase 4** (Pappy QC) and **Phase 7** (extension system) in parallel with the above. |
 
 ---

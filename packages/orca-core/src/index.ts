@@ -5,6 +5,9 @@ export { createOrcaRuntime } from "./runtime.js";
 export { createMirandaLLMService } from "./adapters/mirandaLLM.js";
 export { createPappyPort } from "./adapters/pappyPort.js";
 
+// Workspace context — capture git + file state for prompt grounding
+export { getWorkspaceContext } from "./workspaceContext.js";
+
 // Types
 export type {
   OrcaRuntime,
@@ -20,3 +23,6 @@ export type {
   OrcaEvent,
   OrcaEventType,
 } from "./types.js";
+
+export type { WorkspaceContext } from "./workspaceContext.js";
+export type { RunStore, PersistedRun } from "./persistence/types.js";

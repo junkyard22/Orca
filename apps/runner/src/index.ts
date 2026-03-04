@@ -22,6 +22,7 @@ import {
   createOrcaRuntime,
   createMirandaLLMService,
   createPappyPort,
+  getWorkspaceContext,
 } from "@clawde/orca-core";
 import type { OrcaRuntime, OrcaEvent, OrcaEventType } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
@@ -29,6 +30,7 @@ import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 
 import { createMaestroAdapter } from "./adapters/maestroAdapter.js";
 import { createToolService } from "./adapters/toolService.js";
+import { createSqliteRunStore } from "./store/sqliteRunStore.js";
 
 // ---------------------------------------------------------------------------
 // Type-narrowing helper
@@ -102,11 +104,23 @@ async function main(): Promise<void> {
   const toolRegistry = createCoreToolRegistry();
   const tools = createToolService(toolRegistry, workspaceRoot);
 
-  const runtime = createOrcaRuntime({ maestro, pappy, llm, tools });
+  // Persistent run store — saves every task to ~/.orca/runs.db
+  // Override the path with ORCA_DB_PATH if needed.
+  const store = createSqliteRunStore();
+
+  const runtime = createOrcaRuntime({
+    maestro,
+    pappy,
+    llm,
+    tools,
+    store,
+    getWorkspaceContext: () => getWorkspaceContext(workspaceRoot),
+  });
 
   // Benson receives executeTask via injection — orca-core never depends on Benson.
   const benson = createBenson({
     executeTask: runtime.executeTask.bind(runtime),
+    maxHistoryTurns: parseInt(process.env["ORCA_HISTORY_TURNS"] ?? "8", 10),
   });
 
   // 4. Subscribe to runtime events (written to stderr so they don't mix with output)

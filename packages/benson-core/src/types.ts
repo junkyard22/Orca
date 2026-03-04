@@ -18,8 +18,23 @@ export interface ExecutionResult {
   followUpQuestion?: string;
 }
 
+/**
+ * A single exchange in the ongoing conversation.
+ * Injected into the task context so the model can resolve references like
+ * "that endpoint" or "do the same for the other file".
+ */
+export interface ConversationTurn {
+  user: string;
+  assistant: string;
+}
+
 export interface BensonDependencies {
   executeTask: (task: TaskSpec) => Promise<ExecutionResult>;
+  /**
+   * How many past exchanges to carry forward.
+   * Defaults to 8.  Set to 0 to disable history entirely.
+   */
+  maxHistoryTurns?: number;
 }
 
 // Internal — not exported from package index

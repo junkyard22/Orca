@@ -6,6 +6,7 @@ import type {
   OrcaRunCtx,
   OrcaEventType,
   OrcaEvent,
+  OrcaMaestroResult,
 } from "./types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput } from "./helpers.js";
@@ -43,24 +44,37 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
   const emitter = new OrcaEmitter();
 
   async function executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult> {
+    // ── Workspace snapshot (captured once, before any async work) ─────────
+    const workspaceContext = deps.getWorkspaceContext?.();
+
     const ctx: OrcaRunCtx = {
       llm,
       runId: generateRunId(),
       tools,
       emit: (event) => emitter.emit(event),
+      workspaceContext,
     };
-    const taskId = ctx.runId; // stable across all passes for this task
+    const taskId = ctx.runId;
+    const startTime = Date.now();
+
+    // Track repair passes via events so we don't thread extra state through
+    // the repair loop's return value.
+    let repairPasses = 0;
+    const unsubRepair = emitter.on("repair:start", () => { repairPasses++; });
 
     emitter.emit({ type: "task:start", taskId, intent: taskSpec.intent });
 
+    // Default: always has a value after try/catch
+    let result: OrcaExecutionResult = { status: "FAIL", summary: "Unknown error" };
+
     try {
-      // ── 1. Maestro runs the task (attempt 0, not a repair) ────────────────
+      // ── 1. Maestro runs the task (attempt 0, not a repair) ──────────────
       //    Maestro uses ctx.llm (Miranda-backed) for all model calls.
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
       const maestroResult = await maestro.run(taskSpec, ctx);
       emitter.emit({ type: "maestro:done", taskId, attempt: 0, isRepair: false, hasOutput: !!maestroResult.outputText });
 
-      // ── 2. Pappy evaluates ────────────────────────────────────────────────
+      // ── 2. Pappy evaluates ───────────────────────────────────────────────
       const qcResult = pappy.evaluate(buildPappyInput(taskSpec, maestroResult));
       emitter.emit({
         type: "qc:result",
@@ -71,40 +85,60 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         issueCount: qcResult.issues.length,
       });
 
-      // ── 3. PASS or WARN → done ────────────────────────────────────────────
+      // ── 3. PASS or WARN → done ───────────────────────────────────────────
       if (qcResult.verdict !== "FAIL") {
-        emitter.emit({ type: "task:done", taskId, status: "SUCCESS" });
-        return {
+        result = {
           status: "SUCCESS",
           userFacingText: maestroResult.outputText,
           summary: qcResult.internalSummary,
           artifacts: maestroResult,
         };
+      } else if (!qcResult.repairTask) {
+        // ── 4a. FAIL but Pappy has no repair guidance ──────────────────────
+        result = { status: "FAIL", summary: qcResult.internalSummary };
+      } else {
+        // ── 4b. FAIL → repair loop ───────────────────────────────────────
+        result = await handleRepairLoop(
+          taskSpec,
+          qcResult,        // full PappyResult — issues + repairTask go into repair context
+          ctx,
+          maestro,
+          pappy,
+          emitter,
+          maxRepairPasses,
+        );
       }
-
-      // ── 4. FAIL → repair loop ─────────────────────────────────────────────
-      if (!qcResult.repairTask) {
-        emitter.emit({ type: "task:done", taskId, status: "FAIL" });
-        return { status: "FAIL", summary: qcResult.internalSummary };
-      }
-
-      const repaired = await handleRepairLoop(
-        taskSpec,
-        qcResult,        // full PappyResult — issues + repairTask go into repair context
-        ctx,
-        maestro,
-        pappy,
-        emitter,
-        maxRepairPasses,
-      );
-      emitter.emit({ type: "task:done", taskId, status: repaired.status });
-      return repaired;
-
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      emitter.emit({ type: "task:done", taskId, status: "FAIL" });
-      return { status: "FAIL", summary: `Runtime error: ${message}` };
+      result = { status: "FAIL", summary: `Runtime error: ${message}` };
     }
+
+    // ── Always runs — emit completion, persist, clean up ──────────────────
+    unsubRepair();
+    emitter.emit({ type: "task:done", taskId, status: result.status });
+
+    if (deps.store) {
+      const artifacts = result.artifacts as OrcaMaestroResult | undefined;
+      deps.store.saveRun({
+        runId:           taskId,
+        timestamp:       startTime,
+        durationMs:      Date.now() - startTime,
+        status:          result.status,
+        originalMessage: taskSpec.originalUserMessage,
+        intent:          taskSpec.intent,
+        goals:           JSON.stringify(taskSpec.goals),
+        outputText:      result.userFacingText,
+        summary:         result.summary,
+        subagentCount:   artifacts?.subagentRuns?.length    ?? 0,
+        toolEventCount:  artifacts?.toolEvents?.length      ?? 0,
+        repairPasses,
+        workspaceCwd:    workspaceContext?.cwd,
+        gitBranch:       workspaceContext?.gitBranch,
+        gitCommit:       workspaceContext?.gitCommit,
+      });
+    }
+
+    return result;
   }
 
   return {

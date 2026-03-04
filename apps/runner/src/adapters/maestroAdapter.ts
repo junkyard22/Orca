@@ -16,6 +16,7 @@ import type {
   OrcaTaskSpec,
   OrcaToolService,
   OrcaLLMService,
+  WorkspaceContext,
 } from "@clawde/orca-core";
 
 // ---------------------------------------------------------------------------
@@ -136,7 +137,12 @@ function pickCoreRole(task: OrcaTaskSpec): "brain" | "coder_strong" | "coder_che
 // Task prompt builder
 // ---------------------------------------------------------------------------
 
-function buildTaskPrompt(task: OrcaTaskSpec, role: string, isFallback: boolean): string {
+function buildTaskPrompt(
+  task: OrcaTaskSpec,
+  role: string,
+  isFallback: boolean,
+  workspaceContext?: WorkspaceContext,
+): string {
   const isRepair = task.intent === "repair";
 
   const header = isRepair
@@ -154,13 +160,50 @@ function buildTaskPrompt(task: OrcaTaskSpec, role: string, isFallback: boolean):
     ...task.goals.map((g: string) => `- ${g}`),
   ];
 
+  // ── Workspace context ──────────────────────────────────────────────────────
+  // Gives the model grounding: which branch, what recently changed, etc.
+  if (workspaceContext) {
+    const ws: string[] = [`cwd: ${workspaceContext.cwd}`];
+    if (workspaceContext.gitBranch)        ws.push(`branch: ${workspaceContext.gitBranch}`);
+    if (workspaceContext.gitCommit)        ws.push(`commit: ${workspaceContext.gitCommit}`);
+    if (workspaceContext.gitCommitMessage) ws.push(`last commit: ${workspaceContext.gitCommitMessage}`);
+    if (workspaceContext.recentlyModifiedFiles?.length) {
+      ws.push(`recently modified: ${workspaceContext.recentlyModifiedFiles.slice(0, 10).join(", ")}`);
+    }
+    lines.push("", "### Workspace", ws.join("\n"));
+  }
+
   if (task.constraints != null && Object.keys(task.constraints).length > 0) {
     lines.push("", "### Constraints", JSON.stringify(task.constraints, null, 2));
   }
 
   if (task.context != null && Object.keys(task.context).length > 0) {
-    // Strip internal routing keys before showing to the model
-    const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, forcedRole: _fr, ...userCtx } = task.context as Record<string, unknown>;
+    // Strip internal routing keys + conversation history before showing raw JSON
+    const {
+      hasImages: _hi,
+      errorOutput: _eo,
+      fileCount: _fc,
+      deepPlan: _dp,
+      filePath: _fp,
+      forcedRole: _fr,
+      conversationHistory: convHistory,
+      ...userCtx
+    } = task.context as Record<string, unknown>;
+
+    // ── Conversation history ───────────────────────────────────────────────
+    // Rendered as readable dialogue so the model can resolve back-references.
+    if (Array.isArray(convHistory) && convHistory.length > 0) {
+      lines.push("", "### Conversation History");
+      for (const turn of convHistory as Array<{ user: string; assistant: string }>) {
+        lines.push(`**User:** ${turn.user}`);
+        const preview = turn.assistant.length > 400
+          ? `${turn.assistant.slice(0, 400)}…`
+          : turn.assistant;
+        lines.push(`**You previously replied:** ${preview}`);
+        lines.push("");
+      }
+    }
+
     if (Object.keys(userCtx).length > 0) {
       lines.push("", "### Context", JSON.stringify(userCtx, null, 2));
     }
@@ -189,7 +232,7 @@ async function runSingleAgent(
   ) as RoleName;
 
   const systemPrompt = getRolePrompt(effectiveRole);
-  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback);
+  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext);
 
   let outputText: string;
   let toolEvents: OrcaMaestroResult["toolEvents"] = [];
