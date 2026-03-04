@@ -74,7 +74,10 @@ orca.onOrcaEvent((e) => {
   // Stream tokens arrive here during the sendMessage await.
   // Build a live bubble and append each chunk as raw text;
   // sendMessage's finally block replaces the raw text with rendered markdown.
+  // Guard with busy: late IPC delivery after the task resolves must NOT create
+  // a second bubble (would cause the response to appear twice).
   if (e.type === "stream:token") {
+    if (!busy) return;
     if (!streamBubble) {
       removeThinking();
       showMessages();
@@ -735,6 +738,9 @@ document.getElementById("btn-close").addEventListener("click",    () => orca.clo
 // ── Tool approval dialog ────────────────────────────────────────────
 
 orca.onToolRequest((id, tool, args) => {
+  // Ignore spurious requests with no tool name (can arrive via IPC with
+  // undefined data during internal pipeline cycles).
+  if (!tool) return;
   // Add a tool call card to the message thread so the user can see what's running.
   const card = appendToolCard(id, tool, args);
   toolCallCards.set(id, card);
