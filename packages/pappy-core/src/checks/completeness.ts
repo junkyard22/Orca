@@ -15,8 +15,13 @@ function extractDomainKeywords(task: string): Array<{ keyword: string; category:
     keywords.push({ keyword: "validat", category: "validation" });
   }
 
-  // API/HTTP patterns
-  if (/\b(api|endpoint|fetch|http|request|response|get|post|put|delete)\b/.test(lower)) {
+  // API/HTTP patterns — avoid common English words like "get", "post", "put", "delete"
+  // by requiring them to appear in an HTTP method context or alongside API-specific terms.
+  if (
+    /\b(api|endpoint|http|graphql|rest|webhook)\b|\b(fetch|axios|xhr|curl)\b|\bHTTP (GET|POST|PUT|DELETE|PATCH)\b|\/api\/|api[_\s-]?key/i.test(
+      lower,
+    )
+  ) {
     keywords.push({ keyword: "api", category: "integration" });
     keywords.push({ keyword: "fetch", category: "data access" });
     keywords.push({ keyword: "response", category: "data handling" });
@@ -51,17 +56,30 @@ function extractDomainKeywords(task: string): Array<{ keyword: string; category:
 }
 
 /**
- * Check if the output text contains evidence of addressing a keyword.
- * Looks for the keyword or related terms in the output.
+ * Check if the output text OR any diff in filesChanged contains evidence of addressing a keyword.
+ * Scanning diffs ensures we don't false-positive on agents that write all code to files and
+ * produce minimal prose (e.g. "Done, changes applied.").
  */
-function hasKeywordEvidence(outputText: string, keyword: string): boolean {
-  const lower = outputText.toLowerCase();
-  // Check for keyword itself or common variations
+function hasKeywordEvidence(
+  outputText: string,
+  keyword: string,
+  filesChanged?: PappyInput["filesChanged"],
+): boolean {
   const patterns = [
     new RegExp(`\\b${keyword}\\w*\\b`, "i"),
     new RegExp(`\\w*${keyword}\\b`, "i"),
   ];
-  return patterns.some((p) => p.test(lower));
+
+  // Check prose output first
+  if (patterns.some((p) => p.test(outputText))) return true;
+
+  // Also scan diff content — agents often write everything to files with minimal prose
+  if (filesChanged && filesChanged.length > 0) {
+    const diffContent = filesChanged.map((f) => f.diff ?? "").join("\n");
+    if (diffContent.length > 0 && patterns.some((p) => p.test(diffContent))) return true;
+  }
+
+  return false;
 }
 
 /**
@@ -130,9 +148,9 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   // Compare what was asked against what was delivered using domain keywords.
   const keywords = extractDomainKeywords(input.task);
 
-  if (keywords.length > 0 && hasOutput) {
+  if (keywords.length > 0 && (hasOutput || hasFiles)) {
     const missingKeywords = keywords.filter(
-      (k) => !hasKeywordEvidence(input.outputText ?? "", k.keyword),
+      (k) => !hasKeywordEvidence(input.outputText ?? "", k.keyword, input.filesChanged),
     );
 
     // If >50% of domain keywords are missing, that's a completeness issue

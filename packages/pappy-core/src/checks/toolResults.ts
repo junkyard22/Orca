@@ -2,32 +2,57 @@ import type { Issue, PappyInput } from "../types.js";
 
 /**
  * Detect if a task implies the use of specific tools.
- * Returns an array of { tool, reason } pairs that should be present.
+ *
+ * Each entry carries:
+ *  - tool: the exact Workbench tool name expected
+ *  - reason: human-readable rationale
+ *  - satisfiedByFilesChanged: when true, a non-empty filesChanged list is
+ *    accepted as equivalent proof (e.g. a write_file call whose event was
+ *    not captured but clearly produced output).
+ *
+ * Patterns are intentionally narrow to avoid flagging on common English words
+ * like "get", "test", "run", or "build" that appear in almost every task.
  */
-function detectExpectedTools(task: string): Array<{ tool: string; reason: string }> {
-  const expected: Array<{ tool: string; reason: string }> = [];
+function detectExpectedTools(
+  task: string,
+): Array<{ tool: string; reason: string; satisfiedByFilesChanged?: boolean }> {
+  const expected: Array<{ tool: string; reason: string; satisfiedByFilesChanged?: boolean }> = [];
   const lower = task.toLowerCase();
 
-  // File read/write tasks
-  if (/\b(read (file|contents)|load|parse (json|yaml|xml)|read from)\b/.test(lower)) {
+  // File read — only narrow phrases that unambiguously mean "open a file"
+  if (
+    /\bread (the |a |this |that )?(file|contents?|source code)|load (the |a )?(file|config|json|yaml|csv)|parse (the )?(json|yaml|xml|csv) (file|from)/.test(
+      lower,
+    )
+  ) {
     expected.push({ tool: "read_file", reason: "Task involves reading file contents" });
   }
-  if (/\b(write|create|save|generate|update (file|code)|add (file|code)|implement)\b/.test(lower)) {
-    expected.push({ tool: "write_file", reason: "Task involves writing/creating files" });
+
+  // File write — broad patterns are fine here because we also accept filesChanged
+  if (
+    /\b(write|create|save|generate|implement|add|update)\b.*\b(file|function|class|component|module|test)\b|\b(file|function|class|component|module|test)\b.*\b(write|create|implement|add|update)\b/.test(
+      lower,
+    )
+  ) {
+    expected.push({
+      tool: "write_file",
+      reason: "Task involves writing/creating files",
+      satisfiedByFilesChanged: true, // filesChanged populated = write tool ran
+    });
   }
 
-  // Command execution tasks
-  if (/\b(run|execute|build|compile|test|install|npm|pnpm|yarn|pip|make|cargo)\b/.test(lower)) {
+  // Command execution — only explicit package-manager / build-tool invocations
+  if (/\b(npm|pnpm|yarn|pip3?|cargo|make|gradle|mvn)\b|\bcompile and run\b|\brun the tests?\b|\bexecute the script\b/.test(lower)) {
     expected.push({ tool: "run_command", reason: "Task involves running commands" });
   }
 
-  // Directory/listing tasks
-  if (/\b(list|explore|browse|find (file|dir)|what (file|files)|directory structure)\b/.test(lower)) {
+  // Directory listing — specific phrases only
+  if (/\blist (all |the )?(files?|directories|folders?)|\bdirectory structure\b|\bwhat files? (are|exist) in\b/.test(lower)) {
     expected.push({ tool: "list_directory", reason: "Task involves exploring directories" });
   }
 
-  // Search tasks
-  if (/\b(search|find|grep|locate|look for|scan for)\b/.test(lower)) {
+  // Search — specific phrases that can't be confused with ordinary English
+  if (/\b(grep|ripgrep)\b|\bsearch (for|through) (files?|the (repo|codebase|source))|\bfind all (occurrences?|references?|usages?)\b/.test(lower)) {
     expected.push({ tool: "search_files", reason: "Task involves searching files" });
   }
 
@@ -57,9 +82,13 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
   // ── 4.3 Tool event correlation — verify expected tools were called ───────
   const expectedTools = detectExpectedTools(input.task);
   const actualTools = new Set((input.toolEvents ?? []).map((e) => e.tool));
+  const hasFilesChanged = (input.filesChanged?.length ?? 0) > 0;
 
   for (const expected of expectedTools) {
-    if (!actualTools.has(expected.tool)) {
+    const toolWasCalled = actualTools.has(expected.tool);
+    const satisfiedByFiles = expected.satisfiedByFilesChanged === true && hasFilesChanged;
+
+    if (!toolWasCalled && !satisfiedByFiles) {
       issues.push({
         severity: "MEDIUM",
         code: "TOOL_MISSING",
@@ -75,6 +104,7 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
   }
 
   // ── Instrumentation check: task implies tool use but no tools recorded ───
+  // Uses broader keywords here intentionally — it's just a MEDIUM warning.
   const hasToolUsePatterns = /\b(read|write|run|execute|create|save|list|search|find|build|test)\b/i.test(input.task);
   const hasNoToolEvents = (input.toolEvents?.length ?? 0) === 0;
   const hasNoFiles = (input.filesChanged?.length ?? 0) === 0;

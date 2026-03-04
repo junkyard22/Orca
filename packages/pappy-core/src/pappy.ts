@@ -22,7 +22,7 @@ import { runSafetyChecks }       from "./checks/safety.js";
 import { runToolResultChecks }   from "./checks/toolResults.js";
 import { runCompletenessChecks } from "./checks/completeness.js";
 import { runStructureChecks }    from "./checks/structure.js";
-import { extractClaims, runClaimProofChecks } from "./checks/claimProof.js";
+import { runClaimProofChecks } from "./checks/claimProof.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
 
 // ---------------------------------------------------------------------------
@@ -216,18 +216,18 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
   // Step 1: derive acceptance criteria
   const acceptance_criteria = deriveAcceptanceCriteria(input);
 
-  // Step 2: extract claims from output
-  const claims: Claim[] = extractClaims(input.outputText ?? "");
+  // Step 2: run claim-proof checks — claims are extracted here as a by-product
+  // (avoids iterating CLAIM_PATTERNS twice)
+  const { issues: claimIssues, ledger: claimLedger, claims } = runClaimProofChecks(input);
 
-  // Step 3: run all checks
-  const { issues: claimIssues, ledger: claimLedger } = runClaimProofChecks(input);
+  // Step 3: run all remaining checks
 
   const rawIssues = [
+    ...claimIssues,
     ...runSafetyChecks(input),
     ...runToolResultChecks(input),
     ...runCompletenessChecks(input),
     ...runStructureChecks(input),
-    ...claimIssues,
   ];
 
   const issues = stampIssueIds(rawIssues);

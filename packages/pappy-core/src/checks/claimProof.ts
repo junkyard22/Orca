@@ -184,12 +184,16 @@ export function extractClaims(outputText: string): Claim[] {
   return claims;
 }
 
-/** Check each extracted claim against the trace and produce issues + ledger entries. */
+/**
+ * Check each extracted claim against the trace and produce issues, ledger entries,
+ * and the extracted claims list (so callers don't need to run extractClaims separately).
+ */
 export function runClaimProofChecks(
   input: PappyInput,
-): { issues: Omit<Issue, "issueId">[]; ledger: ReceiptEntry[] } {
+): { issues: Omit<Issue, "issueId">[]; ledger: ReceiptEntry[]; claims: Claim[] } {
   const issues: Omit<Issue, "issueId">[] = [];
   const ledger: ReceiptEntry[] = [];
+  const claims: Claim[] = [];
 
   const outputText = input.outputText ?? "";
   const hasAnyTrace =
@@ -208,6 +212,9 @@ export function runClaimProofChecks(
       claimIndex++;
       const claimId = `C${claimIndex}`;
       const claimText = match[0].trim();
+
+      // Accumulate claims so callers don't need a separate extractClaims() pass
+      claims.push({ id: claimId, text: claimText, requires_proof: true });
 
       const proofPointer = def.findProof(match, input);
 
@@ -263,5 +270,5 @@ export function runClaimProofChecks(
     });
   }
 
-  return { issues, ledger };
+  return { issues, ledger, claims };
 }
