@@ -14,7 +14,9 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "trace": "node dist/pappy-trace.js",
+    "trace:build": "tsc && node dist/pappy-trace.js"
   },
   "engines": {
     "node": ">=20.0.0"
