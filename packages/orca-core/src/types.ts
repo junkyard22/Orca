@@ -68,7 +68,7 @@ export interface OrcaLLMService {
    */
   complete(
     prompt: string,
-    opts?: { maxTokens?: number; temperature?: number; onToken?: (chunk: string) => void },
+    opts?: { maxTokens?: number; temperature?: number; onToken?: (chunk: string) => void; onStreamReset?: () => void },
   ): Promise<{ text: string }>;
 }
 
@@ -194,6 +194,7 @@ export type OrcaEvent =
   | { type: "repair:start";       taskId: string; pass: number; maxPasses: number }
   | { type: "task:done";          taskId: string; status: "SUCCESS" | "FAIL" }
   | { type: "stream:token";       taskId: string; chunk: string }
+  | { type: "stream:reset";       taskId: string }
   | { type: "subagent:spawned";   taskId: string; subagentId: string; role: string; task: string }
   | { type: "subagent:done";      taskId: string; subagentId: string; role: string; ok: boolean }
   | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string };

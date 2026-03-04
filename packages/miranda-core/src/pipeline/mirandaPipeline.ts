@@ -35,7 +35,7 @@ export interface PipelineResult {
 function buildStageMessages(
   stage: string,
   userPrompt: string,
-  stageOutputs: Map<string, string>
+  stageOutputs: Map<string, string>,
 ): LLMMessage[] {
   switch (stage) {
     case "plan":
@@ -47,7 +47,10 @@ function buildStageMessages(
     case "answer": {
       const planOutput = stageOutputs.get("plan") ?? "{}";
       return [
-        { role: "system", content: buildAnswerSystemPrompt(userPrompt, planOutput) },
+        {
+          role: "system",
+          content: buildAnswerSystemPrompt(userPrompt, planOutput),
+        },
         { role: "user", content: userPrompt },
       ];
     }
@@ -69,9 +72,16 @@ function buildStageMessages(
       return [
         {
           role: "system",
-          content: buildRewriteSystemPrompt(userPrompt, answerOutput, critiqueOutput),
+          content: buildRewriteSystemPrompt(
+            userPrompt,
+            answerOutput,
+            critiqueOutput,
+          ),
         },
-        { role: "user", content: "Rewrite and improve the answer based on the critique." },
+        {
+          role: "user",
+          content: "Rewrite and improve the answer based on the critique.",
+        },
       ];
     }
 
@@ -90,7 +100,7 @@ export async function runPipeline(
   userPrompt: string,
   adapter: LLMAdapter,
   config: MirandaConfig,
-  callbacks?: { onToken?: (chunk: string) => void },
+  callbacks?: { onToken?: (chunk: string) => void; onStreamReset?: () => void },
 ): Promise<PipelineResult> {
   const runId = randomUUID();
   const startTime = Date.now();
@@ -112,12 +122,15 @@ export async function runPipeline(
 
   for (const stage of STAGE_ORDER) {
     // Budget check before CRITIQUE and REWRITE
-    if ((stage === "critique" || stage === "rewrite") && totalCost >= config.budgetUsd) {
+    if (
+      (stage === "critique" || stage === "rewrite") &&
+      totalCost >= config.budgetUsd
+    ) {
       budgetExceeded = true;
       liteMode = true;
       if (config.verbose) {
         console.error(
-          `[Miranda] Budget exceeded ($${totalCost.toFixed(6)} >= $${config.budgetUsd}). Skipping ${stage}.`
+          `[Miranda] Budget exceeded ($${totalCost.toFixed(6)} >= $${config.budgetUsd}). Skipping ${stage}.`,
         );
       }
       // Add a skipped stage result
@@ -136,14 +149,21 @@ export async function runPipeline(
     const stageConfig = config.stages[stage];
     const messages = buildStageMessages(stage, userPrompt, stageOutputs);
 
+    // Stream both answer (instant feedback) and rewrite (polished version).
+    // Before rewrite starts, fire onStreamReset so the UI clears the answer
+    // bubble and replaces it with the polished output.
+    const shouldStream = stage === "answer" || stage === "rewrite";
+    if (stage === "rewrite" && callbacks?.onStreamReset) {
+      callbacks.onStreamReset();
+    }
+
     const ctx: StageExecutionContext = {
       adapter,
       router,
       stageConfig,
       pricingTable: config.pricing,
       verbose: config.verbose,
-      // Only stream on answer/rewrite — the user-visible stages.
-      onToken: (stage === "answer" || stage === "rewrite") ? callbacks?.onToken : undefined,
+      onToken: shouldStream ? callbacks?.onToken : undefined,
     };
 
     if (config.verbose) {
@@ -190,7 +210,9 @@ export async function runPipeline(
   const summary = getRunSummary(record);
 
   if (config.verbose) {
-    console.error(`\n[Miranda] Run complete. Cost: $${totalCost.toFixed(6)}, Duration: ${totalDurationMs}ms`);
+    console.error(
+      `\n[Miranda] Run complete. Cost: $${totalCost.toFixed(6)}, Duration: ${totalDurationMs}ms`,
+    );
   }
 
   return { record, summary };

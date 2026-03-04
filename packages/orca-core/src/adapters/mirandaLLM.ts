@@ -58,6 +58,7 @@ export function createMirandaLLMService(
     async complete(prompt, opts) {
       const { record } = await runPipeline(prompt, adapter, config, {
         onToken: opts?.onToken,
+        onStreamReset: opts?.onStreamReset,
       });
       return { text: extractText(record) ?? "" };
     },

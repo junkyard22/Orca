@@ -71,6 +71,17 @@ orca.onOrcaEvent((e) => {
   // Token/cost estimate — saved and rendered below the completed reply.
   if (e.type === "run:stats") { pendingStats = e; return; }
 
+  // Stream reset: REWRITE is about to start — clear the ANSWER text from the
+  // bubble so the polished output replaces it instead of appending.
+  if (e.type === "stream:reset") {
+    if (streamBubble) {
+      streamText = "";
+      const bubbleEl = streamBubble.querySelector(".stream-content");
+      if (bubbleEl) bubbleEl.textContent = "";
+    }
+    return;
+  }
+
   // Stream tokens arrive here during the sendMessage await.
   // Build a live bubble and append each chunk as raw text;
   // sendMessage's finally block replaces the raw text with rendered markdown.
@@ -738,9 +749,9 @@ document.getElementById("btn-close").addEventListener("click",    () => orca.clo
 // ── Tool approval dialog ────────────────────────────────────────────
 
 orca.onToolRequest((id, tool, args) => {
-  // Ignore spurious requests with no tool name (can arrive via IPC with
-  // undefined data during internal pipeline cycles).
-  if (!tool) return;
+  // Ignore spurious requests with no/blank tool name (can arrive via IPC
+  // with undefined data during internal pipeline cycles).
+  if (!tool || !String(tool).trim()) return;
   // Add a tool call card to the message thread so the user can see what's running.
   const card = appendToolCard(id, tool, args);
   toolCallCards.set(id, card);

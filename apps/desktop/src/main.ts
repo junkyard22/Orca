@@ -86,6 +86,10 @@ function buildMaestroAdapter(): MaestroPort {
             ? (chunk: string) =>
                 ctx.emit!({ type: "stream:token", taskId: ctx.runId, chunk })
             : undefined,
+          onStreamReset: ctx.emit
+            ? () =>
+                ctx.emit!({ type: "stream:reset", taskId: ctx.runId })
+            : undefined,
         },
       );
 
@@ -178,7 +182,18 @@ function buildTaskPrompt(task: OrcaTaskSpec, role: string, isFallback: boolean):
 
   if (task.context != null && Object.keys(task.context).length > 0) {
     // Strip internal routing keys before showing to the model
-    const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, ...userCtx } = task.context as Record<string, unknown>;
+    const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, conversationHistory: _ch, ...userCtx } = task.context as Record<string, unknown>;
+
+    // Format conversation history as a readable transcript so Miranda's
+    // PLAN stage can reason about prior turns instead of parsing raw JSON.
+    const history = task.context["conversationHistory"] as Array<{ user: string; assistant: string }> | undefined;
+    if (history?.length) {
+      const transcript = history
+        .map((t) => `USER: ${t.user}\nASSISTANT: ${t.assistant}`)
+        .join("\n\n");
+      lines.push("", "### Conversation history", transcript);
+    }
+
     if (Object.keys(userCtx).length > 0) {
       lines.push("", "### Context", JSON.stringify(userCtx, null, 2));
     }
@@ -429,7 +444,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
 
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
-    "qc:result",  "repair:start",  "task:done", "stream:token",
+    "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
   ];
   const unsubs = EVENT_TYPES.map((type) =>
     runtime!.on(type, (e: OrcaEvent) => win?.webContents.send("orca-event", e)),
