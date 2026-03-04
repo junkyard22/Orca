@@ -1,5 +1,5 @@
 import { runPipeline } from "@clawde/miranda-core";
-import type { LLMAdapter, MirandaConfig, RunRecord } from "@clawde/miranda-core";
+import type { LLMAdapter, MirandaConfig, RunRecord, StageResult } from "@clawde/miranda-core";
 import type { OrcaLLMService } from "../types.js";
 
 // Walk Miranda's stage results to find the best completed text output.
@@ -7,8 +7,8 @@ const STAGE_PREFERENCE = ["rewrite", "answer", "plan"] as const;
 
 function extractText(record: RunRecord): string | undefined {
   for (const stageName of STAGE_PREFERENCE) {
-    const stage = record.stages.find((s) => s.stage === stageName && s.success);
-    if (stage?.finalOutput) return stage.finalOutput;
+    const stage = record.stages.find((s: StageResult) => s.stage === stageName && s.success);
+    if (stage?.finalOutput) return stage.finalOutput as string | undefined;
   }
   return undefined;
 }
