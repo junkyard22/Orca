@@ -94,6 +94,45 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.13)
 
+  packages/ext-docs:
+    dependencies:
+      '@clawde/orca-core':
+        specifier: workspace:*
+        version: link:../orca-core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.12.0
+        version: 22.19.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/ext-github:
+    dependencies:
+      '@clawde/orca-core':
+        specifier: workspace:*
+        version: link:../orca-core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.12.0
+        version: 22.19.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/ext-web:
+    dependencies:
+      '@clawde/orca-core':
+        specifier: workspace:*
+        version: link:../orca-core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.12.0
+        version: 22.19.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/maestro-core:
     devDependencies:
       '@types/node':
