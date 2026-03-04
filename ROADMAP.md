@@ -4,14 +4,14 @@
 
 | Package | Role | Status |
 |---|---|---|
-| benson-core | User-facing speaker — parses intent, formats replies | Thin stub. `parseIntent` is not implemented beyond a placeholder. |
-| orca-core | Runtime wiring — routes tasks through Maestro → Pappy → repair loop | Solid architecture. Clean dependency injection. Works. |
-| maestro-core | Orchestration — classifies tasks, scores risk, plan-gates, manages cancellation | Logic is real and good. But `run()` on `MaestroCore` just echoes the task back — it never actually calls an LLM to do work. |
-| miranda-core | LLM behavior enforcement — wraps prompts, validates outputs, repair loops, circuit breaker | Most complete package. Solid. Production-quality internal logic. |
-| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts on Maestro output | Works, but checks are shallow heuristics. Needs real signal. |
-| workbench-core | Tool execution (Runner interface) + diagnostics (Doctor) | `ShellRunner.execute()` throws "not yet migrated". Doctor is functional. |
-| apps/runner | CLI harness that wires everything together | Works end-to-end as a test harness. |
-| apps/desktop | Electron shell | Bare skeleton — renderer is a plain HTML file with no real UI. |
+| benson-core | User-facing speaker — parses intent, formats replies | ✅ `parseIntent` fully implemented — ambiguity detection, goal/constraint extraction, CLARIFY/TASK routing. |
+| orca-core | Runtime wiring — routes tasks through Maestro → Pappy → repair loop | ✅ Solid architecture. Now carries `OrcaToolService` in `OrcaRunCtx` for agent-loop mode. |
+| maestro-core | Orchestration — classifies tasks, scores risk, plan-gates, manages cancellation | ✅ `orchestrate()` solid. MaestroAdapter now runs a full agent loop when tools are available. |
+| miranda-core | LLM behavior enforcement — wraps prompts, validates outputs, repair loops, circuit breaker | ✅ Most complete package. Production-quality. |
+| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts on Maestro output | ⚠️ Works, but checks are shallow heuristics. Phase 4 target. |
+| workbench-core | Tool execution (Runner + tools) | ✅ ShellRunner done. **Phase 3 complete:** `ToolRegistry`, `readFileTool`, `writeFileTool`, `runCommandTool`, `listDirectoryTool`, `searchFilesTool` all implemented. |
+| apps/runner | CLI harness that wires everything together | ✅ Works end-to-end with full agent-loop tool calling. Tool registry + `OrcaToolService` wired. |
+| apps/desktop | Electron shell | ❌ Bare skeleton — renderer is a plain HTML file with no real UI. |
 
 The architecture is genuinely well-designed. The dependency graph is correct. The interfaces are clean. What's missing is the meat inside several of those interfaces.
 
@@ -41,70 +41,25 @@ Each "role" is a named model slot. Maestro's `RoleSelector` already handles rout
 
 ---
 
-## Phase 1 — Make the Core Actually Work
+## Phase 1 — Make the Core Actually Work ✅ COMPLETE
 
 **Goal:** A real end-to-end task executes and produces real output.
 
-### 1.1 — Implement MaestroAdapter properly
+### 1.1 — Implement MaestroAdapter properly ✅
 
-`apps/runner/src/adapters/maestroAdapter.ts` is the bridge between Orca's runtime and Maestro's logic. Right now `MaestroCore.run()` just returns the task description as output. You need:
+`apps/runner/src/adapters/maestroAdapter.ts` — fully implemented. Uses `RoleSelector`, loads role prompts via `getRolePrompt()`, calls `ctx.llm.complete()` through Miranda. When tools are available, runs the full agent loop instead of a single call.
 
-```typescript
-// What maestroAdapter needs to do:
-async run(task: OrcaTaskSpec, ctx: OrcaRunCtx): Promise<OrcaMaestroResult> {
-  // 1. Use RoleSelector to pick the right role based on task context
-  const roleResult = selectRole({ task: task.intent, ... }, availableRoles);
+### 1.2 — Build role system prompts ✅
 
-  // 2. Build a role-specific system prompt
-  const systemPrompt = buildSystemPromptForRole(roleResult.role);
+`maestro-core/src/prompts/rolePrompts.ts` — all 9 roles defined in `ROLE_PROMPTS` with a typed `getRolePrompt()` accessor.
 
-  // 3. Call ctx.llm.complete() — this goes through Miranda automatically
-  const response = await ctx.llm.complete(
-    `${systemPrompt}\n\nTask: ${task.intent}\nGoals: ${task.goals.join(', ')}`
-  );
+### 1.3 — Implement Benson.parseIntent() for real ✅
 
-  return {
-    outputText: response.text,
-    summary: `Completed via ${roleResult.role} role`,
-  };
-}
-```
+`benson-core/src/intent.ts` — ambiguity detection, goal/constraint extraction, returns correct `CLARIFY` / `TASK` discriminated union.
 
-This is the single most important missing piece. Without it, Orca produces no real output.
+### 1.4 — Implement ShellRunner.execute() ✅
 
-### 1.2 — Build role system prompts
-
-Each role needs a system prompt that defines its behavior. These become your "department head instructions":
-
-- **brain** — General reasoning, analysis, planning
-- **coder_strong** — Full implementation, architecture decisions, complex code
-- **coder_cheap** — Quick edits, small fixes, formatting, trivial changes
-- **reviewer** — Critique, identify problems, suggest improvements
-- **narrator** — Documentation, READMEs, user-facing writing
-- **planner_deep** — Structured multi-step plans with acceptance criteria
-- **debugger** — Root cause analysis, fix proposals for errors/failures
-- **reader** — Summarize large documents into actionable points
-- **vision** — Interpret images, diagrams, screenshots
-
-Store these in `maestro-core/src/prompts/` as typed constants. They're the personality of each department head.
-
-### 1.3 — Implement Benson.parseIntent() for real
-
-`benson-core/src/intent.ts` currently has a stub. It needs to:
-
-- Detect if the message is ambiguous → return `CLARIFY` with clarifying questions
-- Extract intent, goals, and constraints from clear messages → return `TASK` with a `TaskSpec`
-
-This doesn't need an LLM call — a good rule-based parser + a simple LLM call for intent extraction both work. Since Miranda is already wired in, use a lightweight LLM call here.
-
-### 1.4 — Implement ShellRunner.execute()
-
-`workbench-core/src/runner.ts` has `ShellRunner.execute()` throwing a "not yet migrated" error. This is the tool execution layer. Implement it using Node's `child_process.spawn` with proper:
-
-- stdout/stderr capture
-- timeout enforcement
-- exit code handling
-- working directory support
+`workbench-core/src/runner.ts` — `child_process.spawn` with stdout/stderr capture, SIGKILL timeout enforcement, exit code handling.
 
 ---
 
@@ -157,41 +112,45 @@ This is what lets the UI (and Doctor) answer "what subagents ran for this task?"
 
 ---
 
-## Phase 3 — Tool Integration
+## Phase 3 — Tool Integration ✅ 3.1–3.3 COMPLETE
 
 **Goal:** Agents can actually do things, not just generate text.
 
-Right now the LLM only produces text. Production means agents can write files, run commands, call APIs, read codebases.
+### 3.1 — Define the Tool Registry ✅
 
-### 3.1 — Define the Tool Registry
+`workbench-core/src/tools/types.ts` — `Tool`, `ToolResult`, `ToolRunCtx`, `ToolSchema` interfaces.
+`workbench-core/src/tools/registry.ts` — `ToolRegistry` class with `register()`, `get()`, `list()`, and `formatForPrompt()` (renders tool definitions as a prompt block for the LLM).
+`orca-core/src/types.ts` — `OrcaToolService` interface added. `OrcaRunCtx` and `OrcaRuntimeDeps` each accept an optional `tools` slot.
 
-```typescript
-// In workbench-core or orca-core
-export interface Tool {
-  name: string;
-  description: string;  // shown to the LLM
-  schema: JSONSchema;   // input schema
-  execute(input: unknown, ctx: OrcaRunCtx): Promise<ToolResult>;
-}
-```
+### 3.2 — Implement core tools ✅
 
-### 3.2 — Implement core tools first
+All five tools live in `workbench-core/src/tools/`:
 
-Start with the five tools that unlock 90% of use cases:
+- **read_file** (`readFileTool.ts`) — reads a file, workspace-relative paths supported
+- **write_file** (`writeFileTool.ts`) — writes content, creates missing parent directories
+- **run_command** (`runCommandTool.ts`) — shell execution via `child_process.spawn`, timeout + exit code handling
+- **list_directory** (`listDirectoryTool.ts`) — directory listing with file/dir type prefix
+- **search_files** (`searchFilesTool.ts`) — recursive file walk with text pattern matching, skips `node_modules`/`dist`/`.git`, glob filter support
 
-- **read_file** — read a file from the workspace
-- **write_file** — write/create a file
-- **run_command** — execute a shell command (use ShellRunner)
-- **list_directory** — list files in a directory
-- **search_files** — grep/search within the workspace
+Factory: `createCoreToolRegistry()` returns a `ToolRegistry` pre-loaded with all five.
 
-### 3.3 — Wire tools into Maestro's LLM calls
+### 3.3 — Wire tools into Maestro's LLM calls ✅
 
-Miranda already supports tool use via its pipeline. Pass the tool definitions into the LLM calls and handle `tool_use` responses — running the tool and feeding results back as `tool_result` in the conversation.
+`apps/runner/src/adapters/maestroAdapter.ts` — when `ctx.tools` is present, `run()` calls `runAgentLoop()` instead of a single LLM call.
 
-### 3.4 — Add the adapter pattern for tool extensions
+Agent loop protocol:
+- Tool definitions are appended to the system prompt via `tools.formatForPrompt()`
+- Model signals tool use with `<tool_call>{"tool": "NAME", ...args}</tool_call>` blocks
+- Loop parses calls, executes via `ctx.tools.execute()`, feeds back `<tool_result>` blocks
+- Continues until no tool calls remain (max 10 iterations)
+- All tool events collected into `OrcaMaestroResult.toolEvents`
 
-The existing adapter pattern in `orca-core/src/adapters/` is the right place. A `ToolAdapter` registers tools with the runtime. Third-party extensions implement this to add new tools without touching core.
+`apps/runner/src/adapters/toolService.ts` — `createToolService(registry, workspaceRoot)` bridges `ToolRegistry` → `OrcaToolService`.
+`apps/runner/src/index.ts` — `createCoreToolRegistry()` + `createToolService()` wired at startup; `WORKSPACE_ROOT` env var sets the working directory.
+
+### 3.4 — Add the adapter pattern for tool extensions ⬜
+
+The `OrcaExtension` interface (Phase 7) will formalize third-party tool registration. For now, custom tools can be added by calling `registry.register(myTool)` before `createToolService()` in the app shell.
 
 ---
 
@@ -335,11 +294,11 @@ A simple registry in `orca-core` that loads extensions at startup and makes thei
 
 | Timeline | Work |
 |---|---|
-| Week 1–2 | **Phase 1** entirely. Get real output flowing end-to-end. Foundation everything else builds on. |
-| Week 3 | **Phase 3.1–3.3** (core tools). File read/write and command execution make real tasks completable. |
-| Week 4 | **Phase 2.1–2.2** (basic subagents). Single-level subagent spawning unlocks a huge class of tasks. |
-| Week 5–6 | **Phase 5.1–5.3** (persistence). Without this, every session starts from scratch. |
-| Week 7–8 | **Phase 6** (real desktop UI). Something you can hand to a non-developer. |
+| ~~Week 1–2~~ | ~~**Phase 1** entirely.~~ ✅ **DONE** |
+| ~~Week 3~~ | ~~**Phase 3.1–3.3** (core tools).~~ ✅ **DONE** |
+| **Now** | **Phase 2.1–2.2** (basic subagents). Single-level subagent spawning unlocks a huge class of tasks. |
+| Week +2 | **Phase 5.1–5.3** (persistence). Without this, every session starts from scratch. |
+| Week +4 | **Phase 6** (real desktop UI). Something you can hand to a non-developer. |
 | Ongoing | **Phase 4** (Pappy QC) and **Phase 7** (extension system) in parallel with the above. |
 
 ---

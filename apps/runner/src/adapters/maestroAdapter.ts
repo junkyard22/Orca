@@ -13,6 +13,7 @@ import type {
   OrcaMaestroResult,
   OrcaRunCtx,
   OrcaTaskSpec,
+  OrcaToolService,
 } from "@clawde/orca-core";
 
 // ---------------------------------------------------------------------------
@@ -66,20 +67,35 @@ export function createMaestroAdapter(): MaestroPort {
       // 5. Build the full task prompt.
       const taskPrompt = buildTaskPrompt(task, role, isFallback);
 
-      // 6. Delegate to ctx.llm — the Miranda PLAN→ANSWER→CRITIQUE→REWRITE
-      //    pipeline. This is the ONLY model surface Maestro touches.
-      const { text } = await ctx.llm.complete(
-        `${systemPrompt}\n\n---\n\n${taskPrompt}`,
-        { maxTokens: 4096 },
-      );
+      // 6. Run with tools (agent loop) or without (single call).
+      let outputText: string;
+      let toolEvents: OrcaMaestroResult["toolEvents"] = [];
+
+      if (ctx.tools) {
+        // Agent-loop mode: model can call tools until it produces a final answer.
+        const result = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, ctx);
+        outputText = result.text;
+        toolEvents = result.toolEvents;
+      } else {
+        // Plain mode: single Miranda call, no tool calling.
+        const { text } = await ctx.llm.complete(
+          `${systemPrompt}\n\n---\n\n${taskPrompt}`,
+          { maxTokens: 4096 },
+        );
+        outputText = text;
+      }
 
       return {
-        outputText: text,
+        outputText,
+        toolEvents,
         summary: [
           `run_id=${orch.run_id}`,
           `role=${role}${isFallback ? "(fallback)" : ""}`,
           `type=${String(orch.classification.type)}`,
           `risk=${orch.risk.riskScore.toFixed(2)}`,
+          ...(toolEvents && toolEvents.length > 0
+            ? [`tools=${toolEvents.length}`]
+            : []),
         ].join(" "),
       };
     },
@@ -173,4 +189,117 @@ function buildTaskPrompt(task: OrcaTaskSpec, role: string, isFallback: boolean):
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Agent loop — allows the model to call tools in multiple turns until it
+// produces a final answer (no <tool_call> block in its response).
+//
+// Calling convention (taught to the model via ToolRegistry.formatForPrompt()):
+//
+//   Model output:                    We feed back:
+//   <tool_call>                      <tool_result tool="X" ok="true|false">
+//   {"tool": "X", "arg": "val"}      ...output or error text...
+//   </tool_call>                     </tool_result>
+//
+// The conversation grows with each iteration. Miranda sees the full context
+// on every call so it has complete history.
+// ---------------------------------------------------------------------------
+
+const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+
+interface ParsedCall {
+  tool: string;
+  input: Record<string, unknown>;
+}
+
+function parseToolCalls(text: string): ParsedCall[] {
+  const calls: ParsedCall[] = [];
+  // Reset lastIndex before each use since the regex has the /g flag.
+  TOOL_CALL_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = TOOL_CALL_RE.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]!) as Record<string, unknown>;
+      const { tool, ...input } = parsed;
+      if (typeof tool === "string" && tool) {
+        calls.push({ tool, input });
+      }
+    } catch {
+      // Ignore malformed JSON inside <tool_call>.
+    }
+  }
+  return calls;
+}
+
+function formatToolResult(tool: string, ok: boolean, output: string, error?: string): string {
+  const status = ok ? 'ok="true"' : 'ok="false"';
+  const body = ok ? output : (error ?? output ?? "unknown error");
+  return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
+}
+
+async function runAgentLoop(
+  systemPrompt: string,
+  taskPrompt: string,
+  tools: OrcaToolService,
+  ctx: OrcaRunCtx,
+): Promise<{
+  text: string;
+  toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]>;
+}> {
+  const MAX_ITERATIONS = 10;
+  const toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
+
+  // Full conversation grows with each turn so the model always has context.
+  let conversation =
+    `${systemPrompt}\n\n${tools.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
+
+  let lastText = "";
+
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const { text } = await ctx.llm.complete(conversation, { maxTokens: 4096 });
+    lastText = text;
+
+    const calls = parseToolCalls(text);
+
+    if (calls.length === 0) {
+      // No tool calls — model is done.
+      break;
+    }
+
+    // Append this assistant turn to the conversation.
+    conversation += `\n\nAssistant:\n${text}`;
+
+    // Execute each tool call and append results.
+    for (const call of calls) {
+      console.error(
+        `[MaestroAdapter] tool:call  name=${call.tool}  iteration=${i + 1}/${MAX_ITERATIONS}`,
+      );
+
+      const result = await tools.execute(call.tool, call.input);
+
+      toolEvents.push({
+        tool: call.tool,
+        ok: result.ok,
+        summary: result.ok
+          ? `${call.tool}: ok (${result.output.length} chars)`
+          : `${call.tool}: failed — ${result.error ?? "unknown"}`,
+        raw: call.input,
+      });
+
+      console.error(
+        `[MaestroAdapter] tool:result ok=${result.ok}  chars=${result.output.length}`,
+      );
+
+      conversation += formatToolResult(call.tool, result.ok, result.output, result.error);
+    }
+  }
+
+  // Strip any dangling <tool_call> blocks from the final response
+  // (can happen if the model starts a call but we hit MAX_ITERATIONS).
+  const cleanText = lastText
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+    .trim();
+
+  return { text: cleanText, toolEvents };
 }

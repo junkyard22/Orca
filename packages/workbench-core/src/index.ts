@@ -21,7 +21,7 @@ export {
   ShellRunner,
   RunnerRegistry,
   runnerRegistry,
-} from './runner';
+} from './runner.js';
 
 export type {
   ToolSpec,
@@ -29,37 +29,58 @@ export type {
   ExecutionResult,
   VerificationOutcome,
   Runner,
-} from './runner';
+} from './runner.js';
 
 export type {
   VerificationStatus,
   VerifiedToolResult,
-} from './verification';
+} from './verification.js';
 
 export {
   // Verification system
   createVerification,
   wrapToolResult,
   isVerifiedResult,
-} from './verification';
+} from './verification.js';
 
 export type {
   DiagnosticResult,
   DoctorReport,
-} from './doctor';
- 
+} from './doctor.js';
+
+// ---------------------------------------------------------------------------
+// Tool system — Phase 3
+// ---------------------------------------------------------------------------
+export type {
+  Tool,
+  ToolResult,
+  ToolRunCtx,
+  ToolSchema,
+  ToolParameterSchema,
+} from './tools/index.js';
+
+export {
+  ToolRegistry,
+  readFileTool,
+  writeFileTool,
+  runCommandTool,
+  listDirectoryTool,
+  searchFilesTool,
+  createCoreToolRegistry,
+} from './tools/index.js';
+
 export {
   // Doctor diagnostics (foundation layer)
   runDiagnostics,
-} from './doctor';
+} from './doctor.js';
 
 export type {
   RuntimeEvent,
-} from './events';
+} from './events.js';
 
 export {
   // Event system (runtime observability)
   EventBus,
   eventBus,
   createTimestamp,
-} from './events';
+} from './events.js';

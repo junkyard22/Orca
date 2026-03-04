@@ -57,9 +57,35 @@ export interface OrcaLLMService {
   ): Promise<{ text: string }>;
 }
 
+/**
+ * Abstract interface for tool execution — satisfied by workbench-core's
+ * ToolRegistry via createToolService() in the app shell.
+ *
+ * Kept independent of workbench-core types so orca-core stays generic.
+ * The concrete bridge lives in apps/runner/src/adapters/toolService.ts.
+ */
+export interface OrcaToolService {
+  /**
+   * Execute a named tool and return a plain result object.
+   * The agent loop in MaestroAdapter calls this after parsing <tool_call> blocks.
+   */
+  execute(
+    name: string,
+    input: Record<string, unknown>,
+  ): Promise<{ ok: boolean; output: string; error?: string }>;
+
+  /**
+   * Returns a prompt-ready block describing every available tool.
+   * Injected into the LLM system prompt before each agent run.
+   */
+  formatForPrompt(): string;
+}
+
 export interface OrcaRunCtx {
   llm: OrcaLLMService;
   runId: string;
+  /** Optional — when present, Maestro runs in agent-loop mode with tool calling. */
+  tools?: OrcaToolService;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +117,8 @@ export interface OrcaRuntimeDeps {
   maestro: MaestroPort;
   pappy: PappyPort;
   llm: OrcaLLMService;
+  /** When supplied, ctx.tools is populated and the agent loop activates. */
+  tools?: OrcaToolService;
   /** Maximum repair passes before giving up on a FAIL verdict. Default: 2 */
   maxRepairPasses?: number;
 }

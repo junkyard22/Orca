@@ -25,8 +25,10 @@ import {
 } from "@clawde/orca-core";
 import type { OrcaRuntime, OrcaEvent, OrcaEventType } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
+import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 
 import { createMaestroAdapter } from "./adapters/maestroAdapter.js";
+import { createToolService } from "./adapters/toolService.js";
 
 // ---------------------------------------------------------------------------
 // Type-narrowing helper
@@ -93,7 +95,14 @@ async function main(): Promise<void> {
   const pappy = createPappyPort();
   const maestro = createMaestroAdapter();
 
-  const runtime = createOrcaRuntime({ maestro, pappy, llm });
+  // Tool registry — workspace root defaults to CWD but can be overridden
+  // via the WORKSPACE_ROOT env var (useful when the agent should operate on
+  // a specific project rather than wherever the runner process starts).
+  const workspaceRoot = process.env["WORKSPACE_ROOT"]?.trim() ?? process.cwd();
+  const toolRegistry = createCoreToolRegistry();
+  const tools = createToolService(toolRegistry, workspaceRoot);
+
+  const runtime = createOrcaRuntime({ maestro, pappy, llm, tools });
 
   // Benson receives executeTask via injection — orca-core never depends on Benson.
   const benson = createBenson({

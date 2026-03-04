@@ -39,11 +39,11 @@ function generateRunId(): string {
  *   passes per task?", "which specific issues were resolved?"
  */
 export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
-  const { maestro, pappy, llm, maxRepairPasses = 2 } = deps;
+  const { maestro, pappy, llm, maxRepairPasses = 2, tools } = deps;
   const emitter = new OrcaEmitter();
 
   async function executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult> {
-    const ctx: OrcaRunCtx = { llm, runId: generateRunId() };
+    const ctx: OrcaRunCtx = { llm, runId: generateRunId(), tools };
     const taskId = ctx.runId; // stable across all passes for this task
 
     emitter.emit({ type: "task:start", taskId, intent: taskSpec.intent });

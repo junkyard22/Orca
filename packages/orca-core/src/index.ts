@@ -12,6 +12,7 @@ export type {
   OrcaTaskSpec,
   OrcaExecutionResult,
   OrcaLLMService,
+  OrcaToolService,
   OrcaRunCtx,
   OrcaMaestroResult,
   MaestroPort,
