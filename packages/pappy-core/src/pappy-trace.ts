@@ -19,7 +19,7 @@
  *     | node --experimental-strip-types packages/pappy-core/src/pappy-trace.ts -
  */
 
-import type { PappyInput, Issue, ReceiptEntry, AcceptanceCriterion, Claim } from "./types.js";
+import type { PappyInput, PappyResult, Issue, ReceiptEntry, AcceptanceCriterion, Claim } from "./types.js";
 import { runSafetyChecks }       from "./checks/safety.js";
 import { runToolResultChecks }   from "./checks/toolResults.js";
 import { runCompletenessChecks } from "./checks/completeness.js";
@@ -90,7 +90,7 @@ function printIssue(issue: Issue, indent = "   ") {
 
 // ── Main tracer ───────────────────────────────────────────────────────────────
 
-export function traceEvaluation(input: PappyInput): void {
+export function traceEvaluation(input: PappyInput): PappyResult {
   // ── Header ────────────────────────────────────────────────────────────────
   console.log(hr("═"));
   console.log(`${C.bold}${C.magenta}PAPPY TRACE${C.reset}  ${dim(new Date().toISOString())}`);
@@ -285,6 +285,7 @@ export function traceEvaluation(input: PappyInput): void {
   }
 
   console.log(`\n${hr("═")}\n`);
+  return fullResult;
 }
 
 function buildConfBar(conf: number): string {

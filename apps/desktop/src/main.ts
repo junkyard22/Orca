@@ -7,7 +7,7 @@ import type { LLMAdapter, ModelSpec } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createMirandaLLMService,
-  createDebugPappyPort,
+  createLoggingPappyPort,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -284,7 +284,7 @@ function initOrca(s: OrcaSettings): string | null {
         },
       }),
     );
-    const pappy   = createDebugPappyPort();
+    const pappy   = createLoggingPappyPort("orca-pappy.log");
     const maestro = buildMaestroAdapter();
     runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: s.maxRepairPasses });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
