@@ -28,11 +28,14 @@ function detectExpectedTools(
     expected.push({ tool: "read_file", reason: "Task involves reading file contents" });
   }
 
-  // File write — broad patterns are fine here because we also accept filesChanged
+  // File write — require unambiguously file-centric phrasing.
+  // "write a function" / "implement a class" / "create a method" must NOT match.
+  // We look for: explicit file noun OR save/persist/generate phrasing with a file target.
   if (
-    /\b(write|create|save|generate|implement|add|update)\b.*\b(file|function|class|component|module|test)\b|\b(file|function|class|component|module|test)\b.*\b(write|create|implement|add|update)\b/.test(
-      lower,
-    )
+    /\b(write|save|output)\b.{0,30}\b(file|files|module|script|config|json|yaml|csv|log)\b/.test(lower) ||
+    /\bcreate (a |the |an )?(new )?(file|module|script|config)\b/.test(lower) ||
+    /\b(save|persist|write) (to|into) (a |the |disk|file)/.test(lower) ||
+    /\bgenerate (a |the |an )?(file|report|output file)\b/.test(lower)
   ) {
     expected.push({
       tool: "write_file",

@@ -173,6 +173,26 @@ function renderContent(raw) {
   return html;
 }
 
+/**
+ * Strip internal Miranda pipeline stage headers so users only see the
+ * polished response content. Called before renderContent on all replies.
+ */
+function cleanPipelineOutput(raw) {
+  // Regex literals for pipeline stage/section headers.
+  // Using literals avoids the double-escaping trap with new RegExp().
+  const HASH_HEADER  = /^#{1,3}\s*(Plan(\s*\(summary\))?|Answer|Critique|Rewrite|Next\s*steps?|Edge\s*cases?(\s*[&]\s*checks)?|Considerations?|Summary|Approach|Analysis|Steps|Output|Response|Result|Explanation)\s*$/i;
+  const BOLD_HEADER  = /^\*\*(Plan(\s*\(summary\))?|Answer|Critique|Rewrite|Next\s*steps?|Edge\s*cases?(\s*[&]\s*checks)?|Considerations?|Summary|Approach|Analysis|Steps|Output|Response|Result|Explanation):?\*\*:?\s*$/i;
+
+  const lines = raw.split("\n");
+  const cleaned = lines.filter(line => {
+    const t = line.trim();
+    if (HASH_HEADER.test(t)) return false;
+    if (BOLD_HEADER.test(t)) return false;
+    return true;
+  });
+  return cleaned.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 // ── Message builders ──────────────────────────────────────────────────────
 
 function appendMsg(role, text) {
@@ -329,15 +349,20 @@ async function sendMessage() {
     if (streamBubble) {
       // Attach role badge before finalising (element still accessible here).
       if (currentRole) attachRoleBadge(streamBubble, currentRole);
-      // Replace raw stream text with rendered markdown.
+      // Prefer the server-processed reply text (extractText picks REWRITE > ANSWER
+      // and strips pipeline scaffolding).  Fall back to raw streamText only if the
+      // server result is unavailable (e.g. error path).
+      const cleanedReply = result.ok && result.reply?.text
+        ? result.reply.text
+        : streamText;
       const bubbleEl = streamBubble.querySelector(".stream-content");
-      if (bubbleEl && streamText) bubbleEl.innerHTML = renderContent(streamText);
+      if (bubbleEl && cleanedReply) bubbleEl.innerHTML = renderContent(cleanPipelineOutput(cleanedReply));
       streamBubble.classList.remove("streaming");
       streamBubble = null;
       streamText   = "";
     } else if (result.ok) {
       const replyText = result.reply?.text ?? result.reply?.outputText ?? JSON.stringify(result.reply);
-      const msgDiv = appendMsg("orca", replyText);
+      const msgDiv = appendMsg("orca", cleanPipelineOutput(replyText));
       if (currentRole) attachRoleBadge(msgDiv, currentRole);
     } else {
       appendSys(result.error ?? "Unknown error.", "error");

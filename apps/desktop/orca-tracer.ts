@@ -2,12 +2,15 @@
  * orca-tracer.ts — End-to-end prompt tracer
  *
  * Wires up Benson → Orca Runtime → Maestro Adapter → Miranda Pipeline
- * with a mock LLMAdapter (low-level) so Miranda's real 4-stage pipeline
- * (PLAN→ANSWER→CRITIQUE→REWRITE) runs and all events fire naturally.
+ * using REAL API keys loaded from the app's settings.json (or .env fallback).
+ * Miranda's 4-stage pipeline (PLAN→ANSWER→CRITIQUE→REWRITE) runs live and
+ * every adapter call is logged with stage, model, token counts, and latency.
  *
  * Run:  node --experimental-strip-types --no-warnings apps/desktop/orca-tracer.ts
  */
 
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { createBenson } from "@clawde/benson-core";
 import {
   createOrcaRuntime,
@@ -24,13 +27,64 @@ import type {
   OrcaTaskSpec,
 } from "@clawde/orca-core";
 import {
+  createMaestroCore,
+  selectRole,
+  getRolePrompt,
+} from "maestro-core";
+import type {
+  RoleName,
+  OptionalRoleName,
+} from "maestro-core";
+import {
   createDefaultConfig,
+  OpenAICompatAdapter,
+  OllamaAdapter,
 } from "@clawde/miranda-core";
 import type {
   LLMAdapter,
   LLMRequest,
   LLMResponse,
 } from "@clawde/miranda-core";
+
+// ── Load real settings ─────────────────────────────────────────────────────
+
+const SETTINGS_PATH = join(
+  process.env["APPDATA"] ?? process.env["HOME"] ?? "",
+  "@clawde", "desktop", "orca-settings.json",
+);
+
+interface SettingsProvider { type: string; baseUrl: string; apiKey: string; }
+interface SettingsRole    { providerId: string; model: string; }
+interface Settings {
+  providers?: SettingsProvider & { id: string }[];
+  roles?: Record<string, SettingsRole>;
+  budgetUsd?: number;
+  verbose?: boolean;
+}
+
+function loadRealAdapter(): { adapter: LLMAdapter; model: string; budgetUsd: number } {
+  // Try app settings first
+  if (existsSync(SETTINGS_PATH)) {
+    const s = JSON.parse(readFileSync(SETTINGS_PATH, "utf-8")) as Settings;
+    const brain = s.roles?.["brain"];
+    const provider = (s.providers ?? []).find((p: any) => p.id === brain?.providerId) as any;
+    if (brain && provider) {
+      const model = brain.model;
+      const adapter = provider.type === "ollama"
+        ? new OllamaAdapter({ baseUrl: provider.baseUrl || "http://localhost:11434", defaultModel: model })
+        : new OpenAICompatAdapter({ baseUrl: provider.baseUrl, apiKey: provider.apiKey || undefined, defaultModel: model });
+      return { adapter, model, budgetUsd: s.budgetUsd ?? 0.5 };
+    }
+  }
+  // Fallback: OPENROUTER_API_KEY env var
+  const apiKey = process.env["OPENROUTER_API_KEY"]?.trim();
+  if (!apiKey) throw new Error("No settings.json found and OPENROUTER_API_KEY not set.\nRun the Orca app first to configure a provider, or set OPENROUTER_API_KEY.");
+  return {
+    adapter: new OpenAICompatAdapter({ baseUrl: "https://openrouter.ai/api/v1", apiKey, defaultModel: "qwen/qwen-2.5-72b-instruct" }),
+    model:   "qwen/qwen-2.5-72b-instruct",
+    budgetUsd: 0.5,
+  };
+}
 
 // ── Pretty logging ─────────────────────────────────────────────────────────
 
@@ -55,19 +109,21 @@ function trace(layer: string, color: string, msg: string) {
   console.log(`${ts()} ${color}[${layer.padEnd(10)}]${C.reset} ${msg}`);
 }
 
-// ── Mock LLM Adapter ──────────────────────────────────────────────────────
-// This implements the low-level LLMAdapter interface that Miranda calls
-// directly. Because it sits beneath Miranda, the real PLAN→ANSWER→CRITIQUE→
-// REWRITE pipeline runs, onStreamReset fires, and everything works.
+// ── Tracing wrapper around the real adapter ─────────────────────────────
+// Wraps the live OpenAICompatAdapter so every call is logged with stage,
+// model, latency, and token usage — without replacing the real network calls.
 
 let adapterCallCount = 0;
 
-class TracingMockAdapter implements LLMAdapter {
-  readonly name = "tracer-mock";
+class TracingLiveAdapter implements LLMAdapter {
+  private inner: LLMAdapter;
+  constructor(inner: LLMAdapter) { this.inner = inner; }
+  get name() { return this.inner.name; }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
     adapterCallCount++;
     const callNum = adapterCallCount;
+    const t = Date.now();
 
     // Detect stage from the system prompt content
     const sys = request.messages.find(m => m.role === "system")?.content ?? "";
@@ -88,80 +144,159 @@ class TracingMockAdapter implements LLMAdapter {
       trace("Adapter", C.green, `  ✓ Conversation history detected in prompt!`);
     }
 
-    // Generate stage-appropriate mock response
-    let content: string;
-
-    if (stage === "PLAN") {
-      content = JSON.stringify({
-        restatement: "The user wants to know capabilities.",
-        assumptions: ["General inquiry"],
-        constraints: [],
-        approach_steps: ["List capabilities", "Explain architecture"],
-        risks: [],
-        questions: [],
-      });
-    } else if (stage === "CRITIQUE") {
-      content = JSON.stringify({
-        verdict: "PASS",
-        issues: [],
-        suggestions: ["Could add more detail."],
-      });
-    } else {
-      // ANSWER or REWRITE — produce markdown with required headings
-      const tag = stage === "REWRITE" ? " [rewritten]" : "";
-      content = [
-        `## Plan (summary)`,
-        `Analyzing capabilities.${tag}`,
-        ``,
-        `## Answer`,
-        `Orca is an AI orchestration system with:${tag}`,
-        `- **Benson**: Conversation manager`,
-        `- **Maestro**: Task orchestrator`,
-        `- **Miranda**: LLM pipeline (PLAN→ANSWER→CRITIQUE→REWRITE)`,
-        `- **Pappy**: Quality control`,
-        ``,
-        `## Edge cases & checks`,
-        `General inquiry — no edge cases.${tag}`,
-        ``,
-        `## Next steps`,
-        `Try a specific task.${tag}`,
-      ].join("\n");
-    }
-
-    trace("Adapter", C.magenta, `  → Response: ${content.length} chars`);
-
-    return {
-      content,
-      model: request.model,
-      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
-      durationMs: 10,
-    };
+    // Hit the real API
+    trace("Adapter", C.magenta, `  → calling API...`);
+    const response = await this.inner.complete(request);
+    const ms = Date.now() - t;
+    trace("Adapter", C.magenta,
+      `  ← ${ms}ms  ${response.usage?.totalTokens ?? "?"}tok` +
+      `  (in=${response.usage?.promptTokens ?? "?"} out=${response.usage?.completionTokens ?? "?"})` +
+      `  ${response.content.length} chars`);
+    const preview = response.content.slice(0, 120).replace(/\n/g, "\\n");
+    trace("Adapter", C.dim, `  content[0..120]: "${preview}…"`);
+    return response;
   }
 
   async stream(request: LLMRequest, onToken: (chunk: string) => void): Promise<LLMResponse> {
-    // Call complete() to get the response, then simulate streaming
-    const response = await this.complete(request);
+    adapterCallCount++;
+    const callNum = adapterCallCount;
+    const t = Date.now();
+    const sys = request.messages.find(m => m.role === "system")?.content ?? "";
+    let stage = "?";
+    if (sys.includes("structured plan"))  stage = "PLAN";
+    else if (sys.includes("Plan output")) stage = "ANSWER";
+    else if (sys.includes("Critique"))    stage = "CRITIQUE";
+    else if (sys.includes("Rewrite"))     stage = "REWRITE";
+    trace("Adapter", C.magenta, `Call #${callNum}  stage=${stage} [stream]  model=${request.model}`);
 
-    // Emit tokens in chunks
-    const chunks = response.content.match(/.{1,30}/g) ?? [response.content];
-    trace("Adapter", C.magenta, `  Streaming ${chunks.length} chunks...`);
-    for (const chunk of chunks) {
+    let tokenCount = 0;
+    const response = await this.inner.stream(request, (chunk) => {
+      tokenCount++;
       onToken(chunk);
-    }
-
+    });
+    const ms = Date.now() - t;
+    trace("Adapter", C.magenta, `  ← ${ms}ms  ${tokenCount} chunks  ${response.usage?.totalTokens ?? "?"}tok`);
     return response;
   }
 }
 
+// ── Decision logger ───────────────────────────────────────────────────────
+// Prints a highlighted Decision / Reason pair to the trace output.
+
+function decision(desc: string, reason: string) {
+  console.log(
+    `${ts()} ${C.yellow}[Decision   ]${C.reset} ${C.white}${desc}${C.reset}`,
+  );
+  console.log(
+    `${"".padStart(13)} ${C.dim}Reason: ${reason}${C.reset}`,
+  );
+}
+
+// ── Core-role heuristic (mirrors main.ts pickCoreRole) ────────────────────
+
+type CoreRoleName = "brain" | "coder_strong" | "coder_cheap" | "reviewer" | "narrator" | "utility";
+
+function pickCoreRole(task: OrcaTaskSpec): { role: CoreRoleName; reason: string } {
+  if (task.intent === "repair") return { role: "coder_strong", reason: "Task intent is repair" };
+
+  const msg = task.originalUserMessage.toLowerCase();
+
+  if (/\b(implement|build|create|add feature|write code|develop)\b/.test(msg))
+    return { role: "coder_strong", reason: `Task contains code-generation verb (implement/build/create/develop)` };
+
+  if (/\b(rename|reformat|fix typo|small (fix|change|edit)|update import|add field)\b/.test(msg))
+    return { role: "coder_cheap", reason: "Task is a small/trivial edit" };
+
+  if (/\b(review|audit|critique|check for (bugs|issues|problems)|is this (correct|right|good))\b/.test(msg))
+    return { role: "reviewer", reason: "Task requests review or audit" };
+
+  if (/\b(document|write (a |the )?(readme|docs?|comment|jsdoc|tsdoc)|explain (to others|in plain))\b/.test(msg))
+    return { role: "narrator", reason: "Task requests documentation or explanation" };
+
+  return { role: "brain", reason: "No specialised trigger matched — default reasoning role" };
+}
+
+// ── Optional-role trigger reasons (mirrors roleSelector.ts logic) ─────────
+
+const ALL_OPTIONAL_ROLES = new Set<OptionalRoleName>(["planner_deep", "debugger", "reader", "vision"]);
+
+function deriveRoleReason(
+  role: RoleName,
+  isFallback: boolean,
+  coreReason: string,
+  ctx: { hasImages?: boolean; errorOutput?: string; textLength?: number; fileCount?: number; isRisky?: boolean },
+): string {
+  if (isFallback) return `Preferred role not configured — fell back to ${role}`;
+  if (role === "vision")       return "User input contains images";
+  if (role === "debugger")     return "Error output detected in context (compile/test/lint failure)";
+  if (role === "reader")       return `Large text input (${ctx.textLength ?? "?"} chars > 2000)`;
+  if (role === "planner_deep") {
+    if (ctx.isRisky)           return `High-risk change detected (multi-file, refactor, or deep-plan flag)`;
+    return "Task classified as risky or deep-plan requested";
+  }
+  return coreReason;
+}
+
 // ── Tracing Maestro Adapter ────────────────────────────────────────────────
-// Mirrors the real buildMaestroAdapter() but logs handoffs.
+// Mirrors the real buildMaestroAdapter() — includes full role-selection
+// and task-classification logic so all decisions show in the trace.
 
 function createTracingMaestro(): MaestroPort {
+  const maestroCore = createMaestroCore();
+
   return {
     async run(task: OrcaTaskSpec, ctx: OrcaRunCtx): Promise<OrcaMaestroResult> {
       trace("Maestro", C.cyan, `═══ Received task: intent="${task.intent}" ═══`);
       trace("Maestro", C.cyan, `  message: "${task.originalUserMessage}"`);
       trace("Maestro", C.cyan, `  goals: [${task.goals.map(g => `"${g}"`).join(", ")}]`);
+
+      // ── Task classification ──────────────────────────────────────────────
+      const orch = maestroCore.orchestrate(task.originalUserMessage);
+      const { type, estimatedImpact, multiStep } = orch.classification;
+      const { riskScore, requiresPlan } = orch.risk;
+
+      decision(
+        `Task classified as ${type}`,
+        `Heuristic pattern match on "${task.originalUserMessage.slice(0, 60)}" ` +
+        `| impact=${estimatedImpact.toFixed(2)} multiStep=${multiStep}`,
+      );
+      decision(
+        `Risk score: ${riskScore.toFixed(2)} — plan gate ${requiresPlan ? "REQUIRED" : "not required"}`,
+        `Risk scorer weighs task type (${type}), impact (${estimatedImpact.toFixed(2)}), and multi-step flag`,
+      );
+
+      // ── Role selection ───────────────────────────────────────────────────
+      const taskCtx = task.context ?? {};
+      const roleSelectorCtx = {
+        task:                task.originalUserMessage,
+        hasImages:           Boolean(taskCtx["hasImages"]),
+        errorOutput:         typeof taskCtx["errorOutput"] === "string" ? taskCtx["errorOutput"] as string : undefined,
+        textLength:          task.originalUserMessage.length,
+        fileCount:           typeof taskCtx["fileCount"] === "number" ? taskCtx["fileCount"] as number : undefined,
+        isDeepPlanRequested: typeof taskCtx["deepPlan"] === "boolean" ? taskCtx["deepPlan"] as boolean : undefined,
+        filePath:            typeof taskCtx["filePath"] === "string" ? taskCtx["filePath"] as string : undefined,
+      };
+
+      const { role: coreRole, reason: coreReason } = pickCoreRole(task);
+      const { role, isFallback, warning } = selectRole(roleSelectorCtx, ALL_OPTIONAL_ROLES, coreRole);
+
+      const isRisky = riskScore > 0.5 || requiresPlan || Boolean(roleSelectorCtx.isDeepPlanRequested);
+      const roleReason = deriveRoleReason(role as RoleName, isFallback, coreReason, {
+        hasImages:   roleSelectorCtx.hasImages,
+        errorOutput: roleSelectorCtx.errorOutput,
+        textLength:  roleSelectorCtx.textLength,
+        fileCount:   roleSelectorCtx.fileCount,
+        isRisky,
+      });
+
+      decision(
+        `Role selected: ${role}${isFallback ? " (fallback)" : ""}`,
+        roleReason,
+      );
+
+      if (warning) {
+        trace("Maestro", C.yellow, `  ⚠ Role warning: ${warning}`);
+      }
 
       // Check conversation history
       const history = task.context?.["conversationHistory"] as Array<{user: string; assistant: string}> | undefined;
@@ -175,14 +310,14 @@ function createTracingMaestro(): MaestroPort {
         trace("Maestro", C.yellow, `  ⚠ No conversationHistory (expected on turn 1)`);
       }
 
-      // Build prompt like real adapter does
+      // Build prompt (same as real adapter)
+      const systemPrompt = getRolePrompt(role as RoleName);
       const lines: string[] = [
-        `## Task\nRole: **brain**`,
+        `## Task\nRole: **${role}**${isFallback ? " (fallback — preferred role unavailable)" : ""}`,
         ``, `### Request`, task.originalUserMessage,
         ``, `### Goals`, ...task.goals.map(g => `- ${g}`),
       ];
 
-      // Format history as transcript (mirroring the real adapter fix)
       if (history?.length) {
         const transcript = history
           .map(t => `USER: ${t.user}\nASSISTANT: ${t.assistant}`)
@@ -190,14 +325,15 @@ function createTracingMaestro(): MaestroPort {
         lines.push("", "### Conversation history", transcript);
       }
 
-      const prompt = lines.join("\n");
-      trace("Maestro", C.cyan, `  Built ${prompt.length}-char prompt → calling ctx.llm.complete()...`);
+      const taskPrompt = lines.join("\n");
+      const fullPrompt = `${systemPrompt}\n\n---\n\n${taskPrompt}`;
+      trace("Maestro", C.cyan, `  Built ${fullPrompt.length}-char prompt (${systemPrompt.length} sys + ${taskPrompt.length} task) → calling ctx.llm.complete()...`);
 
       // Track stream events
       let tokenCount = 0;
       let resetCount = 0;
 
-      const { text } = await ctx.llm.complete(prompt, {
+      const { text } = await ctx.llm.complete(fullPrompt, {
         maxTokens: 4096,
         onToken: ctx.emit
           ? (chunk: string) => {
@@ -217,7 +353,10 @@ function createTracingMaestro(): MaestroPort {
       trace("Maestro", C.cyan, `  LLM returned ${text.length} chars  |  ${tokenCount} stream tokens  |  ${resetCount} resets`);
       trace("Maestro", C.dim, `  Final text[0..120]: "${text.slice(0, 120).replace(/\n/g, "\\n")}…"`);
 
-      return { outputText: text };
+      return {
+        outputText: text,
+        summary: `role=${role}${isFallback ? "(fallback)" : ""} type=${type} risk=${riskScore.toFixed(2)}`,
+      };
     },
   };
 }
@@ -226,15 +365,17 @@ function createTracingMaestro(): MaestroPort {
 
 async function main() {
   console.log(`\n${"═".repeat(72)}`);
-  console.log(`  ORCA PIPELINE TRACER — full end-to-end prompt flow`);
+  console.log(`  ORCA PIPELINE TRACER — live API run`);
   console.log(`${"═".repeat(72)}\n`);
 
-  // 1. Create components with real Miranda pipeline + mock adapter
-  trace("Init", C.blue, "Creating mock LLM adapter (low-level)...");
-  const adapter = new TracingMockAdapter();
+  // 1. Load real provider settings and wrap with tracing
+  trace("Init", C.blue, `Loading settings from: ${SETTINGS_PATH}`);
+  const { adapter: rawAdapter, model, budgetUsd } = loadRealAdapter();
+  trace("Init", C.blue, `Using model: ${C.cyan}${model}${C.reset}  budget: $${budgetUsd}`);
+  const adapter = new TracingLiveAdapter(rawAdapter);
 
   trace("Init", C.blue, "Creating Miranda LLM service (real pipeline)...");
-  const config = createDefaultConfig({ verbose: false, budgetUsd: 10.0, logPath: "/dev/null" });
+  const config = createDefaultConfig({ verbose: true, budgetUsd, logPath: "orca-tracer.log" });
   const llm = createMirandaLLMService(adapter, config);
 
   trace("Init", C.blue, "Creating Pappy QC port (debug trace enabled)...");
@@ -256,8 +397,36 @@ async function main() {
   const unsubs = eventTypes.map(type =>
     runtime.on(type, (e: OrcaEvent) => {
       events.push(e);
-      if (e.type !== "stream:token") {
-        trace("Event", C.green, `${e.type} → ${JSON.stringify(e)}`);
+      if (e.type === "stream:token") return;  // too noisy
+
+      trace("Event", C.green, `${e.type} → ${JSON.stringify(e)}`);
+
+      // Print a highlighted Decision line for key routing decisions
+      if (e.type === "qc:result") {
+        const ev = e as OrcaEvent & { verdict?: string; issueCount?: number; attempt?: number; isRepair?: boolean };
+        const verdict = ev.verdict ?? "?";
+        const issues  = ev.issueCount ?? 0;
+        if (verdict === "PASS" || verdict === "WARN") {
+          decision(
+            `QC verdict: ${verdict} — output accepted`,
+            issues === 0
+              ? "No issues found by Pappy"
+              : `${issues} minor issue(s) found but below failure threshold`,
+          );
+        } else {
+          decision(
+            `QC verdict: FAIL — triggering repair loop`,
+            `Pappy found ${issues} issue(s) that require correction`,
+          );
+        }
+      }
+
+      if (e.type === "repair:start") {
+        const ev = e as OrcaEvent & { pass?: number; maxPasses?: number };
+        decision(
+          `Repair pass ${ev.pass ?? "?"}/${ev.maxPasses ?? "?"} started`,
+          `Previous attempt failed Pappy QC — re-running task as intent:repair with coder_strong role`,
+        );
       }
     })
   );

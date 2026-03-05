@@ -27,6 +27,7 @@ const shared = {
     "maestro-core":         resolve(PACKAGES, "maestro-core", "src", "index.ts"),
   },
   logLevel: "warning",
+  logOverride: { "empty-import-meta": "silent" },
 };
 
 await Promise.all([

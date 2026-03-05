@@ -1,186 +1,263 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self'">
-  <title>Orca</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-<div id="app">
-
-  <!-- ── Title bar ─────────────────────────────────────────────────── -->
-  <div id="titlebar">
-    <div class="brand">
-      <div class="brand-dot"></div>
-      <span class="brand-name">Orca</span>
-    </div>
-    <div class="win-controls">
-      <button class="win-btn" id="btn-settings" title="Settings">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.75 2.75l1.06 1.06M10.19 10.19l1.06 1.06M2.75 11.25l1.06-1.06M10.19 3.81l1.06-1.06"
-                stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-      </button>
-      <button class="win-btn" id="btn-minimize" title="Minimize">
-        <svg width="11" height="2" viewBox="0 0 11 2" fill="none">
-          <path d="M1 1h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-        </svg>
-      </button>
-      <button class="win-btn close" id="btn-close" title="Close">
-        <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-          <path d="M1 1l9 9M10 1L1 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-        </svg>
-      </button>
-    </div>
-  </div>
-
-  <!-- ── Content area ───────────────────────────────────────────────── -->
-  <div id="content">
-
-    <!-- Chat view -->
-    <div id="chat-view">
-      <!-- Welcome (shown when chat is empty) -->
-      <div id="welcome">
-        <div class="welcome-glyph">
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-            <circle cx="24" cy="24" r="22" stroke="#10b981" stroke-width="2"/>
-            <path d="M13 28c2-4 5-7 11-7s9 3 11 7" stroke="#10b981" stroke-width="2.2"
-                  stroke-linecap="round"/>
-            <circle cx="18" cy="20" r="2.5" fill="#10b981"/>
-            <circle cx="30" cy="20" r="2.5" fill="#10b981"/>
-          </svg>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>Orca</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- ── Title bar ─────────────────────────────────────────────────── -->
+      <div id="titlebar">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <span class="brand-name">Orca</span>
         </div>
-        <p class="welcome-title">How can Orca help?</p>
-        <p class="welcome-sub">Plan, generate, and quality-check — all in one pass.</p>
+        <div class="win-controls">
+          <button class="win-btn" id="btn-settings" title="Settings">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <circle
+                cx="7"
+                cy="7"
+                r="2"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+              <path
+                d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.75 2.75l1.06 1.06M10.19 10.19l1.06 1.06M2.75 11.25l1.06-1.06M10.19 3.81l1.06-1.06"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button class="win-btn" id="btn-minimize" title="Minimize">
+            <svg width="11" height="2" viewBox="0 0 11 2" fill="none">
+              <path
+                d="M1 1h9"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button class="win-btn close" id="btn-close" title="Close">
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+              <path
+                d="M1 1l9 9M10 1L1 10"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <!-- Message feed -->
-      <div id="messages"></div>
-    </div>
-
-    <!-- Settings view -->
-    <div id="settings-view">
-      <div class="settings-header">
-        <button class="settings-back" id="btn-settings-back">
-          <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
-            <path d="M6 1L1 6l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Back
-        </button>
-        <span class="settings-title">Settings</span>
-      </div>
-
-      <div class="settings-body">
-
-        <!-- Providers ─────────────────────────────────────────────── -->
-        <div class="settings-section">
-          <div class="settings-section-header">
-            <span class="settings-section-title">Providers</span>
-            <button class="btn-sm-add" id="btn-add-provider" type="button">+ Add</button>
-          </div>
-          <p class="setting-hint">Define API sources. Each role is assigned to one of these.</p>
-          <div id="providers-list"></div>
-        </div>
-
-        <!-- Core Roles ──────────────────────────────────────────────── -->
-        <div class="settings-section">
-          <div class="settings-section-header">
-            <span class="settings-section-title">Core Roles</span>
-          </div>
-          <p class="setting-hint"><strong style="color:var(--text)">Brain</strong> drives all current LLM calls. Others are routed in future builds.</p>
-          <div id="roles-core-list" class="roles-list"></div>
-        </div>
-
-        <!-- Optional Roles ──────────────────────────────────────────── -->
-        <div class="settings-section">
-          <div class="settings-section-header">
-            <span class="settings-section-title">Optional Roles</span>
-          </div>
-          <p class="setting-hint">Auto-selected by context. Falls back to a core role if unset — hover role name for details.</p>
-          <div id="roles-optional-list" class="roles-list"></div>
-        </div>
-
-        <!-- General ─────────────────────────────────────────────────── -->
-        <div class="settings-section">
-          <div class="settings-section-header">
-            <span class="settings-section-title">General</span>
-          </div>
-          <div class="setting-group">
-            <label class="setting-label" for="set-budget">Budget per request (USD)</label>
-            <p class="setting-hint">Miranda stops spending when this limit is reached.</p>
-            <input type="number" id="set-budget" class="setting-input setting-input--sm"
-                   min="0.01" max="10" step="0.01" />
-          </div>
-          <div class="setting-group" style="margin-top:14px">
-            <label class="setting-label" for="set-repairs">Max repair passes</label>
-            <p class="setting-hint">How many times Orca retries after a QC failure (0 = no repair).</p>
-            <input type="number" id="set-repairs" class="setting-input setting-input--sm"
-                   min="0" max="10" step="1" />
-          </div>
-          <div class="setting-group setting-group--row" style="margin-top:14px">
-            <div>
-              <label class="setting-label">Verbose logging</label>
-              <p class="setting-hint">Log LLM calls to miranda-runs.jsonl.</p>
+      <!-- ── Content area ───────────────────────────────────────────────── -->
+      <div id="content">
+        <!-- Chat view -->
+        <div id="chat-view">
+          <!-- Welcome (shown when chat is empty) -->
+          <div id="welcome">
+            <div class="welcome-glyph">
+              <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                <circle
+                  cx="24"
+                  cy="24"
+                  r="22"
+                  stroke="#10b981"
+                  stroke-width="2"
+                />
+                <path
+                  d="M13 28c2-4 5-7 11-7s9 3 11 7"
+                  stroke="#10b981"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                />
+                <circle cx="18" cy="20" r="2.5" fill="#10b981" />
+                <circle cx="30" cy="20" r="2.5" fill="#10b981" />
+              </svg>
             </div>
-            <label class="toggle">
-              <input type="checkbox" id="set-verbose" />
-              <span class="toggle-track"></span>
-            </label>
+            <p class="welcome-title">How can Orca help?</p>
+            <p class="welcome-sub">
+              Plan, generate, and quality-check — all in one pass.
+            </p>
+          </div>
+
+          <!-- Message feed -->
+          <div id="messages"></div>
+        </div>
+
+        <!-- Settings view -->
+        <div id="settings-view">
+          <div class="settings-header">
+            <button class="settings-back" id="btn-settings-back">
+              <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
+                <path
+                  d="M6 1L1 6l5 5"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              Back
+            </button>
+            <span class="settings-title">Settings</span>
+          </div>
+
+          <div class="settings-body">
+            <!-- Providers ─────────────────────────────────────────────── -->
+            <div class="settings-section">
+              <div class="settings-section-header">
+                <span class="settings-section-title">Providers</span>
+                <button class="btn-sm-add" id="btn-add-provider" type="button">
+                  + Add
+                </button>
+              </div>
+              <p class="setting-hint">
+                Define API sources. Each role is assigned to one of these.
+              </p>
+              <div id="providers-list"></div>
+            </div>
+
+            <!-- Core Roles ──────────────────────────────────────────────── -->
+            <div class="settings-section">
+              <div class="settings-section-header">
+                <span class="settings-section-title">Core Roles</span>
+              </div>
+              <p class="setting-hint">
+                <strong class="text-primary">Brain</strong> drives all current
+                LLM calls. Others are routed in future builds.
+              </p>
+              <div id="roles-core-list" class="roles-list"></div>
+            </div>
+
+            <!-- Optional Roles ──────────────────────────────────────────── -->
+            <div class="settings-section">
+              <div class="settings-section-header">
+                <span class="settings-section-title">Optional Roles</span>
+              </div>
+              <p class="setting-hint">
+                Auto-selected by context. Falls back to a core role if unset —
+                hover role name for details.
+              </p>
+              <div id="roles-optional-list" class="roles-list"></div>
+            </div>
+
+            <!-- General ─────────────────────────────────────────────────── -->
+            <div class="settings-section">
+              <div class="settings-section-header">
+                <span class="settings-section-title">General</span>
+              </div>
+              <div class="setting-group">
+                <label class="setting-label" for="set-budget"
+                  >Budget per request (USD)</label
+                >
+                <p class="setting-hint">
+                  Miranda stops spending when this limit is reached.
+                </p>
+                <input
+                  type="number"
+                  id="set-budget"
+                  class="setting-input setting-input--sm"
+                  min="0.01"
+                  max="10"
+                  step="0.01"
+                />
+              </div>
+              <div class="setting-group mt-14">
+                <label class="setting-label" for="set-repairs"
+                  >Max repair passes</label
+                >
+                <p class="setting-hint">
+                  How many times Orca retries after a QC failure (0 = no
+                  repair).
+                </p>
+                <input
+                  type="number"
+                  id="set-repairs"
+                  class="setting-input setting-input--sm"
+                  min="0"
+                  max="10"
+                  step="1"
+                />
+              </div>
+              <div class="setting-group setting-group--row mt-14">
+                <div>
+                  <label class="setting-label">Verbose logging</label>
+                  <p class="setting-hint">
+                    Log LLM calls to miranda-runs.jsonl.
+                  </p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="set-verbose" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+            </div>
+
+            <button class="save-btn" id="btn-save-settings" type="button">
+              Save &amp; Apply
+            </button>
+            <p class="settings-status" id="settings-status"></p>
           </div>
         </div>
+      </div>
 
-        <button class="save-btn" id="btn-save-settings" type="button">Save &amp; Apply</button>
-        <p class="settings-status" id="settings-status"></p>
+      <!-- ── Status bar ─────────────────────────────────────────────────── -->
+      <div id="statusbar">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">ready</span>
+      </div>
 
+      <!-- ── Input area ─────────────────────────────────────────────────── -->
+      <div id="input-wrap">
+        <textarea
+          id="input"
+          placeholder="Ask Orca anything…"
+          rows="1"
+        ></textarea>
+        <button id="send-btn" title="Send  (Enter)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 13V3M3 8l5-5 5 5"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
       </div>
     </div>
 
-  </div>
-
-  <!-- ── Status bar ─────────────────────────────────────────────────── -->
-  <div id="statusbar">
-    <div class="status-dot" id="status-dot"></div>
-    <span id="status-text">ready</span>
-  </div>
-
-  <!-- ── Input area ─────────────────────────────────────────────────── -->
-  <div id="input-wrap">
-    <textarea id="input" placeholder="Ask Orca anything…" rows="1"></textarea>
-    <button id="send-btn" title="Send  (Enter)">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M8 13V3M3 8l5-5 5 5"
-              stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-  </div>
-
-</div>
-
-  <!-- ── Tool approval dialog ───────────────────────────────────────── -->
-  <div id="tool-approval-dialog" style="display:none">
-    <div class="approval-card">
-      <div class="approval-title">Tool call request</div>
-      <div class="approval-body">
-        <div class="approval-row">
-          <span class="approval-label">Tool</span>
-          <code class="approval-value" id="approval-tool-name"></code>
+    <!-- ── Tool approval dialog ───────────────────────────────────────── -->
+    <div id="tool-approval-dialog" class="hidden">
+      <div class="approval-card">
+        <div class="approval-title">Tool call request</div>
+        <div class="approval-body">
+          <div class="approval-row">
+            <span class="approval-label">Tool</span>
+            <code class="approval-value" id="approval-tool-name"></code>
+          </div>
+          <div class="approval-row approval-args-row">
+            <span class="approval-label">Args</span>
+            <pre class="approval-args" id="approval-args"></pre>
+          </div>
         </div>
-        <div class="approval-row approval-args-row">
-          <span class="approval-label">Args</span>
-          <pre class="approval-args" id="approval-args"></pre>
+        <div class="approval-actions">
+          <button class="btn-deny" id="btn-deny-tool">Deny</button>
+          <button class="btn-approve" id="btn-approve-tool">Approve</button>
         </div>
-      </div>
-      <div class="approval-actions">
-        <button class="btn-deny"    id="btn-deny-tool">Deny</button>
-        <button class="btn-approve" id="btn-approve-tool">Approve</button>
       </div>
     </div>
-  </div>
 
-<script src="app.js"></script>
-</body>
+    <script src="app.js"></script>
+  </body>
 </html>

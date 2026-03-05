@@ -9,17 +9,60 @@ const STAGE_PREFERENCE = ["rewrite", "answer", "plan"] as const;
  * Strip Miranda's pipeline scaffolding headings from the final output.
  * The ANSWER/REWRITE contracts require the model to produce:
  *   ## Plan (summary) / ## Answer / ## Edge cases & checks / ## Next steps
- * These are useful for pipeline validation but should not be exposed to the
- * end user verbatim. Extract the content under ## Answer; if the section
- * doesn't exist (e.g. model ignored the contract), return the full text.
+ * but models sometimes use **bold** headers instead of ## headings.
+ * Extract the content under the Answer section; if it can't be found,
+ * strip all pipeline section headers and return the remaining content.
  */
 function stripPipelineScaffolding(raw: string): string {
-  // Try to extract just the ## Answer section body.
-  const match = raw.match(/##\s*Answer\s*\n([\s\S]*?)(?=\n##\s|$)/i);
-  if (match?.[1]) return match[1].trim();
-  // Fallback: remove only the ## Plan (summary) section (internal self-talk),
-  // leave the rest intact.
-  return raw.replace(/##\s*Plan\s*\(summary\)[\s\S]*?(?=\n##\s|$)/i, "").trim();
+  // Pattern that matches a section header in either ## or ** format.
+  // Captures the section name for identification.
+  const SECTION_HEADER =
+    /^(?:#{1,3}\s*(.+?)|\*\*(.+?):?\*\*:?)\s*$/;
+
+  // Only treat lines as section boundaries when the header name is a known
+  // Miranda pipeline stage — prevents bold subheadings inside the Answer body
+  // (e.g. "**Key points:**") from being mistaken for section delimiters.
+  const PIPELINE_NAMES =
+    /^(plan(\s*\(summary\))?|answer|edge\s*cases?(\s*[&]\s*checks)?|next\s*steps?|critique|rewrite|considerations?|summary|explanation)$/i;
+
+  const lines = raw.split("\n");
+  const sections: Array<{ name: string; startLine: number }> = [];
+
+  // Identify all section boundaries.
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+    const m = line.match(SECTION_HEADER);
+    if (m) {
+      const name = ((m[1] ?? m[2]) || "").trim().toLowerCase();
+      if (PIPELINE_NAMES.test(name)) {
+        sections.push({ name, startLine: i });
+      }
+    }
+  }
+
+  // Find the "answer" section.
+  const answerIdx = sections.findIndex((s) => s.name === "answer");
+  if (answerIdx !== -1) {
+    const section = sections[answerIdx];
+    const nextSection = sections[answerIdx + 1];
+    const start = (section?.startLine ?? 0) + 1;
+    const end = nextSection ? nextSection.startLine : lines.length;
+    const body = lines.slice(start, end).join("\n").trim();
+    if (body.length > 0) return body;
+  }
+
+  // Fallback: strip all known pipeline section headers and return the rest.
+  const PIPELINE_SECTIONS = /plan(\s*\(summary\))?|answer|edge\s*cases?(\s*[&]\s*checks)?|next\s*steps?|critique|rewrite|considerations?|summary|explanation/i;
+  const cleaned = lines.filter((line) => {
+    const m = line.match(SECTION_HEADER);
+    if (m) {
+      const name = ((m[1] ?? m[2]) || "").trim();
+      if (PIPELINE_SECTIONS.test(name)) return false;
+    }
+    return true;
+  });
+  return cleaned.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function extractText(record: RunRecord): string | undefined {

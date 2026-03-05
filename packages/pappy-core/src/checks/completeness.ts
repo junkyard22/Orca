@@ -1,4 +1,5 @@
 import type { Issue, PappyInput } from "../types.js";
+export type { Issue };
 
 /**
  * Extract domain keywords from the task text for semantic completeness checks.
@@ -33,8 +34,14 @@ function extractDomainKeywords(task: string): Array<{ keyword: string; category:
     keywords.push({ keyword: "expect", category: "assertion" });
   }
 
-  // File/system patterns
-  if (/\b(read|write|file|save|load|store|persist)\b/.test(lower)) {
+  // File/system patterns — require filesystem context to avoid flagging
+  // "write a function" or "read the docs" as I/O requirements.
+  if (
+    /\bfile\b/.test(lower) ||
+    /\b(save|load|store|persist)\b/.test(lower) ||
+    /\b(read|write)\b.{0,30}\b(file|disk|path|config|json|yaml|csv)\b/.test(lower) ||
+    /\b(file|config|json|yaml|csv).{0,30}\b(read|write|load|save)\b/.test(lower)
+  ) {
     keywords.push({ keyword: "file", category: "persistence" });
     keywords.push({ keyword: "read", category: "I/O" });
     keywords.push({ keyword: "write", category: "I/O" });
@@ -230,6 +237,152 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
           suggestedFix: `Include complete implementation in the diff.`,
         });
       }
+    }
+  }
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Satisfaction checks — does the output actually deliver what was asked?
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect the primary deliverable the task is requesting.
+ * Returns one of: "code" | "fix" | "list" | "explanation" | null
+ */
+function detectDeliverable(
+  task: string,
+): { kind: "code" | "fix" | "list" | "explanation"; artifact: string } | null {
+  const lower = task.toLowerCase();
+
+  // Code deliverable — explicit verb + code artifact noun
+  const codeVerb   = /\b(write|implement|create|build|make|add|code|generate|define)\b/;
+  const codeNoun   = /\b(function|method|class|hook|component|algorithm|handler|helper|utility|script|module|interface|type|enum|struct|api|endpoint|middleware|route|service|controller|reducer|action|selector|mixin|decorator|plugin)\b/;
+  const codeMatch  = codeNoun.exec(lower);
+  if (codeVerb.test(lower) && codeMatch) {
+    return { kind: "code", artifact: codeMatch[0] };
+  }
+
+  // Fix / debug deliverable
+  const fixVerbPlusNoun = /\b(fix|resolve|debug|correct|patch|repair)\b.{0,50}\b(bug|error|issue|problem|crash|exception|failure|fault|defect)\b/;
+  const nounPlusFixVerb = /\b(bug|error|issue|problem|crash|exception)\b.{0,50}\b(fix|resolve|debug|correct|patch)\b/;
+  if (fixVerbPlusNoun.test(lower) || nounPlusFixVerb.test(lower)) {
+    return { kind: "fix", artifact: "bug/error" };
+  }
+
+  // List deliverable — task starts with list intent or has explicit list phrase
+  if (
+    /^(list|enumerate|what are|show all|find all|give me a list)\b/i.test(task.trim()) ||
+    /\b(list all|enumerate all|show all|what are (all |the )?(available |possible )?\w+s?)\b/.test(lower)
+  ) {
+    return { kind: "list", artifact: "items" };
+  }
+
+  // Explanation deliverable — caught as a baseline fallback later
+  if (/\b(explain|describe|what is|what are|how does|how do|why does|why is|summarize|overview|tell me (about|how))\b/.test(lower)) {
+    return { kind: "explanation", artifact: "explanation" };
+  }
+
+  return null;
+}
+
+/**
+ * Run satisfaction checks: does the output actually deliver what the task requested?
+ *
+ * These complement structural / keyword checks by looking at the deliverable
+ * *type* the user intended — code snippet, bug fix, list, explanation — and
+ * verifying evidence of that type exists in the output or filesChanged.
+ */
+export function runSatisfactionChecks(input: PappyInput): Omit<Issue, "issueId">[] {
+  const issues: Omit<Issue, "issueId">[] = [];
+  const output   = input.outputText ?? "";
+  const hasFiles = (input.filesChanged?.length ?? 0) > 0;
+  const deliverable = detectDeliverable(input.task);
+
+  if (!deliverable) return issues;
+
+  if (deliverable.kind === "code") {
+    // Evidence of code: fenced block, inline code, common code keywords, or a file change
+    const hasCodeBlock    = /```/.test(output);
+    const hasInlineCode   = /`[^`\n]+`/.test(output);
+    const hasCodeKeywords = /\b(def |function |class |const |let |var |export |import |public |private |protected |async |fn |func |procedure )/.test(output);
+    const hasCode = hasCodeBlock || hasInlineCode || hasCodeKeywords || hasFiles;
+
+    if (!hasCode) {
+      issues.push({
+        severity: "HIGH",
+        code: "SATISFACTION_CODE_MISSING",
+        category: "Completeness",
+        description: `Task requests a ${deliverable.artifact} but the output contains no code.`,
+        expected_receipt: "Output must contain a code block (```) or a function/class definition, OR filesChanged must be non-empty.",
+        evidence: `Task: "${input.task.slice(0, 100)}". No code block, inline code, code keywords, or file changes found.`,
+        fix_hint: `Include the requested ${deliverable.artifact} implementation in a fenced code block.`,
+        message: `No code was delivered for a task that requests a ${deliverable.artifact}.`,
+        suggestedFix: "Provide the implementation in a fenced code block.",
+      });
+    }
+  }
+
+  if (deliverable.kind === "fix") {
+    // Evidence of a fix: code in output, file changes, or resolution language
+    const hasFixEvidence =
+      /```/.test(output) ||
+      hasFiles ||
+      /\b(fixed?|resolved?|patched?|updated?|changed?|corrected?|removed?)\b/i.test(output);
+
+    if (!hasFixEvidence) {
+      issues.push({
+        severity: "HIGH",
+        code: "SATISFACTION_FIX_MISSING",
+        category: "Completeness",
+        description: "Task requests a fix/debug but the output contains no fix evidence.",
+        expected_receipt: "Output must contain a corrected code block, OR filesChanged must include the fixed file.",
+        evidence: `Task: "${input.task.slice(0, 100)}". No code change, file change, or fix language detected.`,
+        fix_hint: "Show the specific change that resolves the problem in a code block.",
+        message: "No fix was delivered for a fix/debug task.",
+        suggestedFix: "Provide the corrected code or an explicit description of the change applied.",
+      });
+    }
+  }
+
+  if (deliverable.kind === "list") {
+    // Evidence of a list: bullet/numbered list items in output
+    const hasList =
+      /^[ \t]*[-*•]\s+/m.test(output) ||
+      /^[ \t]*\d+[.)\s]/.test(output) ||
+      hasFiles;
+
+    if (!hasList) {
+      issues.push({
+        severity: "MEDIUM",
+        code: "SATISFACTION_LIST_MISSING",
+        category: "Completeness",
+        description: "Task requests a list but the output contains no list formatting.",
+        expected_receipt: "Output must contain a bulleted or numbered list.",
+        evidence: `Task: "${input.task.slice(0, 100)}". No list markers (-, *, 1.) found in output.`,
+        fix_hint: "Format the items as a bullet or numbered list.",
+        message: "No list structure found for a list task.",
+        suggestedFix: "Format the response items as a bulleted or numbered list.",
+      });
+    }
+  }
+
+  if (deliverable.kind === "explanation") {
+    // An explanation should have at least a minimal substantive response
+    const substantive = output.trim().length >= 80;
+    if (!substantive && !hasFiles) {
+      issues.push({
+        severity: "MEDIUM",
+        code: "SATISFACTION_EXPLANATION_THIN",
+        category: "Completeness",
+        description: "Task requests an explanation but the output is too brief to be substantive.",
+        expected_receipt: "Output must contain at least 100 characters of explanatory text.",
+        evidence: `Task: "${input.task.slice(0, 100)}". Output is only ${output.trim().length} chars.`,
+        fix_hint: "Expand the response to fully address the explanation requested.",
+        message: "Explanation response is too brief.",
+        suggestedFix: "Provide a more detailed explanation.",
+      });
     }
   }
 

@@ -20,7 +20,7 @@ import type {
 } from "./types.js";
 import { runSafetyChecks }       from "./checks/safety.js";
 import { runToolResultChecks }   from "./checks/toolResults.js";
-import { runCompletenessChecks } from "./checks/completeness.js";
+import { runCompletenessChecks, runSatisfactionChecks } from "./checks/completeness.js";
 import { runStructureChecks }    from "./checks/structure.js";
 import { runClaimProofChecks } from "./checks/claimProof.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
@@ -228,6 +228,7 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
     ...runToolResultChecks(input),
     ...runCompletenessChecks(input),
     ...runStructureChecks(input),
+    ...runSatisfactionChecks(input),
   ];
 
   const issues = stampIssueIds(rawIssues);

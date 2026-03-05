@@ -366,7 +366,13 @@ async function main() {
   traceEvaluation(input);
 }
 
-main().catch((e: unknown) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
+// Only run when executed directly (not when imported as a module by the app).
+// import.meta.url is empty when bundled as CJS by esbuild, so the short-circuit
+// prevents fileURLToPath from being called in that context.
+import { fileURLToPath } from "node:url";
+if (import.meta.url && process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  });
+}
