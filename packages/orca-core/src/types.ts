@@ -1,4 +1,5 @@
 import type { PappyInput, PappyResult } from "@clawde/pappy-core";
+import type { MirandaGate } from "@clawde/miranda-core";
 import type { WorkspaceContext } from "./workspaceContext.js";
 import type { RunStore } from "./persistence/types.js";
 
@@ -117,6 +118,13 @@ export interface OrcaRunCtx {
    * Adapters can inject it into prompts for grounding (branch, recent files, etc.).
    */
   workspaceContext?: WorkspaceContext;
+  /**
+   * Miranda's gate — guards before/after every tool call and QC run.
+   * before_tool_run / after_tool_run: validates tool allowlist and receipts.
+   * before_qc / after_qc: validates QC preconditions and verdict shape.
+   * The LLM gates (before/after_llm_call) live inside the Miranda pipeline.
+   */
+  gate?: MirandaGate;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +170,12 @@ export interface OrcaRuntimeDeps {
   getWorkspaceContext?: () => WorkspaceContext;
   /** Maximum repair passes before giving up on a FAIL verdict. Default: 2 */
   maxRepairPasses?: number;
+  /**
+   * Miranda's gate — the compliance and governance layer.
+   * Wraps every LLM call, tool execution, and QC run with validation checkpoints.
+   * Injected here so it flows through OrcaRunCtx to every adapter.
+   */
+  gate?: MirandaGate;
 }
 
 export interface OrcaRuntime {

@@ -72,7 +72,19 @@ export async function handleRepairLoop(
     // ORIGINAL task constraints — the benchmark is always the user's goal,
     // never the repair spec.  "attempt: pass" lets Doctor correlate which
     // repair run produced which verdict.
+
+    // Miranda: before_qc gate
+    ctx.gate?.beforeQC({ taskId: ctx.runId, outputText: maestroResult.outputText ?? "" });
+
     const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
+
+    // Miranda: after_qc gate
+    ctx.gate?.afterQC(
+      { taskId: ctx.runId, outputText: maestroResult.outputText ?? "" },
+      nextQC.verdict,
+      nextQC.issues.length,
+    );
+
     emitter.emit({
       type: "qc:result",
       taskId: ctx.runId,

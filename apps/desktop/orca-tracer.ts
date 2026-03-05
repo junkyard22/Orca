@@ -39,11 +39,17 @@ import {
   createDefaultConfig,
   OpenAICompatAdapter,
   OllamaAdapter,
+  createMirandaGate,
 } from "@clawde/miranda-core";
 import type {
   LLMAdapter,
   LLMRequest,
   LLMResponse,
+  GateName,
+  GateResult,
+  LLMCallGateContext,
+  ToolGateContext,
+  QCGateContext,
 } from "@clawde/miranda-core";
 
 // ── Load real settings ─────────────────────────────────────────────────────
@@ -376,7 +382,22 @@ async function main() {
 
   trace("Init", C.blue, "Creating Miranda LLM service (real pipeline)...");
   const config = createDefaultConfig({ verbose: true, budgetUsd, logPath: "orca-tracer.log" });
-  const llm = createMirandaLLMService(adapter, config);
+
+  trace("Init", C.blue, "Creating Miranda gate (6-checkpoint validator)...");
+  const gate = createMirandaGate({
+    onGate(name: GateName, result: GateResult, ctx: LLMCallGateContext | ToolGateContext | QCGateContext) {
+      const symbol = result.allowed ? `✓` : `✗`;
+      const color  = result.allowed ? C.green : C.red;
+      trace("Gate", color, `${name.padEnd(18)} ${symbol}  ${result.reason}`);
+      if (!result.allowed && result.violations?.length) {
+        for (const v of result.violations) {
+          trace("Gate", C.red, `  └ ${v}`);
+        }
+      }
+    },
+  });
+
+  const llm = createMirandaLLMService(adapter, config, gate);
 
   trace("Init", C.blue, "Creating Pappy QC port (debug trace enabled)...");
   const pappy = createDebugPappyPort();
@@ -385,7 +406,7 @@ async function main() {
   const maestro = createTracingMaestro();
 
   trace("Init", C.blue, "Creating Orca runtime...");
-  const runtime: OrcaRuntime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 1 });
+  const runtime: OrcaRuntime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 1, gate });
 
   // Subscribe to ALL event types
   const events: OrcaEvent[] = [];

@@ -53,6 +53,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       tools,
       emit: (event) => emitter.emit(event),
       workspaceContext,
+      gate: deps.gate,
     };
     const taskId = ctx.runId;
     const startTime = Date.now();
@@ -74,8 +75,21 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       const maestroResult = await maestro.run(taskSpec, ctx);
       emitter.emit({ type: "maestro:done", taskId, attempt: 0, isRepair: false, hasOutput: !!maestroResult.outputText });
 
-      // ── 2. Pappy evaluates ───────────────────────────────────────────────
-      const qcResult = pappy.evaluate(buildPappyInput(taskSpec, maestroResult));
+      // ── 2. Pappy evaluates ─────────────────────────────────────────────────
+      const qcInput = buildPappyInput(taskSpec, maestroResult);
+
+      // Miranda: before_qc gate
+      ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
+
+      const qcResult = pappy.evaluate(qcInput);
+
+      // Miranda: after_qc gate
+      ctx.gate?.afterQC(
+        { taskId, outputText: maestroResult.outputText ?? "" },
+        qcResult.verdict,
+        qcResult.issues.length,
+      );
+
       emitter.emit({
         type: "qc:result",
         taskId,

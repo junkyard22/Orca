@@ -2,7 +2,7 @@ import "dotenv/config";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { join } from "node:path";
 
-import { OllamaAdapter, OpenAICompatAdapter, createDefaultConfig } from "@clawde/miranda-core";
+import { OllamaAdapter, OpenAICompatAdapter, createDefaultConfig, createMirandaGate } from "@clawde/miranda-core";
 import type { LLMAdapter, ModelSpec } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
@@ -271,6 +271,7 @@ function initOrca(s: OrcaSettings): string | null {
       maxTokens,
       timeoutMs: 120_000,
     });
+    const gate = createMirandaGate({ verbose: s.verbose });
     const llm = createMirandaLLMService(
       buildAdapterForProvider(provider, model),
       createDefaultConfig({
@@ -283,10 +284,11 @@ function initOrca(s: OrcaSettings): string | null {
           rewrite:  stg(8192),
         },
       }),
+      gate,
     );
     const pappy   = createLoggingPappyPort("orca-pappy.log");
     const maestro = buildMaestroAdapter();
-    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: s.maxRepairPasses });
+    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: s.maxRepairPasses, gate });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {

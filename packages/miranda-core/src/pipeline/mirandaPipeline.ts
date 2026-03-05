@@ -100,7 +100,12 @@ export async function runPipeline(
   userPrompt: string,
   adapter: LLMAdapter,
   config: MirandaConfig,
-  callbacks?: { onToken?: (chunk: string) => void; onStreamReset?: () => void },
+  callbacks?: {
+    onToken?: (chunk: string) => void;
+    onStreamReset?: () => void;
+    /** Miranda gate — validates each LLM call before it fires and after it returns. */
+    gate?: import("../gate/mirandaGate.js").MirandaGate;
+  },
 ): Promise<PipelineResult> {
   const runId = randomUUID();
   const startTime = Date.now();
@@ -164,6 +169,9 @@ export async function runPipeline(
       pricingTable: config.pricing,
       verbose: config.verbose,
       onToken: shouldStream ? callbacks?.onToken : undefined,
+      gate: callbacks?.gate,
+      budgetUsed: totalCost,
+      budgetLimit: config.budgetUsd,
     };
 
     if (config.verbose) {

@@ -595,7 +595,28 @@ async function runAgentLoop(
         `[MaestroAdapter] tool:call  name=${call.tool}  iteration=${i + 1}/${MAX_ITERATIONS}`,
       );
 
+      // Miranda: before_tool_run gate
+      const beforeGate = ctx.gate?.beforeToolRun({ tool: call.tool, args: call.input });
+      if (beforeGate && !beforeGate.allowed) {
+        console.error(`[MaestroAdapter] gate blocked tool "${call.tool}": ${beforeGate.reason}`);
+        toolEvents.push({
+          tool: call.tool,
+          ok: false,
+          summary: `${call.tool}: blocked by Miranda gate — ${beforeGate.reason}`,
+          raw: call.input,
+        });
+        conversation += formatToolResult(
+          call.tool,
+          false,
+          `Miranda gate blocked this tool call: ${beforeGate.reason}`,
+        );
+        continue;
+      }
+
       const result = await tools.execute(call.tool, call.input);
+
+      // Miranda: after_tool_run gate
+      ctx.gate?.afterToolRun({ tool: call.tool, args: call.input }, { ok: result.ok, output: result.output });
 
       toolEvents.push({
         tool: call.tool,

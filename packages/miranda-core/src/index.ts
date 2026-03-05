@@ -58,6 +58,20 @@ export { HealthTracker } from "./route/health.js";
 
 // LLM
 export type { LLMAdapter } from "./llm/adapter.js";
+
+// Gate (Miranda's 6-checkpoint validation layer)
+export {
+  createMirandaGate,
+} from "./gate/mirandaGate.js";
+export type {
+  MirandaGate,
+  MirandaGateConfig,
+  GateResult,
+  GateName,
+  LLMCallGateContext,
+  ToolGateContext,
+  QCGateContext,
+} from "./gate/mirandaGate.js";
 export { OpenRouterAdapter } from "./llm/openrouter.js";
 export type { OpenRouterConfig } from "./llm/openrouter.js";
 export { OllamaAdapter } from "./llm/ollama.js";

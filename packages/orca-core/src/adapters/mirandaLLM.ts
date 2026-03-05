@@ -1,5 +1,5 @@
 import { runPipeline } from "@clawde/miranda-core";
-import type { LLMAdapter, MirandaConfig, RunRecord, StageResult } from "@clawde/miranda-core";
+import type { LLMAdapter, MirandaConfig, RunRecord, StageResult, MirandaGate } from "@clawde/miranda-core";
 import type { OrcaLLMService } from "../types.js";
 
 // Walk Miranda's stage results to find the best completed text output.
@@ -96,12 +96,14 @@ function extractText(record: RunRecord): string | undefined {
 export function createMirandaLLMService(
   adapter: LLMAdapter,
   config: MirandaConfig,
+  gate?: MirandaGate,
 ): OrcaLLMService {
   return {
     async complete(prompt, opts) {
       const { record } = await runPipeline(prompt, adapter, config, {
         onToken: opts?.onToken,
         onStreamReset: opts?.onStreamReset,
+        gate,
       });
       return { text: extractText(record) ?? "" };
     },

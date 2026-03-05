@@ -16,6 +16,7 @@ import { Router } from "../route/router.js";
 import { validateStageOutput, buildRepairMessages, getRepairTemperature } from "../repair/repairEngine.js";
 import { resolveTokenUsage } from "../metrics/tokens.js";
 import { calculateCost } from "../metrics/costs.js";
+import type { MirandaGate } from "../gate/mirandaGate.js";
 
 export interface StageExecutionContext {
   adapter: LLMAdapter;
@@ -29,6 +30,16 @@ export interface StageExecutionContext {
    * if the adapter supports it.
    */
   onToken?: (chunk: string) => void;
+  /**
+   * Miranda's gate — called before and after each LLM adapter call.
+   * before_llm_call: validates model + budget.
+   * after_llm_call:  validates output shape (informational; repair loop handles retries).
+   */
+  gate?: MirandaGate;
+  /** USD spent in prior stages of this run — fed to before_llm_call gate. */
+  budgetUsed?: number;
+  /** USD budget cap for this run — fed to before_llm_call gate. */
+  budgetLimit?: number;
 }
 
 /**
@@ -90,6 +101,36 @@ export async function executeStage(
       }
 
       try {
+        // ── before_llm_call gate ──────────────────────────────────────────
+        if (ctx.gate) {
+          const gateCtx = {
+            stage,
+            model: model.id,
+            budgetUsed: ctx.budgetUsed ?? 0,
+            budgetLimit: ctx.budgetLimit ?? Infinity,
+          };
+          const gateResult = ctx.gate.beforeLLMCall(gateCtx);
+          if (!gateResult.allowed) {
+            const blockedAttempt: StageAttempt = {
+              attemptNumber: totalAttempts,
+              model: model.id,
+              rawOutput: "",
+              validation: {
+                valid: false,
+                errors: gateResult.violations ?? [`Gate blocked: ${gateResult.reason}`],
+              },
+              usage: null,
+              durationMs: 0,
+              costEstimate: 0,
+            };
+            attempts.push(blockedAttempt);
+            if (verbose) {
+              console.error(`  [Miranda] before_llm_call gate blocked: ${gateResult.reason}`);
+            }
+            break; // Move to next model
+          }
+        }
+
         // Stream the first attempt if the adapter supports it and an onToken
         // callback is available (set only on answer/rewrite stages by the pipeline).
         const useStream = totalAttempts === 1 && onToken != null && adapter.stream != null;
@@ -126,6 +167,18 @@ export async function executeStage(
           costEstimate: cost,
         };
         attempts.push(attempt);
+
+        // ── after_llm_call gate ───────────────────────────────────────────
+        if (ctx.gate) {
+          const gateCtx = {
+            stage,
+            model: model.id,
+            budgetUsed: ctx.budgetUsed ?? 0,
+            budgetLimit: ctx.budgetLimit ?? Infinity,
+          };
+          ctx.gate.afterLLMCall(gateCtx, response.content, validation);
+          // Informational: gate records the result; repair loop drives retries.
+        }
 
         if (validation.valid) {
           router.recordSuccess(model.id);
