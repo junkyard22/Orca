@@ -11,6 +11,7 @@ export type OrcaSettings = {
   siteUrl:         string;
   appName:         string;
   verbose:         boolean;
+  workspaceRoot:   string;
 };
 export type SaveResult   = { ok: boolean; error?: string };
 
@@ -54,6 +55,12 @@ contextBridge.exposeInMainWorld("orca", {
   // Send the user's approve/deny decision back to main.
   approveToolCall: (id: string, approved: boolean): void =>
     ipcRenderer.send("tool:approve", { id, approved }),
+
+  // ── Workspace selection ──────────────────────────────────────────────────
+  // Opens a native folder picker and returns the chosen path (empty string if
+  // the user cancels). Used by the Settings panel workspace section.
+  selectWorkspace: (): Promise<string> =>
+    ipcRenderer.invoke("workspace:select"),
 
   // ── Model discovery ──────────────────────────────────────────────────────
   // Fetch available models from a provider using its current (possibly unsaved)

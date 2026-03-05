@@ -408,8 +408,9 @@ inputEl.addEventListener("keydown", (e) => {
 
 const setBudget  = document.getElementById("set-budget");
 const setRepairs = document.getElementById("set-repairs");
-const setVerbose = document.getElementById("set-verbose");
-const setSaveBtn = document.getElementById("btn-save-settings");
+const setVerbose      = document.getElementById("set-verbose");
+const setWorkspace    = document.getElementById("set-workspace");
+const setSaveBtn      = document.getElementById("btn-save-settings");
 const setStatus2 = document.getElementById("settings-status");
 
 // ── Provider & role metadata ───────────────────────────────────────────────
@@ -705,6 +706,7 @@ function openSettings() {
     setBudget.value        = String(s.budgetUsd       ?? 0.10);
     setRepairs.value       = String(s.maxRepairPasses ?? 2);
     setVerbose.checked     = !!s.verbose;
+    setWorkspace.value     = s.workspaceRoot ?? "";
     setStatus2.textContent = "";
     setStatus2.className   = "settings-status";
     // Prune stale model cache for providers that no longer exist in saved settings
@@ -745,6 +747,7 @@ setSaveBtn.addEventListener("click", async () => {
     budgetUsd:       parseFloat(setBudget.value)   || 0.10,
     maxRepairPasses: parseInt(setRepairs.value, 10) || 0,
     verbose:         setVerbose.checked,
+    workspaceRoot:   setWorkspace.value.trim(),
   };
 
   setSaveBtn.disabled    = true;
@@ -760,6 +763,14 @@ setSaveBtn.addEventListener("click", async () => {
   } else {
     setStatus2.textContent = result.error ?? "Save failed.";
     setStatus2.className   = "settings-status err";
+  }
+});
+
+document.getElementById("btn-pick-workspace").addEventListener("click", async () => {
+  const chosen = await orca.selectWorkspace();
+  if (chosen) {
+    setWorkspace.value = chosen;
+    if (editingSettings) editingSettings.workspaceRoot = chosen;
   }
 });
 

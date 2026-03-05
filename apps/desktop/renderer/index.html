@@ -200,6 +200,23 @@
                   <span class="toggle-track"></span>
                 </label>
               </div>
+              <div class="setting-group mt-14">
+                <label class="setting-label">Workspace folder</label>
+                <p class="setting-hint">
+                  Root directory for tool execution (read_file, write_file, etc.).
+                  Defaults to the current working directory.
+                </p>
+                <div class="workspace-row">
+                  <input
+                    class="setting-input setting-input--path"
+                    id="set-workspace"
+                    type="text"
+                    placeholder="(using process.cwd())"
+                    readonly
+                  />
+                  <button class="btn-pick-workspace" id="btn-pick-workspace" type="button">Browse…</button>
+                </div>
+              </div>
             </div>
 
             <button class="save-btn" id="btn-save-settings" type="button">

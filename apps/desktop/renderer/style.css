@@ -563,6 +563,39 @@ body {
 .setting-input--sm {
   max-width: 100px;
 }
+.setting-input--path {
+  cursor: default;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.workspace-row .setting-input {
+  flex: 1;
+  min-width: 0;
+}
+.btn-pick-workspace {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 8px 12px;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.btn-pick-workspace:hover {
+  background: var(--surface-3, var(--surface-2));
+  border-color: var(--accent);
+}
 
 .setting-key-row {
   display: flex;

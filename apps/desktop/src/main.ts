@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import { join } from "node:path";
 
 import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
@@ -417,6 +417,7 @@ function initOrca(s: OrcaSettings): string | null {
     const pappy   = createPappyPort();
 
     const toolRegistry = createCoreToolRegistry();
+    const workspaceRoot = s.workspaceRoot || process.cwd();
     const toolService: OrcaToolService = {
       execute(name, input) {
         const tool = toolRegistry.get(name);
@@ -424,9 +425,11 @@ function initOrca(s: OrcaSettings): string | null {
           ok: false, output: '',
           error: `Unknown tool: "${name}". Available: ${toolRegistry.list().map(t => t.name).join(', ')}`,
         });
-        return tool.execute(input, { workspaceRoot: process.cwd(), runId: '' });
+        return tool.execute(input, { workspaceRoot, runId: '' });
       },
-      formatForPrompt() { return toolRegistry.formatForPrompt(); },
+      formatForPrompt() {
+        return `Workspace root: ${workspaceRoot}\n\n${toolRegistry.formatForPrompt()}`;
+      },
     };
 
     runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService });
@@ -513,6 +516,17 @@ export function requestToolApproval(
 }
 
 ipcMain.handle("settings:get", () => loadSettings());
+
+// ── Workspace folder picker ────────────────────────────────────────────────
+
+ipcMain.handle("workspace:select", async () => {
+  if (!win) return "";
+  const result = await dialog.showOpenDialog(win, {
+    title:      "Select workspace folder",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  return result.filePaths[0] ?? "";
+});
 
 // ── Model discovery ────────────────────────────────────────────────────────
 

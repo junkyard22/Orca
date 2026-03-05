@@ -206,6 +206,42 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
     }
   }
 
+  // ── Goal term coverage — verify the output addresses what Brain specified ─
+  // Brain's done_criteria flow in as input.goals[]. When goals are meaningful
+  // (not just the default "produce output" fallback), check that key terms from
+  // the goals appear in the output or diffs. Fires MEDIUM at < 60% coverage.
+  const STOP_WORDS = new Set(["this", "that", "with", "from", "have", "will", "should", "must",
+    "each", "every", "their", "there", "been", "into", "when", "than", "only", "also"]);
+  const meaningfulGoals = (input.goals ?? []).filter((g) =>
+    g.length > 10 && !/^(produce|provide|output|generate) (non-?empty|some|an?) (output|response|result)/i.test(g)
+  );
+  if (meaningfulGoals.length > 0 && (hasOutput || hasFiles)) {
+    const goalTerms = [...new Set(
+      meaningfulGoals
+        .flatMap((g) => g.toLowerCase().split(/[\s,.;:()\[\]'"\/\\]+/))
+        .filter((t) => t.length > 3 && !STOP_WORDS.has(t))
+    )];
+    if (goalTerms.length >= 2) {
+      const diffText = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
+      const searchText = `${(input.outputText ?? "").toLowerCase()} ${diffText.toLowerCase()}`;
+      const uncovered = goalTerms.filter((t) => !searchText.includes(t));
+      const coverage  = (goalTerms.length - uncovered.length) / goalTerms.length;
+      if (coverage < 0.6) {
+        issues.push({
+          severity: "MEDIUM",
+          code: "COMPLETENESS_GOAL_COVERAGE",
+          category: "Completeness",
+          description: `Output covers only ${Math.round(coverage * 100)}% of the task goals. Missing terms: ${uncovered.slice(0, 6).join(", ")}.`,
+          expected_receipt: "Output should address all terms from the done_criteria goals.",
+          evidence: `Goals: [${meaningfulGoals.map((g) => g.slice(0, 60)).join(" | ")}]. Uncovered terms: ${uncovered.join(", ")}.`,
+          fix_hint: `Revise the output to address the missing goal terms: ${uncovered.slice(0, 6).join(", ")}.`,
+          message: `Output does not adequately cover the task goals (${Math.round(coverage * 100)}% coverage).`,
+          suggestedFix: `Include content that addresses: ${uncovered.slice(0, 6).join(", ")}.`,
+        });
+      }
+    }
+  }
+
   // ── 4.2 File change verification — verify diffs contain actual content ───
   // Check that file changes contain meaningful diff content, not just metadata.
   for (const file of input.filesChanged ?? []) {

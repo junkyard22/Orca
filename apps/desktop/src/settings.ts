@@ -67,6 +67,8 @@ export interface OrcaSettings {
   budgetUsd:       number;
   maxRepairPasses: number;
   verbose:         boolean;
+  /** Absolute path to the workspace root used for tool execution */
+  workspaceRoot:   string;
 }
 
 const DEFAULTS: OrcaSettings = {
@@ -75,6 +77,7 @@ const DEFAULTS: OrcaSettings = {
   budgetUsd:       0.10,
   maxRepairPasses: 2,
   verbose:         false,
+  workspaceRoot:   "",
 };
 
 function settingsPath(): string {
