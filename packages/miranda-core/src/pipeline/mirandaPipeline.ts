@@ -111,8 +111,8 @@ export async function runPipeline(
   const startTime = Date.now();
 
   if (config.verbose) {
-    console.error(`\n[Miranda] Run ${runId} started`);
-    console.error(`[Miranda] Prompt: "${userPrompt.slice(0, 80)}..."`);
+    console.error(`\n[Pipeline] Run ${runId} started`);
+    console.error(`[Pipeline] Prompt: "${userPrompt.slice(0, 80)}..."`);
   }
 
   const circuitBreaker = new CircuitBreaker(config.circuitBreaker);
@@ -135,7 +135,7 @@ export async function runPipeline(
       liteMode = true;
       if (config.verbose) {
         console.error(
-          `[Miranda] Budget exceeded ($${totalCost.toFixed(6)} >= $${config.budgetUsd}). Skipping ${stage}.`,
+          `[Pipeline] Budget exceeded ($${totalCost.toFixed(6)} >= $${config.budgetUsd}). Skipping ${stage}.`,
         );
       }
       // Add a skipped stage result
@@ -175,7 +175,7 @@ export async function runPipeline(
     };
 
     if (config.verbose) {
-      console.error(`\n[Miranda] === Stage: ${stage.toUpperCase()} ===`);
+      console.error(`\n[Pipeline] === Stage: ${stage.toUpperCase()} ===`);
     }
 
     const result = await executeStage(stage, messages, ctx);
@@ -186,7 +186,7 @@ export async function runPipeline(
       stageOutputs.set(stage, result.finalOutput);
     } else {
       if (config.verbose) {
-        console.error(`[Miranda] Stage "${stage}" failed after all attempts.`);
+        console.error(`[Pipeline] Stage "${stage}" failed after all attempts.`);
       }
       // Store whatever we got so downstream stages have something
       stageOutputs.set(stage, result.finalOutput || "(stage failed)");
@@ -211,7 +211,7 @@ export async function runPipeline(
     appendRunLog(record, config.logPath);
   } catch (err) {
     if (config.verbose) {
-      console.error(`[Miranda] Failed to write run log: ${err}`);
+      console.error(`[Pipeline] Failed to write run log: ${err}`);
     }
   }
 
@@ -219,7 +219,7 @@ export async function runPipeline(
 
   if (config.verbose) {
     console.error(
-      `\n[Miranda] Run complete. Cost: $${totalCost.toFixed(6)}, Duration: ${totalDurationMs}ms`,
+      `\n[Pipeline] Run complete. Cost: $${totalCost.toFixed(6)}, Duration: ${totalDurationMs}ms`,
     );
   }
 

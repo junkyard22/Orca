@@ -69,14 +69,14 @@ export async function executeStage(
     const selection = router.selectModel(stage, stageConfig, triedModels);
     if (!selection) {
       if (verbose) {
-        console.error(`  [Miranda] All models exhausted for stage "${stage}"`);
+        console.error(`  [Pipeline] All models exhausted for stage "${stage}"`);
       }
       break;
     }
 
     const { model, isEscalation } = selection;
     if (isEscalation && verbose) {
-      console.error(`  [Miranda] Escalating to ${model.label} for "${stage}"`);
+      console.error(`  [Pipeline] Escalating to ${model.label} for "${stage}"`);
     }
 
     let currentMessages = [...initialMessages];
@@ -96,7 +96,7 @@ export async function executeStage(
 
       if (verbose) {
         console.error(
-          `  [Miranda] ${stage} attempt ${totalAttempts} (model: ${model.label}, temp: ${temperature})`
+          `  [Pipeline] ${stage} attempt ${totalAttempts} (model: ${model.label}, temp: ${temperature})`
         );
       }
 
@@ -125,7 +125,7 @@ export async function executeStage(
             };
             attempts.push(blockedAttempt);
             if (verbose) {
-              console.error(`  [Miranda] before_llm_call gate blocked: ${gateResult.reason}`);
+              console.error(`  [Pipeline] before_llm_call gate blocked: ${gateResult.reason}`);
             }
             break; // Move to next model
           }
@@ -188,7 +188,7 @@ export async function executeStage(
         // Validation failed — build repair messages
         if (verbose) {
           console.error(
-            `  [Miranda] Validation failed: ${(validation.errors ?? []).join(", ")}`
+            `  [Pipeline] Validation failed: ${(validation.errors ?? []).join(", ")}`
           );
         }
 
@@ -205,7 +205,7 @@ export async function executeStage(
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         if (verbose) {
-          console.error(`  [Miranda] LLM call failed: ${errorMsg}`);
+          console.error(`  [Pipeline] LLM call failed: ${errorMsg}`);
         }
 
         router.recordFailure(model.id, errorMsg);

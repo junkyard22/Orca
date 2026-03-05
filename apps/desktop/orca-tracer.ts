@@ -60,15 +60,19 @@ const SETTINGS_PATH = join(
 );
 
 interface SettingsProvider { type: string; baseUrl: string; apiKey: string; }
-interface SettingsRole    { providerId: string; model: string; }
+interface SettingsRole {
+  providerId: string;
+  model: string;
+  fallbacks?: Array<{ providerId: string; model: string }>;
+}
 interface Settings {
-  providers?: SettingsProvider & { id: string }[];
+  providers?: (SettingsProvider & { id: string; name?: string })[];
   roles?: Record<string, SettingsRole>;
   budgetUsd?: number;
   verbose?: boolean;
 }
 
-function loadRealAdapter(): { adapter: LLMAdapter; model: string; budgetUsd: number } {
+function loadRealAdapter(): { adapter: LLMAdapter; model: string; budgetUsd: number; settings: Settings } {
   // Try app settings first
   if (existsSync(SETTINGS_PATH)) {
     const s = JSON.parse(readFileSync(SETTINGS_PATH, "utf-8")) as Settings;
@@ -79,7 +83,7 @@ function loadRealAdapter(): { adapter: LLMAdapter; model: string; budgetUsd: num
       const adapter = provider.type === "ollama"
         ? new OllamaAdapter({ baseUrl: provider.baseUrl || "http://localhost:11434", defaultModel: model })
         : new OpenAICompatAdapter({ baseUrl: provider.baseUrl, apiKey: provider.apiKey || undefined, defaultModel: model });
-      return { adapter, model, budgetUsd: s.budgetUsd ?? 0.5 };
+      return { adapter, model, budgetUsd: s.budgetUsd ?? 0.5, settings: s };
     }
   }
   // Fallback: OPENROUTER_API_KEY env var
@@ -89,7 +93,29 @@ function loadRealAdapter(): { adapter: LLMAdapter; model: string; budgetUsd: num
     adapter: new OpenAICompatAdapter({ baseUrl: "https://openrouter.ai/api/v1", apiKey, defaultModel: "qwen/qwen-2.5-72b-instruct" }),
     model:   "qwen/qwen-2.5-72b-instruct",
     budgetUsd: 0.5,
+    settings: {},
   };
+}
+
+/**
+ * Build a model fallback ladder from the brain role's settings.
+ * Mirrors main.ts buildModelLadder() so the tracer uses the same models.
+ */
+function buildModelLadder(s: Settings): { id: string; label: string }[] {
+  const brain = s.roles?.["brain"];
+  if (!brain) return [{ id: "qwen/qwen-2.5-72b-instruct", label: "Qwen 2.5 72B (default)" }];
+
+  const primaryProv = (s.providers ?? []).find((p: any) => p.id === brain.providerId);
+  const primary = {
+    id: brain.model,
+    label: primaryProv?.name ? `${brain.model} (${primaryProv.name})` : brain.model,
+  };
+  const fallbacks = (brain.fallbacks ?? []).flatMap((f) => {
+    const prov = (s.providers ?? []).find((p: any) => p.id === f.providerId);
+    if (!prov || !f.model) return [];
+    return [{ id: f.model, label: `${f.model} (${prov.name ?? prov.type}) [fallback]` }];
+  });
+  return [primary, ...fallbacks];
 }
 
 // ── Pretty logging ─────────────────────────────────────────────────────────
@@ -376,12 +402,30 @@ async function main() {
 
   // 1. Load real provider settings and wrap with tracing
   trace("Init", C.blue, `Loading settings from: ${SETTINGS_PATH}`);
-  const { adapter: rawAdapter, model, budgetUsd } = loadRealAdapter();
+  const { adapter: rawAdapter, model, budgetUsd, settings } = loadRealAdapter();
+  const modelLadder = buildModelLadder(settings);
   trace("Init", C.blue, `Using model: ${C.cyan}${model}${C.reset}  budget: $${budgetUsd}`);
+  trace("Init", C.blue, `Model ladder: ${modelLadder.map(m => m.id).join(" → ")}`);
   const adapter = new TracingLiveAdapter(rawAdapter);
 
   trace("Init", C.blue, "Creating Miranda LLM service (real pipeline)...");
-  const config = createDefaultConfig({ verbose: true, budgetUsd, logPath: "orca-tracer.log" });
+  const stg = (maxTokens: number) => ({
+    models: modelLadder,
+    maxRetriesPerModel: 2,
+    maxTotalAttempts: Math.max(3, modelLadder.length * 2),
+    baseTemperature: 0.4,
+    maxTokens,
+    timeoutMs: 120_000,
+  });
+  const config = createDefaultConfig({
+    verbose: true, budgetUsd, logPath: "orca-tracer.log",
+    stages: {
+      plan: stg(2048),
+      answer: stg(8192),
+      critique: stg(2048),
+      rewrite: stg(8192),
+    },
+  });
 
   trace("Init", C.blue, "Creating Miranda gate (6-checkpoint validator)...");
   const gate = createMirandaGate({
