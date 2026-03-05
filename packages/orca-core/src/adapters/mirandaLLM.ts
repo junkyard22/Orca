@@ -104,6 +104,7 @@ export function createMirandaLLMService(
         onToken: opts?.onToken,
         onStreamReset: opts?.onStreamReset,
         gate,
+        simple: opts?.simple,
       });
       return { text: extractText(record) ?? "" };
     },

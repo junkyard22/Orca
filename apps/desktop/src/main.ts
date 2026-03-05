@@ -2,12 +2,11 @@ import "dotenv/config";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { join } from "node:path";
 
-import { OllamaAdapter, OpenAICompatAdapter, createDefaultConfig, createMirandaGate } from "@clawde/miranda-core";
-import type { LLMAdapter, ModelSpec } from "@clawde/miranda-core";
+import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
+import type { LLMAdapter } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
-  createMirandaLLMService,
-  createLoggingPappyPort,
+  createDirectLLMService,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -17,6 +16,7 @@ import type {
   OrcaMaestroResult,
   OrcaRunCtx,
   OrcaTaskSpec,
+  OrcaLLMService,
 } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
 import {
@@ -43,7 +43,10 @@ const ALL_OPTIONAL_ROLES = new Set<OptionalRoleName>([
   "vision",
 ]);
 
-function buildMaestroAdapter(): MaestroPort {
+function buildMaestroAdapter(
+  /** Per-role LLM services. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
+  roleAdapters: Partial<Record<string, OrcaLLMService>>,
+): MaestroPort {
   const maestro = createMaestroCore();
 
   return {
@@ -74,11 +77,10 @@ function buildMaestroAdapter(): MaestroPort {
       // 5. Build the full task prompt.
       const taskPrompt = buildTaskPrompt(task, role, isFallback);
 
-      // 6. Delegate to ctx.llm — the Miranda PLAN→ANSWER→CRITIQUE→REWRITE
-      //    pipeline. This is the ONLY model surface Maestro touches.
-      //    Pass onToken so streaming tokens are forwarded to the renderer
-      //    via the stream:token event, letting the UI show live output.
-      const { text } = await ctx.llm.complete(
+      // 6. Dispatch to the role's dedicated LLM service, or fall back to brain.
+      const llmForRole = roleAdapters[role] ?? ctx.llm;
+
+      const { text } = await llmForRole.complete(
         `${systemPrompt}\n\n---\n\n${taskPrompt}`,
         {
           maxTokens: 4096,
@@ -141,6 +143,14 @@ function pickCoreRole(task: OrcaTaskSpec): "brain" | "coder_strong" | "coder_che
   const msg = task.originalUserMessage.toLowerCase();
 
   if (/\b(implement|build|create|add feature|write code|develop)\b/.test(msg))
+    return "coder_strong";
+
+  // "write a function / class / method / script / component / hook / test / ..."
+  if (/\bwrite\s+(a\s+|the\s+|me\s+a\s+)?(function|class|method|script|component|hook|test|module|interface|type|enum|util|helper|handler|middleware|route|endpoint|api)\b/i.test(msg))
+    return "coder_strong";
+
+  // "code a ..." / "make a function ..."
+  if (/\b(code|make)\s+(a\s+|the\s+)?(function|class|method|script|component|hook|module)\b/i.test(msg))
     return "coder_strong";
 
   if (/\b(rename|reformat|fix typo|small (fix|change|edit)|update import|add field)\b/.test(msg))
@@ -245,50 +255,39 @@ function initOrca(s: OrcaSettings): string | null {
   try {
     const model = brainRole.model;
 
-    // Build model ladder: primary + any fallback models configured for the brain role.
-    // Miranda tries each model in order — if the primary fails (network / quota),
-    // it escalates through the fallbacks automatically.
-    function buildModelLadder(entry: RoleEntry): ModelSpec[] {
-      const primaryProv = s.providers?.find((p) => p.id === entry.providerId);
-      const primary: ModelSpec = {
-        id: entry.model,
-        label: primaryProv ? `${entry.model} (${primaryProv.name})` : entry.model,
-      };
-      const fallbacks = (entry.fallbacks ?? []).flatMap((f) => {
-        const prov = s.providers?.find((p) => p.id === f.providerId);
-        if (!prov || !f.model) return [];
-        return [{ id: f.model, label: `${f.model} (${prov.name}) [fallback]` } as ModelSpec];
-      });
-      return [primary, ...fallbacks];
+    // Brain is the fallback LLM used by ctx.llm for any role without a
+    // dedicated entry in roleAdapters.
+    const llm = createDirectLLMService(
+      buildAdapterForProvider(provider, model),
+      model,
+      { maxTokens: 8192, temperature: 0.7 },
+    );
+
+    // Build a per-role LLM service for every role that has a configured
+    // provider + model in settings.  Roles that share the same provider/model
+    // as brain will reuse the same adapter instance.
+    const roleAdapters: Partial<Record<string, OrcaLLMService>> = {};
+    const ALL_ROLES = [
+      'brain', 'coder_strong', 'coder_cheap', 'utility',
+      'reviewer', 'narrator', 'planner_deep', 'debugger', 'reader', 'vision',
+    ] as const;
+    for (const roleName of ALL_ROLES) {
+      const roleEntry = s.roles?.[roleName];
+      if (!roleEntry?.providerId || !roleEntry?.model) continue;
+      const roleProv = s.providers?.find((p) => p.id === roleEntry.providerId);
+      if (!roleProv) continue;
+      if (roleProv.type !== 'ollama' && !roleProv.apiKey) continue;
+      roleAdapters[roleName] = createDirectLLMService(
+        buildAdapterForProvider(roleProv, roleEntry.model),
+        roleEntry.model,
+        { maxTokens: 8192, temperature: 0.7 },
+      );
     }
 
-    const modelLadder = buildModelLadder(brainRole);
-    const stg = (maxTokens: number) => ({
-      models: modelLadder,
-      maxRetriesPerModel: 2,
-      maxTotalAttempts: Math.max(3, modelLadder.length * 2),
-      baseTemperature: 0.4,
-      maxTokens,
-      timeoutMs: 120_000,
-    });
-    const gate = createMirandaGate({ verbose: s.verbose });
-    const llm = createMirandaLLMService(
-      buildAdapterForProvider(provider, model),
-      createDefaultConfig({
-        budgetUsd: s.budgetUsd,
-        verbose:   s.verbose,
-        stages: {
-          plan:     stg(2048),
-          answer:   stg(8192),
-          critique: stg(2048),
-          rewrite:  stg(8192),
-        },
-      }),
-      gate,
-    );
-    const pappy   = createLoggingPappyPort("orca-pappy.log");
-    const maestro = buildMaestroAdapter();
-    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: s.maxRepairPasses, gate });
+    const maestro = buildMaestroAdapter(roleAdapters);
+    // Pappy QC and Miranda gates are intentionally disabled for now.
+    // Re-enable once Maestro is verified working correctly.
+    runtime = createOrcaRuntime({ maestro, llm, maxRepairPasses: 0 });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {

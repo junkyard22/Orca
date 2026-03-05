@@ -69,7 +69,7 @@ export interface OrcaLLMService {
    */
   complete(
     prompt: string,
-    opts?: { maxTokens?: number; temperature?: number; onToken?: (chunk: string) => void; onStreamReset?: () => void },
+    opts?: { maxTokens?: number; temperature?: number; onToken?: (chunk: string) => void; onStreamReset?: () => void; simple?: boolean },
   ): Promise<{ text: string }>;
 }
 
@@ -154,7 +154,11 @@ export interface PappyPort {
 
 export interface OrcaRuntimeDeps {
   maestro: MaestroPort;
-  pappy: PappyPort;
+  /**
+   * When omitted, QC is skipped entirely (Maestro-only mode).
+   * Restore to enable Pappy quality control.
+   */
+  pappy?: PappyPort;
   llm: OrcaLLMService;
   /** When supplied, ctx.tools is populated and the agent loop activates. */
   tools?: OrcaToolService;

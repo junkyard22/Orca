@@ -41,6 +41,7 @@ function generateRunId(): string {
  */
 export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
   const { maestro, pappy, llm, maxRepairPasses = 2, tools } = deps;
+  const qcEnabled = pappy != null;
   const emitter = new OrcaEmitter();
 
   async function executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult> {
@@ -75,52 +76,55 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       const maestroResult = await maestro.run(taskSpec, ctx);
       emitter.emit({ type: "maestro:done", taskId, attempt: 0, isRepair: false, hasOutput: !!maestroResult.outputText });
 
-      // ── 2. Pappy evaluates ─────────────────────────────────────────────────
-      const qcInput = buildPappyInput(taskSpec, maestroResult);
-
-      // Miranda: before_qc gate
-      ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
-
-      const qcResult = pappy.evaluate(qcInput);
-
-      // Miranda: after_qc gate
-      ctx.gate?.afterQC(
-        { taskId, outputText: maestroResult.outputText ?? "" },
-        qcResult.verdict,
-        qcResult.issues.length,
-      );
-
-      emitter.emit({
-        type: "qc:result",
-        taskId,
-        attempt: 0,
-        isRepair: false,
-        verdict: qcResult.verdict,
-        issueCount: qcResult.issues.length,
-      });
-
-      // ── 3. PASS or WARN → done ───────────────────────────────────────────
-      if (qcResult.verdict !== "FAIL") {
+      if (!qcEnabled) {
+        // ── QC disabled (Maestro-only mode) — accept output immediately ────
         result = {
           status: "SUCCESS",
           userFacingText: maestroResult.outputText,
-          summary: qcResult.internalSummary,
+          summary: "ok",
           artifacts: maestroResult,
         };
-      } else if (!qcResult.repairTask) {
-        // ── 4a. FAIL but Pappy has no repair guidance ──────────────────────
-        result = { status: "FAIL", summary: qcResult.internalSummary };
       } else {
-        // ── 4b. FAIL → repair loop ───────────────────────────────────────
-        result = await handleRepairLoop(
-          taskSpec,
-          qcResult,        // full PappyResult — issues + repairTask go into repair context
-          ctx,
-          maestro,
-          pappy,
-          emitter,
-          maxRepairPasses,
+        // ── 2. Pappy evaluates ───────────────────────────────────────────────
+        const qcInput = buildPappyInput(taskSpec, maestroResult);
+
+        ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
+        const qcResult = pappy!.evaluate(qcInput);
+        ctx.gate?.afterQC(
+          { taskId, outputText: maestroResult.outputText ?? "" },
+          qcResult.verdict,
+          qcResult.issues.length,
         );
+
+        emitter.emit({
+          type: "qc:result",
+          taskId,
+          attempt: 0,
+          isRepair: false,
+          verdict: qcResult.verdict,
+          issueCount: qcResult.issues.length,
+        });
+
+        if (qcResult.verdict !== "FAIL") {
+          result = {
+            status: "SUCCESS",
+            userFacingText: maestroResult.outputText,
+            summary: qcResult.internalSummary,
+            artifacts: maestroResult,
+          };
+        } else if (!qcResult.repairTask) {
+          result = { status: "FAIL", summary: qcResult.internalSummary };
+        } else {
+          result = await handleRepairLoop(
+            taskSpec,
+            qcResult,
+            ctx,
+            maestro,
+            pappy!,
+            emitter,
+            maxRepairPasses,
+          );
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

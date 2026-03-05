@@ -3,6 +3,7 @@ export { createOrcaRuntime } from "./runtime.js";
 
 // Concrete adapter factories (convenience — can be swapped for custom impls)
 export { createMirandaLLMService } from "./adapters/mirandaLLM.js";
+export { createDirectLLMService } from "./adapters/directLLM.js";
 export { createPappyPort, createDebugPappyPort, createLoggingPappyPort } from "./adapters/pappyPort.js";
 
 // Workspace context — capture git + file state for prompt grounding

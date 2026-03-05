@@ -105,6 +105,12 @@ export async function runPipeline(
     onStreamReset?: () => void;
     /** Miranda gate — validates each LLM call before it fires and after it returns. */
     gate?: import("../gate/mirandaGate.js").MirandaGate;
+    /**
+     * When true, run only the ANSWER stage (skip PLAN, CRITIQUE, REWRITE).
+     * Use for low-risk single-step tasks where the overhead of the full
+     * pipeline isn't justified.
+     */
+    simple?: boolean;
   },
 ): Promise<PipelineResult> {
   const runId = randomUUID();
@@ -125,7 +131,23 @@ export async function runPipeline(
   let budgetExceeded = false;
   let liteMode = false;
 
+  const SIMPLE_SKIP = new Set<string>(["plan", "critique", "rewrite"]);
+
   for (const stage of STAGE_ORDER) {
+    // Simple mode: only run ANSWER, skip everything else.
+    if (callbacks?.simple && SIMPLE_SKIP.has(stage)) {
+      stageResults.push({
+        stage,
+        success: false,
+        finalOutput: "",
+        parsedData: null,
+        attempts: [],
+        modelUsed: "skipped",
+        totalCost: 0,
+      });
+      continue;
+    }
+
     // Budget check before CRITIQUE and REWRITE
     if (
       (stage === "critique" || stage === "rewrite") &&
