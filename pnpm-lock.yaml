@@ -19,6 +19,9 @@ importers:
       '@clawde/orca-core':
         specifier: workspace:*
         version: link:../../packages/orca-core
+      '@yakstacks/workbench-core':
+        specifier: workspace:*
+        version: link:../../packages/workbench-core
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1

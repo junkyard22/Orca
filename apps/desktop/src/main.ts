@@ -7,6 +7,7 @@ import type { LLMAdapter } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createDirectLLMService,
+  createPappyPort,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -17,7 +18,9 @@ import type {
   OrcaRunCtx,
   OrcaTaskSpec,
   OrcaLLMService,
+  OrcaToolService,
 } from "@clawde/orca-core";
+import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 import { createBenson } from "@clawde/benson-core";
 import {
   createMaestroCore,
@@ -32,6 +35,108 @@ import type {
 } from "maestro-core";
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry } from "./settings";
+
+// ── Agent loop helpers (tool call parsing + multi-turn execution) ──────────
+
+const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+
+function parseToolCalls(text: string): Array<{ tool: string; input: Record<string, unknown> }> {
+  const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+  // Strict: closed <tool_call>...</tool_call>
+  TOOL_CALL_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = TOOL_CALL_RE.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]!) as Record<string, unknown>;
+      const { tool, ...input } = parsed;
+      if (typeof tool === 'string' && tool) calls.push({ tool, input });
+    } catch {
+      // XML-attribute style: TOOLNAME<arg_key>k</arg_key><arg_value>v</arg_value>
+      const body = match[1]!;
+      const toolNameMatch = /^([\w-]+)/.exec(body.trim());
+      if (toolNameMatch) {
+        const tool = toolNameMatch[1]!;
+        const input: Record<string, unknown> = {};
+        const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
+        let m: RegExpExecArray | null;
+        while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
+        if (tool) calls.push({ tool, input });
+      }
+    }
+  }
+  // Lenient: unclosed <tool_call> at end of text (some models omit the closing tag)
+  if (calls.length === 0) {
+    const openTag = '<tool_call>';
+    const idx = text.lastIndexOf(openTag);
+    if (idx !== -1) {
+      const body = text.slice(idx + openTag.length).replace(/<\/tool_call>[\s\S]*$/, '').trim();
+      try {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        const { tool, ...input } = parsed;
+        if (typeof tool === 'string' && tool) calls.push({ tool, input });
+      } catch {
+        // XML-attribute style fallback
+        const toolNameMatch = /^([\w-]+)/.exec(body);
+        if (toolNameMatch) {
+          const tool = toolNameMatch[1]!;
+          const input: Record<string, unknown> = {};
+          const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
+          let m: RegExpExecArray | null;
+          while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
+          if (tool) calls.push({ tool, input });
+        }
+      }
+    }
+  }
+  return calls;
+}
+
+function formatToolResult(tool: string, ok: boolean, output: string, error?: string): string {
+  const status = ok ? 'ok="true"' : 'ok="false"';
+  const body   = ok ? output : (error ?? output ?? 'unknown error');
+  return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
+}
+
+async function runAgentLoop(
+  systemPrompt: string,
+  taskPrompt: string,
+  tools: OrcaToolService,
+  llm: OrcaLLMService,
+  ctx: OrcaRunCtx,
+): Promise<{ text: string; toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> }> {
+  const MAX_ITER = 10;
+  const toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
+  let conversation = `${systemPrompt}\n\n${tools.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
+  let lastText = '';
+
+  for (let i = 0; i < MAX_ITER; i++) {
+    const { text } = await llm.complete(conversation, { maxTokens: 4096 });
+    lastText = text;
+    const calls = parseToolCalls(text);
+    if (calls.length === 0) break;
+    conversation += `\n\nAssistant:\n${text}`;
+    for (const call of calls) {
+      const result = await tools.execute(call.tool, call.input);
+      toolEvents.push({
+        tool:    call.tool,
+        ok:      result.ok,
+        summary: result.ok
+          ? `${call.tool}: ok (${result.output.length} chars)`
+          : `${call.tool}: failed — ${result.error ?? 'unknown'}`,
+        raw: call.input,
+      });
+      conversation += formatToolResult(call.tool, result.ok, result.output, result.error);
+    }
+  }
+
+  return {
+    text: lastText
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')  // closed tags
+      .replace(/<tool_call>[\s\S]*$/g, '')                // unclosed tail
+      .trim(),
+    toolEvents,
+  };
+}
 
 // ── Maestro adapter ────────────────────────────────────────────────────────
 // Brain decomposes every task into a routing decision (direct or decompose).
@@ -75,22 +180,31 @@ function buildMaestroAdapter(
         const taskPrompt   = buildTaskPrompt(task, role);
         const llmForRole   = roleAdapters[role] ?? ctx.llm;
 
-        const { text } = await llmForRole.complete(
-          `${systemPrompt}\n\n---\n\n${taskPrompt}`,
-          {
-            maxTokens: 4096,
-            onToken: ctx.emit
-              ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
-              : undefined,
-          },
-        );
+        let text: string;
+        let toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
+        if (ctx.tools) {
+          const res = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, llmForRole, ctx);
+          text       = res.text;
+          toolEvents = res.toolEvents;
+        } else {
+          ({ text } = await llmForRole.complete(
+            `${systemPrompt}\n\n---\n\n${taskPrompt}`,
+            {
+              maxTokens: 4096,
+              onToken: ctx.emit
+                ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
+                : undefined,
+            },
+          ));
+        }
 
         const inputTokensEst  = Math.ceil((systemPrompt.length + taskPrompt.length) / 4);
         const outputTokensEst = Math.ceil(text.length / 4);
         win?.webContents.send('orca-event', { type: 'run:stats', taskId, inputTokensEst, outputTokensEst });
 
         return {
-          outputText: text,
+          outputText:  text,
+          toolEvents,
           doneCriteria: decision.done_criteria,
           summary: `run_id=${orch.run_id} routing=direct role=${role} risk=${orch.risk.riskScore.toFixed(2)}`,
         };
@@ -107,15 +221,20 @@ function buildMaestroAdapter(
           try {
             const headSystem = getRolePrompt(dept.head as RoleName);
             const headLLM    = roleAdapters[dept.head] ?? ctx.llm;
-            const prompt = [
-              headSystem,
-              '\n\n---\n\n',
+            const headTask   = [
               dept.context ? `## Context\n${dept.context}\n\n` : '',
               `## Subtask\n${dept.subtask}`,
               `\n\n## Original request\n${task.originalUserMessage}`,
             ].join('');
 
-            const { text: output } = await headLLM.complete(prompt, { maxTokens: 8192 });
+            let output: string;
+            if (ctx.tools) {
+              const res = await runAgentLoop(headSystem, headTask, ctx.tools, headLLM, ctx);
+              output = res.text;
+            } else {
+              const fullPrompt = `${headSystem}\n\n---\n\n${headTask}`;
+              ({ text: output } = await headLLM.complete(fullPrompt, { maxTokens: 8192 }));
+            }
             ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
             return { head: dept.head, subtask: dept.subtask, output, subagentId, ok: true as const };
           } catch (err) {
@@ -155,7 +274,7 @@ function buildMaestroAdapter(
       const { text: synthOutput } = await brainLLM.complete(
         `${getRolePrompt('brain')}\n\n---\n\n${synthPrompt}`,
         {
-          maxTokens: 4096,
+          maxTokens: 8192,
           onToken: ctx.emit
             ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
             : undefined,
@@ -295,9 +414,22 @@ function initOrca(s: OrcaSettings): string | null {
     }
 
     const maestro = buildMaestroAdapter(roleAdapters);
-    // Pappy QC and Miranda gates are intentionally disabled for now.
-    // Re-enable once Maestro is verified working correctly.
-    runtime = createOrcaRuntime({ maestro, llm, maxRepairPasses: 0 });
+    const pappy   = createPappyPort();
+
+    const toolRegistry = createCoreToolRegistry();
+    const toolService: OrcaToolService = {
+      execute(name, input) {
+        const tool = toolRegistry.get(name);
+        if (!tool) return Promise.resolve({
+          ok: false, output: '',
+          error: `Unknown tool: "${name}". Available: ${toolRegistry.list().map(t => t.name).join(', ')}`,
+        });
+        return tool.execute(input, { workspaceRoot: process.cwd(), runId: '' });
+      },
+      formatForPrompt() { return toolRegistry.formatForPrompt(); },
+    };
+
+    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {

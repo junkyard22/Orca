@@ -48,6 +48,15 @@ export class ToolRegistry {
   formatForPrompt(): string {
     if (this.tools.size === 0) return "";
 
+    // Build a concrete example from the first tool's required params
+    const [firstTool] = this.tools.values();
+    const exampleArgs: Record<string, string> = { tool: firstTool!.name };
+    for (const param of firstTool!.schema.required) {
+      const spec = firstTool!.schema.properties[param];
+      exampleArgs[param] = spec?.description ? `<${param}>` : "value";
+    }
+    const exampleJson = JSON.stringify(exampleArgs);
+
     const lines: string[] = [
       "## Tools",
       "",
@@ -55,9 +64,20 @@ export class ToolRegistry {
       "Wait for the tool result before continuing.",
       "When your task is fully complete, give your final answer without a trailing tool call.",
       "",
-      "TOOL CALL SYNTAX:",
+      "TOOL CALL SYNTAX — use ONLY this exact JSON format:",
       "<tool_call>",
-      '{"tool": "TOOL_NAME", "PARAM": "VALUE"}',
+      '{"tool": "tool_name", "arg_name": "arg_value"}',
+      "</tool_call>",
+      "",
+      "RULES:",
+      '- "tool" must be the exact tool name',
+      "- Other keys are the specific parameters for that tool",
+      "- Always close with </tool_call>",
+      "- Do NOT use XML-style <arg_key>/<arg_value> tags",
+      "",
+      `EXAMPLE (${firstTool!.name}):`,
+      "<tool_call>",
+      exampleJson,
       "</tool_call>",
       "",
       "### Available Tools",

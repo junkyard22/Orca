@@ -11,6 +11,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import path from "node:path";
 import { createBenson } from "@clawde/benson-core";
 import {
   createOrcaRuntime,
@@ -26,7 +27,9 @@ import type {
   OrcaRunCtx,
   OrcaTaskSpec,
   OrcaLLMService,
+  OrcaToolService,
 } from "@clawde/orca-core";
+import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 import {
   createMaestroCore,
   getRolePrompt,
@@ -205,6 +208,111 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
   return lines.join("\n");
 }
 
+// ── Agent loop helpers (mirrors main.ts) ───────────────────────────────
+
+const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+
+function parseToolCalls(text: string): Array<{ tool: string; input: Record<string, unknown> }> {
+  const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+  // Strict: closed <tool_call>...</tool_call>
+  TOOL_CALL_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = TOOL_CALL_RE.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]!) as Record<string, unknown>;
+      const { tool, ...input } = parsed;
+      if (typeof tool === 'string' && tool) calls.push({ tool, input });
+    } catch {
+      // XML-attribute style: TOOLNAME<arg_key>k</arg_key><arg_value>v</arg_value>
+      const body = match[1]!;
+      const toolNameMatch = /^([\w-]+)/.exec(body.trim());
+      if (toolNameMatch) {
+        const tool = toolNameMatch[1]!;
+        const input: Record<string, unknown> = {};
+        const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
+        let m: RegExpExecArray | null;
+        while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
+        if (tool) calls.push({ tool, input });
+      }
+    }
+  }
+  // Lenient: unclosed <tool_call> at end of text (some models omit the closing tag)
+  if (calls.length === 0) {
+    const openTag = '<tool_call>';
+    const idx = text.lastIndexOf(openTag);
+    if (idx !== -1) {
+      const body = text.slice(idx + openTag.length).replace(/<\/tool_call>[\s\S]*$/, '').trim();
+      // Try JSON first
+      try {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        const { tool, ...input } = parsed;
+        if (typeof tool === 'string' && tool) calls.push({ tool, input });
+      } catch {
+        // Try XML-attribute style: <tool_call>tool_name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>
+        const toolNameMatch = /^([\w-]+)/.exec(body);
+        if (toolNameMatch) {
+          const tool = toolNameMatch[1]!;
+          const input: Record<string, unknown> = {};
+          const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
+          let m: RegExpExecArray | null;
+          while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
+          if (tool) calls.push({ tool, input });
+        }
+      }
+    }
+  }
+  return calls;
+}
+
+function fmtToolResult(tool: string, ok: boolean, output: string, error?: string): string {
+  const status = ok ? 'ok="true"' : 'ok="false"';
+  const body   = ok ? output : (error ?? output ?? 'unknown error');
+  return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
+}
+
+async function runAgentLoop(
+  systemPrompt: string,
+  taskPrompt: string,
+  tools: OrcaToolService,
+  llm: OrcaLLMService,
+): Promise<{ text: string; toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> }> {
+  const MAX_ITER = 10;
+  const toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
+  let conversation = `${systemPrompt}\n\n${tools.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
+  let lastText = '';
+
+  for (let i = 0; i < MAX_ITER; i++) {
+    const { text } = await llm.complete(conversation, { maxTokens: 4096 });
+    lastText = text;
+    const calls = parseToolCalls(text);
+    if (calls.length === 0) break;
+    trace("Maestro", C.yellow, `  [agentLoop] iteration ${i + 1}: ${calls.length} tool call(s)`);
+    conversation += `\n\nAssistant:\n${text}`;
+    for (const call of calls) {
+      trace("Maestro", C.cyan, `    ➤ tool:${call.tool}  args=${JSON.stringify(call.input).slice(0, 80)}`);
+      const result = await tools.execute(call.tool, call.input);
+      trace("Maestro", result.ok ? C.green : C.red, `    ← ${result.ok ? 'ok' : 'FAIL'} (${result.output.length} chars)`);
+      toolEvents.push({
+        tool:    call.tool,
+        ok:      result.ok,
+        summary: result.ok
+          ? `${call.tool}: ok (${result.output.length} chars)`
+          : `${call.tool}: failed — ${result.error ?? 'unknown'}`,
+        raw: call.input,
+      });
+      conversation += fmtToolResult(call.tool, result.ok, result.output, result.error);
+    }
+  }
+
+  return {
+    text: lastText
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')  // closed tags
+      .replace(/<tool_call>[\s\S]*$/g, '')                // unclosed tail
+      .trim(),
+    toolEvents,
+  };
+}
+
 // ── Tracing Maestro — mirrors buildMaestroAdapter() from main.ts ──────────
 
 function createTracingMaestro(
@@ -272,15 +380,24 @@ function createTracingMaestro(
         const taskPrompt   = buildTaskPrompt(task, role);
         const llmForRole   = roleAdapters[role] ?? ctx.llm;
 
-        const { text } = await llmForRole.complete(
-          `${systemPrompt}\n\n---\n\n${taskPrompt}`,
-          {
-            maxTokens: 4096,
-            onToken: ctx.emit
-              ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
-              : undefined,
-          },
-        );
+        let text: string;
+        let toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
+        if (ctx.tools) {
+          trace("Maestro", C.yellow, `  [tools] injecting ${ctx.tools.formatForPrompt().length} chars of tool defs`);
+          const res = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, llmForRole);
+          text       = res.text;
+          toolEvents = res.toolEvents;
+        } else {
+          ({ text } = await llmForRole.complete(
+            `${systemPrompt}\n\n---\n\n${taskPrompt}`,
+            {
+              maxTokens: 4096,
+              onToken: ctx.emit
+                ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
+                : undefined,
+            },
+          ));
+        }
 
         trace("Maestro", C.cyan, `  LLM returned ${text.length} chars`);
         trace("Maestro", C.dim,  `  Final text[0..120]: "${text.slice(0, 120).replace(/\n/g, "\\n")}…"`);
@@ -292,6 +409,7 @@ function createTracingMaestro(
 
         return {
           outputText: text,
+          toolEvents,
           doneCriteria: dec.done_criteria,
           summary: `routing=direct role=${role} type=${type} risk=${riskScore.toFixed(2)}`,
         };
@@ -313,15 +431,20 @@ function createTracingMaestro(
           try {
             const headSystem = getRolePrompt(dept.head as RoleName);
             const headLLM    = roleAdapters[dept.head] ?? ctx.llm;
-            const prompt = [
-              headSystem,
-              '\n\n---\n\n',
+            const headTask   = [
               dept.context ? `## Context\n${dept.context}\n\n` : '',
               `## Subtask\n${dept.subtask}`,
               `\n\n## Original request\n${task.originalUserMessage}`,
             ].join('');
 
-            const { text: output } = await headLLM.complete(prompt, { maxTokens: 8192 });
+            let output: string;
+            if (ctx.tools) {
+              const res = await runAgentLoop(headSystem, headTask, ctx.tools, headLLM);
+              output = res.text;
+            } else {
+              const fullPrompt = `${headSystem}\n\n---\n\n${headTask}`;
+              ({ text: output } = await headLLM.complete(fullPrompt, { maxTokens: 8192 }));
+            }
             ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
             trace("Maestro", C.green, `    [${dept.head}] done — ${output.length} chars`);
             return { head: dept.head, subtask: dept.subtask, output, subagentId, ok: true as const };
@@ -355,15 +478,25 @@ function createTracingMaestro(
         synthesis_hint,
       );
 
-      const { text: synthOutput } = await brainLLM.complete(
-        `${getRolePrompt('brain')}\n\n---\n\n${synthPrompt}`,
-        {
-          maxTokens: 4096,
-          onToken: ctx.emit
-            ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
-            : undefined,
-        },
-      );
+      const synthFullPrompt = `${getRolePrompt('brain')}\n\n---\n\n${synthPrompt}`;
+      trace("Maestro", C.dim, `  Synthesis prompt length: ${synthFullPrompt.length} chars`);
+
+      let synthOutput: string;
+      try {
+        const res = await brainLLM.complete(
+          synthFullPrompt,
+          {
+            maxTokens: 8192,
+            onToken: ctx.emit
+              ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
+              : undefined,
+          },
+        );
+        synthOutput = res.text;
+      } catch (err) {
+        trace("Maestro", C.yellow, `  ✗ Synthesis threw: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
 
       trace("Maestro", C.cyan, `  Synthesis returned ${synthOutput.length} chars`);
       trace("Maestro", C.dim,  `  Synthesis[0..120]: "${synthOutput.slice(0, 120).replace(/\n/g, "\\n")}…"`);
@@ -449,8 +582,25 @@ async function main() {
   trace("Init", C.blue, "Creating Pappy QC port (debug trace enabled)...");
   const pappy = createDebugPappyPort();
 
+  // Resolve workspace root: two dirs up from apps/desktop → monorepo root
+  const workspaceRoot = path.resolve(import.meta.dirname, '../..');
+
   trace("Init", C.blue, "Creating Orca runtime...");
-  const runtime: OrcaRuntime = createOrcaRuntime({ maestro, llm, pappy, maxRepairPasses: 1 });
+  const toolRegistry = createCoreToolRegistry();
+  const toolService: OrcaToolService = {
+    execute(name, input) {
+      const tool = toolRegistry.get(name);
+      if (!tool) return Promise.resolve({
+        ok: false, output: '',
+        error: `Unknown tool: "${name}". Available: ${toolRegistry.list().map(t => t.name).join(', ')}`,
+      });
+      return tool.execute(input, { workspaceRoot, runId: '' });
+    },
+    formatForPrompt() {
+      return `Workspace root: ${workspaceRoot}\n\n${toolRegistry.formatForPrompt()}`;
+    },
+  };
+  const runtime: OrcaRuntime = createOrcaRuntime({ maestro, llm, pappy, maxRepairPasses: 1, tools: toolService });
 
   // Subscribe to all non-stream events
   const events: OrcaEvent[] = [];
