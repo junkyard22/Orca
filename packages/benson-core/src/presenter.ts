@@ -36,14 +36,16 @@ function presentSuccess(result: ExecutionResult, task: TaskSpec): string {
 }
 
 function presentFailure(result: ExecutionResult, task: TaskSpec): string {
-  const base = result.userFacingText
-    ? result.userFacingText.trim()
-    : "That did not complete as expected.";
+  // If there IS output, show it — the LLM did produce something even if QC
+  // flagged issues. Append the next-step question below so the user can act.
+  if (result.userFacingText) {
+    const nextStep = chooseNextStepQuestion(task);
+    return `${result.userFacingText.trim()}\n\n---\n*QC noted some issues with the above. ${nextStep}*`;
+  }
 
-  // One next-step question — always ask something actionable, never leave user hanging
+  // Truly empty output — nothing to show
   const nextStep = chooseNextStepQuestion(task);
-
-  return `${base} ${nextStep}`;
+  return `That did not complete as expected. ${nextStep}`;
 }
 
 function chooseNextStepQuestion(task: TaskSpec): string {

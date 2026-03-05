@@ -1,6 +1,7 @@
-import type { BensonDependencies, BensonReply, ConversationTurn, TaskSpec } from "./types.js";
+import type { BensonDependencies, BensonReply, ConversationTurn } from "./types.js";
 import { parseIntent } from "./intent.js";
 import { presentResult } from "./presenter.js";
+import { processRequest } from "@clawde/secretary-core";
 
 export function createBenson(deps: BensonDependencies): {
   handleUserMessage(message: string): Promise<BensonReply>;
@@ -23,25 +24,12 @@ export function createBenson(deps: BensonDependencies): {
         };
       }
 
-      const { spec } = parsed;
+      // Secretary builds the full TaskSpec: intent, goals, constraints,
+      // permissions (which tools are allowed), output format, and injects
+      // conversation history into context.
+      const spec = processRequest(message, history);
 
-      // Inject history into context so Maestro/agents can resolve references
-      // like "that endpoint" or "do the same for the other component".
-      const specWithHistory: TaskSpec =
-        history.length > 0
-          ? {
-              ...spec,
-              context: {
-                ...spec.context,
-                conversationHistory: history.map((t) => ({
-                  user:      t.user,
-                  assistant: t.assistant,
-                })),
-              },
-            }
-          : spec;
-
-      const result = await deps.executeTask(specWithHistory);
+      const result = await deps.executeTask(spec);
       const text = presentResult(result, spec);
 
       // Append to rolling buffer (drop oldest if at cap)

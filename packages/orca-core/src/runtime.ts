@@ -51,7 +51,37 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     const ctx: OrcaRunCtx = {
       llm,
       runId: generateRunId(),
-      tools,
+      // Gate tools to only what permissions allow
+      tools: tools && (() => {
+        const allowed = taskSpec.permissions?.toolsAllowed;
+        if (!allowed) return tools; // no restrictions
+        return {
+          execute(name: string, input: Record<string, unknown>) {
+            if (!allowed.includes(name)) {
+              return Promise.resolve({
+                ok: false,
+                output: "",
+                error: `Tool "${name}" is not permitted for this request. Allowed: ${allowed.join(", ")}. Output the result in your response instead.`,
+              });
+            }
+            return tools.execute(name, input);
+          },
+          formatForPrompt() {
+            // Only describe tools the model is actually allowed to use
+            const full = tools.formatForPrompt();
+            // Strip sections for disallowed tools
+            const disallowed = ["write_file", "run_command"].filter(t => !allowed.includes(t));
+            let filtered = full;
+            for (const t of disallowed) {
+              filtered = filtered.replace(
+                new RegExp(`\\n*## Tool: ${t}[\\s\\S]*?(?=\\n## Tool:|$)`),
+                "",
+              );
+            }
+            return filtered;
+          },
+        };
+      })(),
       emit: (event) => emitter.emit(event),
       workspaceContext,
       gate: deps.gate,
@@ -105,6 +135,13 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           issueCount: qcResult.issues.length,
         });
 
+        if (qcResult.verdict === "FAIL") {
+          console.log(
+            `[Pappy FAIL] ${qcResult.issues.length} issue(s):`,
+            qcResult.issues.map((i) => `${i.severity} ${i.code}: ${i.description}`),
+          );
+        }
+
         if (qcResult.verdict !== "FAIL") {
           result = {
             status: "SUCCESS",
@@ -113,7 +150,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             artifacts: maestroResult,
           };
         } else if (!qcResult.repairTask) {
-          result = { status: "FAIL", summary: qcResult.internalSummary };
+          result = { status: "FAIL", userFacingText: maestroResult.outputText, summary: qcResult.internalSummary };
         } else {
           result = await handleRepairLoop(
             taskSpec,
@@ -123,6 +160,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             pappy!,
             emitter,
             maxRepairPasses,
+            maestroResult.outputText,
           );
         }
       }

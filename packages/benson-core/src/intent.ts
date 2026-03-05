@@ -1,4 +1,4 @@
-import type { ParseResult, TaskSpec } from "./types.js";
+import type { ParseResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Vague-verb detection
@@ -43,14 +43,16 @@ const DEFAULT_OPTIONS: [string, string, string] = [
 function isAmbiguous(message: string): boolean {
   const words = message.trim().toLowerCase().split(/\s+/);
 
-  // Single word or bare pronoun
-  if (words.length <= 2) return true;
-
   // Filter out filler + vague verbs to see if anything specific remains
   const meaningful = words.filter(
     (w) => !VAGUE_VERBS.has(w) && !FILLER_WORDS.has(w)
   );
+
+  // Truly empty after filtering (e.g. "help me", "fix it", "do something")
   if (meaningful.length === 0) return true;
+
+  // Single bare word that is itself vague (e.g. "help", "fix")
+  if (words.length === 1 && VAGUE_VERBS.has(words[0] ?? "")) return true;
 
   // Short message whose first word is a vague verb AND nothing specific follows
   if (words.length <= 4 && VAGUE_VERBS.has(words[0] ?? "")) {
@@ -79,60 +81,6 @@ function buildClarify(message: string): ParseResult {
 }
 
 // ---------------------------------------------------------------------------
-// TaskSpec builder
-// ---------------------------------------------------------------------------
-
-const SKIP_WORDS = new Set([
-  "a", "an", "the", "for", "to", "in", "on", "at", "of",
-  "with", "from", "into", "about", "by", "as",
-]);
-
-function extractIntent(message: string): string {
-  const words = message.toLowerCase().split(/\s+/);
-  const verb = words[0] ?? "process";
-  const noun = words.slice(1).find((w) => !SKIP_WORDS.has(w) && !FILLER_WORDS.has(w));
-  return noun ? `${verb} ${noun}` : verb;
-}
-
-function extractGoals(message: string): string[] {
-  const parts = message
-    .split(/\s+and\s+also\s+|\s+also\s+|\s+and\s+|\s*;\s*/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  return parts.length > 1 ? parts : [message.trim()];
-}
-
-function extractConstraints(
-  message: string
-): Record<string, unknown> | undefined {
-  const constraints: Record<string, unknown> = {};
-
-  const withoutMatch = message.match(/without\s+([\w][\w\s]*?)(?:\s*,|\s+and\b|\s*$)/i);
-  if (withoutMatch?.[1]) constraints["without"] = withoutMatch[1].trim();
-
-  const onlyMatch = message.match(/\bonly\s+([\w][\w\s]*?)(?:\s*,|\s+and\b|\s*$)/i);
-  if (onlyMatch?.[1]) constraints["scope"] = onlyMatch[1].trim();
-
-  const mustMatch = message.match(/\bmust\s+([\w][\w\s]*?)(?:\s*,|\s+and\b|\s*$)/i);
-  if (mustMatch?.[1]) constraints["required"] = mustMatch[1].trim();
-
-  const noMatch = message.match(/\bno\s+([\w][\w\s]*?)(?:\s*,|\s+and\b|\s*$)/i);
-  if (noMatch?.[1]) constraints["forbid"] = noMatch[1].trim();
-
-  return Object.keys(constraints).length > 0 ? constraints : undefined;
-}
-
-function buildTaskSpec(message: string): TaskSpec {
-  return {
-    originalUserMessage: message,
-    intent: extractIntent(message),
-    goals: extractGoals(message),
-    constraints: extractConstraints(message),
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -150,5 +98,5 @@ export function parseIntent(message: string): ParseResult {
     return buildClarify(trimmed);
   }
 
-  return { kind: "TASK", spec: buildTaskSpec(trimmed) };
+  return { kind: "TASK" };
 }

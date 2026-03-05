@@ -30,8 +30,11 @@ export async function handleRepairLoop(
   pappy: PappyPort,
   emitter: OrcaEmitter,
   maxPasses: number,
+  initialOutputText?: string,
 ): Promise<OrcaExecutionResult> {
   let currentQC = initialQCResult;
+  // Seed with the initial output so we always have something to show
+  let lastOutputText: string | undefined = initialOutputText;
 
   for (let pass = 1; pass <= maxPasses; pass++) {
     emitter.emit({ type: "repair:start", taskId: ctx.runId, pass, maxPasses });
@@ -42,7 +45,10 @@ export async function handleRepairLoop(
     const repairSpec: OrcaTaskSpec = {
       originalUserMessage: currentQC.repairTask!,
       intent: "repair",
-      goals: ["Fix all issues identified in the quality check"],
+      goals: [
+        ...originalTask.goals,
+        "Fix all issues identified in the quality check — produce the corrected output, not a description of fixes",
+      ],
       constraints: originalTask.constraints,
       context: {
         ...originalTask.context,
@@ -66,6 +72,7 @@ export async function handleRepairLoop(
 
     emitter.emit({ type: "maestro:start", taskId: ctx.runId, attempt: pass, isRepair: true });
     const maestroResult = await maestro.run(repairSpec, ctx);
+    lastOutputText = maestroResult.outputText ?? lastOutputText;
     emitter.emit({ type: "maestro:done", taskId: ctx.runId, attempt: pass, isRepair: true, hasOutput: !!maestroResult.outputText });
 
     // Evaluate THIS pass's maestroResult (latest artifacts) against the
@@ -109,6 +116,7 @@ export async function handleRepairLoop(
 
   return {
     status: "FAIL",
+    userFacingText: lastOutputText,
     summary: `Still failing after ${maxPasses} repair pass(es).`,
   };
 }

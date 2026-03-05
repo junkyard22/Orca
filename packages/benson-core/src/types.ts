@@ -1,14 +1,9 @@
+export type { TaskSpec, TaskPermissions, OutputFormat, ConversationTurn } from "@clawde/secretary-core";
+import type { TaskSpec, ConversationTurn } from "@clawde/secretary-core";
+
 export type BensonReply =
   | { kind: "CLARIFY"; text: string; options?: string[] }
   | { kind: "RESULT"; text: string; task: TaskSpec };
-
-export interface TaskSpec {
-  originalUserMessage: string;
-  intent: string;
-  goals: string[];
-  constraints?: Record<string, unknown>;
-  context?: Record<string, unknown>;
-}
 
 export interface ExecutionResult {
   status: "SUCCESS" | "FAIL";
@@ -16,16 +11,6 @@ export interface ExecutionResult {
   summary?: string;
   artifacts?: unknown;
   followUpQuestion?: string;
-}
-
-/**
- * A single exchange in the ongoing conversation.
- * Injected into the task context so the model can resolve references like
- * "that endpoint" or "do the same for the other file".
- */
-export interface ConversationTurn {
-  user: string;
-  assistant: string;
 }
 
 export interface BensonDependencies {
@@ -46,7 +31,7 @@ export interface ParsedClarify {
 
 export interface ParsedTask {
   kind: "TASK";
-  spec: TaskSpec;
 }
 
 export type ParseResult = ParsedClarify | ParsedTask;
+

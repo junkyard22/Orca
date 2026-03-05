@@ -15,12 +15,23 @@ import type { RunStore } from "./persistence/types.js";
 // in the app shell without an explicit import.
 // ---------------------------------------------------------------------------
 
+export type OutputFormat = "code" | "diff" | "json" | "prose";
+
+export interface TaskPermissions {
+  fileRead:     boolean;
+  fileWrite:    boolean;
+  shellExec:    boolean;
+  toolsAllowed: string[];
+}
+
 export interface OrcaTaskSpec {
   originalUserMessage: string;
   intent: string;
   goals: string[];
   constraints?: Record<string, unknown>;
   context?: Record<string, unknown>;
+  permissions?: TaskPermissions;
+  outputFormat?: OutputFormat;
 }
 
 export interface OrcaExecutionResult {

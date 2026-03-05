@@ -1,0 +1,21 @@
+{
+  "name": "@clawde/secretary-core",
+  "version": "0.1.0",
+  "description": "Intake / intent-translation layer — converts raw user messages into fully-specified TaskSpecs",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "typescript": "^5.4.5"
+  }
+}

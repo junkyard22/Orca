@@ -174,6 +174,7 @@ function buildMaestroAdapter(
       // ── Step 2a: Direct routing — one specialist, one call ───────────────
       if (decision.routing === 'direct') {
         const role = decision.role;
+        console.log(`[Orca]   role:selected  role=${role}  routing=direct`);
         win?.webContents.send('orca-event', { type: 'role:selected', taskId, role, isFallback: false });
 
         const systemPrompt = getRolePrompt(role as RoleName);
@@ -604,7 +605,30 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
   ];
   const unsubs = EVENT_TYPES.map((type) =>
-    runtime!.on(type, (e: OrcaEvent) => win?.webContents.send("orca-event", e)),
+    runtime!.on(type, (e: OrcaEvent) => {
+      win?.webContents.send("orca-event", e);
+      // ── Console trace ──────────────────────────────────────────────────
+      switch (e.type) {
+        case "task:start":
+          console.log(`\n[Orca] ▶ task:start  intent="${e.intent}"  id=${e.taskId}`);
+          break;
+        case "maestro:start":
+          console.log(`[Orca]   maestro:start  attempt=${e.attempt}  repair=${e.isRepair}`);
+          break;
+        case "maestro:done":
+          console.log(`[Orca]   maestro:done   attempt=${e.attempt}  repair=${e.isRepair}  hasOutput=${e.hasOutput}`);
+          break;
+        case "qc:result":
+          console.log(`[Orca]   qc:result      attempt=${e.attempt}  verdict=${e.verdict}  issues=${e.issueCount}`);
+          break;
+        case "repair:start":
+          console.log(`[Orca]   repair:start   pass=${e.pass}/${e.maxPasses}`);
+          break;
+        case "task:done":
+          console.log(`[Orca] ■ task:done`);
+          break;
+      }
+    }),
   );
 
   try {
