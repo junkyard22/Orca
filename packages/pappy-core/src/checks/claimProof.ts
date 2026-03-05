@@ -172,6 +172,14 @@ export function extractClaims(outputText: string): Claim[] {
     const regex = new RegExp(def.pattern.source, def.pattern.flags);
     let match: RegExpMatchArray | null;
     while ((match = regex.exec(outputText)) !== null) {
+      // Skip forward-looking / intent phrasing: "I'll modify X", "will update X", "Let me edit X".
+      // These are plans, not accomplished actions — no receipt should be required.
+      const matchStart = match.index ?? 0;
+      const contextBefore = outputText.slice(Math.max(0, matchStart - 35), matchStart);
+      if (/\b(i'?ll|will|let me|i'?m going to|need to|i would|i'?d|going to|plan to)\s*$/i.test(contextBefore)) {
+        continue;
+      }
+
       claimIndex++;
       claims.push({
         id: `C${claimIndex}`,
@@ -209,6 +217,15 @@ export function runClaimProofChecks(
 
     while ((match = regex.exec(outputText)) !== null) {
       patternMatched = true;
+
+      // Skip forward-looking / intent phrasing: "I'll modify X", "will update X", "Let me edit X".
+      // These are plans, not accomplished actions — requiring a receipt for them is a false positive.
+      const matchStart = match.index ?? 0;
+      const contextBefore = outputText.slice(Math.max(0, matchStart - 35), matchStart);
+      if (/\b(i'?ll|will|let me|i'?m going to|need to|i would|i'?d|going to|plan to)\s*$/i.test(contextBefore)) {
+        continue;
+      }
+
       claimIndex++;
       const claimId = `C${claimIndex}`;
       const claimText = match[0].trim();

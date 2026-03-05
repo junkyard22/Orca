@@ -227,7 +227,14 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
     // Skip Brain's acceptance-criteria descriptions — they describe requirements ABOUT the output
     // ("Output contains X", "Function is syntactically correct") rather than the task topic.
     // These are already checked via the AC receipt ledger; keyword-matching them here creates false positives.
-    !/^(output|function|response|result|code|answer)\s+(contains?|includes?|returns?|prints?|is\b|provides?|shows?|has\b|must\b)/i.test(g)
+    !/^(output|function|response|result|code|answer)\s+(contains?|includes?|returns?|prints?|is\b|provides?|shows?|has\b|must\b)/i.test(g) &&
+    // Skip repair-pass meta-constraints ("No unrelated behavior changes", "No additional side effects").
+    // These are scoping rules, not output content requirements — keyword-matching them creates false positives.
+    !/^no\s+(unrelated|unnecessary|additional|extra|breaking|unwanted|other|extraneous)\b/i.test(g) &&
+    // Skip criteria that reference the original task / existing behavior — meta-scope constraints.
+    !/\b(original\s+task|original\s+behav|existing\s+behav|existing\s+function)\b/i.test(g) &&
+    // Skip "Response must/should/is" patterns not already covered above.
+    !/^response\s+(is\b|must\b|should\b|will\b|includes?\b|contains?\b|provides?\b)/i.test(g)
   );
   if (meaningfulGoals.length > 0 && (hasOutput || hasFiles)) {
     const goalTerms = [...new Set(

@@ -72,7 +72,16 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
       // The model received a clear "not permitted" message and adapted — this is
       // correct behaviour, not a failure worth flagging.
       const isPermissionDenied = event.summary?.includes("is not permitted");
-      if (isPermissionDenied) continue;
+
+      // Navigation errors (EISDIR = tried to read a directory, ENOENT = file not found)
+      // are model path-exploration mistakes. The model gets an error message and
+      // recovers on the next call — no systemic failure, don't flag HIGH.
+      const isNavigationError =
+        event.summary?.includes("EISDIR") ||
+        event.summary?.includes("ENOENT") ||
+        event.summary?.includes("no such file or directory");
+
+      if (isPermissionDenied || isNavigationError) continue;
 
       issues.push({
         severity: "HIGH",
