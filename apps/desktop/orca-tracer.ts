@@ -12,7 +12,7 @@ import { createBenson } from "@clawde/benson-core";
 import {
   createOrcaRuntime,
   createMirandaLLMService,
-  createPappyPort,
+  createDebugPappyPort,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -237,8 +237,8 @@ async function main() {
   const config = createDefaultConfig({ verbose: false, budgetUsd: 10.0, logPath: "/dev/null" });
   const llm = createMirandaLLMService(adapter, config);
 
-  trace("Init", C.blue, "Creating Pappy QC port...");
-  const pappy = createPappyPort();
+  trace("Init", C.blue, "Creating Pappy QC port (debug trace enabled)...");
+  const pappy = createDebugPappyPort();
 
   trace("Init", C.blue, "Creating tracing Maestro adapter...");
   const maestro = createTracingMaestro();
