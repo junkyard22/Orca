@@ -108,7 +108,24 @@ function trace(layer: string, color: string, msg: string) {
   console.log(`${ts()} ${color}[${layer.padEnd(10)}]${C.reset} ${msg}`);
 }
 
-// ── Tracing wrapper around the real adapter ─────────────────────────────
+// ── Message detail toggle ─────────────────────────────────────────────────
+// Set ORCA_MESSAGES=1 to dump full prompts and responses.
+// Unset (or 0) for the normal terse summary view.
+
+const SHOW_MESSAGES = process.env["ORCA_MESSAGES"] === "1";
+
+function printMsg(label: string, color: string, text: string) {
+  if (!SHOW_MESSAGES) return;
+  const bar = "─".repeat(60);
+  console.log(`\n${color}┌─ ${label} ${"─".repeat(Math.max(0, 60 - label.length - 3))}${C.reset}`);
+  // Print each line with a leading pipe so it's easy to eyeball
+  for (const line of text.split("\n")) {
+    console.log(`${color}│${C.reset} ${line}`);
+  }
+  console.log(`${color}└${bar}${C.reset}\n`);
+}
+
+
 // Wraps the live adapter so every call is logged with role, model,
 // latency, and token usage — without replacing the real network calls.
 
@@ -141,6 +158,9 @@ class TracingLiveAdapter implements LLMAdapter {
     trace("Adapter", C.magenta, `Call #${callNum}  stage=${stage}  model=${request.model}  msgs=${request.messages.length}`);
     const promptPreview = sys.slice(0, 150).replace(/\n/g, "\\n");
     trace("Adapter", C.dim, `  system[0..150]: "${promptPreview}…"`);
+    for (const m of request.messages) {
+      printMsg(`→ ${stage} [${m.role}]`, C.magenta, m.content);
+    }
     trace("Adapter", C.magenta, `  → calling API...`);
 
     const response = await this.inner.complete(request);
@@ -151,6 +171,7 @@ class TracingLiveAdapter implements LLMAdapter {
       `  ${response.content.length} chars`);
     const preview = response.content.slice(0, 120).replace(/\n/g, "\\n");
     trace("Adapter", C.dim, `  content[0..120]: "${preview}…"`);
+    printMsg(`← ${stage} [assistant]`, C.green, response.content);
     return response;
   }
 
@@ -161,14 +182,20 @@ class TracingLiveAdapter implements LLMAdapter {
     const sys = request.messages.find(m => m.role === "system")?.content ?? "";
     const stage = this.detectStage(sys);
     trace("Adapter", C.magenta, `Call #${callNum}  stage=${stage} [stream]  model=${request.model}`);
+    for (const m of request.messages) {
+      printMsg(`→ ${stage} [${m.role}] (stream)`, C.magenta, m.content);
+    }
 
     let tokenCount = 0;
+    let streamedContent = "";
     const response = await this.inner.stream(request, (chunk) => {
       tokenCount++;
+      streamedContent += chunk;
       onToken(chunk);
     });
     const ms = Date.now() - t;
     trace("Adapter", C.magenta, `  ← ${ms}ms  ${tokenCount} chunks  ${response.usage?.totalTokens ?? "?"}tok`);
+    printMsg(`← ${stage} [assistant] (stream)`, C.green, streamedContent || response.content);
     return response;
   }
 }
@@ -348,11 +375,14 @@ function createTracingMaestro(
       // ── Step 1: Brain routing call ────────────────────────────────────────
       trace("Maestro", C.cyan, `  Step 1: Brain routing call (max 512 tok, temp 0.1)...`);
       let dec: DecomposeDecision;
+      const brainPrompt = `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`;
       try {
+        printMsg("→ Brain [decompose]", C.cyan, brainPrompt);
         const { text: decisionJson } = await brainLLM.complete(
-          `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`,
+          brainPrompt,
           { maxTokens: 512, temperature: 0 },
         );
+        printMsg("← Brain [decompose response]", C.green, decisionJson);
         trace("Maestro", C.dim, `  Raw routing JSON: ${decisionJson.slice(0, 200)}`);
         dec = parseBrainDecision(decisionJson);
       } catch (err) {
@@ -380,6 +410,9 @@ function createTracingMaestro(
         const taskPrompt   = buildTaskPrompt(task, role);
         const llmForRole   = roleAdapters[role] ?? ctx.llm;
 
+        printMsg(`→ ${role} [system]`, C.yellow, systemPrompt);
+        printMsg(`→ ${role} [task]`, C.yellow, taskPrompt);
+
         let text: string;
         let toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
         if (ctx.tools) {
@@ -401,6 +434,7 @@ function createTracingMaestro(
 
         trace("Maestro", C.cyan, `  LLM returned ${text.length} chars`);
         trace("Maestro", C.dim,  `  Final text[0..120]: "${text.slice(0, 120).replace(/\n/g, "\\n")}…"`);
+        printMsg(`← ${role} [response]`, C.green, text);
 
         if (dec.done_criteria?.length) {
           trace("Maestro", C.yellow, `  Done criteria (${dec.done_criteria.length}):`);
@@ -437,6 +471,9 @@ function createTracingMaestro(
               `\n\n## Original request\n${task.originalUserMessage}`,
             ].join('');
 
+            printMsg(`→ ${dept.head} [system]`, C.yellow, headSystem);
+            printMsg(`→ ${dept.head} [task]`, C.yellow, headTask);
+
             let output: string;
             if (ctx.tools) {
               const res = await runAgentLoop(headSystem, headTask, ctx.tools, headLLM);
@@ -445,6 +482,7 @@ function createTracingMaestro(
               const fullPrompt = `${headSystem}\n\n---\n\n${headTask}`;
               ({ text: output } = await headLLM.complete(fullPrompt, { maxTokens: 8192 }));
             }
+            printMsg(`← ${dept.head} [response]`, C.green, output);
             ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
             trace("Maestro", C.green, `    [${dept.head}] done — ${output.length} chars`);
             return { head: dept.head, subtask: dept.subtask, output, subagentId, ok: true as const };
@@ -480,6 +518,7 @@ function createTracingMaestro(
 
       const synthFullPrompt = `${getRolePrompt('brain')}\n\n---\n\n${synthPrompt}`;
       trace("Maestro", C.dim, `  Synthesis prompt length: ${synthFullPrompt.length} chars`);
+      printMsg("→ Brain [synthesis]", C.cyan, synthFullPrompt);
 
       let synthOutput: string;
       try {
@@ -500,6 +539,7 @@ function createTracingMaestro(
 
       trace("Maestro", C.cyan, `  Synthesis returned ${synthOutput.length} chars`);
       trace("Maestro", C.dim,  `  Synthesis[0..120]: "${synthOutput.slice(0, 120).replace(/\n/g, "\\n")}…"`);
+      printMsg("← Brain [synthesis response]", C.green, synthOutput);
 
       if (dec.done_criteria?.length) {
         trace("Maestro", C.yellow, `  Done criteria (${dec.done_criteria.length}):`);
