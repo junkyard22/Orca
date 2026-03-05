@@ -21,27 +21,22 @@ import type {
 import { createBenson } from "@clawde/benson-core";
 import {
   createMaestroCore,
-  selectRole,
   getRolePrompt,
+  BRAIN_DECOMPOSE_SYSTEM,
+  parseBrainDecision,
+  buildSynthesisPrompt,
 } from "maestro-core";
 import type {
   RoleName,
-  OptionalRoleName,
-  TaskContext as RoleSelectorContext,
+  DecomposeDecision,
 } from "maestro-core";
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry } from "./settings";
 
 // ── Maestro adapter ────────────────────────────────────────────────────────
-// Uses shared maestro-core orchestration with RoleSelector integration.
-// Mirrors the implementation in apps/runner/src/adapters/maestroAdapter.ts.
-
-const ALL_OPTIONAL_ROLES = new Set<OptionalRoleName>([
-  "planner_deep",
-  "debugger",
-  "reader",
-  "vision",
-]);
+// Brain decomposes every task into a routing decision (direct or decompose).
+// Direct: one specialist role handles it in a single LLM call.
+// Decompose: multiple department heads run in parallel, Brain synthesises.
 
 function buildMaestroAdapter(
   /** Per-role LLM services. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
@@ -51,130 +46,147 @@ function buildMaestroAdapter(
 
   return {
     async run(task: OrcaTaskSpec, ctx: OrcaRunCtx): Promise<OrcaMaestroResult> {
-      // 1. Classify the task synchronously — no model call needed here.
-      const orch = maestro.orchestrate(task.originalUserMessage);
+      const orch  = maestro.orchestrate(task.originalUserMessage);
+      const taskId = ctx.runId;
+      const brainLLM = roleAdapters['brain'] ?? ctx.llm;
 
-      // 2. Build role-selector context from the OrcaTaskSpec.
-      const roleCtx = buildRoleSelectorContext(task);
-
-      // 3. Pick the best role (optional-role detection + core-role heuristics).
-      const { role, isFallback, warning } = selectRole(
-        roleCtx,
-        ALL_OPTIONAL_ROLES,
-        pickCoreRole(task),
-      );
-
-      if (warning) {
-        console.warn(`[MaestroAdapter] Role warning: ${warning}`);
+      // ── Step 1: Brain decomposes the task ────────────────────────────────
+      // Small, fast JSON call to decide routing & department assignment.
+      let decision: DecomposeDecision;
+      try {
+        const { text: decisionJson } = await brainLLM.complete(
+          `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`,
+          { maxTokens: 512, temperature: 0.1 },
+        );
+        decision = parseBrainDecision(decisionJson);
+      } catch {
+        // If Brain's JSON is malformed, fall back to direct brain.
+        decision = { routing: 'direct', role: 'brain' };
       }
 
-      // Notify the renderer which role will handle this request.
-      win?.webContents.send("orca-event", { type: "role:selected", taskId: ctx.runId, role, isFallback });
+      win?.webContents.send('orca-event', { type: 'decision', taskId, decision });
 
-      // 4. Load system prompt for the selected role.
-      const systemPrompt = getRolePrompt(role as RoleName);
+      // ── Step 2a: Direct routing — one specialist, one call ───────────────
+      if (decision.routing === 'direct') {
+        const role = decision.role;
+        win?.webContents.send('orca-event', { type: 'role:selected', taskId, role, isFallback: false });
 
-      // 5. Build the full task prompt.
-      const taskPrompt = buildTaskPrompt(task, role, isFallback);
+        const systemPrompt = getRolePrompt(role as RoleName);
+        const taskPrompt   = buildTaskPrompt(task, role);
+        const llmForRole   = roleAdapters[role] ?? ctx.llm;
 
-      // 6. Dispatch to the role's dedicated LLM service, or fall back to brain.
-      const llmForRole = roleAdapters[role] ?? ctx.llm;
+        const { text } = await llmForRole.complete(
+          `${systemPrompt}\n\n---\n\n${taskPrompt}`,
+          {
+            maxTokens: 4096,
+            onToken: ctx.emit
+              ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
+              : undefined,
+          },
+        );
 
-      const { text } = await llmForRole.complete(
-        `${systemPrompt}\n\n---\n\n${taskPrompt}`,
+        const inputTokensEst  = Math.ceil((systemPrompt.length + taskPrompt.length) / 4);
+        const outputTokensEst = Math.ceil(text.length / 4);
+        win?.webContents.send('orca-event', { type: 'run:stats', taskId, inputTokensEst, outputTokensEst });
+
+        return {
+          outputText: text,
+          summary: `run_id=${orch.run_id} routing=direct role=${role} risk=${orch.risk.riskScore.toFixed(2)}`,
+        };
+      }
+
+      // ── Step 2b: Decompose — parallel department calls ───────────────────
+      const { departments, synthesis_hint } = decision;
+
+      const deptResults = await Promise.all(
+        departments.map(async (dept, i) => {
+          const subagentId = `${taskId}_sa${i}`;
+          ctx.emit?.({ type: 'subagent:spawned', taskId, subagentId, role: dept.head, task: dept.subtask });
+
+          try {
+            const headSystem = getRolePrompt(dept.head as RoleName);
+            const headLLM    = roleAdapters[dept.head] ?? ctx.llm;
+            const prompt = [
+              headSystem,
+              '\n\n---\n\n',
+              dept.context ? `## Context\n${dept.context}\n\n` : '',
+              `## Subtask\n${dept.subtask}`,
+              `\n\n## Original request\n${task.originalUserMessage}`,
+            ].join('');
+
+            const { text: output } = await headLLM.complete(prompt, { maxTokens: 4096 });
+            ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
+            return { head: dept.head, subtask: dept.subtask, output, subagentId, ok: true as const };
+          } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            ctx.emit?.({ type: 'subagent:failed', taskId, subagentId, role: dept.head, error });
+            return { head: dept.head, subtask: dept.subtask, output: '', subagentId, ok: false as const, error };
+          }
+        }),
+      );
+
+      // ── Step 3: Synthesise ───────────────────────────────────────────────
+      // If only one department ran (shouldn't normally happen but be safe)
+      // skip synthesis overhead.
+      if (deptResults.length === 1) {
+        return {
+          outputText:   deptResults[0]!.output,
+          summary:      `run_id=${orch.run_id} routing=decompose depts=1`,
+          subagentRuns: deptResults.map((d) => ({
+            subagentId:  d.subagentId,
+            role:        d.head,
+            task:        d.subtask,
+            status:      d.ok ? 'done' : 'failed',
+            outputText:  d.output,
+            error:       'error' in d ? d.error : undefined,
+          })),
+        };
+      }
+
+      // Brain synthesises all department outputs, streaming to the UI.
+      const synthPrompt = buildSynthesisPrompt(
+        task.originalUserMessage,
+        deptResults.map((d) => ({ head: d.head, subtask: d.subtask, output: d.output })),
+        synthesis_hint,
+      );
+
+      const { text: synthOutput } = await brainLLM.complete(
+        `${getRolePrompt('brain')}\n\n---\n\n${synthPrompt}`,
         {
           maxTokens: 4096,
           onToken: ctx.emit
-            ? (chunk: string) =>
-                ctx.emit!({ type: "stream:token", taskId: ctx.runId, chunk })
-            : undefined,
-          onStreamReset: ctx.emit
-            ? () =>
-                ctx.emit!({ type: "stream:reset", taskId: ctx.runId })
+            ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
             : undefined,
         },
       );
 
-      // Emit rough token estimate for the cost/stats pill in the renderer.
-      const inputTokensEst  = Math.ceil((systemPrompt.length + taskPrompt.length) / 4);
-      const outputTokensEst = Math.ceil(text.length / 4);
-      win?.webContents.send("orca-event", { type: "run:stats", taskId: ctx.runId, inputTokensEst, outputTokensEst });
-
       return {
-        outputText: text,
-        summary: [
-          `run_id=${orch.run_id}`,
-          `role=${role}${isFallback ? "(fallback)" : ""}`,
-          `type=${String(orch.classification.type)}`,
-          `risk=${orch.risk.riskScore.toFixed(2)}`,
-        ].join(" "),
+        outputText:   synthOutput,
+        summary:      `run_id=${orch.run_id} routing=decompose depts=${departments.length}`,
+        subagentRuns: deptResults.map((d) => ({
+          subagentId:  d.subagentId,
+          role:        d.head,
+          task:        d.subtask,
+          status:      d.ok ? 'done' : 'failed',
+          outputText:  d.output,
+          error:       'error' in d ? d.error : undefined,
+        })),
       };
     },
   };
 }
 
-// ---------------------------------------------------------------------------
-// Role selection helpers
-// ---------------------------------------------------------------------------
-
 /**
- * Map OrcaTaskSpec fields onto the RoleSelector's TaskContext shape.
+ * Build the task prompt that goes to a specialist role.
+ * Includes conversation history, goals, constraints, and any other context.
  */
-function buildRoleSelectorContext(task: OrcaTaskSpec): RoleSelectorContext {
-  const ctx = task.context ?? {};
-  return {
-    task:                task.originalUserMessage,
-    hasImages:           Boolean(ctx["hasImages"]),
-    errorOutput:         typeof ctx["errorOutput"] === "string" ? ctx["errorOutput"] : undefined,
-    textLength:          task.originalUserMessage.length,
-    fileCount:           typeof ctx["fileCount"] === "number" ? ctx["fileCount"] : undefined,
-    isDeepPlanRequested: typeof ctx["deepPlan"] === "boolean" ? ctx["deepPlan"] : undefined,
-    filePath:            typeof ctx["filePath"] === "string" ? ctx["filePath"] : undefined,
-  };
-}
-
-/**
- * Heuristic core-role selection runs BEFORE selectRole's optional-role
- * detection. selectRole will override this if a special trigger fires.
- */
-function pickCoreRole(task: OrcaTaskSpec): "brain" | "coder_strong" | "coder_cheap" | "reviewer" | "narrator" | "utility" {
-  if (task.intent === "repair") return "coder_strong";
-
-  const msg = task.originalUserMessage.toLowerCase();
-
-  if (/\b(implement|build|create|add feature|write code|develop)\b/.test(msg))
-    return "coder_strong";
-
-  // "write a function / class / method / script / component / hook / test / ..."
-  if (/\bwrite\s+(a\s+|the\s+|me\s+a\s+)?(function|class|method|script|component|hook|test|module|interface|type|enum|util|helper|handler|middleware|route|endpoint|api)\b/i.test(msg))
-    return "coder_strong";
-
-  // "code a ..." / "make a function ..."
-  if (/\b(code|make)\s+(a\s+|the\s+)?(function|class|method|script|component|hook|module)\b/i.test(msg))
-    return "coder_strong";
-
-  if (/\b(rename|reformat|fix typo|small (fix|change|edit)|update import|add field)\b/.test(msg))
-    return "coder_cheap";
-
-  if (/\b(review|audit|critique|check for (bugs|issues|problems)|is this (correct|right|good))\b/.test(msg))
-    return "reviewer";
-
-  if (/\b(document|write (a |the )?(readme|docs?|comment|jsdoc|tsdoc)|explain (to others|in plain))\b/.test(msg))
-    return "narrator";
-
-  return "brain";
-}
-
-/**
- * Build the task prompt with role context.
- */
-function buildTaskPrompt(task: OrcaTaskSpec, role: string, isFallback: boolean): string {
+function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
   const isRepair = task.intent === "repair";
 
   const header = isRepair
     ? "## Repair Task\nYou are fixing defects identified in a previous attempt.\n" +
       "Address every issue listed in the context below without changing unrelated behaviour."
-    : `## Task\nRole: **${role}**${isFallback ? " (fallback — preferred role unavailable)" : ""}`;
+    : role ? `## Task\nRole: **${role}**` : "## Task";
 
   const lines: string[] = [
     header,
@@ -191,11 +203,8 @@ function buildTaskPrompt(task: OrcaTaskSpec, role: string, isFallback: boolean):
   }
 
   if (task.context != null && Object.keys(task.context).length > 0) {
-    // Strip internal routing keys before showing to the model
     const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, conversationHistory: _ch, ...userCtx } = task.context as Record<string, unknown>;
 
-    // Format conversation history as a readable transcript so Miranda's
-    // PLAN stage can reason about prior turns instead of parsing raw JSON.
     const history = task.context["conversationHistory"] as Array<{ user: string; assistant: string }> | undefined;
     if (history?.length) {
       const transcript = history

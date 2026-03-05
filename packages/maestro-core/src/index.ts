@@ -114,6 +114,10 @@ export type {
 
 // ── Role Prompts ─────────────────────────────────────────────────────────────
 export { ROLE_PROMPTS, getRolePrompt } from './prompts/rolePrompts';
+
+// ── Brain Decompose ───────────────────────────────────────────────────────────
+export { BRAIN_DECOMPOSE_SYSTEM, parseBrainDecision, buildSynthesisPrompt } from './decompose';
+export type { HeadName, DirectRouting, DepartmentTask, DecomposeRouting, DecomposeDecision } from './decompose';
 export type {
   NormalizedModelId,
   RoleEffectiveConfig,
