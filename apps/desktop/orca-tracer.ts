@@ -434,68 +434,58 @@ async function main() {
   trace("Init", C.blue, "Creating Benson speaker...");
   const benson = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
 
-  // ── TURN 1 ────────────────────────────────────────────────────────────
-  console.log(`\n${"─".repeat(72)}`);
-  trace("TEST", C.white, `═══ TURN 1: "What can you do?" ═══`);
-  console.log(`${"─".repeat(72)}\n`);
+  // ── Determine mode ─────────────────────────────────────────────────────
+  // If a prompt is passed as a CLI arg, run it once and exit.
+  // Otherwise, enter interactive REPL mode.
+  const cliPrompt = process.argv[2]?.trim();
 
-  const reply1 = await benson.handleUserMessage("What can you do?");
-  trace("Benson", C.yellow, `Reply kind: ${reply1.kind}`);
-  trace("Benson", C.yellow, `Reply[0..150]: "${reply1.text.slice(0, 150).replace(/\n/g, "\\n")}…"`);
+  if (cliPrompt) {
+    // ── Single-shot mode ─────────────────────────────────────────────────
+    console.log(`\n${"─".repeat(72)}`);
+    trace("Prompt", C.white, `"${cliPrompt}"`);
+    console.log(`${"─".repeat(72)}\n`);
 
-  // ── TURN 2 (tests history injection) ──────────────────────────────────
-  console.log(`\n${"─".repeat(72)}`);
-  trace("TEST", C.white, `═══ TURN 2: "Tell me more about Miranda pipeline" ═══`);
-  trace("TEST", C.white, `(This tests conversationHistory injection)`);
-  console.log(`${"─".repeat(72)}\n`);
+    const reply = await benson.handleUserMessage(cliPrompt);
+    console.log(`\n${"─".repeat(72)}`);
+    trace("Reply", C.yellow, `kind: ${reply.kind}`);
+    console.log(`\n${reply.text}\n`);
+    console.log(`${"─".repeat(72)}\n`);
 
-  const reply2 = await benson.handleUserMessage("Tell me more about the Miranda pipeline and how it processes each request");
-  trace("Benson", C.yellow, `Reply kind: ${reply2.kind}`);
-  trace("Benson", C.yellow, `Reply[0..150]: "${reply2.text.slice(0, 150).replace(/\n/g, "\\n")}…"`);
-
-  // ── Summary ───────────────────────────────────────────────────────────
-  console.log(`\n${"═".repeat(72)}`);
-  console.log(`  TRACER SUMMARY`);
-  console.log(`${"═".repeat(72)}`);
-
-  const streamTokens = events.filter(e => e.type === "stream:token").length;
-  const streamResets = events.filter(e => e.type === "stream:reset").length;
-  const taskStarts   = events.filter(e => e.type === "task:start").length;
-  const taskDones    = events.filter(e => e.type === "task:done").length;
-  const qcResults    = events.filter(e => e.type === "qc:result").length;
-
-  console.log(`
-  Low-level adapter calls: ${adapterCallCount}  (≥8 expected: 4 stages × 2 turns, + possible repair retries)
-  Total events emitted:    ${events.length}
-    ├─ task:start:         ${taskStarts}
-    ├─ task:done:          ${taskDones}
-    ├─ qc:result:          ${qcResults}
-    ├─ stream:token:       ${streamTokens}
-    ├─ stream:reset:       ${streamResets}
-    └─ other:              ${events.length - streamTokens - streamResets - taskStarts - taskDones - qcResults}
-  `);
-
-  const checks: Array<{ name: string; ok: boolean }> = [
-    { name: "Benson returned RESULT (not CLARIFY)",         ok: reply1.kind === "RESULT" },
-    { name: "Miranda pipeline ran (adapter calls > 0)",     ok: adapterCallCount > 0 },
-    { name: "All 4 stages ran per turn (≥8 adapter calls)", ok: adapterCallCount >= 8 },
-    { name: "stream:token events fired",                    ok: streamTokens > 0 },
-    { name: "stream:reset events fired",                    ok: streamResets > 0 },
-    { name: "task:start + task:done balanced",              ok: taskStarts === taskDones },
-    { name: "Turn 2 had conversationHistory",               ok: reply2.kind === "RESULT" },
-  ];
-
-  console.log("  Checks:");
-  for (const c of checks) {
-    const icon = c.ok ? `${C.green}✓${C.reset}` : `${C.red}✗${C.reset}`;
-    console.log(`    ${icon} ${c.name}`);
+    unsubs.forEach(u => u());
+    process.exit(0);
   }
 
-  const allPassed = checks.every(c => c.ok);
-  console.log(`\n  ${allPassed ? `${C.green}ALL CHECKS PASSED!` : `${C.red}SOME CHECKS FAILED`}${C.reset}\n`);
+  // ── Interactive REPL mode ───────────────────────────────────────────────
+  // Prompts the user for input, runs it through the full pipeline, then
+  // loops. Type "exit" or press Ctrl+C to quit.
+  import("node:readline").then(({ createInterface }) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
 
-  unsubs.forEach(u => u());
-  process.exit(allPassed ? 0 : 1);
+    const askNext = () => {
+      process.stdout.write(`\n${C.cyan}You>${C.reset} `);
+      rl.once("line", async (line: string) => {
+        const msg = line.trim();
+        if (!msg || msg.toLowerCase() === "exit" || msg.toLowerCase() === "quit") {
+          console.log(`\n${C.dim}Exiting tracer.${C.reset}\n`);
+          unsubs.forEach(u => u());
+          rl.close();
+          process.exit(0);
+        }
+
+        console.log(`\n${"─".repeat(72)}\n`);
+        const reply = await benson.handleUserMessage(msg);
+        console.log(`\n${"─".repeat(72)}`);
+        trace("Reply", C.yellow, `kind: ${reply.kind}`);
+        console.log(`\n${reply.text}\n`);
+        console.log(`${"─".repeat(72)}`);
+
+        askNext();
+      });
+    };
+
+    console.log(`\n${C.cyan}Interactive mode${C.reset} — type your prompt and press Enter. Type ${C.dim}exit${C.reset} to quit.\n`);
+    askNext();
+  });
 }
 
 main().catch((err) => {
