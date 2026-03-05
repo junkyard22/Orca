@@ -69,12 +69,14 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           formatForPrompt() {
             // Only describe tools the model is actually allowed to use
             const full = tools.formatForPrompt();
-            // Strip sections for disallowed tools
+            // Strip blocks for disallowed tools.
+            // Format is: "**tool_name** — description\n  - param...\n  - param...\n\n"
             const disallowed = ["write_file", "run_command"].filter(t => !allowed.includes(t));
             let filtered = full;
             for (const t of disallowed) {
+              // Match "**tool_name** — ..." line + any "  - ..." parameter lines + trailing blank line
               filtered = filtered.replace(
-                new RegExp(`\\n*## Tool: ${t}[\\s\\S]*?(?=\\n## Tool:|$)`),
+                new RegExp(`\\*\\*${t}\\*\\*[^\\n]*(?:\\n  -[^\\n]*)*\\n?`, "g"),
                 "",
               );
             }

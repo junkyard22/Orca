@@ -210,10 +210,24 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   // Brain's done_criteria flow in as input.goals[]. When goals are meaningful
   // (not just the default "produce output" fallback), check that key terms from
   // the goals appear in the output or diffs. Fires MEDIUM at < 60% coverage.
-  const STOP_WORDS = new Set(["this", "that", "with", "from", "have", "will", "should", "must",
-    "each", "every", "their", "there", "been", "into", "when", "than", "only", "also"]);
+  const STOP_WORDS = new Set([
+    // Common English fillers
+    "this", "that", "with", "from", "have", "will", "should", "must",
+    "each", "every", "their", "there", "been", "into", "when", "than", "only", "also",
+    // Words that describe acceptance criteria but don't need to appear verbatim in output
+    "output", "outputs", "contains", "contain", "includes", "include",
+    "returns", "return", "prints", "print", "correct", "correctly",
+    "syntactically", "executable", "produces", "produce",
+    "valid", "proper", "properly", "passes", "provides", "provide",
+  ]);
   const meaningfulGoals = (input.goals ?? []).filter((g) =>
-    g.length > 10 && !/^(produce|provide|output|generate) (non-?empty|some|an?) (output|response|result)/i.test(g)
+    g.length > 10 &&
+    // Skip fallback "produce non-empty output" goals
+    !/^(produce|provide|output|generate) (non-?empty|some|an?) (output|response|result)/i.test(g) &&
+    // Skip Brain's acceptance-criteria descriptions — they describe requirements ABOUT the output
+    // ("Output contains X", "Function is syntactically correct") rather than the task topic.
+    // These are already checked via the AC receipt ledger; keyword-matching them here creates false positives.
+    !/^(output|function|response|result|code|answer)\s+(contains?|includes?|returns?|prints?|is\b|provides?|shows?|has\b|must\b)/i.test(g)
   );
   if (meaningfulGoals.length > 0 && (hasOutput || hasFiles)) {
     const goalTerms = [...new Set(

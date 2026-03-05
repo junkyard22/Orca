@@ -68,6 +68,12 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
   // ── Existing check: tool failures ─────────────────────────────────────────
   for (const event of input.toolEvents ?? []) {
     if (!event.ok) {
+      // Permission-denied responses are intentional gates, not execution errors.
+      // The model received a clear "not permitted" message and adapted — this is
+      // correct behaviour, not a failure worth flagging.
+      const isPermissionDenied = event.summary?.includes("is not permitted");
+      if (isPermissionDenied) continue;
+
       issues.push({
         severity: "HIGH",
         code: "TOOL_FAILURE",
