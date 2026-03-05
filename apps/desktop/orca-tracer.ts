@@ -9,7 +9,7 @@
  * Run:  node --experimental-strip-types --no-warnings apps/desktop/orca-tracer.ts
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import path from "node:path";
 import { createBenson } from "@clawde/benson-core";
@@ -114,11 +114,23 @@ function trace(layer: string, color: string, msg: string) {
 
 const SHOW_MESSAGES = process.env["ORCA_MESSAGES"] === "1";
 
+// System prompts are written to files on first use so the trace stays readable.
+// Subsequent calls for the same stage just say "see file" instead of re-printing.
+const PROMPT_CACHE_DIR = join(import.meta.dirname ?? ".", "trace-prompts");
+const savedSystemByStage = new Map<string, string>(); // stage → file path
+
+function saveSystemPrompt(stage: string, content: string): string {
+  if (!existsSync(PROMPT_CACHE_DIR)) mkdirSync(PROMPT_CACHE_DIR, { recursive: true });
+  const slug = stage.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const filePath = join(PROMPT_CACHE_DIR, `${slug}-system.md`);
+  writeFileSync(filePath, content, "utf-8");
+  return filePath;
+}
+
 function printMsg(label: string, color: string, text: string) {
   if (!SHOW_MESSAGES) return;
   const bar = "─".repeat(60);
   console.log(`\n${color}┌─ ${label} ${"─".repeat(Math.max(0, 60 - label.length - 3))}${C.reset}`);
-  // Print each line with a leading pipe so it's easy to eyeball
   for (const line of text.split("\n")) {
     console.log(`${color}│${C.reset} ${line}`);
   }
@@ -130,6 +142,9 @@ function printMsg(label: string, color: string, text: string) {
 // latency, and token usage — without replacing the real network calls.
 
 let adapterCallCount = 0;
+
+// Track per-stage what we've already printed so repeated content is suppressed.
+const shownUserLenByStage = new Map<string, number>();
 
 class TracingLiveAdapter implements LLMAdapter {
   private inner: LLMAdapter;
@@ -148,6 +163,43 @@ class TracingLiveAdapter implements LLMAdapter {
     return this.roleLabel;
   }
 
+  private printMessages(stage: string, messages: LLMRequest["messages"]) {
+    if (!SHOW_MESSAGES) return;
+    for (const m of messages) {
+      if (m.role === "system") {
+        const prevPath = savedSystemByStage.get(stage);
+        if (prevPath) {
+          // Already saved — just reference the file
+          if (SHOW_MESSAGES) {
+            const bar = "─".repeat(60);
+            console.log(`\n${C.dim}┌─ → ${stage} [system — unchanged] ${"─".repeat(Math.max(0, 55 - stage.length))}${C.reset}`);
+            console.log(`${C.dim}│${C.reset} (see ${prevPath})`);
+            console.log(`${C.dim}└${bar}${C.reset}\n`);
+          }
+        } else {
+          const filePath = saveSystemPrompt(stage, m.content);
+          savedSystemByStage.set(stage, filePath);
+          const bar = "─".repeat(60);
+          console.log(`\n${C.magenta}┌─ → ${stage} [system → ${filePath}] ${"─".repeat(Math.max(0, 25 - stage.length))}${C.reset}`);
+          for (const line of m.content.split("\n")) {
+            console.log(`${C.magenta}│${C.reset} ${line}`);
+          }
+          console.log(`${C.magenta}└${bar}${C.reset}\n`);
+        }
+      } else if (m.role === "user") {
+        const prevLen = shownUserLenByStage.get(stage) ?? 0;
+        if (prevLen > 0 && m.content.length > prevLen) {
+          printMsg(`→ ${stage} [user — new content]`, C.magenta, m.content.slice(prevLen));
+        } else {
+          printMsg(`→ ${stage} [user]`, C.magenta, m.content);
+        }
+        shownUserLenByStage.set(stage, m.content.length);
+      } else {
+        printMsg(`→ ${stage} [${m.role}]`, C.magenta, m.content);
+      }
+    }
+  }
+
   async complete(request: LLMRequest): Promise<LLMResponse> {
     adapterCallCount++;
     const callNum = adapterCallCount;
@@ -158,9 +210,7 @@ class TracingLiveAdapter implements LLMAdapter {
     trace("Adapter", C.magenta, `Call #${callNum}  stage=${stage}  model=${request.model}  msgs=${request.messages.length}`);
     const promptPreview = sys.slice(0, 150).replace(/\n/g, "\\n");
     trace("Adapter", C.dim, `  system[0..150]: "${promptPreview}…"`);
-    for (const m of request.messages) {
-      printMsg(`→ ${stage} [${m.role}]`, C.magenta, m.content);
-    }
+    this.printMessages(stage, request.messages);
     trace("Adapter", C.magenta, `  → calling API...`);
 
     const response = await this.inner.complete(request);
@@ -182,9 +232,7 @@ class TracingLiveAdapter implements LLMAdapter {
     const sys = request.messages.find(m => m.role === "system")?.content ?? "";
     const stage = this.detectStage(sys);
     trace("Adapter", C.magenta, `Call #${callNum}  stage=${stage} [stream]  model=${request.model}`);
-    for (const m of request.messages) {
-      printMsg(`→ ${stage} [${m.role}] (stream)`, C.magenta, m.content);
-    }
+    this.printMessages(stage, request.messages);
 
     let tokenCount = 0;
     let streamedContent = "";
@@ -410,7 +458,17 @@ function createTracingMaestro(
         const taskPrompt   = buildTaskPrompt(task, role);
         const llmForRole   = roleAdapters[role] ?? ctx.llm;
 
-        printMsg(`→ ${role} [system]`, C.yellow, systemPrompt);
+        // System prompt: save to file on first use, reference thereafter
+        if (SHOW_MESSAGES) {
+          const prevPath = savedSystemByStage.get(role);
+          if (prevPath) {
+            trace("Maestro", C.dim, `  → ${role} [system] — see ${prevPath}`);
+          } else {
+            const filePath = saveSystemPrompt(role, systemPrompt);
+            savedSystemByStage.set(role, filePath);
+            printMsg(`→ ${role} [system → ${filePath}]`, C.yellow, systemPrompt);
+          }
+        }
         printMsg(`→ ${role} [task]`, C.yellow, taskPrompt);
 
         let text: string;
@@ -471,8 +529,17 @@ function createTracingMaestro(
               `\n\n## Original request\n${task.originalUserMessage}`,
             ].join('');
 
-            printMsg(`→ ${dept.head} [system]`, C.yellow, headSystem);
             printMsg(`→ ${dept.head} [task]`, C.yellow, headTask);
+            if (SHOW_MESSAGES) {
+              const prevPath = savedSystemByStage.get(dept.head);
+              if (prevPath) {
+                trace("Maestro", C.dim, `  → ${dept.head} [system] — see ${prevPath}`);
+              } else {
+                const filePath = saveSystemPrompt(dept.head, headSystem);
+                savedSystemByStage.set(dept.head, filePath);
+                printMsg(`→ ${dept.head} [system → ${filePath}]`, C.yellow, headSystem);
+              }
+            }
 
             let output: string;
             if (ctx.tools) {
