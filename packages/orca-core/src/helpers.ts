@@ -13,6 +13,8 @@ export function buildPappyInput(
   const raw = taskSpec.constraints ?? {};
   return {
     task: taskSpec.originalUserMessage,
+    // Brain-defined done criteria take precedence; fall back to task goals.
+    goals: maestroResult.doneCriteria ?? taskSpec.goals,
     outputText:   maestroResult.outputText,
     filesChanged: maestroResult.filesChanged,
     toolEvents:   maestroResult.toolEvents,

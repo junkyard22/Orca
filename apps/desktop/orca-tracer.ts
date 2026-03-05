@@ -243,7 +243,7 @@ function createTracingMaestro(
       try {
         const { text: decisionJson } = await brainLLM.complete(
           `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`,
-          { maxTokens: 512, temperature: 0.1 },
+          { maxTokens: 512, temperature: 0 },
         );
         trace("Maestro", C.dim, `  Raw routing JSON: ${decisionJson.slice(0, 200)}`);
         dec = parseBrainDecision(decisionJson);
@@ -285,8 +285,14 @@ function createTracingMaestro(
         trace("Maestro", C.cyan, `  LLM returned ${text.length} chars`);
         trace("Maestro", C.dim,  `  Final text[0..120]: "${text.slice(0, 120).replace(/\n/g, "\\n")}…"`);
 
+        if (dec.done_criteria?.length) {
+          trace("Maestro", C.yellow, `  Done criteria (${dec.done_criteria.length}):`);
+          for (const c of dec.done_criteria) trace("Maestro", C.dim, `    • ${c}`);
+        }
+
         return {
           outputText: text,
+          doneCriteria: dec.done_criteria,
           summary: `routing=direct role=${role} type=${type} risk=${riskScore.toFixed(2)}`,
         };
       }
@@ -315,7 +321,7 @@ function createTracingMaestro(
               `\n\n## Original request\n${task.originalUserMessage}`,
             ].join('');
 
-            const { text: output } = await headLLM.complete(prompt, { maxTokens: 4096 });
+            const { text: output } = await headLLM.complete(prompt, { maxTokens: 8192 });
             ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
             trace("Maestro", C.green, `    [${dept.head}] done — ${output.length} chars`);
             return { head: dept.head, subtask: dept.subtask, output, subagentId, ok: true as const };
@@ -331,6 +337,7 @@ function createTracingMaestro(
       if (deptResults.length === 1) {
         return {
           outputText:   deptResults[0]!.output,
+          doneCriteria: dec.done_criteria,
           summary:      `routing=decompose depts=1`,
           subagentRuns: deptResults.map(d => ({
             subagentId: d.subagentId, role: d.head, task: d.subtask,
@@ -361,8 +368,14 @@ function createTracingMaestro(
       trace("Maestro", C.cyan, `  Synthesis returned ${synthOutput.length} chars`);
       trace("Maestro", C.dim,  `  Synthesis[0..120]: "${synthOutput.slice(0, 120).replace(/\n/g, "\\n")}…"`);
 
+      if (dec.done_criteria?.length) {
+        trace("Maestro", C.yellow, `  Done criteria (${dec.done_criteria.length}):`);
+        for (const c of dec.done_criteria) trace("Maestro", C.dim, `    • ${c}`);
+      }
+
       return {
         outputText:   synthOutput,
+        doneCriteria: dec.done_criteria,
         summary:      `routing=decompose depts=${departments.length}`,
         subagentRuns: deptResults.map(d => ({
           subagentId: d.subagentId, role: d.head, task: d.subtask,

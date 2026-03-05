@@ -19,6 +19,8 @@ export type HeadName = Exclude<RoleName, 'vision'> | 'brain';
 export interface DirectRouting {
   routing: 'direct';
   role: HeadName;
+  /** Brain-defined acceptance criteria Pappy must enforce. */
+  done_criteria?: string[];
 }
 
 export interface DepartmentTask {
@@ -33,6 +35,8 @@ export interface DecomposeRouting {
   departments: DepartmentTask[];
   /** Brief instruction for how to merge department outputs into one answer. */
   synthesis_hint?: string;
+  /** Brain-defined acceptance criteria Pappy must enforce. */
+  done_criteria?: string[];
 }
 
 export type DecomposeDecision = DirectRouting | DecomposeRouting;
@@ -51,7 +55,7 @@ You are Maestro's task router. Read the user request and decide how to handle it
 Reply with ONLY valid JSON — no markdown fences, no explanation.
 
 ## Option A — one specialist handles it:
-{ "routing": "direct", "role": "<role>" }
+{ "routing": "direct", "role": "<role>", "done_criteria": ["<criterion 1>", "<criterion 2>"] }
 
 ## Option B — multiple specialists work in parallel:
 {
@@ -59,8 +63,14 @@ Reply with ONLY valid JSON — no markdown fences, no explanation.
   "departments": [
     { "head": "<role>", "subtask": "<fully self-contained directive>", "context": "<optional background>" }
   ],
-  "synthesis_hint": "<how to merge the outputs>"
+  "synthesis_hint": "<how to merge the outputs>",
+  "done_criteria": ["<criterion 1>", "<criterion 2>"]
 }
+
+## done_criteria rules:
+- List 1-4 short, objective, verifiable statements about what the final output must contain or achieve.
+- Each criterion must be independently checkable (e.g. "Output contains a TypeScript function", "All exported functions have JSDoc comments").
+- Do NOT include process steps or explanations — only outcome facts.
 
 ## Role menu:
 brain         — reasoning, analysis, open-ended questions
@@ -75,10 +85,22 @@ utility       — general tasks that don't fit other categories
 
 ## Rules:
 - Use "direct" for the VAST MAJORITY of requests.
-- Only use "decompose" when two or more specialists genuinely need to work independently and in parallel (e.g. "implement X AND document it", "review this code AND fix the bugs").
-- Single-focus tasks like "write a function" or "explain this" are always "direct".
+- Use "decompose" ONLY when the request explicitly combines two or more distinct types of work that require DIFFERENT specialist roles.
+- A strong signal: the request uses "AND" (or "ALSO", "AS WELL AS", "PLUS") to join two clearly different work categories (code vs docs, code vs review, plan vs implement).
 - Maximum 3 departments.
-- Each subtask must be complete and actionable on its own — departments don't talk to each other.`;
+- Each subtask must be complete and actionable on its own — departments don't talk to each other.
+
+## Examples — DIRECT (one specialist):
+- "write a function that gets the time" → { "routing": "direct", "role": "coder_strong" }
+- "explain how async/await works" → { "routing": "direct", "role": "brain" }
+- "fix the bug in line 42" → { "routing": "direct", "role": "debugger" }
+- "implement a login form" → { "routing": "direct", "role": "coder_strong" }
+
+## Examples — DECOMPOSE (multiple specialists):
+- "implement a login form AND write the JSDoc for it" → decompose: [coder_strong, narrator]
+- "review this code AND fix all the bugs you find" → decompose: [reviewer, coder_strong]
+- "write a detailed plan AND then implement it" → decompose: [planner_deep, coder_strong]
+- "build the API endpoint AND write the README for it" → decompose: [coder_strong, narrator]`;
 
 // ---------------------------------------------------------------------------
 // Parse
@@ -101,6 +123,9 @@ export function parseBrainDecision(raw: string): DecomposeDecision {
     return {
       routing: 'direct',
       role: (parsed['role'] as HeadName) ?? 'brain',
+      done_criteria: Array.isArray(parsed['done_criteria'])
+        ? (parsed['done_criteria'] as string[]).filter((s) => typeof s === 'string')
+        : undefined,
     };
   }
 
@@ -123,6 +148,9 @@ export function parseBrainDecision(raw: string): DecomposeDecision {
       routing:          'decompose',
       departments,
       synthesis_hint:   parsed['synthesis_hint'] as string | undefined,
+      done_criteria:    Array.isArray(parsed['done_criteria'])
+        ? (parsed['done_criteria'] as string[]).filter((s) => typeof s === 'string')
+        : undefined,
     };
   }
 

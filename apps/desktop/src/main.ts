@@ -56,7 +56,7 @@ function buildMaestroAdapter(
       try {
         const { text: decisionJson } = await brainLLM.complete(
           `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`,
-          { maxTokens: 512, temperature: 0.1 },
+          { maxTokens: 512, temperature: 0 },
         );
         decision = parseBrainDecision(decisionJson);
       } catch {
@@ -91,6 +91,7 @@ function buildMaestroAdapter(
 
         return {
           outputText: text,
+          doneCriteria: decision.done_criteria,
           summary: `run_id=${orch.run_id} routing=direct role=${role} risk=${orch.risk.riskScore.toFixed(2)}`,
         };
       }
@@ -114,7 +115,7 @@ function buildMaestroAdapter(
               `\n\n## Original request\n${task.originalUserMessage}`,
             ].join('');
 
-            const { text: output } = await headLLM.complete(prompt, { maxTokens: 4096 });
+            const { text: output } = await headLLM.complete(prompt, { maxTokens: 8192 });
             ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
             return { head: dept.head, subtask: dept.subtask, output, subagentId, ok: true as const };
           } catch (err) {
@@ -131,6 +132,7 @@ function buildMaestroAdapter(
       if (deptResults.length === 1) {
         return {
           outputText:   deptResults[0]!.output,
+          doneCriteria: decision.done_criteria,
           summary:      `run_id=${orch.run_id} routing=decompose depts=1`,
           subagentRuns: deptResults.map((d) => ({
             subagentId:  d.subagentId,
@@ -161,8 +163,7 @@ function buildMaestroAdapter(
       );
 
       return {
-        outputText:   synthOutput,
-        summary:      `run_id=${orch.run_id} routing=decompose depts=${departments.length}`,
+        outputText:   synthOutput,          doneCriteria: decision.done_criteria,        summary:      `run_id=${orch.run_id} routing=decompose depts=${departments.length}`,
         subagentRuns: deptResults.map((d) => ({
           subagentId:  d.subagentId,
           role:        d.head,

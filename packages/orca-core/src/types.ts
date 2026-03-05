@@ -41,6 +41,11 @@ export interface OrcaMaestroResult {
   summary?: string;
   filesChanged?: Array<{ path: string; changeType: "A" | "M" | "D"; diff?: string }>;
   toolEvents?: Array<{ tool: string; ok: boolean; summary: string; raw?: unknown }>;
+  /**
+   * Acceptance criteria Brain defined for this task.
+   * Passed to Pappy so it can enforce them instead of deriving generic ones.
+   */
+  doneCriteria?: string[];
   /** Populated when Maestro decomposed the task into parallel subagents (Phase 2). */
   subagentRuns?: Array<{
     subagentId: string;

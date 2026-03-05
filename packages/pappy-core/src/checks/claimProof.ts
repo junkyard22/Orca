@@ -255,8 +255,9 @@ export function runClaimProofChecks(
     }
   }
 
-  // If no trace at all, add a blanket instrumentation warning
-  if (!hasAnyTrace && outputText.length > 0) {
+  // If no trace at all AND the output made verifiable claims, add a warning.
+  // Skip for pure code-gen output that contains no claims (no toolEvents expected).
+  if (!hasAnyTrace && outputText.length > 0 && claims.length > 0) {
     issues.push({
       severity: "MEDIUM",
       code: "PROOF_NO_TRACE",
