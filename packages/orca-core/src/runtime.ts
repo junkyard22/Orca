@@ -55,6 +55,10 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       tools: tools && (() => {
         const allowed = taskSpec.permissions?.toolsAllowed;
         if (!allowed) return tools; // no restrictions
+        // Empty allow-list means no tools at all. Return undefined so ctx.tools
+        // is falsy and the agent loop is skipped entirely — the LLM never sees
+        // tool definitions and won't try to call any.
+        if (allowed.length === 0) return undefined;
         return {
           execute(name: string, input: Record<string, unknown>) {
             if (!allowed.includes(name)) {
@@ -67,18 +71,19 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             return tools.execute(name, input);
           },
           formatForPrompt() {
-            // Only describe tools the model is actually allowed to use
+            // Only describe tools the model is actually allowed to use.
+            // Discover all tool names in the prompt and strip any not in allowed.
             const full = tools.formatForPrompt();
-            // Strip blocks for disallowed tools.
-            // Format is: "**tool_name** — description\n  - param...\n  - param...\n\n"
-            const disallowed = ["write_file", "run_command"].filter(t => !allowed.includes(t));
+            const allToolNames = [...full.matchAll(/\*\*([\w_]+)\*\*/g)].map(m => m[1] as string);
             let filtered = full;
-            for (const t of disallowed) {
-              // Match "**tool_name** — ..." line + any "  - ..." parameter lines + trailing blank line
-              filtered = filtered.replace(
-                new RegExp(`\\*\\*${t}\\*\\*[^\\n]*(?:\\n  -[^\\n]*)*\\n?`, "g"),
-                "",
-              );
+            for (const t of allToolNames) {
+              if (!allowed.includes(t)) {
+                // Match "**tool_name** — ..." line + any "  - ..." parameter lines + trailing blank line
+                filtered = filtered.replace(
+                  new RegExp(`\\*\\*${t}\\*\\*[^\\n]*(?:\\n  -[^\\n]*)*\\n?`, "g"),
+                  "",
+                );
+              }
             }
             return filtered;
           },

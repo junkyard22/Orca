@@ -227,7 +227,8 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
     // Skip Brain's acceptance-criteria descriptions — they describe requirements ABOUT the output
     // ("Output contains X", "Function is syntactically correct") rather than the task topic.
     // These are already checked via the AC receipt ledger; keyword-matching them here creates false positives.
-    !/^(output|function|response|result|code|answer)\s+(contains?|includes?|returns?|prints?|is\b|provides?|shows?|has\b|must\b)/i.test(g) &&
+    // "Function can be executed without errors", "Code is syntactically correct", etc.
+    !/^(output|function|response|result|code|answer)\s+(contains?|includes?|returns?|prints?|is\b|can\b|will\b|provides?|shows?|has\b|must\b|should\b)/i.test(g) &&
     // Skip repair-pass meta-constraints ("No unrelated behavior changes", "No additional side effects").
     // These are scoping rules, not output content requirements — keyword-matching them creates false positives.
     !/^no\s+(unrelated|unnecessary|additional|extra|breaking|unwanted|other|extraneous)\b/i.test(g) &&
