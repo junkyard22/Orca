@@ -12,6 +12,7 @@ export type ProviderType =
   | 'openai'
   | 'anthropic'
   | 'zai'
+  | 'alibaba'
   | 'custom';
 
 /**
@@ -27,6 +28,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   openai:      "https://api.openai.com/v1",
   anthropic:   "https://api.anthropic.com/v1",
   zai:         "https://api.z.ai/v1",
+  alibaba:     "https://dashscope.aliyuncs.com/compatible-mode/v1",
   custom:      "",
 };
 

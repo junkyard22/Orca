@@ -1,0 +1,41 @@
+{
+  "providers": [
+    {
+      "id": "alibaba_cloud",
+      "name": "Alibaba Cloud (Qwen)",
+      "type": "alibaba",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKey": "YOUR_ALIBABA_CLOUD_API_KEY_HERE"
+    }
+  ],
+  "roles": {
+    "brain": {
+      "providerId": "alibaba_cloud",
+      "model": "qwen3-max"
+    },
+    "coder_strong": {
+      "providerId": "alibaba_cloud",
+      "model": "qwen3-coder-plus"
+    },
+    "coder_cheap": {
+      "providerId": "alibaba_cloud",
+      "model": "qwen3-coder-next"
+    },
+    "utility": {
+      "providerId": "alibaba_cloud",
+      "model": "qwen3-coder-next"
+    },
+    "reviewer": {
+      "providerId": "alibaba_cloud",
+      "model": "qwen3-max"
+    },
+    "narrator": {
+      "providerId": "alibaba_cloud",
+      "model": "qwen3-max"
+    }
+  },
+  "budgetUsd": 0.10,
+  "maxRepairPasses": 2,
+  "verbose": false,
+  "workspaceRoot": ""
+}
