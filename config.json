@@ -1,0 +1,5 @@
+{
+  "name": "Orca Application",
+  "version": "1.0.0",
+  "description": "A configuration file for the Orca application containing essential metadata for form handling, validation rules, and data persistence operations."
+}
