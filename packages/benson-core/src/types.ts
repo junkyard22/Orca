@@ -22,6 +22,12 @@ export interface BensonDependencies {
   maxHistoryTurns?: number;
 }
 
+// Message type for conversation history
+export interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 // Internal — not exported from package index
 export interface ParsedClarify {
   kind: "CLARIFY";
@@ -31,6 +37,7 @@ export interface ParsedClarify {
 
 export interface ParsedTask {
   kind: "TASK";
+  spec: TaskSpec;
 }
 
 export type ParseResult = ParsedClarify | ParsedTask;

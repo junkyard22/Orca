@@ -1,82 +1,188 @@
-import type { ParseResult } from "./types.js";
+import type { ParseResult, ParsedTask, Message } from "./types.js";
+import type { TaskSpec } from "@clawde/secretary-core";
 
 // ---------------------------------------------------------------------------
-// Vague-verb detection
+// Ambiguity detection — clarification is the EXCEPTION
 // ---------------------------------------------------------------------------
 
-const VAGUE_VERBS = new Set([
-  "help", "fix", "update", "improve", "make", "do", "change", "work",
-  "handle", "deal", "check", "look", "review", "go", "run", "try",
-  "test", "use", "get", "set", "add", "remove", "process", "manage",
-]);
-
-const FILLER_WORDS = new Set([
-  "me", "it", "this", "that", "the", "a", "an", "my", "our",
-  "them", "us", "some", "something", "anything", "everything",
-]);
-
-// Per-verb safe default options shown in CLARIFY responses
-const VERB_OPTIONS: Record<string, [string, string, string]> = {
-  help:    ["Write or fix code",          "Explain a concept",          "Review something"],
-  fix:     ["Fix a specific bug or error", "Fix formatting or style",   "Fix failing tests"],
-  update:  ["Update documentation",        "Update existing code",      "Update configuration"],
-  improve: ["Improve code quality",        "Improve performance",        "Improve documentation"],
-  make:    ["Create a new file or module", "Generate documentation",    "Build a feature"],
-  add:     ["Add a new feature",           "Add tests",                 "Add documentation"],
-  remove:  ["Remove unused code",          "Remove a dependency",       "Remove a feature"],
-  review:  ["Review code quality",         "Review for bugs",           "Review documentation"],
-  check:   ["Check for errors",            "Check test coverage",       "Check dependencies"],
-  run:     ["Run tests",                   "Run a build",               "Run a script"],
-  write:   ["Write code",                  "Write documentation",       "Write tests"],
-};
-
-const DEFAULT_OPTIONS: [string, string, string] = [
-  "Create or modify code",
-  "Write documentation",
-  "Explain or review something",
+const AMBIGUOUS_PATTERNS = [
+  /^(help|hello|hi|hey|what can you do|what do you do)\??$/i,  // pure greeting
+  /^.{1,8}$/,                                                    // too short to parse (<9 chars)
+  /^(yes|no|ok|okay|sure|maybe|idk|dunno)$/i,                   // single-word response with no prior context
 ];
 
-// ---------------------------------------------------------------------------
-// Ambiguity detection
-// ---------------------------------------------------------------------------
-
-function isAmbiguous(message: string): boolean {
-  const words = message.trim().toLowerCase().split(/\s+/);
-
-  // Filter out filler + vague verbs to see if anything specific remains
-  const meaningful = words.filter(
-    (w) => !VAGUE_VERBS.has(w) && !FILLER_WORDS.has(w)
-  );
-
-  // Truly empty after filtering (e.g. "help me", "fix it", "do something")
-  if (meaningful.length === 0) return true;
-
-  // Single bare word that is itself vague (e.g. "help", "fix")
-  if (words.length === 1 && VAGUE_VERBS.has(words[0] ?? "")) return true;
-
-  // Short message whose first word is a vague verb AND nothing specific follows
-  if (words.length <= 4 && VAGUE_VERBS.has(words[0] ?? "")) {
-    const hasSpecificNoun = words
-      .slice(1)
-      .some((w) => !FILLER_WORDS.has(w) && !VAGUE_VERBS.has(w));
-    if (!hasSpecificNoun) return true;
+function isAmbiguous(message: string, history?: Message[]): boolean {
+  const trimmed = message.trim();
+  
+  // Empty message
+  if (!trimmed) return true;
+  
+  // Check against explicit ambiguous patterns
+  for (const pattern of AMBIGUOUS_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      // Exception: if we have history, "yes"/"no" might be meaningful
+      if (/^(yes|no|ok|okay|sure|maybe|idk|dunno)$/i.test(trimmed)) {
+        if (history && history.length > 0) {
+          return false; // Has context, not ambiguous
+        }
+      }
+      return true;
+    }
   }
-
+  
   return false;
 }
 
 // ---------------------------------------------------------------------------
-// CLARIFY builder
+// Intent extraction — rule-based, LLM fallback only if rules fail
 // ---------------------------------------------------------------------------
 
-function buildClarify(message: string): ParseResult {
-  const firstWord = message.trim().toLowerCase().split(/\s+/)[0] ?? "";
-  const options = VERB_OPTIONS[firstWord] ?? DEFAULT_OPTIONS;
+const ACTION_VERBS = [
+  'create', 'make', 'build', 'write', 'generate', 'add',
+  'fix', 'debug', 'resolve', 'repair', 'correct',
+  'read', 'open', 'load', 'get', 'fetch', 'find', 'search',
+  'explain', 'describe', 'summarize', 'analyze', 'review',
+  'update', 'edit', 'modify', 'change', 'refactor', 'rename',
+  'delete', 'remove', 'clean',
+  'run', 'execute', 'test', 'check', 'deploy',
+  'help', 'show', 'list',
+];
 
+function extractLeadingVerb(message: string): string | null {
+  const lower = message.toLowerCase();
+  for (const verb of ACTION_VERBS) {
+    // Check if message starts with this verb (as a word boundary)
+    const regex = new RegExp(`^\\b${verb}\\b`, 'i');
+    if (regex.test(lower)) {
+      return verb;
+    }
+  }
+  return null;
+}
+
+function extractIntent(message: string): string {
+  const verb = extractLeadingVerb(message);
+  if (!verb) {
+    // Fallback: use first few words as intent
+    const words = message.split(/\s+/).slice(0, 3);
+    return words.join(' ');
+  }
+  
+  // Extract noun phrase after verb
+  const skipWords = new Set(['a', 'an', 'the', 'to', 'for', 'me', 'it', 'this', 'that']);
+  const words = message.split(/\s+/);
+  const nounStart = words.findIndex((w, i) => {
+    if (i === 0 && w.toLowerCase() === verb) return false;
+    return !skipWords.has(w.toLowerCase());
+  });
+  
+  if (nounStart === -1) return verb;
+  
+  const nounPhrase = words.slice(nounStart, nounStart + 4).join(' ');
+  return `${verb} ${nounPhrase}`.trim();
+}
+
+function extractGoals(message: string): string[] {
+  // Split on multi-goal delimiters
+  const delimiters = /\s+and then\s+|\s+then\s+|\s+also\s+|\s+additionally\s+|\s*;\s*/;
+  const parts = message
+    .split(delimiters)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  
+  // If no delimiters found, return single goal
+  if (parts.length <= 1) {
+    return [message.trim()];
+  }
+  
+  return parts;
+}
+
+function extractConstraints(message: string): Record<string, unknown> | undefined {
+  const c: Record<string, unknown> = {};
+  
+  // "without X"
+  const without = message.match(/without\s+([\w][\w\s]*?)(?:\s*,|\s+and\b|\s*$)/i);
+  if (without?.[1]) c["without"] = without[1].trim();
+  
+  // "don't X" / "do not X"
+  const dont = message.match(/(?:don't|do not)\s+([\w][\w\s]*?)(?:\s*,|\s+and\b|\s*$)/i);
+  if (dont?.[1]) c["dont"] = dont[1].trim();
+  
+  // "make sure X"
+  const makeSure = message.match(/make sure (?:that )?([\w][\w\s]*?)(?:\s*,|\s+and\b|\s*$)/i);
+  if (makeSure?.[1]) c["must"] = makeSure[1].trim();
+  
+  // "must be X" / "must X"
+  const must = message.match(/\bmust\s+(?:be\s+)?([\w][\w\s]*?)(?:\s*,|\s+and\b|\s*$)/i);
+  if (must?.[1] && !c["must"]) c["must"] = must[1].trim();
+  
+  return Object.keys(c).length > 0 ? c : undefined;
+}
+
+function extractContext(message: string, history?: Message[]): Record<string, unknown> | undefined {
+  const ctx: Record<string, unknown> = {};
+  
+  // Extract file paths (simple pattern: word.extension or path/to/file.ext)
+  const filePattern = /[\w./\\-]+\.(ts|tsx|js|jsx|py|json|yaml|yml|md|txt|rs|go|java|c|cpp|h|hpp|css|html|xml|sql|sh|bash|zsh)/gi;
+  const files = message.match(filePattern);
+  if (files && files.length > 0) {
+    ctx["files"] = files;
+  }
+  
+  // Extract URLs
+  const urlPattern = /https?:\/\/[\w./?=&-]+/gi;
+  const urls = message.match(urlPattern);
+  if (urls && urls.length > 0) {
+    ctx["urls"] = urls;
+  }
+  
+  // Thread history if provided
+  if (history && history.length > 0) {
+    ctx["history"] = history;
+  }
+  
+  return Object.keys(ctx).length > 0 ? ctx : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// CLARIFY builder — specific, minimal, non-developer-centric
+// ---------------------------------------------------------------------------
+
+const CLARIFY_OPTIONS: [string, string, string, string] = [
+  "Create something new",
+  "Fix or improve existing work",
+  "Explain or analyze something",
+  "Run or automate a task",
+];
+
+function buildClarify(): ParseResult {
   return {
     kind: "CLARIFY",
-    text: "Could you be a bit more specific about what you need?",
-    options: [...options],
+    text: "I can help with that — what would you like me to do?",
+    options: [...CLARIFY_OPTIONS],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Build TaskSpec
+// ---------------------------------------------------------------------------
+
+function buildTaskSpec(message: string, history?: Message[]): TaskSpec {
+  return {
+    originalUserMessage: message,
+    intent: extractIntent(message),
+    goals: extractGoals(message),
+    constraints: extractConstraints(message),
+    context: extractContext(message, history),
+    // These will be filled by secretary-core's processRequest
+    permissions: {
+      fileRead: true,
+      fileWrite: false,
+      shellExec: false,
+      toolsAllowed: [],
+    },
+    outputFormat: "prose",
   };
 }
 
@@ -84,19 +190,19 @@ function buildClarify(message: string): ParseResult {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-export function parseIntent(message: string): ParseResult {
+export function parseIntent(message: string, history?: Message[]): ParseResult {
   const trimmed = message.trim();
-  if (!trimmed) {
-    return {
-      kind: "CLARIFY",
-      text: "What would you like me to help with?",
-      options: [...DEFAULT_OPTIONS],
-    };
+  
+  // Check for ambiguity
+  if (isAmbiguous(trimmed, history)) {
+    return buildClarify();
   }
-
-  if (isAmbiguous(trimmed)) {
-    return buildClarify(trimmed);
-  }
-
-  return { kind: "TASK" };
+  
+  // Build and return task spec
+  const spec = buildTaskSpec(message, history);
+  
+  return {
+    kind: "TASK",
+    spec,
+  };
 }

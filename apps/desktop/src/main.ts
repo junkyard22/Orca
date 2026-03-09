@@ -249,6 +249,7 @@ type BensonHandle = ReturnType<typeof createBenson>;
 
 let runtime: OrcaRuntime | null = null;
 let benson: BensonHandle | null = null;
+let store: SqliteStore | null = null;
 
 function buildAdapterForProvider(provider: ProviderEntry, model: string): LLMAdapter {
   if (provider.type === 'ollama') {
@@ -360,7 +361,7 @@ function initOrca(s: OrcaSettings): string | null {
     };
 
     // Create SQLite store for persistence
-    const store = new SqliteStore(
+    store = new SqliteStore(
       join(app.getPath('userData'), 'orca-runs.db')
     );
 
@@ -583,4 +584,9 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+// Close SQLite store on quit
+app.on("before-quit", () => {
+  store?.close();
 });

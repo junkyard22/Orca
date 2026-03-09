@@ -111,6 +111,7 @@ async function main(): Promise<void> {
   const dbPath = process.env["ORCA_DB_PATH"]?.trim() ??
     path.join(os.homedir(), ".orca", "runs.db");
   const store = new SqliteStore(dbPath);
+  _store = store;
 
   const runtime = createOrcaRuntime({
     maestro,
@@ -229,8 +230,20 @@ async function readPrompt(): Promise<string> {
 // Bootstrap
 // ---------------------------------------------------------------------------
 
-main().catch((err: unknown) => {
+// Store reference for graceful shutdown
+let _store: SqliteStore | null = null;
+
+async function run(): Promise<void> {
+  try {
+    await main();
+  } finally {
+    _store?.close();
+  }
+}
+
+run().catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
   console.error(`[runner] fatal: ${message}`);
+  _store?.close();
   process.exit(1);
 });

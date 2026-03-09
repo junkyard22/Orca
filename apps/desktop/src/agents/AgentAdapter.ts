@@ -22,8 +22,13 @@ export interface AgentResult {
   toolsUsed: ToolEvent[];
   filesChanged: FileChange[];
   iterationCount: number;
-  stoppedBecause: 'done' | 'max_iterations' | 'error';
+  stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error';
   error?: string;
+  loopEvidence?: {
+    iteration: number;
+    repeatedCall: string;
+    occurrences: number;
+  };
 }
 
 export interface AgentAdapter {

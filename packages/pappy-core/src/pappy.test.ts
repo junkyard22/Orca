@@ -59,9 +59,10 @@ describe("evaluateWithPappy — verdict", () => {
   it("returns PASS when required file is present in filesChanged", () => {
     const result = evaluateWithPappy({
       task: "Create README.md",
-      outputText: "Done.",
+      outputText: "Created README.md with project overview and setup instructions.",
       constraints: { requireFiles: ["README.md"] },
       filesChanged: [{ path: "README.md", changeType: "A", diff: "# Orca\n..." }],
+      toolEvents: [{ tool: "write_file", ok: true, summary: "write_file: ok" }],
     });
     expect(result.verdict).toBe("PASS");
   });

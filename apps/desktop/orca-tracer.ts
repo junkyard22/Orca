@@ -29,6 +29,7 @@ import type {
   OrcaTaskSpec,
   OrcaLLMService,
   OrcaToolService,
+  RunRecord,
 } from "@clawde/orca-core";
 import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 import {
@@ -205,7 +206,7 @@ class TracingLiveAdapter implements LLMAdapter {
     adapterCallCount++;
     const callNum = adapterCallCount;
     const t = Date.now();
-    const sys = request.messages.find(m => m.role === "system")?.content ?? "";
+    const sys = request.messages.find((m: any) => m.role === "system")?.content ?? "";
     const stage = this.detectStage(sys);
 
     trace("Adapter", C.magenta, `Call #${callNum}  stage=${stage}  model=${request.model}  msgs=${request.messages.length}`);
@@ -230,14 +231,21 @@ class TracingLiveAdapter implements LLMAdapter {
     adapterCallCount++;
     const callNum = adapterCallCount;
     const t = Date.now();
-    const sys = request.messages.find(m => m.role === "system")?.content ?? "";
+    const sys = request.messages.find((m: any) => m.role === "system")?.content ?? "";
     const stage = this.detectStage(sys);
     trace("Adapter", C.magenta, `Call #${callNum}  stage=${stage} [stream]  model=${request.model}`);
     this.printMessages(stage, request.messages);
 
     let tokenCount = 0;
     let streamedContent = "";
-    const response = await this.inner.stream(request, (chunk) => {
+    const innerStream = this.inner.stream;
+    if (!innerStream) {
+      // Fallback to complete if stream is not available
+      const response = await this.inner.complete(request);
+      onToken(response.content);
+      return response;
+    }
+    const response = await innerStream(request, (chunk) => {
       tokenCount++;
       streamedContent += chunk;
       onToken(chunk);
@@ -875,13 +883,21 @@ async function main() {
       }
 
       if (e.type === "maestro:agent_done") {
-        const ev = e as OrcaEvent & { role: string; stoppedBecause: string; iterations: number };
-        trace("Agent", C.green, `${ev.role} done  stopped=${ev.stoppedBecause}  iterations=${ev.iterations}`);
+        const ev = e as OrcaEvent & { role: string; stoppedBecause: string; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } };
+        if (ev.stoppedBecause === 'loop_detected') {
+          console.error(`${ts()} ${C.red}[Agent     ]${C.reset} ⚠ LOOP DETECTED — ${ev.role} stopped at iteration ${ev.iterations}`);
+          if (ev.loopEvidence) {
+            console.error(`${"".padStart(20)} ${C.dim}Repeated: ${ev.loopEvidence.repeatedCall} × ${ev.loopEvidence.occurrences}${C.reset}`);
+          }
+        } else {
+          trace("Agent", C.green, `${ev.role} done  stopped=${ev.stoppedBecause}  iterations=${ev.iterations}`);
+        }
       }
 
       if (e.type === "task:done") {
         const ev = e as OrcaEvent & { taskId: string; status: "SUCCESS" | "FAIL" };
-        trace("Persist", C.blue, `run saved → ${ev.taskId}  verdict=${ev.status}`);
+        // Persist confirmation will be shown after the store.saveRun call
+        // which happens internally in the runtime after this event
       }
     })
   );
@@ -903,16 +919,22 @@ async function main() {
     console.log(`\n${reply.text}\n`);
     console.log(`${"─".repeat(72)}\n`);
 
-    // Print run history
-    console.log(`\n${"─".repeat(72)}`);
-    console.log(`${C.cyan}─── Run History ────────────────────────────────${C.reset}`);
-    const recentRuns = store.getRecentRuns(5);
-    for (const run of recentRuns) {
-      const status = run.status === "SUCCESS" ? `${C.green}PASS${C.reset}` : `${C.red}FAIL${C.reset}`;
-      const intent = run.intent.length > 40 ? run.intent.slice(0, 40) + "..." : run.intent;
-      console.log(`  ${run.runId}  ${status}  "${intent}"`);
+    // Print persist confirmation
+    const lastRun = store.getRecentRuns(1)[0] as RunRecord | undefined;
+    if (lastRun) {
+      console.log(`${ts()} ${C.blue}[Persist   ]${C.reset} run saved → ${lastRun.id}  verdict=${lastRun.verdict ?? lastRun.status}  iterations=${lastRun.iterationCount ?? '?'}`);
     }
-    console.log(`${"─".repeat(72)}\n`);
+
+    // Print run history
+    console.log(`\n${C.cyan}─── Run History ${"─".repeat(48)}${C.reset}`);
+    const recentRuns = store.getRecentRuns(5) as RunRecord[];
+    for (const run of recentRuns) {
+      const cost = run.costUsd ? `  $${run.costUsd.toFixed(4)}` : '';
+      const verdict = run.verdict ?? (run.status === "SUCCESS" ? "PASS" : "FAIL");
+      const intent = run.intent.length > 40 ? run.intent.slice(0, 40) + "..." : run.intent;
+      console.log(`  ${run.id}  ${verdict}  "${intent}"  ${run.iterationCount ?? '?'} iter${cost}`);
+    }
+    console.log(`${"─".repeat(64)}\n`);
 
     unsubs.forEach(u => u());
     store.close();
@@ -927,7 +949,7 @@ async function main() {
 
     const askNext = () => {
       process.stdout.write(`\n${C.cyan}You>${C.reset} `);
-      rl.once("line", async (line: string) => {
+      rl.on("line", async (line: string) => {
         const msg = line.trim();
         if (!msg || msg.toLowerCase() === "exit" || msg.toLowerCase() === "quit") {
           console.log(`\n${C.dim}Exiting tracer.${C.reset}\n`);

@@ -307,6 +307,23 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   const hasFiles = (input.filesChanged?.length ?? 0) > 0;
   const hasTools = (input.toolEvents?.length ?? 0) > 0;
 
+  // ── Loop detection check ─────────────────────────────────────────────────────
+  // If agent stopped due to loop detection, always surface as at least WARN
+  // This ensures loop-detected runs can never silently PASS
+  if ((input as any).metadata?.stoppedBecause === 'loop_detected') {
+    issues.push({
+      severity: 'MEDIUM',
+      code: 'AGENT_LOOP_DETECTED',
+      category: 'Completeness',
+      description: 'Agent stopped due to detected tool call loop — output may be incomplete.',
+      expected_receipt: 'Agent should complete task within maxIterations without repeating identical calls.',
+      evidence: (input as any).metadata?.loopEvidence?.repeatedCall,
+      fix_hint: 'Review the task specification — the agent may have been given insufficient context to complete the task.',
+      message: 'Agent stopped due to detected tool call loop — output may be incomplete.',
+      suggestedFix: 'Review the task specification — the agent may have been given insufficient context to complete the task.'
+    });
+  }
+
   // ── required files from constraints ──────────────────────────────────────
   const requiredFiles = input.constraints?.requireFiles ?? [];
   const touched = new Set((input.filesChanged ?? []).map((f) => f.path));

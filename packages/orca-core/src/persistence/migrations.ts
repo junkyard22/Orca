@@ -5,15 +5,16 @@
  * All tables use TEXT for dates to maintain ISO 8601 format compatibility.
  */
 
-import Database from "better-sqlite3";
+import type { Database } from "sql.js";
 
 /**
  * Run all migrations to set up the database schema.
  * This is called automatically by SqliteStore on construction.
+ * Migrations are idempotent — safe to run on every startup.
  */
-export function runMigrations(db: Database.Database): void {
+export function runMigrations(db: Database): void {
   // Create runs table
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS runs (
       id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
@@ -34,7 +35,7 @@ export function runMigrations(db: Database.Database): void {
   `);
 
   // Create thoughts table
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS thoughts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_id TEXT NOT NULL REFERENCES runs(id),
@@ -46,7 +47,7 @@ export function runMigrations(db: Database.Database): void {
   `);
 
   // Create tool_events table
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS tool_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_id TEXT NOT NULL REFERENCES runs(id),
@@ -58,7 +59,7 @@ export function runMigrations(db: Database.Database): void {
   `);
 
   // Create files_changed table
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS files_changed (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_id TEXT NOT NULL REFERENCES runs(id),
@@ -68,7 +69,7 @@ export function runMigrations(db: Database.Database): void {
   `);
 
   // Create indexes for common queries
-  db.exec(`
+  db.run(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_runs_intent ON runs(intent);
     CREATE INDEX IF NOT EXISTS idx_thoughts_run_id ON thoughts(run_id);

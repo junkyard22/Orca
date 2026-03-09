@@ -1,7 +1,7 @@
 import type { PappyInput, PappyResult } from "@clawde/pappy-core";
 import type { MirandaGate } from "@clawde/miranda-core";
 import type { WorkspaceContext } from "./workspaceContext.js";
-import type { RunStore } from "./persistence/types.js";
+import type { OrcaStore } from "./persistence/types.js";
 import type { RoleName } from "maestro-core";
 
 // ---------------------------------------------------------------------------
@@ -181,9 +181,9 @@ export interface OrcaRuntimeDeps {
   tools?: OrcaToolService;
   /**
    * Persist every completed run to a durable store.
-   * Inject createSqliteRunStore() from apps/runner for production use.
+   * Inject SqliteStore from @clawde/orca-core/persistence for production use.
    */
-  store?: RunStore;
+  store?: OrcaStore;
   /**
    * Called once at the start of each task to capture workspace state.
    * Inject getWorkspaceContext from orca-core for automatic git + file info.
@@ -235,4 +235,4 @@ export type OrcaEvent =
   | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string }
   | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
   | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
-  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'error'; iterations: number };
+  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } };

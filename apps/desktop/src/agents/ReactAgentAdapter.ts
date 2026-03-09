@@ -72,6 +72,11 @@ export class ReactAgentAdapter implements AgentAdapter {
   private llmAdapter: LLMAdapter;
   private systemPrompt: string;
   private maxIterations: number;
+  
+  // Loop detection constants
+  private readonly LOOP_WINDOW = 3;        // consecutive identical calls = loop
+  private readonly THRASH_WINDOW = 6;      // alternating pattern window
+  private readonly EMPTY_RESULT_LIMIT = 3; // consecutive empty/error results = loop
 
   constructor(
     llmAdapter: LLMAdapter,
@@ -90,8 +95,13 @@ export class ReactAgentAdapter implements AgentAdapter {
     const toolsUsed: ToolEvent[] = [];
     const filesChanged: FileChange[] = [];
     let iterationCount = 0;
-    let stoppedBecause: 'done' | 'max_iterations' | 'error' = 'max_iterations';
+    let stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error' = 'max_iterations';
     let error: string | undefined;
+    
+    // Loop detection state
+    const callHistory: string[] = [];
+    let consecutiveEmptyResults = 0;
+    let loopEvidence: { iteration: number; repeatedCall: string; occurrences: number } | undefined;
     
     // Build initial conversation history
     let conversationHistory = task.conversationHistory || [];
@@ -252,6 +262,71 @@ Rules:
               });
             }
           }
+          
+          // === LOOP DETECTION CHECKS ===
+          
+          // Record this tool call in history for loop detection
+          const callSig = `${call.tool}:${JSON.stringify(call.input)}`;
+          callHistory.push(callSig);
+          
+          // Check 1: Identical call loop (same call repeated LOOP_WINDOW times)
+          if (callHistory.length >= this.LOOP_WINDOW) {
+            const window = callHistory.slice(-this.LOOP_WINDOW);
+            if (window.every(s => s === window[0])) {
+              console.warn(`[ReactAgent] Loop detected: "${window[0]}" repeated ${this.LOOP_WINDOW} times`);
+              stoppedBecause = 'loop_detected';
+              loopEvidence = {
+                iteration: iterationCount,
+                repeatedCall: window[0],
+                occurrences: this.LOOP_WINDOW
+              };
+              break;
+            }
+          }
+          
+          // Check 2: Thrashing pattern (alternating between two calls)
+          if (callHistory.length >= this.THRASH_WINDOW) {
+            const window = callHistory.slice(-this.THRASH_WINDOW);
+            const evens = window.filter((_, i) => i % 2 === 0);
+            const odds = window.filter((_, i) => i % 2 !== 0);
+            const isThrashing = 
+              evens.every(s => s === evens[0]) && 
+              odds.every(s => s === odds[0]) && 
+              evens[0] !== odds[0];
+            
+            if (isThrashing) {
+              console.warn(`[ReactAgent] Thrash detected: alternating between "${evens[0]}" and "${odds[0]}"`);
+              stoppedBecause = 'loop_detected';
+              loopEvidence = {
+                iteration: iterationCount,
+                repeatedCall: `${evens[0]} ↔ ${odds[0]}`,
+                occurrences: this.THRASH_WINDOW
+              };
+              break;
+            }
+          }
+          
+          // Check 3: Empty/error result loop
+          if (!result.ok || !result.output || result.output.trim() === '' || result.output.startsWith('Error')) {
+            consecutiveEmptyResults++;
+            if (consecutiveEmptyResults >= this.EMPTY_RESULT_LIMIT) {
+              console.warn(`[ReactAgent] Empty/error result loop: ${consecutiveEmptyResults} consecutive failures`);
+              stoppedBecause = 'loop_detected';
+              loopEvidence = {
+                iteration: iterationCount,
+                repeatedCall: `${call.tool} returning empty/error`,
+                occurrences: consecutiveEmptyResults
+              };
+              break;
+            }
+          } else {
+            consecutiveEmptyResults = 0; // reset on successful result
+          }
+        }
+        
+        // If loop was detected, break out of the iteration loop
+        if (stoppedBecause === 'loop_detected') {
+          break;
         }
       }
       
@@ -272,7 +347,8 @@ Rules:
         filesChanged,
         iterationCount,
         stoppedBecause,
-        error
+        error,
+        loopEvidence
       };
       
     } catch (err) {
@@ -286,7 +362,8 @@ Rules:
         filesChanged,
         iterationCount,
         stoppedBecause,
-        error
+        error,
+        loopEvidence
       };
     }
   }

@@ -1,49 +1,73 @@
 /**
- * Persistence port — everything orca-core needs to record a run.
+ * Persistence types — everything orca-core needs to record a run.
  *
  * The concrete implementation (SQLite, Postgres, JSONL, …) lives in the
  * app shell and is injected via OrcaRuntimeDeps.store.
  * orca-core stays storage-agnostic.
  */
 
-export interface PersistedRun {
-  /** Stable run identifier — same as OrcaRunCtx.runId. */
-  runId: string;
-  /** Unix epoch ms at task start. */
-  timestamp: number;
-  /** Wall-clock duration in milliseconds. */
-  durationMs: number;
-  /** Final verdict — mirrors OrcaExecutionResult.status. */
-  status: "SUCCESS" | "FAIL";
-  /** Raw user message that triggered this run. */
-  originalMessage: string;
-  /** Parsed intent string. */
+export interface RunRecord {
+  id: string;
+  createdAt: string;
   intent: string;
-  /** JSON-serialised goals array. */
-  goals: string;
-  /** User-facing reply text (may be undefined on FAIL). */
+  role?: string;
+  status: 'SUCCESS' | 'FAIL';
+  stoppedBecause?: 'done' | 'max_iterations' | 'loop_detected' | 'error';
+  iterationCount?: number;
   outputText?: string;
-  /** Internal QC summary. */
   summary?: string;
-  /** How many subagents were spawned (0 = single-agent). */
-  subagentCount: number;
-  /** Total tool call events across all agents. */
-  toolEventCount: number;
-  /** Number of repair passes needed (0 = passed on first try). */
-  repairPasses: number;
-  /** Working directory captured at task start. */
-  workspaceCwd?: string;
-  /** Git branch at task start. */
-  gitBranch?: string;
-  /** Short git commit SHA at task start. */
-  gitCommit?: string;
+  verdict?: 'PASS' | 'WARN' | 'FAIL';
+  confidence?: number;
+  issueCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
 }
 
-export interface RunStore {
-  /** Persist a completed run record. Implementations should be synchronous-friendly. */
-  saveRun(run: PersistedRun): void;
-  /** Return the most-recent runs, newest first. */
-  getRecentRuns(limit?: number): PersistedRun[];
-  /** Graceful teardown (flush buffers, close handles, etc.). */
+export interface ThoughtRecord {
+  runId: string;
+  iteration: number;
+  thought?: string;
+  observation?: string;
+  next?: string;
+}
+
+export interface ToolEvent {
+  runId: string;
+  tool: string;
+  ok: boolean;
+  summary?: string;
+  iteration?: number;
+}
+
+export interface FileChange {
+  runId: string;
+  path: string;
+  changeType: string;
+}
+
+export interface OrcaStore {
+  saveRun(
+    run: RunRecord,
+    thoughts: ThoughtRecord[],
+    toolEvents: ToolEvent[],
+    filesChanged: FileChange[]
+  ): void | Promise<void>;
+  getRecentRuns(limit?: number): RunRecord[] | Promise<RunRecord[]>;
+  getRun(id: string): RunRecord | null | Promise<RunRecord | null>;
+  getRunThoughts(runId: string): ThoughtRecord[] | Promise<ThoughtRecord[]>;
+  getRunToolEvents(runId: string): ToolEvent[] | Promise<ToolEvent[]>;
+  searchRuns(query: string, limit?: number): RunRecord[] | Promise<RunRecord[]>;
+  getStats(): {
+    totalRuns: number;
+    passRate: number;
+    avgIterations: number;
+    totalCostUsd: number;
+  } | Promise<{
+    totalRuns: number;
+    passRate: number;
+    avgIterations: number;
+    totalCostUsd: number;
+  }>;
   close(): void;
 }

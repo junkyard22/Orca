@@ -8,6 +8,7 @@ import type {
   OrcaEvent,
   OrcaMaestroResult,
 } from "./types.js";
+import type { RunRecord, ThoughtRecord, ToolEvent, FileChange } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput } from "./helpers.js";
 import { handleRepairLoop } from "./repairLoop.js";
@@ -180,25 +181,32 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     unsubRepair();
     emitter.emit({ type: "task:done", taskId, status: result.status });
 
-    if (deps.store) {
-      const artifacts = result.artifacts as OrcaMaestroResult | undefined;
-      deps.store.saveRun({
-        runId:           taskId,
-        timestamp:       startTime,
-        durationMs:      Date.now() - startTime,
-        status:          result.status,
-        originalMessage: taskSpec.originalUserMessage,
-        intent:          taskSpec.intent,
-        goals:           JSON.stringify(taskSpec.goals),
-        outputText:      result.userFacingText,
-        summary:         result.summary,
-        subagentCount:   artifacts?.subagentRuns?.length    ?? 0,
-        toolEventCount:  artifacts?.toolEvents?.length      ?? 0,
-        repairPasses,
-        workspaceCwd:    workspaceContext?.cwd,
-        gitBranch:       workspaceContext?.gitBranch,
-        gitCommit:       workspaceContext?.gitCommit,
-      });
+    // Persist the run if store is available
+    // Persistence failure must never crash the runtime
+    try {
+      const saveResult = deps.store?.saveRun(
+        {
+          id: taskId,
+          createdAt: new Date(startTime).toISOString(),
+          intent: taskSpec.intent,
+          role: undefined, // Will be populated by caller if available
+          status: result.status,
+          stoppedBecause: undefined, // Will be populated by caller if available
+          iterationCount: undefined, // Will be populated by caller if available
+          outputText: result.userFacingText,
+          summary: result.summary,
+          // verdict, confidence, issueCount will be populated by caller if QC ran
+        } as RunRecord,
+        [], // thoughts - will be populated by caller if available
+        [], // toolEvents - will be populated by caller if available
+        [], // filesChanged - will be populated by caller if available
+      );
+      // If saveRun returns a Promise, await it to ensure data is persisted
+      if (saveResult instanceof Promise) {
+        await saveResult;
+      }
+    } catch (err) {
+      console.error("[orca-core] store.saveRun failed:", err);
     }
 
     return result;

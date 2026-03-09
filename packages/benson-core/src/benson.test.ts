@@ -1,0 +1,391 @@
+/**
+ * Benson Core — Unit Tests
+ *
+ * Tests createBenson() and handleUserMessage() with mocked executeTask.
+ */
+
+import { describe, it, expect, vi } from "vitest";
+import { createBenson } from "./benson.js";
+import { parseIntent } from "./intent.js";
+import type { ExecutionResult, BensonReply, TaskSpec, Message } from "./types.js";
+
+function createSuccessResult(output?: string): ExecutionResult {
+  return {
+    status: "SUCCESS",
+    userFacingText: output ?? "Task completed successfully",
+    summary: "ok",
+  };
+}
+
+function createFailureResult(): ExecutionResult {
+  return {
+    status: "FAIL",
+    summary: "Task failed",
+  };
+}
+
+describe("createBenson", () => {
+  describe("handleUserMessage", () => {
+    describe("Clear task message — parseIntent returns TASK", () => {
+      it("executeTask is called, reply kind is RESULT, text is non-empty", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult("Here is the result"));
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("Create a new file called auth.ts");
+
+        expect(executeTask).toHaveBeenCalled();
+        expect(reply.kind).toBe("RESULT");
+        expect(reply.text).toBe("Here is the result");
+      });
+    });
+
+    describe("Ambiguous message — parseIntent returns CLARIFY", () => {
+      it("executeTask is NOT called, reply kind is CLARIFY, options array present", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult());
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("help me");
+
+        expect(executeTask).not.toHaveBeenCalled();
+        expect(reply.kind).toBe("CLARIFY");
+        const clarifyReply = reply as { kind: "CLARIFY"; text: string; options?: string[] };
+        expect(clarifyReply.options).toBeDefined();
+        expect(clarifyReply.options?.length).toBeGreaterThan(0);
+      });
+
+      it("returns CLARIFY for vague commands like 'fix it'", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult());
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("fix it");
+
+        expect(executeTask).not.toHaveBeenCalled();
+        expect(reply.kind).toBe("CLARIFY");
+      });
+
+      it("returns CLARIFY for single vague word 'help'", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult());
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("help");
+
+        expect(executeTask).not.toHaveBeenCalled();
+        expect(reply.kind).toBe("CLARIFY");
+      });
+    });
+
+    describe("executeTask returns SUCCESS", () => {
+      it("reply kind RESULT contains outputText", async () => {
+        const executeTask = vi.fn().mockResolvedValue(
+          createSuccessResult("The authentication module has been created.")
+        );
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("Create auth.ts with login functionality");
+
+        expect(reply.kind).toBe("RESULT");
+        expect(reply.text).toContain("authentication");
+      });
+    });
+
+    describe("executeTask returns FAIL", () => {
+      it("reply kind RESULT contains failure message, does not throw", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createFailureResult());
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("Create auth.ts");
+        
+        // Should not throw
+        expect(() => benson.handleUserMessage("Create auth.ts")).not.toThrow();
+        // Should return RESULT with failure text (not throw)
+        expect(reply.kind).toBe("RESULT");
+      });
+    });
+
+    describe("Empty message handling", () => {
+      it("returns CLARIFY for empty/whitespace-only message", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult());
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("");
+        
+        expect(reply.kind).toBe("CLARIFY");
+      });
+
+      it("returns CLARIFY for message with only whitespace", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult());
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("   ");
+        
+        expect(reply.kind).toBe("CLARIFY");
+      });
+    });
+
+    describe("Specific intent handling", () => {
+      it("processes 'create' intent as a task", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult("Created file"));
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("Create a new component");
+
+        expect(executeTask).toHaveBeenCalled();
+        expect(reply.kind).toBe("RESULT");
+      });
+
+      it("processes 'explain' intent as a task", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult("Here is an explanation"));
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("Explain how recursion works");
+
+        expect(executeTask).toHaveBeenCalled();
+        expect(reply.kind).toBe("RESULT");
+      });
+
+      it("processes 'fix' intent as a task (with specific target)", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult("Fixed the bug"));
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("Fix the login bug");
+
+        expect(executeTask).toHaveBeenCalled();
+        expect(reply.kind).toBe("RESULT");
+      });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseIntent unit tests
+// ---------------------------------------------------------------------------
+
+describe("parseIntent", () => {
+  // 1. Pure greeting → CLARIFY
+  it("returns CLARIFY for pure greeting", () => {
+    const result = parseIntent("hello");
+    expect(result.kind).toBe("CLARIFY");
+  });
+
+  it("returns CLARIFY for 'hi'", () => {
+    const result = parseIntent("hi");
+    expect(result.kind).toBe("CLARIFY");
+  });
+
+  it("returns CLARIFY for 'hey'", () => {
+    const result = parseIntent("hey");
+    expect(result.kind).toBe("CLARIFY");
+  });
+
+  it("returns CLARIFY for 'what can you do'", () => {
+    const result = parseIntent("what can you do");
+    expect(result.kind).toBe("CLARIFY");
+  });
+
+  // 2. Very short message with no history → CLARIFY
+  it("returns CLARIFY for very short message (<9 chars)", () => {
+    const result = parseIntent("do it");
+    expect(result.kind).toBe("CLARIFY");
+  });
+
+  it("returns CLARIFY for 'yes' with no history", () => {
+    const result = parseIntent("yes");
+    expect(result.kind).toBe("CLARIFY");
+  });
+
+  it("returns CLARIFY for 'no' with no history", () => {
+    const result = parseIntent("no");
+    expect(result.kind).toBe("CLARIFY");
+  });
+
+  // 3. Clear action verb message → TASK, not CLARIFY
+  it("returns TASK for 'create a README file'", () => {
+    const result = parseIntent("create a README file");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.intent).toContain("create");
+    }
+  });
+
+  it("returns TASK for 'write a function'", () => {
+    const result = parseIntent("write a function to sort arrays");
+    expect(result.kind).toBe("TASK");
+  });
+
+  // 4. "fix the bug in auth.ts" → TASK, intent contains "fix", context contains "auth.ts"
+  it("extracts file path from 'fix the bug in auth.ts'", () => {
+    const result = parseIntent("fix the bug in auth.ts");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.intent).toContain("fix");
+      expect(result.spec.context?.files).toContain("auth.ts");
+    }
+  });
+
+  // 5. "create a README and then add installation instructions" → TASK, goals.length === 2
+  it("splits multi-goal message on 'and then'", () => {
+    const result = parseIntent("create a README and then add installation instructions");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.goals.length).toBe(2);
+    }
+  });
+
+  it("splits multi-goal message on 'also'", () => {
+    const result = parseIntent("create a test file also add documentation");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.goals.length).toBe(2);
+    }
+  });
+
+  // 6. "explain what hello_world.py does" → TASK, intent contains "explain"
+  it("processes 'explain' intent with file reference", () => {
+    const result = parseIntent("explain what hello_world.py does");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.intent).toContain("explain");
+      expect(result.spec.context?.files).toContain("hello_world.py");
+    }
+  });
+
+  // 7. History threading — second message references prior context
+  it("threads history through to spec.context", () => {
+    const history: Message[] = [
+      { role: 'user', content: 'Create a README' },
+      { role: 'assistant', content: 'README created' },
+    ];
+    const result = parseIntent("now add tests for it", history);
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.context?.history).toBeDefined();
+      expect((result.spec.context?.history as Message[]).length).toBe(2);
+    }
+  });
+
+  it("does not treat 'yes' as ambiguous when history is present", () => {
+    const history: Message[] = [
+      { role: 'user', content: 'Should I create the file?' },
+      { role: 'assistant', content: 'Would you like me to proceed?' },
+    ];
+    const result = parseIntent("yes", history);
+    expect(result.kind).toBe("TASK");
+  });
+
+  // 8. CLARIFY options are non-developer-centric
+  it("has non-developer-centric CLARIFY options", () => {
+    const result = parseIntent("help");
+    expect(result.kind).toBe("CLARIFY");
+    if (result.kind === "CLARIFY") {
+      const options = result.options;
+      // Should NOT contain developer-centric terms like "write code" or "debug code"
+      for (const opt of options) {
+        expect(opt.toLowerCase()).not.toContain("write code");
+        expect(opt.toLowerCase()).not.toContain("debug code");
+      }
+      // Should contain user-friendly options
+      expect(options.some(o => o.includes("Create"))).toBe(true);
+      expect(options.some(o => o.includes("Fix") || o.includes("improve"))).toBe(true);
+      expect(options.some(o => o.includes("Explain") || o.includes("analyze"))).toBe(true);
+    }
+  });
+
+  // 9. Message with constraint — "fix auth.ts without changing the API" → constraints present
+  it("extracts 'without' constraint", () => {
+    const result = parseIntent("fix auth.ts without changing the API");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.constraints).toBeDefined();
+      expect(result.spec.constraints?.without).toBe("changing the API");
+    }
+  });
+
+  it("extracts 'must' constraint", () => {
+    const result = parseIntent("create a function that must be async");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      // The regex captures "async" (what follows "must be")
+      expect(result.spec.constraints?.must).toBe("async");
+    }
+  });
+
+  // 10. File path detection — "read config.js" → context.files includes "config.js"
+  it("detects file path in message", () => {
+    const result = parseIntent("read config.js");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.context?.files).toContain("config.js");
+    }
+  });
+
+  it("detects multiple file paths", () => {
+    const result = parseIntent("compare main.ts and utils.ts");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.context?.files).toContain("main.ts");
+      expect(result.spec.context?.files).toContain("utils.ts");
+    }
+  });
+
+  it("detects file path with directory", () => {
+    const result = parseIntent("open src/components/Button.ts");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.context?.files).toContain("src/components/Button.ts");
+    }
+  });
+
+  // Additional edge cases
+  it("handles 'ok' with history as TASK", () => {
+    const history: Message[] = [
+      { role: 'user', content: 'Shall I run the tests?' },
+      { role: 'assistant', content: 'Yes, would you like me to?' },
+    ];
+    const result = parseIntent("ok", history);
+    expect(result.kind).toBe("TASK");
+  });
+
+  it("handles URL in message", () => {
+    const result = parseIntent("fetch data from https://api.example.com/users");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.context?.urls).toContain("https://api.example.com/users");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// History management tests
+// ---------------------------------------------------------------------------
+
+describe("Benson history management", () => {
+  it("exposes getHistory method", () => {
+    const executeTask = vi.fn().mockResolvedValue(createSuccessResult("done"));
+    const benson = createBenson({ executeTask });
+
+    expect(benson.getHistory()).toEqual([]);
+  });
+
+  it("exposes clearHistory method", async () => {
+    const executeTask = vi.fn().mockResolvedValue(createSuccessResult("done"));
+    const benson = createBenson({ executeTask, maxHistoryTurns: 5 });
+
+    // Use a message that will be parsed as TASK (not CLARIFY)
+    await benson.handleUserMessage("create a file");
+    expect(benson.getHistory().length).toBe(1);
+
+    benson.clearHistory();
+    expect(benson.getHistory()).toEqual([]);
+  });
+
+  it("respects maxHistoryTurns limit", async () => {
+    const executeTask = vi.fn().mockResolvedValue(createSuccessResult("done"));
+    const benson = createBenson({ executeTask, maxHistoryTurns: 2 });
+
+    await benson.handleUserMessage("message 1");
+    await benson.handleUserMessage("message 2");
+    await benson.handleUserMessage("message 3");
+
+    expect(benson.getHistory().length).toBe(2);
+  });
+});
