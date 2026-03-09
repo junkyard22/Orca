@@ -49,6 +49,7 @@ import {
 } from "@clawde/miranda-core";
 import type {
   LLMAdapter,
+  LLMMessage as Message,
   LLMRequest,
   LLMResponse,
 } from "@clawde/miranda-core";
@@ -264,6 +265,33 @@ function decision(desc: string, reason: string) {
   console.log(`${"".padStart(13)} ${C.dim}Reason: ${reason}${C.reset}`);
 }
 
+function normalizeConversationHistory(rawHistory: unknown): Message[] {
+  if (!Array.isArray(rawHistory)) return [];
+
+  if (rawHistory.every((entry) =>
+    typeof entry === "object" &&
+    entry !== null &&
+    "role" in entry &&
+    "content" in entry,
+  )) {
+    return rawHistory as Message[];
+  }
+
+  const normalized: Message[] = [];
+  for (const entry of rawHistory) {
+    if (!entry || typeof entry !== "object") continue;
+    const turn = entry as { user?: unknown; assistant?: unknown };
+    if (typeof turn.user === "string" && turn.user.length > 0) {
+      normalized.push({ role: "user", content: turn.user });
+    }
+    if (typeof turn.assistant === "string" && turn.assistant.length > 0) {
+      normalized.push({ role: "assistant", content: turn.assistant });
+    }
+  }
+
+  return normalized;
+}
+
 // ── Task prompt builder (mirrors main.ts buildTaskPrompt) ─────────────────
 
 function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
@@ -283,9 +311,14 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
     lines.push("", "### Constraints", JSON.stringify(task.constraints, null, 2));
   }
 
-  const history = task.context?.["conversationHistory"] as Array<{ user: string; assistant: string }> | undefined;
+  const history = normalizeConversationHistory(task.context?.["conversationHistory"]);
   if (history?.length) {
-    const transcript = history.map(h => `USER: ${h.user}\nASSISTANT: ${h.assistant}`).join("\n\n");
+    lines.push(
+      "",
+      "### History usage",
+      "Resolve references like 'it', 'that file', 'the file you just created', and 'same as before' from the conversation history below before deciding what to do.",
+    );
+    const transcript = history.map((message) => `${String(message.role).toUpperCase()}: ${message.content}`).join("\n\n");
     lines.push("", "### Conversation history", transcript);
   }
 
@@ -354,6 +387,52 @@ function fmtToolResult(tool: string, ok: boolean, output: string, error?: string
   return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
 }
 
+const REACT_PROMPT_BLOCK = `
+
+After receiving a tool result, reason before acting again:
+
+Thought: [what did I just learn? what does it mean for the task?]
+Observation: [current state of the task based on everything so far]
+Next: [what to do next and why — or "Task is complete" if done]
+
+CRITICAL RULES:
+- Your Thought/Observation/Next blocks are INTERNAL REASONING ONLY
+- They must NEVER appear in your final answer to the user
+- Never call a tool without a preceding Thought block
+- When the task is complete, write your final answer using EXACTLY this format:
+
+FINAL ANSWER:
+[your complete response to the user here — no thought blocks, no reasoning, just the answer]
+
+- Everything before FINAL ANSWER: is thinking
+- Everything after FINAL ANSWER: is what the user receives
+- If you are done and have no tool calls, you MUST use the FINAL ANSWER: marker
+`;
+
+function stripToolCalls(text: string): string {
+  return text
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+    .replace(/<tool_call>[\s\S]*$/g, '')
+    .trim();
+}
+
+function extractFinalAnswer(rawText: string): string | null {
+  const marker = 'FINAL ANSWER:';
+  const idx = rawText.indexOf(marker);
+  if (idx !== -1) {
+    return rawText.slice(idx + marker.length).trim();
+  }
+  return null;
+}
+
+function stripThoughtBlocks(text: string): string {
+  return text
+    .replace(/Thought:.*?(?=\n\n|\nObservation:|\nNext:|\nFINAL ANSWER:|$)/gs, '')
+    .replace(/Observation:.*?(?=\n\n|\nThought:|\nNext:|\nFINAL ANSWER:|$)/gs, '')
+    .replace(/Next:.*?(?=\n\n|\nThought:|\nObservation:|\nFINAL ANSWER:|$)/gs, '')
+    .trim();
+}
+
 async function runAgentLoop(
   systemPrompt: string,
   taskPrompt: string,
@@ -362,7 +441,8 @@ async function runAgentLoop(
 ): Promise<{ text: string; toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> }> {
   const MAX_ITER = 10;
   const toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
-  let conversation = `${systemPrompt}\n\n${tools.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
+  const fullSystemPrompt = `${systemPrompt}${REACT_PROMPT_BLOCK}`;
+  let conversation = `${fullSystemPrompt}\n\n${tools.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
   let lastText = '';
 
   for (let i = 0; i < MAX_ITER; i++) {
@@ -389,10 +469,11 @@ async function runAgentLoop(
   }
 
   return {
-    text: lastText
-      .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')  // closed tags
-      .replace(/<tool_call>[\s\S]*$/g, '')                // unclosed tail
-      .trim(),
+    text: (() => {
+      const cleanedOutput = stripToolCalls(lastText);
+      const finalAnswer = extractFinalAnswer(cleanedOutput);
+      return finalAnswer || stripThoughtBlocks(cleanedOutput);
+    })(),
     toolEvents,
   };
 }
@@ -401,6 +482,8 @@ async function runAgentLoop(
 
 function createTracingMaestro(
   roleAdapters: Partial<Record<string, OrcaLLMService>>,
+  availableToolNames: string[],
+  toolService: OrcaToolService,
 ): MaestroPort {
   const maestroCore = createMaestroCore();
 
@@ -422,9 +505,9 @@ function createTracingMaestro(
         `impact=${estimatedImpact.toFixed(2)} multiStep=${multiStep} riskScore=${riskScore.toFixed(2)}`,
       );
 
-      const history = task.context?.["conversationHistory"] as Array<{ user: string; assistant: string }> | undefined;
+      const history = normalizeConversationHistory(task.context?.["conversationHistory"]);
       if (history?.length) {
-        trace("Maestro", C.green, `  ✓ conversationHistory: ${history.length} turn(s)`);
+        trace("Maestro", C.green, `  ✓ conversationHistory: ${history.length} message(s)`);
       } else {
         trace("Maestro", C.yellow, `  ⚠ No conversationHistory (expected on turn 1)`);
       }
@@ -476,23 +559,11 @@ function createTracingMaestro(
 
         const baseSystemPrompt = getRolePrompt(role as RoleName);
         // Add ReAct system prompt block
-        const reactSystemBlock = `
-
-After receiving a tool result, reason before acting again:
-
-Thought: [what did I just learn? what does it mean for the task?]
-Observation: [current state of the task based on everything so far]
-Next: [what to do next and why — or "Task is complete" if done]
-
-Rules:
-- Never call a tool without a preceding Thought block
-- If the task is complete, say so in Next then produce your final answer
-- If a tool result shows an error, reason about why and try a different approach
-- You can see your full reasoning history — build on prior Thoughts
-`;
-        const systemPrompt = `${baseSystemPrompt}${reactSystemBlock}`;
+        const systemPrompt = `${baseSystemPrompt}${REACT_PROMPT_BLOCK}`;
         const taskPrompt   = buildTaskPrompt(task, role);
         const llmForRole   = roleAdapters[role] ?? ctx.llm;
+
+        trace("Maestro", C.blue, `  Passing ${availableToolNames.length} tools to ${role} agent: ${availableToolNames.join(', ')}`);
 
         // System prompt: save to file on first use, reference thereafter
         if (SHOW_MESSAGES) {
@@ -510,8 +581,10 @@ Rules:
         // Run the ReAct agent loop
         const MAX_ITER = 10;
         const toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
-        let conversation = `${systemPrompt}\n\n${ctx.tools?.formatForPrompt() || ''}\n\n---\n\n${taskPrompt}`;
+        const thoughts: NonNullable<NonNullable<OrcaMaestroResult['metadata']>['thoughts']> = [];
+        let conversation = `${systemPrompt}\n\n${toolService.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
         let lastText = '';
+        let currentOutputText = '';
         let iterationCount = 0;
         let stoppedBecause: 'done' | 'max_iterations' | 'error' = 'max_iterations';
 
@@ -532,6 +605,7 @@ Rules:
               const thought = thoughtMatch ? thoughtMatch[1].trim() : "";
               const observation = observationMatch ? observationMatch[1].trim() : "";
               const next = nextMatch ? nextMatch[1].trim() : "";
+              thoughts.push({ iteration: iterationCount, thought, observation, next });
               
               // Emit thought event
               ctx.emit?.({
@@ -554,15 +628,12 @@ Rules:
             }
             
             const calls = parseToolCalls(text);
-            
-            // Check if task is complete
-            const isComplete = nextMatch 
-              ? nextMatch[1].toLowerCase().includes('complete') || 
-                nextMatch[1].toLowerCase().includes('done')
-              : false;
-            
+
             if (calls.length === 0) {
-              stoppedBecause = isComplete ? 'done' : 'done';
+              const cleanedOutput = stripToolCalls(text);
+              const finalAnswer = extractFinalAnswer(cleanedOutput);
+              currentOutputText = finalAnswer || stripThoughtBlocks(cleanedOutput);
+              stoppedBecause = 'done';
               break;
             }
             
@@ -571,7 +642,7 @@ Rules:
             
             for (const call of calls) {
               trace("Maestro", C.cyan, `    ➤ tool:${call.tool}  args=${JSON.stringify(call.input).slice(0, 80)}`);
-              const result = await ctx.tools!.execute(call.tool, call.input);
+              const result = await toolService.execute(call.tool, call.input);
               trace("Maestro", result.ok ? C.green : C.red, `    ← ${result.ok ? 'ok' : 'FAIL'} (${result.output.length} chars)`);
               toolEvents.push({
                 tool:    call.tool,
@@ -598,10 +669,11 @@ Rules:
           iterations: iterationCount
         });
 
-        const text = lastText
-          .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
-          .replace(/<tool_call>[\s\S]*$/g, '')
-          .trim();
+        const text = currentOutputText || (() => {
+          const cleanedOutput = stripToolCalls(lastText);
+          const finalAnswer = extractFinalAnswer(cleanedOutput);
+          return finalAnswer || stripThoughtBlocks(cleanedOutput);
+        })();
 
         trace("Maestro", C.cyan, `  Agent stopped: ${stoppedBecause} after ${iterationCount} iterations`);
         trace("Maestro", C.dim,  `  Final text[0..120]: "${text.slice(0, 120).replace(/\n/g, "\\n")}…"`);
@@ -617,6 +689,12 @@ Rules:
           toolEvents,
           doneCriteria: dec.done_criteria,
           summary: `routing=direct role=${role} type=${type} risk=${riskScore.toFixed(2)} iterations=${iterationCount} stopped=${stoppedBecause}`,
+          metadata: {
+            role,
+            thoughts,
+            iterationCount,
+            stoppedBecause,
+          },
         };
       }
 
@@ -655,13 +733,8 @@ Rules:
             }
 
             let output: string;
-            if (ctx.tools) {
-              const res = await runAgentLoop(headSystem, headTask, ctx.tools, headLLM);
-              output = res.text;
-            } else {
-              const fullPrompt = `${headSystem}\n\n---\n\n${headTask}`;
-              ({ text: output } = await headLLM.complete(fullPrompt, { maxTokens: 8192 }));
-            }
+            const res = await runAgentLoop(headSystem, headTask, toolService, headLLM);
+            output = res.text;
             printMsg(`← ${dept.head} [response]`, C.green, output);
             ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
             trace("Maestro", C.green, `    [${dept.head}] done — ${output.length} chars`);
@@ -680,6 +753,10 @@ Rules:
           outputText:   deptResults[0]!.output,
           doneCriteria: dec.done_criteria,
           summary:      `routing=decompose depts=1`,
+          metadata: {
+            iterationCount: 1,
+            stoppedBecause: deptResults[0]!.ok ? 'done' : 'error',
+          },
           subagentRuns: deptResults.map(d => ({
             subagentId: d.subagentId, role: d.head, task: d.subtask,
             status: d.ok ? 'done' : 'failed', outputText: d.output,
@@ -730,6 +807,11 @@ Rules:
         outputText:   synthOutput,
         doneCriteria: dec.done_criteria,
         summary:      `routing=decompose depts=${departments.length}`,
+        metadata: {
+          role: 'brain',
+          iterationCount: 1,
+          stoppedBecause: 'done',
+        },
         subagentRuns: deptResults.map(d => ({
           subagentId: d.subagentId, role: d.head, task: d.subtask,
           status: d.ok ? 'done' : 'failed', outputText: d.output,
@@ -796,17 +878,13 @@ async function main() {
   const llm = brainLLM;
   trace("Init", C.blue, `Configured ${Object.keys(roleAdapters).length} role adapter(s): ${Object.keys(roleAdapters).join(', ')}`);
 
-  trace("Init", C.blue, "Creating tracing Maestro adapter...");
-  const maestro = createTracingMaestro(roleAdapters);
-
-  trace("Init", C.blue, "Creating Pappy QC port (debug trace enabled)...");
-  const pappy = createDebugPappyPort();
+  const toolRegistry = createCoreToolRegistry();
+  const availableToolNames = toolRegistry.list().map((tool) => tool.name);
+  trace("Init", C.blue, `Tool registry ready: ${availableToolNames.length} tools — ${availableToolNames.join(', ')}`);
 
   // Resolve workspace root: two dirs up from apps/desktop → monorepo root
   const workspaceRoot = path.resolve(import.meta.dirname, '../..');
 
-  trace("Init", C.blue, "Creating Orca runtime...");
-  const toolRegistry = createCoreToolRegistry();
   const toolService: OrcaToolService = {
     execute(name, input) {
       const tool = toolRegistry.get(name);
@@ -820,6 +898,14 @@ async function main() {
       return `Workspace root: ${workspaceRoot}\n\n${toolRegistry.formatForPrompt()}`;
     },
   };
+
+  trace("Init", C.blue, "Creating tracing Maestro adapter...");
+  const maestro = createTracingMaestro(roleAdapters, availableToolNames, toolService);
+
+  trace("Init", C.blue, "Creating Pappy QC port (debug trace enabled)...");
+  const pappy = createDebugPappyPort();
+
+  trace("Init", C.blue, "Creating Orca runtime...");
   
   // Create SQLite store for persistence (fallback path for CLI)
   const store = new SqliteStore(
@@ -920,14 +1006,14 @@ async function main() {
     console.log(`${"─".repeat(72)}\n`);
 
     // Print persist confirmation
-    const lastRun = store.getRecentRuns(1)[0] as RunRecord | undefined;
+    const lastRun = (await store.getRecentRuns(1))[0] as RunRecord | undefined;
     if (lastRun) {
       console.log(`${ts()} ${C.blue}[Persist   ]${C.reset} run saved → ${lastRun.id}  verdict=${lastRun.verdict ?? lastRun.status}  iterations=${lastRun.iterationCount ?? '?'}`);
     }
 
     // Print run history
     console.log(`\n${C.cyan}─── Run History ${"─".repeat(48)}${C.reset}`);
-    const recentRuns = store.getRecentRuns(5) as RunRecord[];
+    const recentRuns = await store.getRecentRuns(5) as RunRecord[];
     for (const run of recentRuns) {
       const cost = run.costUsd ? `  $${run.costUsd.toFixed(4)}` : '';
       const verdict = run.verdict ?? (run.status === "SUCCESS" ? "PASS" : "FAIL");
@@ -938,7 +1024,7 @@ async function main() {
 
     unsubs.forEach(u => u());
     store.close();
-    process.exit(0);
+    return;
   }
 
   // ── Interactive REPL mode ───────────────────────────────────────────────
@@ -949,13 +1035,14 @@ async function main() {
 
     const askNext = () => {
       process.stdout.write(`\n${C.cyan}You>${C.reset} `);
-      rl.on("line", async (line: string) => {
+      rl.once("line", async (line: string) => {
         const msg = line.trim();
         if (!msg || msg.toLowerCase() === "exit" || msg.toLowerCase() === "quit") {
           console.log(`\n${C.dim}Exiting tracer.${C.reset}\n`);
           unsubs.forEach(u => u());
+          store.close();
           rl.close();
-          process.exit(0);
+          return;
         }
 
         console.log(`\n${"─".repeat(72)}\n`);
@@ -976,5 +1063,5 @@ async function main() {
 
 main().catch((err) => {
   console.error("\nTracer crashed:", err);
-  process.exit(1);
+  process.exitCode = 1;
 });

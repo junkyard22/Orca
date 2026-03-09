@@ -3,7 +3,7 @@ import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import { join } from "node:path";
 
 import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
-import type { LLMAdapter } from "@clawde/miranda-core";
+import type { LLMAdapter, LLMMessage as Message } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createDirectLLMService,
@@ -37,6 +37,39 @@ import type {
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
+
+type AgentTool = {
+  name: string;
+  description: string;
+  execute: (input: Record<string, unknown>, context: { workspaceRoot?: string; runId?: string }) => Promise<{ ok: boolean; output: string; error?: string }>;
+};
+
+function normalizeConversationHistory(rawHistory: unknown): Message[] {
+  if (!Array.isArray(rawHistory)) return [];
+
+  if (rawHistory.every((entry) =>
+    typeof entry === "object" &&
+    entry !== null &&
+    "role" in entry &&
+    "content" in entry,
+  )) {
+    return rawHistory as Message[];
+  }
+
+  const normalized: Message[] = [];
+  for (const entry of rawHistory) {
+    if (!entry || typeof entry !== "object") continue;
+    const turn = entry as { user?: unknown; assistant?: unknown };
+    if (typeof turn.user === "string" && turn.user.length > 0) {
+      normalized.push({ role: "user", content: turn.user });
+    }
+    if (typeof turn.assistant === "string" && turn.assistant.length > 0) {
+      normalized.push({ role: "assistant", content: turn.assistant });
+    }
+  }
+
+  return normalized;
+}
 
 // ── Brain routing helper ───────────────────────────────────────────────────
 
@@ -139,21 +172,15 @@ function formatToolResult(tool: string, ok: boolean, output: string, error?: str
 function buildMaestroAdapter(
   /** Per-role LLM adapters. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
   configuredAdapters: Map<RoleName, LLMAdapter>,
+  availableTools: AgentTool[],
 ): MaestroPort {
   const maestroCore = createMaestroCore();
+  const logger = console;
 
   // Build one RoleAgentAdapter per configured role
   const roleAgents = new Map<RoleName, RoleAgentAdapter>();
   for (const [role, llmAdapter] of configuredAdapters) {
     roleAgents.set(role, new RoleAgentAdapter(role, llmAdapter));
-  }
-
-  // Helper function to get available tools
-  function getAvailableTools(): any[] {
-    // This should return the actual tools available in the system
-    // For now, returning an empty array as a placeholder
-    // In a real implementation, this would access the tool registry
-    return [];
   }
 
   return {
@@ -173,6 +200,11 @@ function buildMaestroAdapter(
       
       // 3. Get the agent for the selected role
       const agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
+
+      if (!availableTools || availableTools.length === 0) {
+        logger.warn(`[Maestro] WARNING: No tools passed to ${routing.role} agent — tool calls will not be available`);
+      }
+      logger.info(`[Maestro] Passing ${availableTools.length} tools to ${routing.role} agent: ${availableTools.map((tool) => tool.name).join(', ')}`);
       
       // 4. Hand off to the agent — it runs autonomously until done
       const result = await agent.run(
@@ -180,9 +212,9 @@ function buildMaestroAdapter(
           intent: task.intent,
           goals: task.goals,
           doneCriteria: routing.doneCriteria,
-          conversationHistory: task.context?.conversationHistory as any[],
+          conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
         },
-        getAvailableTools(),
+        availableTools,
         ctx
       );
       
@@ -192,7 +224,13 @@ function buildMaestroAdapter(
         summary: `${routing.role} agent — ${result.iterationCount} iterations — stopped: ${result.stoppedBecause}`,
         toolEvents: result.toolsUsed,
         filesChanged: result.filesChanged,
-        doneCriteria: routing.doneCriteria
+        doneCriteria: routing.doneCriteria,
+        metadata: {
+          role: routing.role,
+          thoughts: result.thoughts,
+          iterationCount: result.iterationCount,
+          stoppedBecause: result.stoppedBecause,
+        },
       };
     }
   };
@@ -227,10 +265,15 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
   if (task.context != null && Object.keys(task.context).length > 0) {
     const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, conversationHistory: _ch, ...userCtx } = task.context as Record<string, unknown>;
 
-    const history = task.context["conversationHistory"] as Array<{ user: string; assistant: string }> | undefined;
+    const history = normalizeConversationHistory(task.context["conversationHistory"]);
     if (history?.length) {
+      lines.push(
+        "",
+        "### History usage",
+        "Resolve references like 'it', 'that file', 'the file you just created', and 'same as before' from the conversation history below before deciding what to do.",
+      );
       const transcript = history
-        .map((t) => `USER: ${t.user}\nASSISTANT: ${t.assistant}`)
+        .map((message) => `${String(message.role).toUpperCase()}: ${message.content}`)
         .join("\n\n");
       lines.push("", "### Conversation history", transcript);
     }
@@ -341,11 +384,18 @@ function initOrca(s: OrcaSettings): string | null {
       }
     }
     
-    const maestro = buildMaestroAdapter(adapterMap);
-    const pappy   = createPappyPort();
-
     const toolRegistry = createCoreToolRegistry();
     const workspaceRoot = s.workspaceRoot || process.cwd();
+    const availableTools: AgentTool[] = toolRegistry.list().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      execute(input, context) {
+        return tool.execute(input, {
+          workspaceRoot: context.workspaceRoot ?? workspaceRoot,
+          runId: context.runId ?? '',
+        });
+      },
+    }));
     const toolService: OrcaToolService = {
       execute(name, input) {
         const tool = toolRegistry.get(name);
@@ -359,6 +409,9 @@ function initOrca(s: OrcaSettings): string | null {
         return `Workspace root: ${workspaceRoot}\n\n${toolRegistry.formatForPrompt()}`;
       },
     };
+
+    const maestro = buildMaestroAdapter(adapterMap, availableTools);
+    const pappy   = createPappyPort();
 
     // Create SQLite store for persistence
     store = new SqliteStore(

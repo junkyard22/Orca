@@ -258,9 +258,29 @@ describe("parseIntent", () => {
     const result = parseIntent("now add tests for it", history);
     expect(result.kind).toBe("TASK");
     if (result.kind === "TASK") {
-      expect(result.spec.context?.history).toBeDefined();
-      expect((result.spec.context?.history as Message[]).length).toBe(2);
+      expect(result.spec.context?.conversationHistory).toBeDefined();
+      expect((result.spec.context?.conversationHistory as Message[]).length).toBe(2);
     }
+  });
+
+  it("threads multi-turn conversationHistory from the first turn into the second spec", async () => {
+    const executeTask = vi
+      .fn<(_: TaskSpec) => Promise<ExecutionResult>>()
+      .mockResolvedValueOnce(createSuccessResult("Created greet()"))
+      .mockResolvedValueOnce(createSuccessResult("Added docstring"));
+    const benson = createBenson({ executeTask });
+
+    await benson.handleUserMessage("create a python function called greet()");
+    await benson.handleUserMessage("now add a docstring to it");
+
+    expect(executeTask).toHaveBeenCalledTimes(2);
+
+    const secondSpec = executeTask.mock.calls[1]?.[0];
+    const history = secondSpec?.context?.conversationHistory as Message[] | undefined;
+
+    expect(history).toBeDefined();
+    expect(history?.[0]?.role).toBe("user");
+    expect(history?.[0]?.content).toContain("greet");
   });
 
   it("does not treat 'yes' as ambiguous when history is present", () => {

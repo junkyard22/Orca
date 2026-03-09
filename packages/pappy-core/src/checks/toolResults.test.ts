@@ -93,13 +93,13 @@ describe("runToolResultChecks — tool correlation", () => {
 // ---------------------------------------------------------------------------
 
 describe("runToolResultChecks — instrumentation warning", () => {
-  it("flags MEDIUM instrumentation warning for action tasks with no trace", () => {
+  it("flags HIGH instrumentation warning for action tasks with no trace", () => {
     const issues = runToolResultChecks({
       task: "Read the config file and update it.",
     });
     const instr = issues.find((i) => i.code === "TOOL_INSTRUMENTATION_MISSING");
     expect(instr).toBeDefined();
-    expect(instr!.severity).toBe("MEDIUM");
+    expect(instr!.severity).toBe("HIGH");
   });
 
   it("does NOT flag instrumentation when toolEvents are present", () => {

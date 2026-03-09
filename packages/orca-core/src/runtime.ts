@@ -8,6 +8,7 @@ import type {
   OrcaEvent,
   OrcaMaestroResult,
 } from "./types.js";
+import type { PappyResult } from "@clawde/pappy-core";
 import type { RunRecord, ThoughtRecord, ToolEvent, FileChange } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput } from "./helpers.js";
@@ -106,12 +107,15 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
     // Default: always has a value after try/catch
     let result: OrcaExecutionResult = { status: "FAIL", summary: "Unknown error" };
+    let persistedMaestroResult: OrcaMaestroResult | undefined;
+    let persistedQcResult: PappyResult | undefined;
 
     try {
       // ── 1. Maestro runs the task (attempt 0, not a repair) ──────────────
       //    Maestro uses ctx.llm (Miranda-backed) for all model calls.
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
       const maestroResult = await maestro.run(taskSpec, ctx);
+      persistedMaestroResult = maestroResult;
       emitter.emit({ type: "maestro:done", taskId, attempt: 0, isRepair: false, hasOutput: !!maestroResult.outputText });
 
       if (!qcEnabled) {
@@ -128,6 +132,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
         ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
         const qcResult = pappy!.evaluate(qcInput);
+        persistedQcResult = qcResult;
         ctx.gate?.afterQC(
           { taskId, outputText: maestroResult.outputText ?? "" },
           qcResult.verdict,
@@ -170,6 +175,10 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             maxRepairPasses,
             maestroResult.outputText,
           );
+          if (result.artifacts) {
+            persistedMaestroResult = result.artifacts as OrcaMaestroResult;
+            persistedQcResult = pappy!.evaluate(buildPappyInput(taskSpec, persistedMaestroResult));
+          }
         }
       }
     } catch (err) {
@@ -189,17 +198,37 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           id: taskId,
           createdAt: new Date(startTime).toISOString(),
           intent: taskSpec.intent,
-          role: undefined, // Will be populated by caller if available
+          role: persistedMaestroResult?.metadata?.role,
           status: result.status,
-          stoppedBecause: undefined, // Will be populated by caller if available
-          iterationCount: undefined, // Will be populated by caller if available
+          stoppedBecause: persistedMaestroResult?.metadata?.stoppedBecause,
+          iterationCount: persistedMaestroResult?.metadata?.iterationCount,
           outputText: result.userFacingText,
           summary: result.summary,
-          // verdict, confidence, issueCount will be populated by caller if QC ran
+          verdict: persistedQcResult?.verdict,
+          confidence: persistedQcResult?.confidence,
+          issueCount: persistedQcResult?.issues.length,
+          inputTokens: persistedMaestroResult?.metadata?.inputTokens,
+          outputTokens: persistedMaestroResult?.metadata?.outputTokens,
+          costUsd: persistedMaestroResult?.metadata?.costUsd,
         } as RunRecord,
-        [], // thoughts - will be populated by caller if available
-        [], // toolEvents - will be populated by caller if available
-        [], // filesChanged - will be populated by caller if available
+        (persistedMaestroResult?.metadata?.thoughts ?? []).map((thought) => ({
+          runId: taskId,
+          iteration: thought.iteration,
+          thought: thought.thought,
+          observation: thought.observation,
+          next: thought.next,
+        })),
+        (persistedMaestroResult?.toolEvents ?? []).map((event) => ({
+          runId: taskId,
+          tool: event.tool,
+          ok: event.ok,
+          summary: event.summary,
+        })),
+        (persistedMaestroResult?.filesChanged ?? []).map((file) => ({
+          runId: taskId,
+          path: file.path,
+          changeType: file.changeType,
+        })),
       );
       // If saveRun returns a Promise, await it to ensure data is persisted
       if (saveResult instanceof Promise) {

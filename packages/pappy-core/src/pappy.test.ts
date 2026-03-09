@@ -86,6 +86,45 @@ describe("evaluateWithPappy — verdict", () => {
     });
     expect(result.verdict).toBe("WARN");
   });
+
+  it("returns FAIL when TOOL_INSTRUMENTATION_MISSING is present", () => {
+    const result = evaluateWithPappy({
+      task: "Read the config file and update it.",
+      outputText: "Updated the configuration.",
+    });
+
+    expect(result.issues.some((issue) => issue.code === "TOOL_INSTRUMENTATION_MISSING")).toBe(true);
+    expect(result.verdict).toBe("FAIL");
+  });
+
+  it("returns FAIL when AGENT_LOOP_DETECTED is present", () => {
+    const result = evaluateWithPappy({
+      task: "Summarize the file.",
+      outputText: "Partial answer.",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read ok" }],
+      metadata: {
+        stoppedBecause: "loop_detected",
+        loopEvidence: { repeatedCall: "read_file:{\"path\":\"hello_world.py\"}", occurrences: 3 },
+      },
+    } as PappyInput & { metadata: { stoppedBecause: string; loopEvidence: { repeatedCall: string; occurrences: number } } });
+
+    expect(result.issues.some((issue) => issue.code === "AGENT_LOOP_DETECTED")).toBe(true);
+    expect(result.verdict).toBe("FAIL");
+  });
+
+  it("returns WARN when multiple MEDIUM issues exist without hard-fail codes", () => {
+    const result = evaluateWithPappy({
+      task: "Explain recursion.",
+      outputText: "Recursion is when a function calls itself.",
+      constraints: { requireSections: ["Examples"] },
+      toolEvents: [{ tool: "read_file", ok: true, summary: "context read" }],
+    });
+
+    expect(result.issues.filter((issue) => issue.severity === "MEDIUM").length).toBeGreaterThanOrEqual(2);
+    expect(result.issues.some((issue) => issue.code === "TOOL_INSTRUMENTATION_MISSING")).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "AGENT_LOOP_DETECTED")).toBe(false);
+    expect(result.verdict).toBe("WARN");
+  });
 });
 
 // ---------------------------------------------------------------------------

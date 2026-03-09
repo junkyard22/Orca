@@ -4,19 +4,29 @@
  * Uses an in-memory SQLite database for fast, isolated tests.
  */
 
-import { describe, it, beforeEach } from "vitest";
+import { describe, it, beforeEach, afterEach } from "vitest";
 import assert from "node:assert";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { SqliteStore } from "./sqliteStore.js";
 import type { RunRecord, ThoughtRecord, ToolEvent, FileChange } from "./types.js";
 
 describe("SqliteStore", () => {
   let store: SqliteStore;
+  let tempDir: string;
 
   beforeEach(async () => {
     // Use in-memory database for each test
     store = new SqliteStore(":memory:");
+    tempDir = mkdtempSync(join(tmpdir(), "orca-store-test-"));
     // Wait for initialization to complete
     await new Promise(resolve => setTimeout(resolve, 100));
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(tempDir, { recursive: true, force: true });
   });
 
   describe("saveRun and getRun", () => {
@@ -299,6 +309,81 @@ describe("SqliteStore", () => {
   });
 
   describe("close and reopen", () => {
+    it("should round-trip an enriched run with thoughts, tool events, and stats", async () => {
+      const dbPath = join(tempDir, "enriched-runs.db");
+      store.close();
+
+      const fileStore = new SqliteStore(dbPath);
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const run: RunRecord = {
+        id: "enriched-run",
+        createdAt: "2024-01-15T10:00:00.000Z",
+        intent: "Read notes and summarize them",
+        role: "reader",
+        status: "SUCCESS",
+        stoppedBecause: "done",
+        iterationCount: 2,
+        outputText: "Summary complete",
+        summary: "PASS — all required receipts are present.",
+        verdict: "PASS",
+        confidence: 0.92,
+        issueCount: 0,
+        inputTokens: 120,
+        outputTokens: 45,
+        costUsd: 0.0012,
+      };
+
+      const thoughts: ThoughtRecord[] = [
+        { runId: run.id, iteration: 1, thought: "Need the file contents", observation: "notes.txt exists", next: "Read it" },
+        { runId: run.id, iteration: 2, thought: "Now summarize", observation: "Read succeeded", next: "done" },
+      ];
+
+      const toolEvents: ToolEvent[] = [
+        { runId: run.id, tool: "read_file", ok: true, summary: "Read notes.txt", iteration: 1 },
+      ];
+
+      const filesChanged: FileChange[] = [
+        { runId: run.id, path: "notes.txt", changeType: "M" },
+      ];
+
+      await fileStore.saveRun(run, thoughts, toolEvents, filesChanged);
+
+      const initialThoughts = await fileStore.getRunThoughts(run.id);
+      const initialToolEvents = await fileStore.getRunToolEvents(run.id);
+      const initialStats = await fileStore.getStats();
+
+      assert.strictEqual(initialThoughts.length, 2);
+      assert.strictEqual(initialThoughts[0].thought, thoughts[0].thought);
+      assert.strictEqual(initialToolEvents.length, 1);
+      assert.strictEqual(initialToolEvents[0].tool, "read_file");
+      assert.strictEqual(initialStats.totalRuns, 1);
+      assert.strictEqual(initialStats.passRate, 1);
+
+      fileStore.close();
+
+      const reopenedStore = new SqliteStore(dbPath);
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const reopenedRun = await reopenedStore.getRun(run.id);
+      const reopenedThoughts = await reopenedStore.getRunThoughts(run.id);
+      const reopenedToolEvents = await reopenedStore.getRunToolEvents(run.id);
+      const reopenedStats = await reopenedStore.getStats();
+
+      assert.ok(reopenedRun);
+      assert.strictEqual(reopenedRun?.verdict, "PASS");
+      assert.strictEqual(reopenedRun?.iterationCount, 2);
+      assert.strictEqual(reopenedRun?.role, "reader");
+      assert.strictEqual(reopenedThoughts.length, 2);
+      assert.strictEqual(reopenedThoughts[1].next, "done");
+      assert.strictEqual(reopenedToolEvents.length, 1);
+      assert.strictEqual(reopenedToolEvents[0].summary, "Read notes.txt");
+      assert.strictEqual(reopenedStats.totalRuns, 1);
+      assert.strictEqual(reopenedStats.passRate, 1);
+
+      reopenedStore.close();
+    });
+
     it("should persist data and allow reopening", async () => {
       const dbPath = ":memory:";
       

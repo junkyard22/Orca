@@ -36,7 +36,7 @@ export interface OpenAICompatConfig {
 interface OpenAIChatResponse {
   id?: string;
   choices: Array<{
-    message: { role: string; content: string };
+    message: { role: string; content: string | null };
     finish_reason: string;
   }>;
   model?: string;
@@ -118,7 +118,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
     }
 
     return {
-      content: firstChoice.message.content,
+      content: firstChoice.message.content ?? "",
       model: data.model ?? model,
       usage,
       durationMs,

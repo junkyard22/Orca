@@ -29,8 +29,50 @@ const STOP_WORDS = new Set([
   'this', 'that', 'these', 'those', 'my', 'your', 'its', 'our',
   'file', 'files', // too generic to flag
   'output', 'outputs', // refers to the response itself, not a concept
+  'provide', 'provides', 'provided', // structural verbs for goals
   'contains', 'contain', 'includes', 'include', // structural verbs
   'explains', 'explain', 'describes', 'describe', // structural verbs for goals
+]);
+
+const SUMMARY_REQUEST_PATTERNS = [
+  /\b(summarize|summary|summarise)\b/i,
+  /\b(\d+)\s*(bullet|point|item)s?\b/i,
+  /\bbrief(ly)?\b/i,
+  /\btl;?dr\b/i,
+  /\bin\s+\d+\s+(word|sentence|line|point|bullet)s?\b/i,
+  /\bshort(ly)?\b/i,
+  /\boverview\b/i,
+];
+
+const CONDENSED_FORMAT_TERMS = new Set([
+  'aspect',
+  'aspects',
+  'brief',
+  'briefly',
+  'bullet',
+  'bullets',
+  'capture',
+  'captures',
+  'captured',
+  'concise',
+  'each',
+  'item',
+  'items',
+  'key',
+  'overview',
+  'point',
+  'points',
+  'short',
+  'shortly',
+  'summaries',
+  'summarise',
+  'summarised',
+  'summarises',
+  'summarize',
+  'summarized',
+  'summarizes',
+  'summary',
+  'tldr',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -102,6 +144,29 @@ function extractMeaningfulTerms(text: string): string[] {
   }
   
   return Array.from(terms);
+}
+
+function requestedCondensedFormat(task: string, goals: string[]): boolean {
+  const relevantGoals = goals.filter((goal) =>
+    !/^(output|function|response|result|code|answer)\s+(contains?|includes?|returns?|prints?|is\b|can\b|will\b|provides?|shows?|has\b|must\b|should\b)/i.test(goal) &&
+    !/^(produce|provide|output|generate)\s+(non-?empty|some|an?)\s+(output|response|result)/i.test(goal)
+  );
+  const combined = [task, ...relevantGoals].join(' ');
+  return SUMMARY_REQUEST_PATTERNS.some((pattern) => pattern.test(combined));
+}
+
+function hasStructuredFormat(outputText: string): boolean {
+  const bulletPattern = /^[\s]*[-•*]\s+.+/m;
+  const numberedPattern = /^[\s]*\d+[.)]\s+.+/m;
+  const headerPattern = /^#{1,3}\s+.+/m;
+  return bulletPattern.test(outputText)
+    || numberedPattern.test(outputText)
+    || headerPattern.test(outputText);
+}
+
+function isCondensedFormatTerm(term: string): boolean {
+  const lower = term.toLowerCase();
+  return CONDENSED_FORMAT_TERMS.has(lower) || CONDENSED_FORMAT_TERMS.has(stemWord(lower));
 }
 
 /**
@@ -306,6 +371,9 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   const hasOutput = outputText.trim().length > 0;
   const hasFiles = (input.filesChanged?.length ?? 0) > 0;
   const hasTools = (input.toolEvents?.length ?? 0) > 0;
+  const isCondensedRequest = requestedCondensedFormat(input.task, input.goals ?? []);
+  const isStructuredOutput = hasStructuredFormat(outputText);
+  const hasSuccessfulToolUse = (input.toolEvents ?? []).some((event) => event.ok);
 
   // ── Loop detection check ─────────────────────────────────────────────────────
   // If agent stopped due to loop detection, always surface as at least WARN
@@ -453,13 +521,13 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
     !/^response\s+(is\b|must\b|should\b|will\b|includes?\b|contains?\b|provides?\b)/i.test(g)
   );
 
-  if (meaningfulGoals.length > 0 && (hasOutput || hasFiles)) {
+  if (meaningfulGoals.length > 0 && (hasOutput || hasFiles || hasTools)) {
     // Extract meaningful terms from all goals
     const goalTerms = [...new Set(
       meaningfulGoals
         .flatMap((g) => g.toLowerCase().split(/[\s,.;:()\[\]'"\/\\]+/))
         .filter((t) => t.length > 3 && !STOP_WORDS.has(t))
-    )];
+    )].filter((term) => !(isCondensedRequest && isStructuredOutput && isCondensedFormatTerm(term)));
 
     if (goalTerms.length >= 2) {
       const diffText = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
@@ -493,12 +561,19 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
       }
 
       const coverage = (goalTerms.length - uncovered.length) / goalTerms.length;
+      const effectiveThreshold = (
+        (isCondensedRequest && isStructuredOutput) ||
+        (isStructuredOutput && hasSuccessfulToolUse)
+      ) ? 0.35 : 0.60;
 
-      // Only flag if coverage is below 60%
-      if (coverage < 0.6) {
-        // Determine severity: MEDIUM by default, LOW if output is substantial and tools were used
+      if (coverage < effectiveThreshold) {
         let severity: "MEDIUM" | "LOW" = "MEDIUM";
-        if (outputText.length > 200 && hasTools && hasProvedAC(input)) {
+        const shouldDowngrade = (
+          (outputText.length > 200 && hasTools && hasProvedAC(input)) ||
+          isCondensedRequest
+        ) && (hasOutput || hasFiles);
+
+        if (shouldDowngrade) {
           severity = "LOW";
         }
 

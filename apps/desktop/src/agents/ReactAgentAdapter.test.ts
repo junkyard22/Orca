@@ -24,7 +24,7 @@ class MockLLMAdapter implements LLMAdapter {
   get name() { return "mock"; }
   
   async complete(request: LLMRequest): Promise<LLMResponse> {
-    const response = this.responses[this.callCount] ?? this.responses[this.responses.length - 1] ?? "";
+    const response = this.responses[this.callCount] ?? "";
     this.callCount++;
     return { content: response, usage: { totalTokens: 100, promptTokens: 50, completionTokens: 50 } };
   }
@@ -377,5 +377,59 @@ Next: Continue
     expect(result.stoppedBecause).toBe("max_iterations");
     expect(result.iterationCount).toBe(10);
     expect(result.loopEvidence).toBeUndefined();
+  });
+
+  it("uses only the text after the FINAL ANSWER marker", async () => {
+    const responses = [
+      `Thought: I inspected the file\nObservation: I have what I need\nNext: Task is complete\n\nFINAL ANSWER:\n- apps/runner is the CLI entrypoint\n- It wires the Orca runtime\n- It prints Benson's response`
+    ];
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "reader" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(createTask(), [], createCtx());
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.outputText).toBe("- apps/runner is the CLI entrypoint\n- It wires the Orca runtime\n- It prints Benson's response");
+  });
+
+  it("strips thought blocks when no FINAL ANSWER marker is present", async () => {
+    const responses = [
+      `Thought: I read the file\nObservation: It contains a simple function\nNext: Task is complete\n\n- hello_world.py defines a small Python entrypoint\n- It prints a greeting\n- It has no external dependencies`
+    ];
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "reader" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(createTask(), [], createCtx());
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.outputText).toBe("- hello_world.py defines a small Python entrypoint\n- It prints a greeting\n- It has no external dependencies");
+  });
+
+  it("keeps a clean answer unchanged when there are no thought blocks", async () => {
+    const responses = [
+      `- apps/runner is a CLI wrapper around Orca\n- It configures LLM, Maestro, Pappy, and tools\n- It reads a prompt and prints the final reply`
+    ];
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "reader" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(createTask(), [], createCtx());
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.outputText).toBe("- apps/runner is a CLI wrapper around Orca\n- It configures LLM, Maestro, Pappy, and tools\n- It reads a prompt and prints the final reply");
   });
 });

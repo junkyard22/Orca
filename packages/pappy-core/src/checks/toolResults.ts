@@ -132,7 +132,7 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
 
   if (hasToolUsePatterns && hasNoToolEvents && hasNoFiles) {
     issues.push({
-      severity: "MEDIUM",
+      severity: "HIGH",
       code: "TOOL_INSTRUMENTATION_MISSING",
       category: "Tooling",
       description: "Task implies tool use but no tool events were recorded.",

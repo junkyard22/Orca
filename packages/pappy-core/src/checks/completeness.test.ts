@@ -317,4 +317,102 @@ describe("runCompletenessChecks — semantic completeness case studies", () => {
     );
     expect(goalCoverageIssue).toBeUndefined(); // No issue because concepts are covered
   });
+
+  it("does not flag goal coverage for condensed bullet summaries with successful tool use", () => {
+    const issues = runCompletenessChecks({
+      task: "summarize hello_world.py in 3 bullet points",
+      goals: [
+        "Output contains exactly 3 bullet points",
+        "Each bullet point summarizes a key aspect of hello_world.py",
+        "Summary is concise and captures the file's purpose",
+      ],
+      outputText:
+        "- Defines a single function named `hello_world()` that takes no parameters\n" +
+        "- The function returns a hardcoded string \"Hello, World!\"\n" +
+        "- Minimal implementation with no additional logic, imports, or complexity",
+      toolEvents: [
+        { tool: "read_file", ok: true, summary: "read_file: ok (51 chars)" },
+      ],
+    });
+
+    const goalCoverageIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+    expect(goalCoverageIssue).toBeUndefined();
+  });
+
+  it("still flags thin condensed bullet summaries when no tool evidence exists", () => {
+    const issues = runCompletenessChecks({
+      task: "summarize hello_world.py in 3 bullet points",
+      goals: [
+        "Each bullet point summarizes a key aspect of hello_world.py",
+        "Summary is concise and captures the file's purpose",
+      ],
+      outputText:
+        "- First bullet\n" +
+        "- Second bullet\n" +
+        "- Third bullet",
+      toolEvents: [],
+    });
+
+    const goalCoverageIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+    expect(goalCoverageIssue).toBeDefined();
+  });
+
+  it("lowers the threshold for brief overview requests with structured output", () => {
+    const issues = runCompletenessChecks({
+      task: "give me a brief overview of hello_world.py",
+      goals: [
+        "Provide a brief overview of hello_world.py",
+        "Summary is concise and captures the file's purpose",
+      ],
+      outputText:
+        "- Defines hello_world()\n" +
+        "- Returns \"Hello, World!\"",
+    });
+
+    const goalCoverageIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+    expect(goalCoverageIssue).toBeUndefined();
+  });
+
+  it("still flags low-coverage detailed explanations at the normal threshold", () => {
+    const issues = runCompletenessChecks({
+      task: "explain in detail what hello_world.py does and how it works",
+      goals: [
+        "Explain in detail what hello_world.py does",
+        "Describe how the code works internally",
+      ],
+      outputText: "It prints hello.",
+    });
+
+    const goalCoverageIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+    expect(goalCoverageIssue).toBeDefined();
+    expect(goalCoverageIssue!.severity).toBe("MEDIUM");
+  });
+
+  it("keeps empty condensed responses at MEDIUM severity for goal coverage", () => {
+    const issues = runCompletenessChecks({
+      task: "summarize hello_world.py in 3 bullet points",
+      goals: [
+        "Each bullet point summarizes a key aspect of hello_world.py",
+        "Summary is concise and captures the file's purpose",
+      ],
+      outputText: "",
+      toolEvents: [
+        { tool: "read_file", ok: true, summary: "read_file: ok (51 chars)" },
+      ],
+    });
+
+    const goalCoverageIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+    expect(goalCoverageIssue).toBeDefined();
+    expect(goalCoverageIssue!.severity).toBe("MEDIUM");
+  });
 });

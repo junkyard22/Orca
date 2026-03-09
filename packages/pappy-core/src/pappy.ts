@@ -142,7 +142,16 @@ function buildCriteriaLedger(
 // Verdict + confidence
 // ---------------------------------------------------------------------------
 
+const HARD_FAIL_CODES = new Set([
+  "TOOL_INSTRUMENTATION_MISSING",
+  "AGENT_LOOP_DETECTED",
+  "SAFETY_VIOLATION",
+]);
+
 function deriveVerdict(issues: Issue[]): Verdict {
+  if (issues.some((issue) => HARD_FAIL_CODES.has(issue.code))) {
+    return "FAIL";
+  }
   if (issues.some((i) => i.severity === "CRITICAL" || i.severity === "HIGH")) {
     return "FAIL";
   }

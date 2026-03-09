@@ -67,6 +67,52 @@ function formatToolResult(tool: string, ok: boolean, output: string, error?: str
   return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
 }
 
+const REACT_PROMPT_BLOCK = `
+
+After receiving a tool result, reason before acting again:
+
+Thought: [what did I just learn? what does it mean for the task?]
+Observation: [current state of the task based on everything so far]
+Next: [what to do next and why — or "Task is complete" if done]
+
+CRITICAL RULES:
+- Your Thought/Observation/Next blocks are INTERNAL REASONING ONLY
+- They must NEVER appear in your final answer to the user
+- Never call a tool without a preceding Thought block
+- When the task is complete, write your final answer using EXACTLY this format:
+
+FINAL ANSWER:
+[your complete response to the user here — no thought blocks, no reasoning, just the answer]
+
+- Everything before FINAL ANSWER: is thinking
+- Everything after FINAL ANSWER: is what the user receives
+- If you are done and have no tool calls, you MUST use the FINAL ANSWER: marker
+`;
+
+function stripToolCalls(text: string): string {
+  return text
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+    .replace(/<tool_call>[\s\S]*$/g, '')
+    .trim();
+}
+
+function extractFinalAnswer(rawText: string): string | null {
+  const marker = 'FINAL ANSWER:';
+  const idx = rawText.indexOf(marker);
+  if (idx !== -1) {
+    return rawText.slice(idx + marker.length).trim();
+  }
+  return null;
+}
+
+function stripThoughtBlocks(text: string): string {
+  return text
+    .replace(/Thought:.*?(?=\n\n|\nObservation:|\nNext:|\nFINAL ANSWER:|$)/gs, '')
+    .replace(/Observation:.*?(?=\n\n|\nThought:|\nNext:|\nFINAL ANSWER:|$)/gs, '')
+    .replace(/Next:.*?(?=\n\n|\nThought:|\nObservation:|\nFINAL ANSWER:|$)/gs, '')
+    .trim();
+}
+
 export class ReactAgentAdapter implements AgentAdapter {
   readonly role: RoleName;
   private llmAdapter: LLMAdapter;
@@ -95,6 +141,8 @@ export class ReactAgentAdapter implements AgentAdapter {
     const toolsUsed: ToolEvent[] = [];
     const filesChanged: FileChange[] = [];
     let iterationCount = 0;
+    let currentOutputText = '';
+    let lastModelOutput = '';
     let stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error' = 'max_iterations';
     let error: string | undefined;
     
@@ -119,33 +167,14 @@ export class ReactAgentAdapter implements AgentAdapter {
     ].join("\n");
     
     // Append ReAct system prompt block
-    const reactSystemBlock = `
-
-After receiving a tool result, reason before acting again:
-
-Thought: [what did I just learn? what does it mean for the task?]
-Observation: [current state of the task based on everything so far]
-Next: [what to do next and why — or "Task is complete" if done]
-
-Rules:
-- Never call a tool without a preceding Thought block
-- If the task is complete, say so in Next then produce your final answer
-- If a tool result shows an error, reason about why and try a different approach
-- You can see your full reasoning history — build on prior Thoughts
-`;
+    const fullSystemPrompt = `${this.systemPrompt}${REACT_PROMPT_BLOCK}`;
     
-    const fullSystemPrompt = `${this.systemPrompt}${reactSystemBlock}`;
-    
-    // Initialize conversation with system message and task context
+    // Initialize conversation with system prompt, prior turns, then the new task.
     let messages = [
       { role: "system", content: fullSystemPrompt },
+      ...conversationHistory,
       { role: "user", content: taskContext }
     ];
-    
-    // Add conversation history if present
-    if (conversationHistory.length > 0) {
-      messages = messages.concat(conversationHistory);
-    }
     
     try {
       for (let iteration = 0; iteration < this.maxIterations; iteration++) {
@@ -159,6 +188,7 @@ Rules:
         });
         
         const modelOutput = response.content;
+        lastModelOutput = modelOutput;
         messages.push({ role: "assistant", content: modelOutput });
         
         // Extract Thought/Observation/Next blocks with proper multiline matching
@@ -197,22 +227,20 @@ Rules:
           console.log(`[ReactAgent] Raw output[0..200]: "${modelOutput.slice(0, 200).replace(/\n/g, "\\n")}..."`);
         }
         
-        // Check if task is complete
-        const isComplete = next.toLowerCase().includes('complete') || 
-                          next.toLowerCase().includes('done') ||
-                          modelOutput.toLowerCase().includes('task is complete');
-        
         // Parse tool calls
         const toolCalls = parseToolCalls(modelOutput);
         
-        // If no tool calls and task is complete, break
-        if (toolCalls.length === 0 && isComplete) {
-          stoppedBecause = 'done';
-          break;
-        }
-        
-        // If no tool calls and not complete, assume it's the final answer
         if (toolCalls.length === 0) {
+          const cleanedOutput = stripToolCalls(modelOutput);
+          const finalAnswer = extractFinalAnswer(cleanedOutput);
+
+          if (finalAnswer) {
+            currentOutputText = finalAnswer;
+            stoppedBecause = 'done';
+            break;
+          }
+
+          currentOutputText = stripThoughtBlocks(cleanedOutput);
           stoppedBecause = 'done';
           break;
         }
@@ -268,8 +296,25 @@ Rules:
           // Record this tool call in history for loop detection
           const callSig = `${call.tool}:${JSON.stringify(call.input)}`;
           callHistory.push(callSig);
+
+          // Check 1: Empty/error result loop
+          if (!result.ok || !result.output || result.output.trim() === '' || result.output.startsWith('Error')) {
+            consecutiveEmptyResults++;
+            if (consecutiveEmptyResults >= this.EMPTY_RESULT_LIMIT) {
+              console.warn(`[ReactAgent] Empty/error result loop: ${consecutiveEmptyResults} consecutive failures`);
+              stoppedBecause = 'loop_detected';
+              loopEvidence = {
+                iteration: iterationCount,
+                repeatedCall: `${call.tool} returning empty/error`,
+                occurrences: consecutiveEmptyResults
+              };
+              break;
+            }
+          } else {
+            consecutiveEmptyResults = 0; // reset on successful result
+          }
           
-          // Check 1: Identical call loop (same call repeated LOOP_WINDOW times)
+          // Check 2: Identical call loop (same call repeated LOOP_WINDOW times)
           if (callHistory.length >= this.LOOP_WINDOW) {
             const window = callHistory.slice(-this.LOOP_WINDOW);
             if (window.every(s => s === window[0])) {
@@ -284,7 +329,7 @@ Rules:
             }
           }
           
-          // Check 2: Thrashing pattern (alternating between two calls)
+          // Check 3: Thrashing pattern (alternating between two calls)
           if (callHistory.length >= this.THRASH_WINDOW) {
             const window = callHistory.slice(-this.THRASH_WINDOW);
             const evens = window.filter((_, i) => i % 2 === 0);
@@ -306,22 +351,6 @@ Rules:
             }
           }
           
-          // Check 3: Empty/error result loop
-          if (!result.ok || !result.output || result.output.trim() === '' || result.output.startsWith('Error')) {
-            consecutiveEmptyResults++;
-            if (consecutiveEmptyResults >= this.EMPTY_RESULT_LIMIT) {
-              console.warn(`[ReactAgent] Empty/error result loop: ${consecutiveEmptyResults} consecutive failures`);
-              stoppedBecause = 'loop_detected';
-              loopEvidence = {
-                iteration: iterationCount,
-                repeatedCall: `${call.tool} returning empty/error`,
-                occurrences: consecutiveEmptyResults
-              };
-              break;
-            }
-          } else {
-            consecutiveEmptyResults = 0; // reset on successful result
-          }
         }
         
         // If loop was detected, break out of the iteration loop
@@ -330,15 +359,8 @@ Rules:
         }
       }
       
-      // Extract final output text (remove tool calls and thought blocks)
-      let finalOutput = messages[messages.length - 1].content;
-      finalOutput = finalOutput
-        .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')  // closed tags
-        .replace(/<tool_call>[\s\S]*$/g, '')                // unclosed tail
-        .replace(/Thought:[\s\S]*?(?=Observation:|$)/gi, '')
-        .replace(/Observation:[\s\S]*?(?=Next:|$)/gi, '')
-        .replace(/Next:[\s\S]*?(?=\n\n|$)/gi, '')
-        .trim();
+      const cleanedLastOutput = stripToolCalls(lastModelOutput);
+      const finalOutput = currentOutputText || stripThoughtBlocks(cleanedLastOutput);
       
       return {
         outputText: finalOutput,

@@ -12,6 +12,11 @@
 
 import type { RoleName } from '../roleSelector';
 
+const TOOL_USAGE_REMINDER = `
+You have access to tools (read_file, write_file, run_command, list_directory, search_files).
+Use them whenever the task requires interacting with files or the system.
+Do not simulate or describe tool actions — actually call the tools.`;
+
 // ============================================================================
 // Individual Role Prompts
 // ============================================================================
@@ -188,7 +193,12 @@ What this role does NOT do:
 const READER = `\
 You are the Document Reader — summarizing and extracting actionable information from large inputs.
 
+IMPORTANT: You have access to file reading tools. When asked to read or analyze a file,
+you MUST use the read_file tool to get the actual file contents. Never summarize a file
+you haven't read. Never make up file contents.
+
 Responsibilities:
+- Always use read_file before summarizing any file
 - Summarize long documents, logs, pastes, or files into the essential points
 - Extract action items, decisions, or next steps from meeting notes, tickets, or threads
 - Identify patterns in large log outputs (repeated errors, anomalies)
@@ -246,5 +256,6 @@ export const ROLE_PROMPTS: Record<RoleName, string> = {
  * Falls back to BRAIN prompt if the role is unknown.
  */
 export function getRolePrompt(role: RoleName): string {
-  return ROLE_PROMPTS[role] ?? BRAIN;
+  const basePrompt = ROLE_PROMPTS[role] ?? BRAIN;
+  return `${basePrompt}\n\n${TOOL_USAGE_REMINDER}`;
 }

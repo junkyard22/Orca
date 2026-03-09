@@ -137,9 +137,9 @@ function extractContext(message: string, history?: Message[]): Record<string, un
     ctx["urls"] = urls;
   }
   
-  // Thread history if provided
+  // Thread history if provided using the key the downstream agent path reads.
   if (history && history.length > 0) {
-    ctx["history"] = history;
+    ctx["conversationHistory"] = history;
   }
   
   return Object.keys(ctx).length > 0 ? ctx : undefined;

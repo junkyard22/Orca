@@ -2,6 +2,7 @@ import type { PappyInput, PappyResult } from "@clawde/pappy-core";
 import type { MirandaGate } from "@clawde/miranda-core";
 import type { WorkspaceContext } from "./workspaceContext.js";
 import type { OrcaStore } from "./persistence/types.js";
+import type { ThoughtRecord } from "./persistence/types.js";
 import type { RoleName } from "maestro-core";
 
 // ---------------------------------------------------------------------------
@@ -53,6 +54,15 @@ export interface OrcaMaestroResult {
   summary?: string;
   filesChanged?: Array<{ path: string; changeType: "A" | "M" | "D"; diff?: string }>;
   toolEvents?: Array<{ tool: string; ok: boolean; summary: string; raw?: unknown }>;
+  metadata?: {
+    role?: string;
+    thoughts?: ThoughtRecord[];
+    iterationCount?: number;
+    stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "error";
+    inputTokens?: number;
+    outputTokens?: number;
+    costUsd?: number;
+  };
   /**
    * Acceptance criteria Brain defined for this task.
    * Passed to Pappy so it can enforce them instead of deriving generic ones.
