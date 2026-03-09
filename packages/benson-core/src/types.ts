@@ -1,5 +1,27 @@
-export type { TaskSpec, TaskPermissions, OutputFormat, ConversationTurn } from "@clawde/secretary-core";
-import type { TaskSpec, ConversationTurn } from "@clawde/secretary-core";
+export type Permission = "read" | "write" | "shell" | "network";
+
+export type OutputFormat =
+  | "prose"
+  | "code"
+  | "file_diff"
+  | "json"
+  | "bullets"
+  | "table";
+
+export interface ConversationTurn {
+  user: string;
+  assistant: string;
+}
+
+export interface TaskSpec {
+  originalUserMessage: string;
+  intent: string;
+  goals: string[];
+  constraints?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  permissions?: Permission[];
+  outputFormat?: OutputFormat;
+}
 
 export type BensonReply =
   | { kind: "CLARIFY"; text: string; options?: string[] }

@@ -19,9 +19,7 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "dependencies": {
-    "@clawde/secretary-core": "workspace:*"
-  },
+  "dependencies": {},
   "devDependencies": {
     "typescript": "^5.7.3",
     "@types/node": "^22.12.0",

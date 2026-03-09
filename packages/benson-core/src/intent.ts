@@ -1,5 +1,4 @@
-import type { ParseResult, ParsedTask, Message } from "./types.js";
-import type { TaskSpec } from "@clawde/secretary-core";
+import type { Message, OutputFormat, ParseResult, Permission, TaskSpec } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Ambiguity detection — clarification is the EXCEPTION
@@ -120,6 +119,29 @@ function extractConstraints(message: string): Record<string, unknown> | undefine
   return Object.keys(c).length > 0 ? c : undefined;
 }
 
+function extractPermissions(message: string): Permission[] {
+  const permissions: Permission[] = ["read"];
+
+  const writeSignals = /\b(create|write|save|edit|modify|update|delete|remove|add|append)\b/i;
+  const shellSignals = /\b(run|execute|install|build|test|deploy|compile|start|stop)\b/i;
+  const networkSignals = /\b(fetch|download|upload|request|call|api|url|http)\b/i;
+
+  if (writeSignals.test(message)) permissions.push("write");
+  if (shellSignals.test(message)) permissions.push("shell");
+  if (networkSignals.test(message)) permissions.push("network");
+
+  return permissions;
+}
+
+function extractOutputFormat(message: string): OutputFormat {
+  if (/\b(bullet|list|points?)\b/i.test(message)) return "bullets";
+  if (/\b(table|tabular|columns?)\b/i.test(message)) return "table";
+  if (/\b(json|structured|machine.readable)\b/i.test(message)) return "json";
+  if (/\b(diff|patch|changes?)\b/i.test(message)) return "file_diff";
+  if (/\b(code|function|class|script|implement)\b/i.test(message)) return "code";
+  return "prose";
+}
+
 function extractContext(message: string, history?: Message[]): Record<string, unknown> | undefined {
   const ctx: Record<string, unknown> = {};
   
@@ -169,20 +191,19 @@ function buildClarify(): ParseResult {
 // ---------------------------------------------------------------------------
 
 function buildTaskSpec(message: string, history?: Message[]): TaskSpec {
+  const extractedContext = extractContext(message, history);
+
   return {
     originalUserMessage: message,
     intent: extractIntent(message),
     goals: extractGoals(message),
     constraints: extractConstraints(message),
-    context: extractContext(message, history),
-    // These will be filled by secretary-core's processRequest
-    permissions: {
-      fileRead: true,
-      fileWrite: false,
-      shellExec: false,
-      toolsAllowed: [],
+    permissions: extractPermissions(message),
+    outputFormat: extractOutputFormat(message),
+    context: {
+      ...extractedContext,
+      conversationHistory: history ?? [],
     },
-    outputFormat: "prose",
   };
 }
 

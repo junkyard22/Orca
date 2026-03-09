@@ -1,7 +1,6 @@
 import type { BensonDependencies, BensonReply, ConversationTurn, Message } from "./types.js";
 import { parseIntent } from "./intent.js";
 import { presentResult } from "./presenter.js";
-import { processRequest } from "@clawde/secretary-core";
 
 export function createBenson(deps: BensonDependencies): {
   handleUserMessage(message: string): Promise<BensonReply>;

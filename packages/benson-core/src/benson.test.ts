@@ -372,6 +372,94 @@ describe("parseIntent", () => {
       expect(result.spec.context?.urls).toContain("https://api.example.com/users");
     }
   });
+
+  it("includes shell permission for 'run the tests'", () => {
+    const result = parseIntent("run the tests");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.permissions).toContain("shell");
+    }
+  });
+
+  it("includes write permission for 'create a file called notes.txt'", () => {
+    const result = parseIntent("create a file called notes.txt");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.permissions).toContain("write");
+    }
+  });
+
+  it("keeps read-only permissions for 'explain what this does'", () => {
+    const result = parseIntent("explain what this does");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.permissions).toEqual(["read"]);
+    }
+  });
+
+  it("includes network permission for 'fetch data from the API'", () => {
+    const result = parseIntent("fetch data from the API");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.permissions).toContain("network");
+    }
+  });
+
+  it("uses bullets output format for bullet summary requests", () => {
+    const result = parseIntent("summarize in bullet points");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.outputFormat).toBe("bullets");
+    }
+  });
+
+  it("uses json output format when JSON is requested", () => {
+    const result = parseIntent("return the result as JSON");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.outputFormat).toBe("json");
+    }
+  });
+
+  it("uses code output format for function-writing requests", () => {
+    const result = parseIntent("write a function to sort an array");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.outputFormat).toBe("code");
+    }
+  });
+
+  it("uses file_diff output format for diff requests", () => {
+    const result = parseIntent("show me the diff");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.outputFormat).toBe("file_diff");
+    }
+  });
+
+  it("defaults to prose output when no format signal is present", () => {
+    const result = parseIntent("review the login flow");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.outputFormat).toBe("prose");
+    }
+  });
+
+  it("uses Benson's local TaskSpec shape with permission arrays", () => {
+    const localTask: TaskSpec = {
+      originalUserMessage: "explain this",
+      intent: "explain this",
+      goals: ["explain this"],
+      permissions: ["read"],
+      outputFormat: "prose",
+      context: {
+        conversationHistory: [],
+      },
+    };
+
+    expect(Array.isArray(localTask.permissions)).toBe(true);
+    expect(localTask.outputFormat).toBe("prose");
+  });
 });
 
 // ---------------------------------------------------------------------------
