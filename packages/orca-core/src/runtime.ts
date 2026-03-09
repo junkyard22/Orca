@@ -11,7 +11,7 @@ import type {
 import type { PappyResult } from "@clawde/pappy-core";
 import type { RunRecord, ThoughtRecord, ToolEvent, FileChange } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
-import { buildPappyInput } from "./helpers.js";
+import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
 import { handleRepairLoop } from "./repairLoop.js";
 
 function generateRunId(): string {
@@ -114,7 +114,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       // ── 1. Maestro runs the task (attempt 0, not a repair) ──────────────
       //    Maestro uses ctx.llm (Miranda-backed) for all model calls.
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
-      const maestroResult = await maestro.run(taskSpec, ctx);
+      const maestroResult = normalizeMaestroResult(await maestro.run(taskSpec, ctx));
       persistedMaestroResult = maestroResult;
       emitter.emit({ type: "maestro:done", taskId, attempt: 0, isRepair: false, hasOutput: !!maestroResult.outputText });
 
@@ -176,7 +176,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             maestroResult.outputText,
           );
           if (result.artifacts) {
-            persistedMaestroResult = result.artifacts as OrcaMaestroResult;
+            persistedMaestroResult = normalizeMaestroResult(result.artifacts as OrcaMaestroResult);
             persistedQcResult = pappy!.evaluate(buildPappyInput(taskSpec, persistedMaestroResult));
           }
         }

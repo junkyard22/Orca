@@ -7,7 +7,7 @@ import type {
 } from "./types.js";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaEmitter } from "./emitter.js";
-import { buildPappyInput } from "./helpers.js";
+import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
 
 /**
  * Called when Pappy returns FAIL on the initial generation pass.
@@ -71,7 +71,7 @@ export async function handleRepairLoop(
     };
 
     emitter.emit({ type: "maestro:start", taskId: ctx.runId, attempt: pass, isRepair: true });
-    const maestroResult = await maestro.run(repairSpec, ctx);
+    const maestroResult = normalizeMaestroResult(await maestro.run(repairSpec, ctx));
     lastOutputText = maestroResult.outputText ?? lastOutputText;
     emitter.emit({ type: "maestro:done", taskId: ctx.runId, attempt: pass, isRepair: true, hasOutput: !!maestroResult.outputText });
 

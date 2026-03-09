@@ -17,6 +17,7 @@ import {
   createOrcaRuntime,
   createDirectLLMService,
   createDebugPappyPort,
+  deriveFilesChangedFromToolEvents,
   SqliteStore,
 } from "@clawde/orca-core";
 import type {
@@ -438,7 +439,11 @@ async function runAgentLoop(
   taskPrompt: string,
   tools: OrcaToolService,
   llm: OrcaLLMService,
-): Promise<{ text: string; toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> }> {
+): Promise<{
+  text: string;
+  toolEvents: NonNullable<OrcaMaestroResult['toolEvents']>;
+  filesChanged: NonNullable<OrcaMaestroResult['filesChanged']>;
+}> {
   const MAX_ITER = 10;
   const toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
   const fullSystemPrompt = `${systemPrompt}${REACT_PROMPT_BLOCK}`;
@@ -468,6 +473,8 @@ async function runAgentLoop(
     }
   }
 
+  const filesChanged = deriveFilesChangedFromToolEvents(toolEvents);
+
   return {
     text: (() => {
       const cleanedOutput = stripToolCalls(lastText);
@@ -475,6 +482,7 @@ async function runAgentLoop(
       return finalAnswer || stripThoughtBlocks(cleanedOutput);
     })(),
     toolEvents,
+    filesChanged,
   };
 }
 
@@ -684,9 +692,12 @@ function createTracingMaestro(
           for (const c of dec.done_criteria) trace("Maestro", C.dim, `    • ${c}`);
         }
 
+        const filesChanged = deriveFilesChangedFromToolEvents(toolEvents);
+
         return {
           outputText: text,
           toolEvents,
+          filesChanged,
           doneCriteria: dec.done_criteria,
           summary: `routing=direct role=${role} type=${type} risk=${riskScore.toFixed(2)} iterations=${iterationCount} stopped=${stoppedBecause}`,
           metadata: {
@@ -694,6 +705,7 @@ function createTracingMaestro(
             thoughts,
             iterationCount,
             stoppedBecause,
+            filesChanged,
           },
         };
       }
@@ -738,24 +750,50 @@ function createTracingMaestro(
             printMsg(`← ${dept.head} [response]`, C.green, output);
             ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
             trace("Maestro", C.green, `    [${dept.head}] done — ${output.length} chars`);
-            return { head: dept.head, subtask: dept.subtask, output, subagentId, ok: true as const };
+            return {
+              head: dept.head,
+              subtask: dept.subtask,
+              output,
+              subagentId,
+              ok: true as const,
+              toolEvents: res.toolEvents,
+              filesChanged: res.filesChanged,
+            };
           } catch (err) {
             const error = err instanceof Error ? err.message : String(err);
             ctx.emit?.({ type: 'subagent:failed', taskId, subagentId, role: dept.head, error });
             trace("Maestro", C.red, `    [${dept.head}] FAILED: ${error}`);
-            return { head: dept.head, subtask: dept.subtask, output: '', subagentId, ok: false as const, error };
+            return {
+              head: dept.head,
+              subtask: dept.subtask,
+              output: '',
+              subagentId,
+              ok: false as const,
+              error,
+              toolEvents: [],
+              filesChanged: [],
+            };
           }
         }),
+      );
+
+      const combinedToolEvents = deptResults.flatMap((result) => result.toolEvents);
+      const combinedFilesChanged = deriveFilesChangedFromToolEvents(
+        combinedToolEvents,
+        deptResults.flatMap((result) => result.filesChanged),
       );
 
       if (deptResults.length === 1) {
         return {
           outputText:   deptResults[0]!.output,
+          toolEvents: combinedToolEvents,
+          filesChanged: combinedFilesChanged,
           doneCriteria: dec.done_criteria,
           summary:      `routing=decompose depts=1`,
           metadata: {
             iterationCount: 1,
             stoppedBecause: deptResults[0]!.ok ? 'done' : 'error',
+            filesChanged: combinedFilesChanged,
           },
           subagentRuns: deptResults.map(d => ({
             subagentId: d.subagentId, role: d.head, task: d.subtask,
@@ -805,12 +843,15 @@ function createTracingMaestro(
 
       return {
         outputText:   synthOutput,
+        toolEvents: combinedToolEvents,
+        filesChanged: combinedFilesChanged,
         doneCriteria: dec.done_criteria,
         summary:      `routing=decompose depts=${departments.length}`,
         metadata: {
           role: 'brain',
           iterationCount: 1,
           stoppedBecause: 'done',
+          filesChanged: combinedFilesChanged,
         },
         subagentRuns: deptResults.map(d => ({
           subagentId: d.subagentId, role: d.head, task: d.subtask,
@@ -1046,6 +1087,8 @@ async function main() {
         }
 
         console.log(`\n${"─".repeat(72)}\n`);
+        trace("Prompt", C.white, `"${msg}"`);
+        console.log(`${"─".repeat(72)}\n`);
         const reply = await benson.handleUserMessage(msg);
         console.log(`\n${"─".repeat(72)}`);
         trace("Reply", C.yellow, `kind: ${reply.kind}`);

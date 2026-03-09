@@ -70,15 +70,24 @@ describe("runClaimProofChecks — file modification claims", () => {
 // ---------------------------------------------------------------------------
 
 describe("runClaimProofChecks — file creation claims", () => {
-  it("flags HIGH when output claims file creation but no filesChanged", () => {
+  it("does NOT flag creation claims when write_file succeeded for the matching path", () => {
     const { issues, claims } = runClaimProofChecks({
       task: "Create auth.ts.",
       outputText: "I created `auth.ts` for you.",
-      toolEvents: [{ tool: "write_file", ok: true, summary: "written" }],
+      toolEvents: [{ tool: "write_file", ok: true, summary: "written", raw: { path: "auth.ts" } }],
     });
-    // "created auth.ts" is claimed but no filesChanged entry
-    const claimFound = claims.length > 0;
-    expect(claimFound).toBe(true);
+    expect(claims.some((claim) => claim.text.includes("auth.ts"))).toBe(true);
+
+    const unverified = issues.filter((i) => i.code === "PROOF_CLAIM_UNVERIFIED");
+    expect(unverified).toHaveLength(0);
+  });
+
+  it("flags creation claims when write_file failed for the matching path", () => {
+    const { issues } = runClaimProofChecks({
+      task: "Create auth.ts.",
+      outputText: "I created `auth.ts` for you.",
+      toolEvents: [{ tool: "write_file", ok: false, summary: "write failed", raw: { path: "auth.ts" } }],
+    });
 
     const unverified = issues.filter((i) => i.code === "PROOF_CLAIM_UNVERIFIED");
     expect(unverified.length).toBeGreaterThan(0);
@@ -92,6 +101,36 @@ describe("runClaimProofChecks — file creation claims", () => {
     });
     const unverified = issues.filter((i) => i.code === "PROOF_CLAIM_UNVERIFIED");
     expect(unverified).toHaveLength(0);
+  });
+
+  it("flags creation claims when there is no matching write_file tool event and no filesChanged entry", () => {
+    const { issues } = runClaimProofChecks({
+      task: "Create auth.ts.",
+      outputText: "I created `auth.ts` for you.",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read", raw: { path: "auth.ts" } }],
+    });
+
+    const unverified = issues.filter((i) => i.code === "PROOF_CLAIM_UNVERIFIED");
+    expect(unverified.length).toBeGreaterThan(0);
+  });
+});
+
+describe("runClaimProofChecks — test command claims", () => {
+  it("does NOT flag a tests-passed claim when a successful pytest run_command event is present", () => {
+    const { issues } = runClaimProofChecks({
+      task: "Create calculator and run tests.",
+      outputText: "I created the files and tests passed.",
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: true,
+          summary: "run_command: ok (835 chars)",
+          raw: { command: "python -m pytest tmp-test/prompt2_calculator_test.py -v" },
+        },
+      ],
+    });
+
+    expect(issues.filter((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toHaveLength(0);
   });
 });
 

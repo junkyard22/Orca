@@ -8,6 +8,7 @@ import {
   createOrcaRuntime,
   createDirectLLMService,
   createPappyPort,
+  deriveFilesChangedFromToolEvents,
   SqliteStore,
 } from "@clawde/orca-core";
 import type {
@@ -217,19 +218,22 @@ function buildMaestroAdapter(
         availableTools,
         ctx
       );
+
+      const filesChanged = deriveFilesChangedFromToolEvents(result.toolsUsed, result.filesChanged);
       
       // 5. Map AgentResult → OrcaMaestroResult
       return {
         outputText: result.outputText,
         summary: `${routing.role} agent — ${result.iterationCount} iterations — stopped: ${result.stoppedBecause}`,
         toolEvents: result.toolsUsed,
-        filesChanged: result.filesChanged,
+        filesChanged,
         doneCriteria: routing.doneCriteria,
         metadata: {
           role: routing.role,
           thoughts: result.thoughts,
           iterationCount: result.iterationCount,
           stoppedBecause: result.stoppedBecause,
+          filesChanged,
         },
       };
     }
@@ -585,6 +589,11 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!benson || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
+  const normalizedText = String(text ?? "").replace(/\r\n?/g, "\n").trim();
+  if (!normalizedText) {
+    return { ok: false, error: "Message is empty." };
+  }
+
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
@@ -617,7 +626,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   );
 
   try {
-    const reply = await benson.handleUserMessage(text);
+    const reply = await benson.handleUserMessage(normalizedText);
     return { ok: true, reply };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

@@ -14,6 +14,43 @@
 
 import type { Issue, PappyInput, Claim, ReceiptEntry, ReceiptType } from "../types.js";
 
+function pathMatches(candidate: string, expected: string): boolean {
+  return candidate === expected || candidate.endsWith(expected) || expected.endsWith(candidate);
+}
+
+function extractToolPath(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const record = raw as Record<string, unknown>;
+  const candidate = record["path"] ?? record["filePath"];
+  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : null;
+}
+
+function extractToolCommand(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const record = raw as Record<string, unknown>;
+  const candidate = record["command"];
+  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : null;
+}
+
+function findSuccessfulFileToolEvent(
+  input: PappyInput,
+  filePath: string,
+  tools: string[],
+): string | null {
+  const event = (input.toolEvents ?? []).find((entry) => {
+    if (!entry.ok || !tools.includes(entry.tool)) return false;
+    const eventPath = extractToolPath(entry.raw);
+    return eventPath ? pathMatches(eventPath, filePath) : false;
+  });
+
+  if (!event) return null;
+
+  const eventPath = extractToolPath(event.raw);
+  return `toolEvent: tool=${event.tool} ok=true path="${eventPath ?? filePath}"`;
+}
+
 // ---------------------------------------------------------------------------
 // Claim pattern definitions
 // ---------------------------------------------------------------------------
@@ -45,15 +82,16 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
       const changed = input.filesChanged ?? [];
       const hit = changed.find(
         (f) =>
-          f.path === filePath ||
-          f.path.endsWith(filePath) ||
-          filePath.endsWith(f.path),
+          pathMatches(f.path, filePath),
       );
-      if (!hit) return null;
-      return `filesChanged: ${hit.path} changeType=${hit.changeType}${hit.diff ? ` (+diff)` : ""}`;
+      if (hit) {
+        return `filesChanged: ${hit.path} changeType=${hit.changeType}${hit.diff ? ` (+diff)` : ""}`;
+      }
+
+      return findSuccessfulFileToolEvent(input, filePath, ["write_file", "modify_file", "create_file"]);
     },
     receiptDetails(match) {
-      return `diff or filesChanged entry for "${match[1] ?? "file"}"`;
+      return `filesChanged entry or successful write_file/modify_file tool event for "${match[1] ?? "file"}"`;
     },
   },
 
@@ -68,13 +106,16 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
       const hit = changed.find(
         (f) =>
           (f.changeType === "A" || f.changeType === "M") &&
-          (f.path === filePath || f.path.endsWith(filePath) || filePath.endsWith(f.path)),
+          pathMatches(f.path, filePath),
       );
-      if (!hit) return null;
-      return `filesChanged: ${hit.path} changeType=${hit.changeType}`;
+      if (hit) {
+        return `filesChanged: ${hit.path} changeType=${hit.changeType}`;
+      }
+
+      return findSuccessfulFileToolEvent(input, filePath, ["write_file", "create_file"]);
     },
     receiptDetails(match) {
-      return `filesChanged entry (changeType=A) for "${match[1] ?? "file"}"`;
+      return `filesChanged entry or successful write_file/create_file tool event for "${match[1] ?? "file"}"`;
     },
   },
 
@@ -87,10 +128,15 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
       const testEvent = (input.toolEvents ?? []).find(
         (e) =>
           e.ok &&
-          /test|jest|vitest|mocha|pytest|cargo\s+test|go\s+test/i.test(e.tool + " " + e.summary),
+          /test|jest|vitest|mocha|pytest|cargo\s+test|go\s+test/i.test(
+            `${e.tool} ${e.summary} ${extractToolCommand(e.raw) ?? ""}`,
+          ),
       );
       if (!testEvent) return null;
-      return `toolEvent: tool=${testEvent.tool} ok=true summary="${testEvent.summary}"`;
+      const command = extractToolCommand(testEvent.raw);
+      return command
+        ? `toolEvent: tool=${testEvent.tool} ok=true command="${command}"`
+        : `toolEvent: tool=${testEvent.tool} ok=true summary="${testEvent.summary}"`;
     },
     receiptDetails() {
       return "run_command or tool_event for test runner with exit=0";
@@ -105,10 +151,13 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
     findProof(match, input) {
       const cmd = (match[1] ?? "").toLowerCase().trim();
       const event = (input.toolEvents ?? []).find((e) =>
-        e.summary.toLowerCase().includes(cmd.split(/\s+/)[0] ?? cmd),
+        `${e.summary} ${extractToolCommand(e.raw) ?? ""}`.toLowerCase().includes(cmd.split(/\s+/)[0] ?? cmd),
       );
       if (!event) return null;
-      return `toolEvent: tool=${event.tool} ok=${event.ok} summary="${event.summary}"`;
+      const command = extractToolCommand(event.raw);
+      return command
+        ? `toolEvent: tool=${event.tool} ok=${event.ok} command="${command}"`
+        : `toolEvent: tool=${event.tool} ok=${event.ok} summary="${event.summary}"`;
     },
     receiptDetails(match) {
       return `tool_event matching "${match[1] ?? "command"}"`;

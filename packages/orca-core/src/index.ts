@@ -1,5 +1,6 @@
 // Runtime factory
 export { createOrcaRuntime } from "./runtime.js";
+export { buildPappyInput, deriveFilesChangedFromToolEvents, normalizeMaestroResult } from "./helpers.js";
 
 // Concrete adapter factories (convenience — can be swapped for custom impls)
 export { createMirandaLLMService } from "./adapters/mirandaLLM.js";
@@ -28,8 +29,10 @@ export type {
   OrcaRuntimeDeps,
   OrcaTaskSpec,
   OrcaExecutionResult,
+  OrcaFileChange,
   OrcaLLMService,
   OrcaToolService,
+  OrcaToolEvent,
   OrcaRunCtx,
   OrcaMaestroResult,
   MaestroPort,

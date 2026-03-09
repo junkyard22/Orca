@@ -44,6 +44,19 @@ export interface OrcaExecutionResult {
   followUpQuestion?: string;
 }
 
+export interface OrcaFileChange {
+  path: string;
+  changeType: "A" | "M" | "D";
+  diff?: string;
+}
+
+export interface OrcaToolEvent {
+  tool: string;
+  ok: boolean;
+  summary: string;
+  raw?: unknown;
+}
+
 // ---------------------------------------------------------------------------
 // What Maestro returns to orca-core after running a task.
 // Richer than Maestro's own PodMember.Result so Pappy can evaluate it fully.
@@ -52,8 +65,8 @@ export interface OrcaExecutionResult {
 export interface OrcaMaestroResult {
   outputText?: string;
   summary?: string;
-  filesChanged?: Array<{ path: string; changeType: "A" | "M" | "D"; diff?: string }>;
-  toolEvents?: Array<{ tool: string; ok: boolean; summary: string; raw?: unknown }>;
+  filesChanged?: OrcaFileChange[];
+  toolEvents?: OrcaToolEvent[];
   metadata?: {
     role?: string;
     thoughts?: ThoughtRecord[];
@@ -62,6 +75,7 @@ export interface OrcaMaestroResult {
     inputTokens?: number;
     outputTokens?: number;
     costUsd?: number;
+    filesChanged?: OrcaFileChange[];
   };
   /**
    * Acceptance criteria Brain defined for this task.

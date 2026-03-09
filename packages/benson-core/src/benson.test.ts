@@ -152,6 +152,22 @@ describe("createBenson", () => {
         expect(executeTask).toHaveBeenCalled();
         expect(reply.kind).toBe("RESULT");
       });
+
+      it("keeps consecutive messages separated and preserves the exact current turn text", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult("ok"));
+        const benson = createBenson({ executeTask });
+
+        await benson.handleUserMessage("create a file called config.json");
+        await benson.handleUserMessage("now add an author field");
+
+        const secondTask = executeTask.mock.calls[1]?.[0] as TaskSpec | undefined;
+
+        expect(secondTask).toBeDefined();
+        expect(secondTask?.originalUserMessage).toBe("now add an author field");
+        expect(secondTask?.intent).not.toContain("config.jsonnow");
+        expect(secondTask?.originalUserMessage).not.toContain("config.jsonnow");
+        expect(secondTask?.context?.conversationHistory).toBeDefined();
+      });
     });
   });
 });

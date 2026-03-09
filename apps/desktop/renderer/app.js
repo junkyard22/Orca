@@ -329,7 +329,7 @@ function appendToolCard(id, tool, args) {
 // ── Send ──────────────────────────────────────────────────────────────────
 
 async function sendMessage() {
-  const text = inputEl.value.trim();
+  const text = inputEl.value.replace(/\r\n?/g, "\n").trim();
   if (!text || busy) return;
 
   busy = true;

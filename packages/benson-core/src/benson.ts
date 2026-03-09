@@ -9,6 +9,10 @@ export function createBenson(deps: BensonDependencies): {
 } {
   const maxTurns = deps.maxHistoryTurns ?? 8;
 
+  function normalizeUserMessage(message: string): string {
+    return message.replace(/\r\n?/g, "\n").trim();
+  }
+
   // Rolling conversation buffer — lives in this closure, never serialised here.
   // The app shell can persist it separately if needed (Phase 5.3 ext.).
   const history: ConversationTurn[] = [];
@@ -25,8 +29,9 @@ export function createBenson(deps: BensonDependencies): {
 
   return {
     async handleUserMessage(message: string): Promise<BensonReply> {
+      const normalizedMessage = normalizeUserMessage(message);
       const messageHistory = toMessageHistory();
-      const parsed = parseIntent(message, messageHistory);
+      const parsed = parseIntent(normalizedMessage, messageHistory);
 
       if (parsed.kind === "CLARIFY") {
         // Don't add clarify exchanges to history — they're noise
@@ -45,7 +50,7 @@ export function createBenson(deps: BensonDependencies): {
       const text = presentResult(result, spec);
 
       // Append to rolling buffer (drop oldest if at cap)
-      history.push({ user: message, assistant: text });
+      history.push({ user: normalizedMessage, assistant: text });
       if (history.length > maxTurns) history.shift();
 
       return { kind: "RESULT", text, task: spec };

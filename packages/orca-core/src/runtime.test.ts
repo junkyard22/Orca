@@ -128,6 +128,70 @@ describe("createOrcaRuntime", () => {
       expect(result.status).toBe("SUCCESS");
       expect(result.userFacingText).toBe("Task completed successfully");
     });
+
+    it("derives filesChanged from successful write_file tool events before QC and persistence", async () => {
+      const pappy = {
+        evaluate: vi.fn(() => createMockPappyResult("PASS")),
+      } satisfies PappyPort;
+
+      const store = {
+        saveRun: vi.fn(),
+        getRecentRuns: vi.fn(() => []),
+        getRun: vi.fn(() => null),
+        getRunThoughts: vi.fn(() => []),
+        getRunToolEvents: vi.fn(() => []),
+        searchRuns: vi.fn(() => []),
+        getStats: vi.fn(() => ({ totalRuns: 0, passRate: 0, avgIterations: 0, totalCostUsd: 0 })),
+        close: vi.fn(),
+      };
+
+      const maestro: MaestroPort = {
+        run: async () => ({
+          outputText: "Created tmp-test/prompt2-calculator.py.",
+          summary: "mock summary",
+          toolEvents: [
+            {
+              tool: "write_file",
+              ok: true,
+              summary: "write_file: ok (42 chars)",
+              raw: { path: "tmp-test/prompt2-calculator.py" },
+            },
+          ],
+        }),
+      };
+
+      const runtime = createOrcaRuntime({
+        maestro,
+        pappy,
+        llm: createMockLLM(),
+        store: store as any,
+      });
+
+      const result = await runtime.executeTask(createTaskSpec({
+        originalUserMessage: "Create tmp-test/prompt2-calculator.py",
+      }));
+
+      const qcInput = pappy.evaluate.mock.calls[0]?.[0];
+      expect(qcInput?.filesChanged).toEqual([
+        { path: "tmp-test/prompt2-calculator.py", changeType: "M" },
+      ]);
+
+      const savedFiles = store.saveRun.mock.calls[0]?.[3];
+      expect(savedFiles).toEqual([
+        expect.objectContaining({
+          path: "tmp-test/prompt2-calculator.py",
+          changeType: "M",
+        }),
+      ]);
+
+      const artifacts = result.artifacts as { filesChanged?: Array<{ path: string; changeType: string }>; metadata?: { filesChanged?: Array<{ path: string; changeType: string }> } };
+      expect(artifacts.filesChanged).toEqual([
+        { path: "tmp-test/prompt2-calculator.py", changeType: "M" },
+      ]);
+      expect(artifacts.metadata?.filesChanged).toEqual([
+        { path: "tmp-test/prompt2-calculator.py", changeType: "M" },
+      ]);
+    });
   });
 
   describe("WARN path — maestro returns output, pappy returns WARN", () => {
