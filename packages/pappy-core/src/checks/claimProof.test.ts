@@ -103,7 +103,7 @@ describe("runClaimProofChecks — PROOF_NO_TRACE", () => {
   it("fires MEDIUM PROOF_NO_TRACE when there is output but no trace at all", () => {
     const { issues } = runClaimProofChecks({
       task: "Do something.",
-      outputText: "I did something useful.",
+      outputText: "I updated `file.txt` with the changes.",
     });
     const noTrace = issues.find((i) => i.code === "PROOF_NO_TRACE");
     expect(noTrace).toBeDefined();

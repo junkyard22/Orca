@@ -5,7 +5,7 @@
       "name": "Alibaba Cloud (Qwen)",
       "type": "alibaba",
       "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "apiKey": "YOUR_ALIBABA_CLOUD_API_KEY_HERE"
+      "apiKey": "sk-5ac02308b7bd46f980617fc07f8ea8e0"
     }
   ],
   "roles": {

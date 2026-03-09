@@ -16,6 +16,12 @@
   },
   "license": "MIT",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "electron"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "electron"
+    ]
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

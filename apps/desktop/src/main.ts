@@ -35,6 +35,38 @@ import type {
 } from "maestro-core";
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry } from "./settings";
+import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
+
+// ── Brain routing helper ───────────────────────────────────────────────────
+
+async function brainRoute(
+  task: OrcaTaskSpec,
+  ctx: OrcaRunCtx,
+  roleAdapters: Partial<Record<RoleName, OrcaLLMService>>,
+): Promise<{ role: RoleName; doneCriteria: string[] }> {
+  const maestro = createMaestroCore();
+  const brainLLM = roleAdapters['brain'] ?? ctx.llm;
+
+  // Small, fast JSON call to decide routing & department assignment.
+  let decision: DecomposeDecision;
+  try {
+    const { text: decisionJson } = await brainLLM.complete(
+      `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`,
+      { maxTokens: 512, temperature: 0 },
+    );
+    decision = parseBrainDecision(decisionJson);
+  } catch {
+    // If Brain's JSON is malformed, fall back to direct brain.
+    decision = { routing: 'direct', role: 'brain' };
+  }
+
+  // For now, we only handle direct routing in the new architecture
+  // Decompose routing would need to be handled differently in the future
+  const role = decision.routing === 'direct' ? decision.role : 'brain';
+  const doneCriteria = decision.done_criteria || [];
+  
+  return { role: role as RoleName, doneCriteria };
+}
 
 // ── Agent loop helpers (tool call parsing + multi-turn execution) ──────────
 
@@ -97,203 +129,71 @@ function formatToolResult(tool: string, ok: boolean, output: string, error?: str
   return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
 }
 
-async function runAgentLoop(
-  systemPrompt: string,
-  taskPrompt: string,
-  tools: OrcaToolService,
-  llm: OrcaLLMService,
-  ctx: OrcaRunCtx,
-): Promise<{ text: string; toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> }> {
-  const MAX_ITER = 10;
-  const toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
-  let conversation = `${systemPrompt}\n\n${tools.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
-  let lastText = '';
+// ── Maestro adapter ────────────────────────────────────────────────────────
+// Three-tier architecture:
+// Tier 1: LLMAdapter (raw model calls) - already exists
+// Tier 2: ReactAgentAdapter (ReAct loop implementation) 
+// Tier 3: RoleAgentAdapter (role-aware wrapper)
 
-  for (let i = 0; i < MAX_ITER; i++) {
-    const { text } = await llm.complete(conversation, { maxTokens: 4096 });
-    lastText = text;
-    const calls = parseToolCalls(text);
-    if (calls.length === 0) break;
-    conversation += `\n\nAssistant:\n${text}`;
-    for (const call of calls) {
-      const result = await tools.execute(call.tool, call.input);
-      toolEvents.push({
-        tool:    call.tool,
-        ok:      result.ok,
-        summary: result.ok
-          ? `${call.tool}: ok (${result.output.length} chars)`
-          : `${call.tool}: failed — ${result.error ?? 'unknown'}`,
-        raw: call.input,
-      });
-      conversation += formatToolResult(call.tool, result.ok, result.output, result.error);
-    }
+function buildMaestroAdapter(
+  /** Per-role LLM adapters. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
+  configuredAdapters: Map<RoleName, LLMAdapter>,
+): MaestroPort {
+  const maestroCore = createMaestroCore();
+
+  // Build one RoleAgentAdapter per configured role
+  const roleAgents = new Map<RoleName, RoleAgentAdapter>();
+  for (const [role, llmAdapter] of configuredAdapters) {
+    roleAgents.set(role, new RoleAgentAdapter(role, llmAdapter));
+  }
+
+  // Helper function to get available tools
+  function getAvailableTools(): any[] {
+    // This should return the actual tools available in the system
+    // For now, returning an empty array as a placeholder
+    // In a real implementation, this would access the tool registry
+    return [];
   }
 
   return {
-    text: lastText
-      .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')  // closed tags
-      .replace(/<tool_call>[\s\S]*$/g, '')                // unclosed tail
-      .trim(),
-    toolEvents,
-  };
-}
-
-// ── Maestro adapter ────────────────────────────────────────────────────────
-// Brain decomposes every task into a routing decision (direct or decompose).
-// Direct: one specialist role handles it in a single LLM call.
-// Decompose: multiple department heads run in parallel, Brain synthesises.
-
-function buildMaestroAdapter(
-  /** Per-role LLM services. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
-  roleAdapters: Partial<Record<string, OrcaLLMService>>,
-): MaestroPort {
-  const maestro = createMaestroCore();
-
-  return {
     async run(task: OrcaTaskSpec, ctx: OrcaRunCtx): Promise<OrcaMaestroResult> {
-      const orch  = maestro.orchestrate(task.originalUserMessage);
-      const taskId = ctx.runId;
-      const brainLLM = roleAdapters['brain'] ?? ctx.llm;
-
-      // ── Step 1: Brain decomposes the task ────────────────────────────────
-      // Small, fast JSON call to decide routing & department assignment.
-      let decision: DecomposeDecision;
-      try {
-        const { text: decisionJson } = await brainLLM.complete(
-          `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`,
-          { maxTokens: 512, temperature: 0 },
-        );
-        decision = parseBrainDecision(decisionJson);
-      } catch {
-        // If Brain's JSON is malformed, fall back to direct brain.
-        decision = { routing: 'direct', role: 'brain' };
+      // 1. Classify and score risk (unchanged)
+      const { classification, risk } = maestroCore.orchestrate(task.intent);
+      
+      // 2. Brain routing call to pick role and done criteria
+      // Convert Map<RoleName, LLMAdapter> to Partial<Record<RoleName, OrcaLLMService>>
+      // for compatibility with brainRoute function
+      const roleAdapters: Partial<Record<RoleName, OrcaLLMService>> = {};
+      for (const [role, adapter] of configuredAdapters) {
+        roleAdapters[role] = createDirectLLMService(adapter, 'model', { maxTokens: 8192, temperature: 0.7 });
       }
-
-      win?.webContents.send('orca-event', { type: 'decision', taskId, decision });
-
-      // ── Step 2a: Direct routing — one specialist, one call ───────────────
-      if (decision.routing === 'direct') {
-        const role = decision.role;
-        console.log(`[Orca]   role:selected  role=${role}  routing=direct`);
-        win?.webContents.send('orca-event', { type: 'role:selected', taskId, role, isFallback: false });
-
-        const systemPrompt = getRolePrompt(role as RoleName);
-        const taskPrompt   = buildTaskPrompt(task, role);
-        const llmForRole   = roleAdapters[role] ?? ctx.llm;
-
-        let text: string;
-        let toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
-        if (ctx.tools) {
-          const res = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, llmForRole, ctx);
-          text       = res.text;
-          toolEvents = res.toolEvents;
-        } else {
-          ({ text } = await llmForRole.complete(
-            `${systemPrompt}\n\n---\n\n${taskPrompt}`,
-            {
-              maxTokens: 4096,
-              onToken: ctx.emit
-                ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
-                : undefined,
-            },
-          ));
-        }
-
-        const inputTokensEst  = Math.ceil((systemPrompt.length + taskPrompt.length) / 4);
-        const outputTokensEst = Math.ceil(text.length / 4);
-        win?.webContents.send('orca-event', { type: 'run:stats', taskId, inputTokensEst, outputTokensEst });
-
-        return {
-          outputText:  text,
-          toolEvents,
-          doneCriteria: decision.done_criteria,
-          summary: `run_id=${orch.run_id} routing=direct role=${role} risk=${orch.risk.riskScore.toFixed(2)}`,
-        };
-      }
-
-      // ── Step 2b: Decompose — parallel department calls ───────────────────
-      const { departments, synthesis_hint } = decision;
-
-      const deptResults = await Promise.all(
-        departments.map(async (dept, i) => {
-          const subagentId = `${taskId}_sa${i}`;
-          ctx.emit?.({ type: 'subagent:spawned', taskId, subagentId, role: dept.head, task: dept.subtask });
-
-          try {
-            const headSystem = getRolePrompt(dept.head as RoleName);
-            const headLLM    = roleAdapters[dept.head] ?? ctx.llm;
-            const headTask   = [
-              dept.context ? `## Context\n${dept.context}\n\n` : '',
-              `## Subtask\n${dept.subtask}`,
-              `\n\n## Original request\n${task.originalUserMessage}`,
-            ].join('');
-
-            let output: string;
-            if (ctx.tools) {
-              const res = await runAgentLoop(headSystem, headTask, ctx.tools, headLLM, ctx);
-              output = res.text;
-            } else {
-              const fullPrompt = `${headSystem}\n\n---\n\n${headTask}`;
-              ({ text: output } = await headLLM.complete(fullPrompt, { maxTokens: 8192 }));
-            }
-            ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
-            return { head: dept.head, subtask: dept.subtask, output, subagentId, ok: true as const };
-          } catch (err) {
-            const error = err instanceof Error ? err.message : String(err);
-            ctx.emit?.({ type: 'subagent:failed', taskId, subagentId, role: dept.head, error });
-            return { head: dept.head, subtask: dept.subtask, output: '', subagentId, ok: false as const, error };
-          }
-        }),
-      );
-
-      // ── Step 3: Synthesise ───────────────────────────────────────────────
-      // If only one department ran (shouldn't normally happen but be safe)
-      // skip synthesis overhead.
-      if (deptResults.length === 1) {
-        return {
-          outputText:   deptResults[0]!.output,
-          doneCriteria: decision.done_criteria,
-          summary:      `run_id=${orch.run_id} routing=decompose depts=1`,
-          subagentRuns: deptResults.map((d) => ({
-            subagentId:  d.subagentId,
-            role:        d.head,
-            task:        d.subtask,
-            status:      d.ok ? 'done' : 'failed',
-            outputText:  d.output,
-            error:       'error' in d ? d.error : undefined,
-          })),
-        };
-      }
-
-      // Brain synthesises all department outputs, streaming to the UI.
-      const synthPrompt = buildSynthesisPrompt(
-        task.originalUserMessage,
-        deptResults.map((d) => ({ head: d.head, subtask: d.subtask, output: d.output })),
-        synthesis_hint,
-      );
-
-      const { text: synthOutput } = await brainLLM.complete(
-        `${getRolePrompt('brain')}\n\n---\n\n${synthPrompt}`,
+      
+      const routing = await brainRoute(task, ctx, roleAdapters);
+      
+      // 3. Get the agent for the selected role
+      const agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
+      
+      // 4. Hand off to the agent — it runs autonomously until done
+      const result = await agent.run(
         {
-          maxTokens: 8192,
-          onToken: ctx.emit
-            ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
-            : undefined,
+          intent: task.intent,
+          goals: task.goals,
+          doneCriteria: routing.doneCriteria,
+          conversationHistory: task.context?.conversationHistory as any[],
         },
+        getAvailableTools(),
+        ctx
       );
-
+      
+      // 5. Map AgentResult → OrcaMaestroResult
       return {
-        outputText:   synthOutput,          doneCriteria: decision.done_criteria,        summary:      `run_id=${orch.run_id} routing=decompose depts=${departments.length}`,
-        subagentRuns: deptResults.map((d) => ({
-          subagentId:  d.subagentId,
-          role:        d.head,
-          task:        d.subtask,
-          status:      d.ok ? 'done' : 'failed',
-          outputText:  d.output,
-          error:       'error' in d ? d.error : undefined,
-        })),
+        outputText: result.outputText,
+        summary: `${routing.role} agent — ${result.iterationCount} iterations — stopped: ${result.stoppedBecause}`,
+        toolEvents: result.toolsUsed,
+        filesChanged: result.filesChanged,
+        doneCriteria: routing.doneCriteria
       };
-    },
+    }
   };
 }
 
@@ -414,7 +314,32 @@ function initOrca(s: OrcaSettings): string | null {
       );
     }
 
-    const maestro = buildMaestroAdapter(roleAdapters);
+    // Convert roleAdapters to Map<RoleName, LLMAdapter> for buildMaestroAdapter
+    const adapterMap = new Map<RoleName, LLMAdapter>();
+    for (const [role, service] of Object.entries(roleAdapters)) {
+      // Extract the underlying LLMAdapter from the OrcaLLMService wrapper
+      // This is a bit hacky but works with the current structure
+      const roleName = role as RoleName;
+      // We need to get the original adapter - for now we'll use brain's adapter as fallback
+      if (roleName === 'brain') {
+        adapterMap.set(roleName, buildAdapterForProvider(provider, model));
+      }
+    }
+    // Add other configured roles
+    const ALL_ROLES_LIST = [
+      'brain', 'coder_strong', 'coder_cheap', 'utility',
+      'reviewer', 'narrator', 'planner_deep', 'debugger', 'reader', 'vision',
+    ] as RoleName[];
+    for (const roleName of ALL_ROLES_LIST) {
+      if (!adapterMap.has(roleName) && s.roles?.[roleName]?.providerId && s.roles?.[roleName]?.model) {
+        const roleProv = s.providers?.find((p) => p.id === s.roles![roleName]!.providerId);
+        if (roleProv) {
+          adapterMap.set(roleName, buildAdapterForProvider(roleProv, s.roles![roleName]!.model!));
+        }
+      }
+    }
+    
+    const maestro = buildMaestroAdapter(adapterMap);
     const pappy   = createPappyPort();
 
     const toolRegistry = createCoreToolRegistry();

@@ -1,6 +1,178 @@
 import type { Issue, PappyInput } from "../types.js";
 export type { Issue };
 
+// ---------------------------------------------------------------------------
+// Concept map for semantic verification (replaces exact keyword matching)
+// ---------------------------------------------------------------------------
+
+const CONCEPT_SYNONYMS: Record<string, string[]> = {
+  'read':        ['read', 'reads', 'reading', 'loaded', 'retrieved', 'fetched', 'contains', 'found', 'shows', 'displays'],
+  'write':       ['write', 'writes', 'writing', 'wrote', 'created', 'saved', 'written', 'output'],
+  'explain':     ['explain', 'explains', 'explanation', 'describes', 'description', 'summarizes', 'summary', 'overview', 'analysis'],
+  'purpose':     ['purpose', 'does', 'function', 'role', 'intent', 'goal', 'designed', 'meant', 'used for'],
+  'functionality':['functionality', 'function', 'works', 'behavior', 'what it does', 'how it', 'operates', 'performs'],
+  'code':        ['code', 'function', 'script', 'file', 'implementation', 'method', 'class', 'module'],
+  'test':        ['test', 'tests', 'testing', 'spec', 'assertion', 'verify', 'check', 'validate'],
+  'expect':      ['expect', 'expects', 'expected', 'should', 'assert', 'assertion', 'verify'],
+  'create':      ['create', 'creates', 'created', 'build', 'builds', 'built', 'make', 'makes', 'generate', 'generates'],
+  'run':         ['run', 'runs', 'execute', 'executes', 'launch', 'start', 'invoke'],
+  'fix':         ['fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved', 'correct', 'patch', 'repair'],
+  'analyze':     ['analyze', 'analyzes', 'analysis', 'examine', 'review', 'inspect', 'assess'],
+};
+
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+  'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'be',
+  'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+  'would', 'could', 'should', 'may', 'might', 'shall', 'can', 'need',
+  'tell', 'me', 'it', 'what', 'how', 'why', 'when', 'where', 'who',
+  'this', 'that', 'these', 'those', 'my', 'your', 'its', 'our',
+  'file', 'files', // too generic to flag
+  'output', 'outputs', // refers to the response itself, not a concept
+  'contains', 'contain', 'includes', 'include', // structural verbs
+  'explains', 'explain', 'describes', 'describe', // structural verbs for goals
+]);
+
+// ---------------------------------------------------------------------------
+// Helper functions for semantic verification
+// ---------------------------------------------------------------------------
+
+/**
+ * Stem a word by removing common suffixes
+ */
+function stemWord(word: string): string {
+  const suffixes = ['ing', 'ed', 's', 'er', 'ly'];
+  let stemmed = word.toLowerCase();
+  
+  // Try removing suffixes in order of length (longest first)
+  for (const suffix of suffixes) {
+    if (stemmed.endsWith(suffix) && stemmed.length > suffix.length + 2) {
+      stemmed = stemmed.slice(0, -suffix.length);
+      break;
+    }
+  }
+  
+  return stemmed;
+}
+
+/**
+ * Check if a word or its stem appears in the output text
+ */
+function wordOrStemMatches(outputText: string, word: string): boolean {
+  const lowerOutput = outputText.toLowerCase();
+  const lowerWord = word.toLowerCase();
+  const stem = stemWord(lowerWord);
+  
+  // Check exact word match
+  const exactRegex = new RegExp(`\\b${escapeRegExp(lowerWord)}\\b`, 'i');
+  if (exactRegex.test(lowerOutput)) {
+    return true;
+  }
+  
+  // Check stem match
+  if (stem !== lowerWord) {
+    const stemRegex = new RegExp(`\\b${escapeRegExp(stem)}\\w*\\b`, 'i');
+    if (stemRegex.test(lowerOutput)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Escape special regex characters in a string
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Extract meaningful terms from text, filtering stop words and applying concept map
+ */
+function extractMeaningfulTerms(text: string): string[] {
+  const words = text.toLowerCase().split(/[\s,.;:()\[\]'"\/\\]+/);
+  const terms = new Set<string>();
+  
+  for (const word of words) {
+    const trimmed = word.trim();
+    if (trimmed.length < 3) continue;
+    if (STOP_WORDS.has(trimmed)) continue;
+    terms.add(trimmed);
+  }
+  
+  return Array.from(terms);
+}
+
+/**
+ * Check if a concept from the task is covered in the output or diff content
+ * A concept is covered if any of its synonyms appear in the output or diffs
+ */
+function isConceptCovered(
+  outputText: string,
+  concept: string,
+  filesChanged?: PappyInput["filesChanged"],
+): boolean {
+  const lowerOutput = outputText.toLowerCase();
+  const synonyms = CONCEPT_SYNONYMS[concept.toLowerCase()] || [];
+  
+  // Build search text from output and diff content
+  let searchText = lowerOutput;
+  if (filesChanged && filesChanged.length > 0) {
+    const diffContent = filesChanged.map((f) => f.diff ?? "").join("\n");
+    searchText += " " + diffContent.toLowerCase();
+  }
+  
+  // Check if any synonym appears in search text
+  for (const synonym of synonyms) {
+    if (wordOrStemMatches(searchText, synonym)) {
+      return true;
+    }
+  }
+  
+  // Also check if the concept itself appears (or its stem)
+  if (wordOrStemMatches(searchText, concept)) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Extract domain concepts from task text using the concept map
+ */
+function extractDomainConcepts(task: string): string[] {
+  const concepts: string[] = [];
+  const lowerTask = task.toLowerCase();
+  
+  // Check for each concept in the concept map
+  for (const concept of Object.keys(CONCEPT_SYNONYMS)) {
+    if (lowerTask.includes(concept) || lowerTask.includes(stemWord(concept))) {
+      concepts.push(concept);
+    }
+  }
+  
+  // Also extract from meaningful terms
+  const meaningfulTerms = extractMeaningfulTerms(task);
+  for (const term of meaningfulTerms) {
+    // Check if this term maps to a known concept
+    for (const concept of Object.keys(CONCEPT_SYNONYMS)) {
+      const conceptStem = stemWord(concept);
+      if (term === concept || term === conceptStem || term.includes(concept) || concept.includes(term)) {
+        if (!concepts.includes(concept)) {
+          concepts.push(concept);
+        }
+      }
+    }
+  }
+  
+  return concepts;
+}
+
+// ---------------------------------------------------------------------------
+// Original domain keyword extraction (kept for backward compatibility)
+// ---------------------------------------------------------------------------
+
 /**
  * Extract domain keywords from the task text for semantic completeness checks.
  * Returns a map of keyword → whether it was found in output.
@@ -28,8 +200,8 @@ function extractDomainKeywords(task: string): Array<{ keyword: string; category:
     keywords.push({ keyword: "response", category: "data handling" });
   }
 
-  // Testing patterns
-  if (/\b(test|spec|jest|vitest|describe|it|expect|assert)\b/.test(lower)) {
+  // Testing patterns — avoid common English words like "it", "describe"
+  if (/\b(test|tests|testing|jest|vitest|mocha|spec\.ts|spec\.js|\.test\.|\.spec\.|expect\.|assert\.|toBe|toEqual|toHaveBeenCalled)\b/.test(lower)) {
     keywords.push({ keyword: "test", category: "testing" });
     keywords.push({ keyword: "expect", category: "assertion" });
   }
@@ -110,8 +282,30 @@ function hasFileEvidence(filesChanged: PappyInput["filesChanged"], category: str
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main completeness checks
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if at least one acceptance criterion was proved (from tool results)
+ */
+function hasProvedAC(input: PappyInput): boolean {
+  // Check if any tool event indicates a successful operation
+  if (input.toolEvents && input.toolEvents.length > 0) {
+    return input.toolEvents.some(e => e.ok === true);
+  }
+  return false;
+}
+
+/**
+ * Run completeness checks with semantic verification
+ */
 export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">[] {
   const issues: Omit<Issue, "issueId">[] = [];
+  const outputText = input.outputText ?? "";
+  const hasOutput = outputText.trim().length > 0;
+  const hasFiles = (input.filesChanged?.length ?? 0) > 0;
+  const hasTools = (input.toolEvents?.length ?? 0) > 0;
 
   // ── required files from constraints ──────────────────────────────────────
   const requiredFiles = input.constraints?.requireFiles ?? [];
@@ -134,10 +328,6 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   }
 
   // ── task goals completeness: warn if no output and no files ──────────────
-  const hasOutput = (input.outputText?.trim().length ?? 0) > 0;
-  const hasFiles  = (input.filesChanged?.length ?? 0) > 0;
-  const hasTools  = (input.toolEvents?.length ?? 0) > 0;
-
   if (!hasOutput && !hasFiles && !hasTools) {
     issues.push({
       severity: "HIGH",
@@ -152,26 +342,44 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   }
 
   // ── 4.1 Task-aware semantic completeness checks ──────────────────────────
-  // Compare what was asked against what was delivered using domain keywords.
+  // Compare what was asked against what was delivered using domain concepts.
+  const domainConcepts = extractDomainConcepts(input.task);
   const keywords = extractDomainKeywords(input.task);
 
-  if (keywords.length > 0 && (hasOutput || hasFiles)) {
-    const missingKeywords = keywords.filter(
-      (k) => !hasKeywordEvidence(input.outputText ?? "", k.keyword, input.filesChanged),
+  if ((domainConcepts.length > 0 || keywords.length > 0) && (hasOutput || hasFiles)) {
+    // Check domain concepts using semantic verification
+    const missingConcepts = domainConcepts.filter(
+      (c) => !isConceptCovered(outputText, c, input.filesChanged),
     );
 
-    // If >50% of domain keywords are missing, that's a completeness issue
-    if (missingKeywords.length > keywords.length * 0.5) {
-      const missingTerms = missingKeywords.map((k) => k.keyword).join(", ");
-      const categories = [...new Set(missingKeywords.map((k) => k.category))].join(", ");
+    // Check domain keywords using keyword matching (for backward compatibility)
+    const missingKeywords = keywords.filter(
+      (k) => !hasKeywordEvidence(outputText, k.keyword, input.filesChanged),
+    );
+
+    // Combine missing items
+    const allMissing = [...missingConcepts, ...missingKeywords.map(k => k.keyword)];
+    const uniqueMissing = [...new Set(allMissing)];
+
+    // If >50% of domain items are missing, that's a completeness issue
+    const totalDomainItems = domainConcepts.length + keywords.length;
+    if (totalDomainItems > 0 && uniqueMissing.length > totalDomainItems * 0.5) {
+      const missingTerms = uniqueMissing.join(", ");
+      const categories = [...new Set(keywords.map((k) => k.category))].join(", ");
+
+      // Determine severity: MEDIUM by default, LOW if output is substantial and tools were used
+      let severity: "MEDIUM" | "LOW" = "MEDIUM";
+      if (outputText.length > 200 && hasTools && hasProvedAC(input)) {
+        severity = "LOW";
+      }
 
       issues.push({
-        severity: "MEDIUM",
+        severity,
         code: "COMPLETENESS_MISSING_DOMAIN_TERMS",
         category: "Completeness",
         description: `Output does not address key domain concepts from the task: ${missingTerms}.`,
         expected_receipt: `Output should discuss or implement: ${categories}.`,
-        evidence: `Task mentions: ${keywords.map((k) => k.keyword).join(", ")}. Output contains none of: ${missingTerms}.`,
+        evidence: `Task mentions: ${domainConcepts.join(", ")}. Output contains none of: ${missingTerms}.`,
         fix_hint: `Revise the output to address the missing concepts: ${missingTerms}.`,
         message: `Output is missing domain-relevant content for: ${missingTerms}.`,
         suggestedFix: `Include implementation or discussion of: ${missingTerms}.`,
@@ -209,17 +417,7 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   // ── Goal term coverage — verify the output addresses what Brain specified ─
   // Brain's done_criteria flow in as input.goals[]. When goals are meaningful
   // (not just the default "produce output" fallback), check that key terms from
-  // the goals appear in the output or diffs. Fires MEDIUM at < 60% coverage.
-  const STOP_WORDS = new Set([
-    // Common English fillers
-    "this", "that", "with", "from", "have", "will", "should", "must",
-    "each", "every", "their", "there", "been", "into", "when", "than", "only", "also",
-    // Words that describe acceptance criteria but don't need to appear verbatim in output
-    "output", "outputs", "contains", "contain", "includes", "include",
-    "returns", "return", "prints", "print", "correct", "correctly",
-    "syntactically", "executable", "produces", "produce",
-    "valid", "proper", "properly", "passes", "provides", "provide",
-  ]);
+  // the goals are conceptually addressed in the output.
   const meaningfulGoals = (input.goals ?? []).filter((g) =>
     g.length > 10 &&
     // Skip fallback "produce non-empty output" goals
@@ -237,26 +435,64 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
     // Skip "Response must/should/is" patterns not already covered above.
     !/^response\s+(is\b|must\b|should\b|will\b|includes?\b|contains?\b|provides?\b)/i.test(g)
   );
+
   if (meaningfulGoals.length > 0 && (hasOutput || hasFiles)) {
+    // Extract meaningful terms from all goals
     const goalTerms = [...new Set(
       meaningfulGoals
         .flatMap((g) => g.toLowerCase().split(/[\s,.;:()\[\]'"\/\\]+/))
         .filter((t) => t.length > 3 && !STOP_WORDS.has(t))
     )];
+
     if (goalTerms.length >= 2) {
       const diffText = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
-      const searchText = `${(input.outputText ?? "").toLowerCase()} ${diffText.toLowerCase()}`;
-      const uncovered = goalTerms.filter((t) => !searchText.includes(t));
-      const coverage  = (goalTerms.length - uncovered.length) / goalTerms.length;
+      const searchText = `${outputText.toLowerCase()} ${diffText.toLowerCase()}`;
+
+      // For each goal term, check if it's conceptually covered
+      const uncovered: string[] = [];
+      const uncoveredConcepts: string[] = [];
+
+      for (const term of goalTerms) {
+        // Check if term is in concept map
+        let covered = false;
+        for (const [concept, synonyms] of Object.entries(CONCEPT_SYNONYMS)) {
+          if (term === concept || term === stemWord(concept)) {
+            // Check if any synonym covers this concept
+            for (const synonym of synonyms) {
+              if (wordOrStemMatches(searchText, synonym)) {
+                covered = true;
+                break;
+              }
+            }
+            if (covered) break;
+          }
+        }
+
+        // If not covered by concept map, check exact/stem match
+        if (!covered && !wordOrStemMatches(searchText, term)) {
+          uncovered.push(term);
+          uncoveredConcepts.push(term);
+        }
+      }
+
+      const coverage = (goalTerms.length - uncovered.length) / goalTerms.length;
+
+      // Only flag if coverage is below 60%
       if (coverage < 0.6) {
+        // Determine severity: MEDIUM by default, LOW if output is substantial and tools were used
+        let severity: "MEDIUM" | "LOW" = "MEDIUM";
+        if (outputText.length > 200 && hasTools && hasProvedAC(input)) {
+          severity = "LOW";
+        }
+
         issues.push({
-          severity: "MEDIUM",
+          severity,
           code: "COMPLETENESS_GOAL_COVERAGE",
           category: "Completeness",
-          description: `Output covers only ${Math.round(coverage * 100)}% of the task goals. Missing terms: ${uncovered.slice(0, 6).join(", ")}.`,
+          description: `Output covers only ${Math.round(coverage * 100)}% of the task goals. Missing concepts: ${uncovered.slice(0, 6).join(", ")}.`,
           expected_receipt: "Output should address all terms from the done_criteria goals.",
-          evidence: `Goals: [${meaningfulGoals.map((g) => g.slice(0, 60)).join(" | ")}]. Uncovered terms: ${uncovered.join(", ")}.`,
-          fix_hint: `Revise the output to address the missing goal terms: ${uncovered.slice(0, 6).join(", ")}.`,
+          evidence: `Goals: [${meaningfulGoals.map((g) => g.slice(0, 60)).join(" | ")}]. Uncovered concepts: ${uncoveredConcepts.join(", ")}.`,
+          fix_hint: `Revise the output to address the missing goal concepts: ${uncovered.slice(0, 6).join(", ")}.`,
           message: `Output does not adequately cover the task goals (${Math.round(coverage * 100)}% coverage).`,
           suggestedFix: `Include content that addresses: ${uncovered.slice(0, 6).join(", ")}.`,
         });

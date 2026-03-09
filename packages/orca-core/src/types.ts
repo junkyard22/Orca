@@ -2,6 +2,7 @@ import type { PappyInput, PappyResult } from "@clawde/pappy-core";
 import type { MirandaGate } from "@clawde/miranda-core";
 import type { WorkspaceContext } from "./workspaceContext.js";
 import type { RunStore } from "./persistence/types.js";
+import type { RoleName } from "maestro-core";
 
 // ---------------------------------------------------------------------------
 // Task / result shapes
@@ -231,4 +232,7 @@ export type OrcaEvent =
   | { type: "stream:reset";       taskId: string }
   | { type: "subagent:spawned";   taskId: string; subagentId: string; role: string; task: string }
   | { type: "subagent:done";      taskId: string; subagentId: string; role: string; ok: boolean }
-  | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string };
+  | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string }
+  | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
+  | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
+  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'error'; iterations: number };

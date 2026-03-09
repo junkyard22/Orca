@@ -388,12 +388,15 @@ async function runAgentLoop(
   };
 }
 
-// ── Tracing Maestro — mirrors buildMaestroAdapter() from main.ts ──────────
+// ── Tracing Maestro — uses new three-tier agent architecture ──────────────
 
 function createTracingMaestro(
   roleAdapters: Partial<Record<string, OrcaLLMService>>,
 ): MaestroPort {
   const maestroCore = createMaestroCore();
+
+  // Note: The tracer implements the ReAct loop directly instead of using RoleAgentAdapter
+  // to avoid circular dependencies and keep the tracer self-contained.
 
   return {
     async run(task: OrcaTaskSpec, ctx: OrcaRunCtx): Promise<OrcaMaestroResult> {
@@ -449,12 +452,36 @@ function createTracingMaestro(
           : `Brain decomposed into ${(dec as any).departments?.length ?? 0} parallel departments`,
       );
 
-      // ── Step 2a: Direct routing ───────────────────────────────────────────
+      // ── Step 2a: Direct routing with ReAct agent loop ─────────────────────
       if (dec.routing === 'direct') {
         const role = dec.role;
-        trace("Maestro", C.cyan, `  Step 2a [direct]: calling ${role}...`);
+        trace("Maestro", C.cyan, `  Step 2a [direct]: running ${role} agent...`);
 
-        const systemPrompt = getRolePrompt(role as RoleName);
+        // Emit agent start event
+        ctx.emit?.({ 
+          type: 'maestro:agent_start', 
+          taskId, 
+          role: role as RoleName, 
+          doneCriteria: dec.done_criteria || [] 
+        });
+
+        const baseSystemPrompt = getRolePrompt(role as RoleName);
+        // Add ReAct system prompt block
+        const reactSystemBlock = `
+
+After receiving a tool result, reason before acting again:
+
+Thought: [what did I just learn? what does it mean for the task?]
+Observation: [current state of the task based on everything so far]
+Next: [what to do next and why — or "Task is complete" if done]
+
+Rules:
+- Never call a tool without a preceding Thought block
+- If the task is complete, say so in Next then produce your final answer
+- If a tool result shows an error, reason about why and try a different approach
+- You can see your full reasoning history — build on prior Thoughts
+`;
+        const systemPrompt = `${baseSystemPrompt}${reactSystemBlock}`;
         const taskPrompt   = buildTaskPrompt(task, role);
         const llmForRole   = roleAdapters[role] ?? ctx.llm;
 
@@ -471,26 +498,98 @@ function createTracingMaestro(
         }
         printMsg(`→ ${role} [task]`, C.yellow, taskPrompt);
 
-        let text: string;
-        let toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
-        if (ctx.tools) {
-          trace("Maestro", C.yellow, `  [tools] injecting ${ctx.tools.formatForPrompt().length} chars of tool defs`);
-          const res = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, llmForRole);
-          text       = res.text;
-          toolEvents = res.toolEvents;
-        } else {
-          ({ text } = await llmForRole.complete(
-            `${systemPrompt}\n\n---\n\n${taskPrompt}`,
-            {
-              maxTokens: 4096,
-              onToken: ctx.emit
-                ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
-                : undefined,
-            },
-          ));
+        // Run the ReAct agent loop
+        const MAX_ITER = 10;
+        const toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
+        let conversation = `${systemPrompt}\n\n${ctx.tools?.formatForPrompt() || ''}\n\n---\n\n${taskPrompt}`;
+        let lastText = '';
+        let iterationCount = 0;
+        let stoppedBecause: 'done' | 'max_iterations' | 'error' = 'max_iterations';
+
+        try {
+          for (let i = 0; i < MAX_ITER; i++) {
+            iterationCount = i + 1;
+            
+            const { text } = await llmForRole.complete(conversation, { maxTokens: 4096 });
+            lastText = text;
+            
+            // Extract Thought/Observation/Next blocks
+            const thoughtMatch = text.match(/Thought:\s*([^\n]*)/i);
+            const observationMatch = text.match(/Observation:\s*([^\n]*)/i);
+            const nextMatch = text.match(/Next:\s*([^\n]*)/i);
+            
+            if (thoughtMatch || observationMatch || nextMatch) {
+              const thought = thoughtMatch ? thoughtMatch[1].trim() : "";
+              const observation = observationMatch ? observationMatch[1].trim() : "";
+              const next = nextMatch ? nextMatch[1].trim() : "";
+              
+              // Emit thought event
+              ctx.emit?.({
+                type: 'maestro:thought',
+                taskId,
+                iteration: iterationCount,
+                thought,
+                observation,
+                next
+              });
+              
+              trace("Maestro", C.white, `  [Thought] iter=${iterationCount}`);
+              if (thought) trace("Maestro", C.dim, `    Thought: ${thought}`);
+              if (observation) trace("Maestro", C.dim, `    Observation: ${observation}`);
+              if (next) trace("Maestro", C.dim, `    Next: ${next}`);
+            }
+            
+            const calls = parseToolCalls(text);
+            
+            // Check if task is complete
+            const isComplete = nextMatch 
+              ? nextMatch[1].toLowerCase().includes('complete') || 
+                nextMatch[1].toLowerCase().includes('done')
+              : false;
+            
+            if (calls.length === 0) {
+              stoppedBecause = isComplete ? 'done' : 'done';
+              break;
+            }
+            
+            trace("Maestro", C.yellow, `  [agentLoop] iteration ${i + 1}: ${calls.length} tool call(s)`);
+            conversation += `\n\nAssistant:\n${text}`;
+            
+            for (const call of calls) {
+              trace("Maestro", C.cyan, `    ➤ tool:${call.tool}  args=${JSON.stringify(call.input).slice(0, 80)}`);
+              const result = await ctx.tools!.execute(call.tool, call.input);
+              trace("Maestro", result.ok ? C.green : C.red, `    ← ${result.ok ? 'ok' : 'FAIL'} (${result.output.length} chars)`);
+              toolEvents.push({
+                tool:    call.tool,
+                ok:      result.ok,
+                summary: result.ok
+                  ? `${call.tool}: ok (${result.output.length} chars)`
+                  : `${call.tool}: failed — ${result.error ?? 'unknown'}`,
+                raw: call.input,
+              });
+              conversation += fmtToolResult(call.tool, result.ok, result.output, result.error);
+            }
+          }
+        } catch (err) {
+          stoppedBecause = 'error';
+          trace("Maestro", C.red, `  Agent error: ${err}`);
         }
 
-        trace("Maestro", C.cyan, `  LLM returned ${text.length} chars`);
+        // Emit agent done event
+        ctx.emit?.({
+          type: 'maestro:agent_done',
+          taskId,
+          role: role as RoleName,
+          stoppedBecause,
+          iterations: iterationCount
+        });
+
+        const text = lastText
+          .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+          .replace(/<tool_call>[\s\S]*$/g, '')
+          .trim();
+
+        trace("Maestro", C.cyan, `  Agent stopped: ${stoppedBecause} after ${iterationCount} iterations`);
         trace("Maestro", C.dim,  `  Final text[0..120]: "${text.slice(0, 120).replace(/\n/g, "\\n")}…"`);
         printMsg(`← ${role} [response]`, C.green, text);
 
@@ -503,7 +602,7 @@ function createTracingMaestro(
           outputText: text,
           toolEvents,
           doneCriteria: dec.done_criteria,
-          summary: `routing=direct role=${role} type=${type} risk=${riskScore.toFixed(2)}`,
+          summary: `routing=direct role=${role} type=${type} risk=${riskScore.toFixed(2)} iterations=${iterationCount} stopped=${stoppedBecause}`,
         };
       }
 
@@ -716,6 +815,7 @@ async function main() {
     "qc:result", "repair:start", "task:done",
     "stream:token", "stream:reset",
     "subagent:spawned", "subagent:done", "subagent:failed",
+    "maestro:thought", "maestro:agent_start", "maestro:agent_done",
   ];
   const unsubs = eventTypes.map(type =>
     runtime.on(type, (e: OrcaEvent) => {
@@ -747,6 +847,24 @@ async function main() {
           `Repair pass ${ev.pass ?? "?"}/${ev.maxPasses ?? "?"} started`,
           `Previous attempt failed Pappy QC — re-running task`,
         );
+      }
+
+      if (e.type === "maestro:agent_start") {
+        const ev = e as OrcaEvent & { role: string; doneCriteria: string[] };
+        trace("Agent", C.cyan, `${ev.role} started  criteria=${ev.doneCriteria?.length ?? 0}`);
+      }
+
+      if (e.type === "maestro:thought") {
+        const ev = e as OrcaEvent & { iteration: number; thought: string; observation: string; next: string };
+        console.log(`${ts()} ${C.white}[Thought   ]${C.reset} iter=${ev.iteration}`);
+        if (ev.thought) console.log(`${"".padStart(13)} ${C.dim}Thought: ${ev.thought}${C.reset}`);
+        if (ev.observation) console.log(`${"".padStart(13)} ${C.dim}Observation: ${ev.observation}${C.reset}`);
+        if (ev.next) console.log(`${"".padStart(13)} ${C.dim}Next: ${ev.next}${C.reset}`);
+      }
+
+      if (e.type === "maestro:agent_done") {
+        const ev = e as OrcaEvent & { role: string; stoppedBecause: string; iterations: number };
+        trace("Agent", C.green, `${ev.role} done  stopped=${ev.stoppedBecause}  iterations=${ev.iterations}`);
       }
     })
   );

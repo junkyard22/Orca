@@ -1,6 +1,50 @@
 import { spawn } from "child_process";
 import * as path from "path";
+import * as fs from "fs";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
+
+/**
+ * Parse a shell command to detect file redirections (e.g., > file.py, >> file.py).
+ * Returns an array of { path, changeType } for files that are created or modified.
+ */
+function detectFileChanges(command: string, cwd: string): Array<{ path: string; changeType: "A" | "M" }> {
+  const changes: Array<{ path: string; changeType: "A" | "M" }> = [];
+  
+  // Match redirections like: > file.txt, >> file.txt, 2> file.txt, etc.
+  // Also handles heredocs and other shell redirections
+  const redirectionPattern = /(?:^|\s|;)\s*(\d*>)\s*(['"`])?(.+?)\2\s*(?=$|;|\s)/g;
+  let match: RegExpExecArray | null;
+  
+  while ((match = redirectionPattern.exec(command)) !== null) {
+    const filePath = match[3];
+    if (filePath) {
+      const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+      // Check if file exists before command execution
+      const existsBefore = fs.existsSync(resolved);
+      changes.push({
+        path: path.relative(cwd, resolved),
+        changeType: existsBefore ? "M" : "A",
+      });
+    }
+  }
+  
+  // Also check for echo/cat with redirection: echo "..." > file.py
+  const echoPattern = /echo\s+['"`]?(.*?)['"`]?\s*>\s*['"`]?(.+?)['"`]?\s*(?=$|;)/;
+  const echoMatch = command.match(echoPattern);
+  if (echoMatch) {
+    const filePath = echoMatch[2];
+    if (filePath) {
+      const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+      const existsBefore = fs.existsSync(resolved);
+      changes.push({
+        path: path.relative(cwd, resolved),
+        changeType: existsBefore ? "M" : "A",
+      });
+    }
+  }
+  
+  return changes;
+}
 
 export const runCommandTool: Tool = {
   name: "run_command",
@@ -47,6 +91,9 @@ export const runCommandTool: Tool = {
         ? input["timeout"]
         : 30_000;
 
+    // Detect file changes before executing the command
+    const fileChanges = detectFileChanges(command, cwd);
+
     return new Promise<ToolResult>((resolve) => {
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
@@ -83,7 +130,11 @@ export const runCommandTool: Tool = {
         } else if ((code ?? -1) !== 0) {
           resolve({ ok: false, output: combined, error: `Exit code ${code ?? -1}` });
         } else {
-          resolve({ ok: true, output: combined });
+          // Include file changes in the output for the caller to parse
+          const outputWithChanges = fileChanges.length > 0
+            ? `${combined}\n\n<!-- Files changed: ${JSON.stringify(fileChanges)} -->`
+            : combined;
+          resolve({ ok: true, output: outputWithChanges });
         }
       });
     });

@@ -4,6 +4,7 @@
   "description": "Orca — AI coding assistant desktop app",
   "author": "Clawde",
   "private": true,
+  "type": "module",
   "main": "dist-main/main.js",
   "scripts": {
     "dev": "node build-main.mjs && electron .",

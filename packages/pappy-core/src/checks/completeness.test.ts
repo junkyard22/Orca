@@ -205,3 +205,116 @@ describe("runCompletenessChecks — empty diff verification (Phase 4.2)", () => 
     expect(emptyDiff).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Semantic completeness verification (Case studies)
+// ---------------------------------------------------------------------------
+
+describe("runCompletenessChecks — semantic completeness case studies", () => {
+  // Case 1 — should produce no completeness issues
+  // The output uses synonyms like "contains", "returns", "basic example", "simple Python function"
+  // which semantically cover the task concepts of "read" and "explain/purpose"
+  it("Case 1: read file and explain purpose - should PASS with no issues", () => {
+    const issues = runCompletenessChecks({
+      task: "read the file hello_world.py and tell me what it does",
+      goals: [
+        "Output contains a summary of the file's contents",
+        "Output explains the purpose/functionality of the code",
+      ],
+      outputText:
+        "## TL;DR\n" +
+        "This file contains a single Python function `hello_world()` that returns the string 'Hello, World!'. It's a basic example of a simple Python function with no dependencies or external calls.\n\n" +
+        "## File Analysis\n" +
+        "### Structure\n" +
+        "- **1 function** defined: `hello_world()`\n" +
+        "- **1 return statement** returning a string literal\n\n" +
+        "### Key Points\n" +
+        "- Function name: `hello_world`\n" +
+        "- No parameters required\n" +
+        "- Returns: 'Hello, World!' (string)\n" +
+        "- No side effects or external operations",
+      toolEvents: [
+        { tool: "read_file", ok: true, summary: "read_file: ok (51 chars)" },
+      ],
+    });
+
+    // Should have no COMPLETENESS_MISSING_DOMAIN_TERMS issue
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    expect(domainTermsIssue).toBeUndefined();
+
+    // Should have no COMPLETENESS_GOAL_COVERAGE issue
+    const goalCoverageIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+    expect(goalCoverageIssue).toBeUndefined();
+  });
+
+  // Case 2 — should still catch a real failure
+  // The output "I was unable to complete this task." does not address any
+  // of the semantic concepts from the task (read, explain, purpose, functionality)
+  it("Case 2: unable to complete task - should flag MEDIUM issues", () => {
+    const issues = runCompletenessChecks({
+      task: "read the file hello_world.py and tell me what it does",
+      goals: [
+        "Output contains a summary of the file's contents",
+        "Output explains the purpose/functionality of the code",
+      ],
+      outputText: "I was unable to complete this task.",
+      toolEvents: [],
+    });
+
+    // Should flag COMPLETENESS_MISSING_DOMAIN_TERMS as MEDIUM
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    expect(domainTermsIssue).toBeDefined();
+    expect(domainTermsIssue!.severity).toBe("MEDIUM");
+
+    // Should flag COMPLETENESS_GOAL_COVERAGE as MEDIUM
+    const goalCoverageIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+    expect(goalCoverageIssue).toBeDefined();
+    expect(goalCoverageIssue!.severity).toBe("MEDIUM");
+  });
+
+  // Additional test: verify severity downgrade when output >200 chars, tools exist, and AC proved
+  it("Case 3: substantial output with tools - should downgrade to LOW severity", () => {
+    const issues = runCompletenessChecks({
+      task: "read the file hello_world.py and tell me what it does",
+      goals: [
+        "Output contains a summary of the file's contents",
+        "Output explains the purpose/functionality of the code",
+      ],
+      outputText:
+        "## TL;DR\n" +
+        "This file contains a single Python function `hello_world()` that returns the string 'Hello, World!'. It's a basic example of a simple Python function with no dependencies or external calls.\n\n" +
+        "## File Analysis\n" +
+        "### Structure\n" +
+        "- **1 function** defined: `hello_world()`\n" +
+        "- **1 return statement** returning a string literal\n\n" +
+        "### Key Points\n" +
+        "- Function name: `hello_world`\n" +
+        "- No parameters required\n" +
+        "- Returns: 'Hello, World!' (string)\n" +
+        "- No side effects or external operations",
+      toolEvents: [
+        { tool: "read_file", ok: true, summary: "read_file: ok (51 chars)" },
+      ],
+    });
+
+    // With substantial output (>200 chars), tool events, and AC proved,
+    // the severity should be LOW instead of MEDIUM
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    expect(domainTermsIssue).toBeUndefined(); // No issue because concepts are covered
+
+    const goalCoverageIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+    expect(goalCoverageIssue).toBeUndefined(); // No issue because concepts are covered
+  });
+});

@@ -5,13 +5,14 @@
 | Package | Role | Status |
 |---|---|---|
 | benson-core | User-facing speaker — parses intent, formats replies | ✅ `parseIntent` fully implemented — ambiguity detection, goal/constraint extraction, CLARIFY/TASK routing. |
-| orca-core | Runtime wiring — routes tasks through Maestro → Pappy → repair loop | ✅ Solid architecture. Now carries `OrcaToolService` in `OrcaRunCtx` for agent-loop mode. |
-| maestro-core | Orchestration — classifies tasks, scores risk, plan-gates, manages cancellation | ✅ `orchestrate()` solid. MaestroAdapter now runs a full agent loop when tools are available. |
-| miranda-core | LLM behavior enforcement — wraps prompts, validates outputs, repair loops, circuit breaker | ✅ Most complete package. Production-quality. |
-| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts on Maestro output | ⚠️ Works, but checks are shallow heuristics. Phase 4 target. |
+| secretary-core | Intent parsing — full TaskSpec creation | ✅ `processRequest()` extracts intent, goals, constraints, permissions, output format. |
+| orca-core | Runtime wiring — routes tasks through Maestro → Pappy → repair loop | ✅ Solid architecture. Carries `OrcaToolService` in `OrcaRunCtx` for agent-loop mode. |
+| maestro-core | Orchestration — classifies tasks, scores risk, plan-gates, manages cancellation | ✅ `orchestrate()` solid. MaestroAdapter runs full agent loop with tools. |
+| miranda-core | LLM behavior enforcement — wraps prompts, validates outputs, repair loops, circuit breaker | ✅ Most complete package. Production-quality. 27 tests passing. |
+| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts on Maestro output | ✅ **Phase 4 COMPLETE.** 84 tests passing. SATISFACTION_EXPLANATION_THIN, PROOF_NO_TRACE, and all claim-proof checks working. |
 | workbench-core | Tool execution (Runner + tools) | ✅ ShellRunner done. **Phase 3 complete:** `ToolRegistry`, `readFileTool`, `writeFileTool`, `runCommandTool`, `listDirectoryTool`, `searchFilesTool` all implemented. |
-| apps/runner | CLI harness that wires everything together | ✅ Works end-to-end with full agent-loop tool calling. Tool registry + `OrcaToolService` wired. |
-| apps/desktop | Electron shell | ❌ Bare skeleton — renderer is a plain HTML file with no real UI. |
+| apps/runner | CLI harness that wires everything together | ✅ **SHIPPABLE.** Works end-to-end with full agent-loop tool calling. Tool registry + `OrcaToolService` wired. |
+| apps/desktop | Electron shell | ⚠️ **Phase 6 pending.** Bare skeleton — renderer needs React UI. |
 
 The architecture is genuinely well-designed. The dependency graph is correct. The interfaces are clean. What's missing is the meat inside several of those interfaces.
 
@@ -277,10 +278,10 @@ A simple registry in `orca-core` that loads extensions at startup and makes thei
 | ~~Week 3~~ | ~~**Phase 3.1–3.3** (core tools).~~ ✅ **DONE** |
 | ~~Week 4~~ | ~~**Phase 2.1–2.2** (basic subagents).~~ ✅ **DONE** |
 | ~~Now~~ | ~~**Phase 5.1–5.3** (persistence).~~ ✅ **DONE** |
-| **Now** | **Phase 4** (Pappy QC depth). Deeper repair signals → fewer passes → better output. |
-| Week +2 | **Phase 6** (real desktop UI). Something you can hand to a non-developer. |
+| ~~Now~~ | ~~**Phase 4** (Pappy QC depth).~~ ✅ **DONE** (84 tests passing) |
+| **Now** | **Phase 6** (real desktop UI). Something you can hand to a non-developer. |
 
-| Ongoing | **Phase 4** (Pappy QC) and **Phase 7** (extension system) in parallel with the above. |
+| Ongoing | **Phase 7** (extension system) in parallel with the above. |
 
 ---
 

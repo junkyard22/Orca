@@ -20,7 +20,7 @@ import type { PappyInput } from "./types.js";
 function passInput(overrides: Partial<PappyInput> = {}): PappyInput {
   return {
     task: "Explain what recursion means.",
-    outputText: "Recursion is a function calling itself.",
+    outputText: "Recursion is a function calling itself. This is a detailed explanation of how recursion works in programming.",
     // Provide a minimal trace so PROOF_NO_TRACE / TOOL_INSTRUMENTATION_MISSING
     // don't fire and convert an otherwise clean run to WARN.
     toolEvents: [{ tool: "read_file", ok: true, summary: "context read" }],
