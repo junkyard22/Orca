@@ -151,10 +151,11 @@ Rules:
         const modelOutput = response.content;
         messages.push({ role: "assistant", content: modelOutput });
         
-        // Extract Thought/Observation/Next blocks
-        const thoughtMatch = modelOutput.match(/Thought:\s*([^\n]*)/i);
-        const observationMatch = modelOutput.match(/Observation:\s*([^\n]*)/i);
-        const nextMatch = modelOutput.match(/Next:\s*([^\n]*)/i);
+        // Extract Thought/Observation/Next blocks with proper multiline matching
+        // Using [\s\S]*? with s flag (dotAll) to match across newlines
+        const thoughtMatch = modelOutput.match(/Thought:\s*([\s\S]*?)(?:\n|$)/i);
+        const observationMatch = modelOutput.match(/Observation:\s*([\s\S]*?)(?:\n|$)/i);
+        const nextMatch = modelOutput.match(/Next:\s*([\s\S]*?)(?:\n|$)/i);
         
         let thought = thoughtMatch ? thoughtMatch[1].trim() : "";
         let observation = observationMatch ? observationMatch[1].trim() : "";
@@ -180,6 +181,10 @@ Rules:
               next
             });
           }
+        } else {
+          // Defensive logging: log when thought extraction fails so we can see it in the tracer
+          console.log(`[ReactAgent] No Thought block found in iteration ${iterationCount} — model may have skipped format`);
+          console.log(`[ReactAgent] Raw output[0..200]: "${modelOutput.slice(0, 200).replace(/\n/g, "\\n")}..."`);
         }
         
         // Check if task is complete

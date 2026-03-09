@@ -8,6 +8,7 @@ import {
   createOrcaRuntime,
   createDirectLLMService,
   createPappyPort,
+  SqliteStore,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -358,7 +359,12 @@ function initOrca(s: OrcaSettings): string | null {
       },
     };
 
-    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService });
+    // Create SQLite store for persistence
+    const store = new SqliteStore(
+      join(app.getPath('userData'), 'orca-runs.db')
+    );
+
+    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {

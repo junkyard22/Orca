@@ -17,12 +17,15 @@
 
 import "dotenv/config";
 
+import * as os from "os";
+import * as path from "path";
 import { OpenRouterAdapter, OllamaAdapter, createDefaultConfig } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createMirandaLLMService,
   createPappyPort,
   getWorkspaceContext,
+  SqliteStore,
 } from "@clawde/orca-core";
 import type { OrcaRuntime, OrcaEvent, OrcaEventType } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
@@ -30,7 +33,6 @@ import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 
 import { createMaestroAdapter } from "./adapters/maestroAdapter.js";
 import { createToolService } from "./adapters/toolService.js";
-import { createSqliteRunStore } from "./store/sqliteRunStore.js";
 
 // ---------------------------------------------------------------------------
 // Type-narrowing helper
@@ -106,7 +108,9 @@ async function main(): Promise<void> {
 
   // Persistent run store — saves every task to ~/.orca/runs.db
   // Override the path with ORCA_DB_PATH if needed.
-  const store = createSqliteRunStore();
+  const dbPath = process.env["ORCA_DB_PATH"]?.trim() ??
+    path.join(os.homedir(), ".orca", "runs.db");
+  const store = new SqliteStore(dbPath);
 
   const runtime = createOrcaRuntime({
     maestro,

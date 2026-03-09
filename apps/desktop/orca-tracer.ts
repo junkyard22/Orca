@@ -17,6 +17,7 @@ import {
   createOrcaRuntime,
   createDirectLLMService,
   createDebugPappyPort,
+  SqliteStore,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -513,10 +514,11 @@ Rules:
             const { text } = await llmForRole.complete(conversation, { maxTokens: 4096 });
             lastText = text;
             
-            // Extract Thought/Observation/Next blocks
-            const thoughtMatch = text.match(/Thought:\s*([^\n]*)/i);
-            const observationMatch = text.match(/Observation:\s*([^\n]*)/i);
-            const nextMatch = text.match(/Next:\s*([^\n]*)/i);
+            // Extract Thought/Observation/Next blocks with proper multiline matching
+            // Using [\s\S]*? with s flag (dotAll) to match across newlines
+            const thoughtMatch = text.match(/Thought:\s*([\s\S]*?)(?:\n|$)/i);
+            const observationMatch = text.match(/Observation:\s*([\s\S]*?)(?:\n|$)/i);
+            const nextMatch = text.match(/Next:\s*([\s\S]*?)(?:\n|$)/i);
             
             if (thoughtMatch || observationMatch || nextMatch) {
               const thought = thoughtMatch ? thoughtMatch[1].trim() : "";
@@ -537,6 +539,10 @@ Rules:
               if (thought) trace("Maestro", C.dim, `    Thought: ${thought}`);
               if (observation) trace("Maestro", C.dim, `    Observation: ${observation}`);
               if (next) trace("Maestro", C.dim, `    Next: ${next}`);
+            } else {
+              // Defensive logging: log when thought extraction fails
+              trace("Maestro", C.yellow, `  [Thought] No Thought block found in iteration ${iterationCount} — model may have skipped format`);
+              trace("Maestro", C.dim, `    Raw output[0..200]: "${text.slice(0, 200).replace(/\n/g, "\\n")}..."`);
             }
             
             const calls = parseToolCalls(text);
@@ -806,7 +812,13 @@ async function main() {
       return `Workspace root: ${workspaceRoot}\n\n${toolRegistry.formatForPrompt()}`;
     },
   };
-  const runtime: OrcaRuntime = createOrcaRuntime({ maestro, llm, pappy, maxRepairPasses: 1, tools: toolService });
+  
+  // Create SQLite store for persistence (fallback path for CLI)
+  const store = new SqliteStore(
+    path.join(process.env["HOME"] || process.env["USERPROFILE"] || "", ".orca", "runs.db")
+  );
+  
+  const runtime: OrcaRuntime = createOrcaRuntime({ maestro, llm, pappy, maxRepairPasses: 1, tools: toolService, store });
 
   // Subscribe to all non-stream events
   const events: OrcaEvent[] = [];
@@ -866,6 +878,11 @@ async function main() {
         const ev = e as OrcaEvent & { role: string; stoppedBecause: string; iterations: number };
         trace("Agent", C.green, `${ev.role} done  stopped=${ev.stoppedBecause}  iterations=${ev.iterations}`);
       }
+
+      if (e.type === "task:done") {
+        const ev = e as OrcaEvent & { taskId: string; status: "SUCCESS" | "FAIL" };
+        trace("Persist", C.blue, `run saved → ${ev.taskId}  verdict=${ev.status}`);
+      }
     })
   );
 
@@ -886,7 +903,19 @@ async function main() {
     console.log(`\n${reply.text}\n`);
     console.log(`${"─".repeat(72)}\n`);
 
+    // Print run history
+    console.log(`\n${"─".repeat(72)}`);
+    console.log(`${C.cyan}─── Run History ────────────────────────────────${C.reset}`);
+    const recentRuns = store.getRecentRuns(5);
+    for (const run of recentRuns) {
+      const status = run.status === "SUCCESS" ? `${C.green}PASS${C.reset}` : `${C.red}FAIL${C.reset}`;
+      const intent = run.intent.length > 40 ? run.intent.slice(0, 40) + "..." : run.intent;
+      console.log(`  ${run.runId}  ${status}  "${intent}"`);
+    }
+    console.log(`${"─".repeat(72)}\n`);
+
     unsubs.forEach(u => u());
+    store.close();
     process.exit(0);
   }
 

@@ -41,3 +41,6 @@ export type {
 export type { WorkspaceContext } from "./workspaceContext.js";
 export type { RunStore, PersistedRun } from "./persistence/types.js";
 
+// SQLite persistence implementation
+export { SqliteStore } from "./persistence/sqliteStore.js";
+
