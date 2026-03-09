@@ -5,19 +5,53 @@ export type { Issue };
 // Concept map for semantic verification (replaces exact keyword matching)
 // ---------------------------------------------------------------------------
 
+// Generic action verbs that are too common to be domain-specific
+// These should NOT be used as domain cluster triggers
+const GENERIC_ACTION_VERBS = new Set([
+  'create', 'creates', 'created', 'creating',
+  'write', 'writes', 'writing', 'wrote', 'written',
+  'read', 'reads', 'reading', 'loaded',
+  'build', 'builds', 'built', 'building',
+  'make', 'makes', 'making',
+  'run', 'runs', 'running', 'execute', 'executes', 'executing',
+  'add', 'adds', 'added', 'adding',
+  'update', 'updates', 'updated', 'updating',
+  'delete', 'deletes', 'deleted', 'deleting',
+  'do', 'does', 'did', 'doing', 'done',
+  'get', 'gets', 'getting', 'got',
+  'use', 'uses', 'used', 'using',
+  'set', 'sets', 'setting',
+  'change', 'changes', 'changed', 'changing',
+  'remove', 'removes', 'removed', 'removing',
+  'generate', 'generates', 'generated', 'generating',
+  'implement', 'implements', 'implemented', 'implementing',
+]);
+
+// Generic nouns that are too common to be domain-specific
+const GENERIC_NOUNS = new Set([
+  'file', 'files',
+  'name', 'names',
+  'version', 'versions',
+  'description', 'descriptions',
+  'field', 'fields',
+  'data', 'item', 'items',
+  'thing', 'things',
+  'task', 'tasks',
+  'work', 'works',
+]);
+
 const CONCEPT_SYNONYMS: Record<string, string[]> = {
-  'read':        ['read', 'reads', 'reading', 'loaded', 'retrieved', 'fetched', 'contains', 'found', 'shows', 'displays'],
-  'write':       ['write', 'writes', 'writing', 'wrote', 'created', 'saved', 'written', 'output'],
-  'explain':     ['explain', 'explains', 'explanation', 'describes', 'description', 'summarizes', 'summary', 'overview', 'analysis'],
-  'purpose':     ['purpose', 'does', 'function', 'role', 'intent', 'goal', 'designed', 'meant', 'used for'],
-  'functionality':['functionality', 'function', 'works', 'behavior', 'what it does', 'how it', 'operates', 'performs'],
-  'code':        ['code', 'function', 'script', 'file', 'implementation', 'method', 'class', 'module'],
-  'test':        ['test', 'tests', 'testing', 'spec', 'assertion', 'verify', 'check', 'validate'],
-  'expect':      ['expect', 'expects', 'expected', 'should', 'assert', 'assertion', 'verify'],
-  'create':      ['create', 'creates', 'created', 'build', 'builds', 'built', 'make', 'makes', 'generate', 'generates'],
-  'run':         ['run', 'runs', 'execute', 'executes', 'launch', 'start', 'invoke'],
-  'fix':         ['fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved', 'correct', 'patch', 'repair'],
-  'analyze':     ['analyze', 'analyzes', 'analysis', 'examine', 'review', 'inspect', 'assess'],
+  // Domain-specific concepts only - no generic action verbs
+  'form':        ['form', 'forms', 'input', 'inputs', 'submit', 'button', 'field', 'fields', 'validation', 'validat'],
+  'api':         ['api', 'apis', 'endpoint', 'endpoints', 'http', 'rest', 'graphql', 'webhook', 'webhooks'],
+  'database':    ['database', 'databases', 'db', 'schema', 'schemas', 'table', 'tables', 'query', 'queries', 'sql'],
+  'test':        ['test', 'tests', 'testing', 'spec', 'specs', 'assertion', 'verify', 'check', 'validate', 'jest', 'vitest', 'mocha'],
+  'component':   ['component', 'components', 'react', 'vue', 'angular', 'element', 'elements', 'render', 'renders', 'props', 'state'],
+  'auth':        ['auth', 'authentication', 'authorization', 'login', 'logout', 'signin', 'signup', 'password', 'token', 'jwt', 'oauth'],
+  'function':    ['function', 'functions', 'method', 'methods', 'class', 'classes', 'module', 'modules', 'hook', 'hooks', 'functionality', 'functional'],
+  'error':       ['error', 'errors', 'throw', 'throws', 'catch', 'catches', 'try', 'except', 'fail', 'fails', 'exception', 'exceptions'],
+  'explain':     ['explain', 'explains', 'explanation', 'describes', 'description', 'summarizes', 'summary', 'overview', 'analysis', 'purpose', 'purposes', 'what', 'does', 'how', 'works', 'contains', 'contain', 'returns', 'return', 'structure', 'structures', 'key points', 'key', 'points', 'example', 'examples', 'basic', 'simple'],
+  'analyze':     ['analyze', 'analyzes', 'analysis', 'examine', 'examines', 'review', 'reviews', 'inspect', 'inspects', 'assess', 'assesses'],
 };
 
 const STOP_WORDS = new Set([
@@ -204,7 +238,31 @@ function isConceptCovered(
 }
 
 /**
- * Extract domain concepts from task text using the concept map
+ * Check if a term is a generic action verb that should not trigger domain matching
+ */
+function isGenericActionVerb(term: string): boolean {
+  const lower = term.toLowerCase();
+  return GENERIC_ACTION_VERBS.has(lower) || GENERIC_ACTION_VERBS.has(stemWord(lower));
+}
+
+/**
+ * Check if a term is a generic noun that should not trigger domain matching
+ */
+function isGenericNoun(term: string): boolean {
+  const lower = term.toLowerCase();
+  return GENERIC_NOUNS.has(lower);
+}
+
+/**
+ * Extract domain concepts from task text using the concept map.
+ *
+ * This function filters out generic action verbs (create, write, read, etc.) and
+ * generic nouns (file, name, version, etc.) that are too common to be domain-specific.
+ * Domain cluster matching only triggers on domain-specific nouns like:
+ * - form, api, database, test, component, endpoint, schema, auth, etc.
+ *
+ * Returns an empty array if the task only contains generic terms, which signals
+ * that the domain term check should be skipped entirely.
  */
 function extractDomainConcepts(task: string): string[] {
   const concepts: string[] = [];
@@ -212,6 +270,9 @@ function extractDomainConcepts(task: string): string[] {
   
   // Check for each concept in the concept map
   for (const concept of Object.keys(CONCEPT_SYNONYMS)) {
+    // Skip if this concept would be triggered only by a generic action verb
+    if (isGenericActionVerb(concept)) continue;
+    
     if (lowerTask.includes(concept) || lowerTask.includes(stemWord(concept))) {
       concepts.push(concept);
     }
@@ -220,8 +281,15 @@ function extractDomainConcepts(task: string): string[] {
   // Also extract from meaningful terms
   const meaningfulTerms = extractMeaningfulTerms(task);
   for (const term of meaningfulTerms) {
+    // Skip generic action verbs and nouns - they don't indicate domain specificity
+    if (isGenericActionVerb(term)) continue;
+    if (isGenericNoun(term)) continue;
+    
     // Check if this term maps to a known concept
     for (const concept of Object.keys(CONCEPT_SYNONYMS)) {
+      // Skip generic concepts
+      if (isGenericActionVerb(concept)) continue;
+      
       const conceptStem = stemWord(concept);
       if (term === concept || term === conceptStem || term.includes(concept) || concept.includes(term)) {
         if (!concepts.includes(concept)) {
@@ -234,6 +302,70 @@ function extractDomainConcepts(task: string): string[] {
   return concepts;
 }
 
+/**
+ * Check if a task is too generic to warrant domain term checking.
+ *
+ * Tasks that only contain generic action verbs and common nouns should skip
+ * the domain term check to avoid spurious missing-term warnings.
+ *
+ * Examples of generic tasks:
+ * - "create a file called config.json with a name and version"
+ * - "write a function to sort an array"
+ * - "make a script that prints hello"
+ *
+ * Examples of NON-generic tasks (have domain-specific nouns):
+ * - "create a login form with validation" (form, login, validation are domain-specific)
+ * - "build a REST API endpoint" (api, endpoint, rest are domain-specific)
+ * - "read the file and explain" (explain is a domain concept for explanation tasks)
+ */
+function isGenericTask(task: string): boolean {
+  const lowerTask = task.toLowerCase();
+  const terms = extractMeaningfulTerms(task);
+  
+  // Filter out generic action verbs and nouns
+  const domainSpecificTerms = terms.filter(term =>
+    !isGenericActionVerb(term) && !isGenericNoun(term) && !STOP_WORDS.has(term)
+  );
+  
+  // Check if the task contains any domain-specific concepts from our concept map
+  const domainConcepts = extractDomainConcepts(task);
+  
+  // Tasks with domain concepts from our map are NOT generic
+  // This includes: form, api, database, test, component, auth, function, error, explain, analyze
+  if (domainConcepts.length > 0) {
+    return false;
+  }
+  
+  // Check for specific domain keywords that indicate a real domain task
+  // These are terms that indicate a specific domain context beyond generic programming
+  const domainKeywords = [
+    'form', 'api', 'endpoint', 'database', 'schema', 'table',
+    'test', 'spec', 'component', 'render', 'auth', 'login', 'token',
+    'error', 'exception',
+    'http', 'rest', 'graphql', 'query', 'mutation',
+    'validation', 'validate', 'submit', 'button',
+    'jest', 'vitest', 'mocha', 'assertion',
+    'react', 'vue', 'angular', 'element', 'props',
+    'password', 'jwt', 'oauth', 'authentication', 'authorization'
+  ];
+  
+  for (const keyword of domainKeywords) {
+    if (lowerTask.includes(keyword)) {
+      return false;
+    }
+  }
+  
+  // Special case: tasks about reading/analyzing/explaining a specific file are NOT generic
+  // even if they use generic verbs, because they have a specific target
+  if (/\b(read|analyze|examine|review|explain|summarize)\b.*\b\w+\.\w+\b/i.test(lowerTask)) {
+    return false;
+  }
+  
+  // If we only have generic terms (like "file", "name", "version", "description", "array", "script"),
+  // it's a generic task that should skip domain term checking
+  return domainSpecificTerms.length <= 2;
+}
+
 // ---------------------------------------------------------------------------
 // Original domain keyword extraction (kept for backward compatibility)
 // ---------------------------------------------------------------------------
@@ -241,16 +373,36 @@ function extractDomainConcepts(task: string): string[] {
 /**
  * Extract domain keywords from the task text for semantic completeness checks.
  * Returns a map of keyword → whether it was found in output.
+ *
+ * This function skips generic tasks that only contain action verbs and common nouns.
+ * Domain keywords are only extracted for tasks with domain-specific nouns.
  */
 function extractDomainKeywords(task: string): Array<{ keyword: string; category: string }> {
   const keywords: Array<{ keyword: string; category: string }> = [];
   const lower = task.toLowerCase();
 
-  // Code/implementation patterns
+  // Skip keyword extraction for generic tasks
+  if (isGenericTask(task)) {
+    return keywords;
+  }
+
+  // Code/implementation patterns — require domain-specific context
+  // "login", "form", "input", "submit", "validation" are UI-specific terms
+  // Only trigger form keywords if there's actual form-related context (not just "login" for API auth)
   if (/\b(login|form|input|submit|validat|button|field)\b/.test(lower)) {
-    keywords.push({ keyword: "form", category: "UI component" });
-    keywords.push({ keyword: "submit", category: "action" });
-    keywords.push({ keyword: "validat", category: "validation" });
+    // Only flag if this looks like a UI form task, not just API authentication
+    // Form context: mentions form, input, button, field, submit together with login
+    // API auth context: mentions login with api, endpoint, auth, token, route
+    const hasFormContext = /\b(form|input|button|field|submit)\b/.test(lower);
+    const hasApiContext = /\b(api|endpoint|auth|token|route|http|request|response)\b/i.test(lower);
+    
+    if (/\b(login|form|submit|validat)\b/.test(lower) && !hasApiContext) {
+      keywords.push({ keyword: "form", category: "UI component" });
+      if (hasFormContext) {
+        keywords.push({ keyword: "submit", category: "action" });
+        keywords.push({ keyword: "validat", category: "validation" });
+      }
+    }
   }
 
   // API/HTTP patterns — avoid common English words like "get", "post", "put", "delete"
@@ -271,17 +423,38 @@ function extractDomainKeywords(task: string): Array<{ keyword: string; category:
     keywords.push({ keyword: "expect", category: "assertion" });
   }
 
-  // File/system patterns — require filesystem context to avoid flagging
-  // "write a function" or "read the docs" as I/O requirements.
-  if (
-    /\bfile\b/.test(lower) ||
-    /\b(save|load|store|persist)\b/.test(lower) ||
-    /\b(read|write)\b.{0,30}\b(file|disk|path|config|json|yaml|csv)\b/.test(lower) ||
-    /\b(file|config|json|yaml|csv).{0,30}\b(read|write|load|save)\b/.test(lower)
+  // File/system patterns — require filesystem I/O context, not just "file" as a noun
+  // "write a function" or "read the docs" should NOT be flagged as I/O requirements
+  // "create a file called X with fields" should NOT be flagged - it's a generic config task
+  // "read the file X and tell me what it does" should flag file analysis keywords
+  // Only flag when there's explicit file I/O operations mentioned (save, load, store, persist)
+  // or when read/write is used in a file manipulation context (not just reading for analysis)
+  if (/\b(save|load|store|persist)\b/.test(lower)) {
+    // Explicit file I/O operations - always flag
+    if (!isGenericTask(task)) {
+      keywords.push({ keyword: "file", category: "persistence" });
+      keywords.push({ keyword: "read", category: "I/O" });
+      keywords.push({ keyword: "write", category: "I/O" });
+    }
+  } else if (
+    /\b(read|write)\b.{0,30}\b(file|disk|path|config|json|yaml|csv|txt|xml)\b/.test(lower) ||
+    /\b(file|config|json|yaml|csv|txt|xml).{0,30}\b(read|write|load|save|store|persist)\b/.test(lower)
   ) {
-    keywords.push({ keyword: "file", category: "persistence" });
-    keywords.push({ keyword: "read", category: "I/O" });
-    keywords.push({ keyword: "write", category: "I/O" });
+    // Read/write file patterns - check if it's about file manipulation or analysis
+    const isAnalysisTask = /\b(read|analyze|examine|review)\b.*\b(tell|explain|describe|show|what|how|purpose|contents?)\b/i.test(lower);
+    
+    if (isAnalysisTask) {
+      // For analysis tasks, use explain/analyze keywords instead of I/O keywords
+      // This ensures the output is checked for explanation content
+      if (!isGenericTask(task)) {
+        keywords.push({ keyword: "explain", category: "analysis" });
+        keywords.push({ keyword: "summary", category: "analysis" });
+      }
+    } else if (!isGenericTask(task)) {
+      keywords.push({ keyword: "file", category: "persistence" });
+      keywords.push({ keyword: "read", category: "I/O" });
+      keywords.push({ keyword: "write", category: "I/O" });
+    }
   }
 
   // Error handling patterns
@@ -303,12 +476,35 @@ function extractDomainKeywords(task: string): Array<{ keyword: string; category:
  * Check if the output text OR any diff in filesChanged contains evidence of addressing a keyword.
  * Scanning diffs ensures we don't false-positive on agents that write all code to files and
  * produce minimal prose (e.g. "Done, changes applied.").
+ *
+ * If the keyword is in CONCEPT_SYNONYMS, also check for any of its synonyms.
  */
 function hasKeywordEvidence(
   outputText: string,
   keyword: string,
   filesChanged?: PappyInput["filesChanged"],
 ): boolean {
+  // Build search text from output and diff content
+  let searchText = outputText;
+  if (filesChanged && filesChanged.length > 0) {
+    const diffContent = filesChanged.map((f) => f.diff ?? "").join("\n");
+    searchText += " " + diffContent;
+  }
+  
+  const lowerSearchText = searchText.toLowerCase();
+
+  // If keyword is in CONCEPT_SYNONYMS, check for any of its synonyms
+  if (CONCEPT_SYNONYMS[keyword.toLowerCase()]) {
+    const synonyms = CONCEPT_SYNONYMS[keyword.toLowerCase()];
+    for (const synonym of synonyms) {
+      if (wordOrStemMatches(lowerSearchText, synonym)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  
+  // Otherwise, check for exact keyword match
   const patterns = [
     new RegExp(`\\b${keyword}\\w*\\b`, "i"),
     new RegExp(`\\w*${keyword}\\b`, "i"),
@@ -428,10 +624,16 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
 
   // ── 4.1 Task-aware semantic completeness checks ──────────────────────────
   // Compare what was asked against what was delivered using domain concepts.
+  // Skip this check for generic tasks that only contain action verbs and common nouns.
   const domainConcepts = extractDomainConcepts(input.task);
   const keywords = extractDomainKeywords(input.task);
 
-  if ((domainConcepts.length > 0 || keywords.length > 0) && (hasOutput || hasFiles)) {
+  // Skip domain term checking for generic tasks to avoid spurious warnings
+  // e.g., "create a file called config.json with a name and version" should not
+  // trigger missing domain terms just because it doesn't mention form/submit/validate
+  const shouldSkipDomainCheck = isGenericTask(input.task);
+
+  if (!shouldSkipDomainCheck && (domainConcepts.length > 0 || keywords.length > 0) && (hasOutput || hasFiles)) {
     // Check domain concepts using semantic verification
     const missingConcepts = domainConcepts.filter(
       (c) => !isConceptCovered(outputText, c, input.filesChanged),
@@ -538,11 +740,30 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
       const uncoveredConcepts: string[] = [];
 
       for (const term of goalTerms) {
-        // Check if term is in concept map
+        // Check if term is in concept map (either as a key or as a synonym value)
         let covered = false;
+        
+        // First, check if the term itself is a concept key
         for (const [concept, synonyms] of Object.entries(CONCEPT_SYNONYMS)) {
           if (term === concept || term === stemWord(concept)) {
             // Check if any synonym covers this concept
+            for (const synonym of synonyms) {
+              if (wordOrStemMatches(searchText, synonym)) {
+                covered = true;
+                break;
+              }
+            }
+            if (covered) break;
+          }
+          
+          // Also check if the term is a synonym value in this concept's list
+          // If so, check if any other synonym (or the concept key) is in the output
+          if (synonyms.includes(term) || synonyms.some(s => s === stemWord(term))) {
+            // Check if the concept key or any other synonym is in the output
+            if (wordOrStemMatches(searchText, concept)) {
+              covered = true;
+              break;
+            }
             for (const synonym of synonyms) {
               if (wordOrStemMatches(searchText, synonym)) {
                 covered = true;

@@ -640,9 +640,17 @@ function createTracingMaestro(
             if (calls.length === 0) {
               const cleanedOutput = stripToolCalls(text);
               const finalAnswer = extractFinalAnswer(cleanedOutput);
-              currentOutputText = finalAnswer || stripThoughtBlocks(cleanedOutput);
-              stoppedBecause = 'done';
-              break;
+              if (finalAnswer) {
+                currentOutputText = finalAnswer;
+                stoppedBecause = 'done';
+                break;
+              }
+              // No FINAL ANSWER and no tool calls — model output is malformed.
+              // Do not exit — continue to next iteration to allow model to retry
+              // with proper formatting. Only exit on FINAL ANSWER or max_iterations.
+              currentOutputText = stripThoughtBlocks(cleanedOutput);
+              conversation += `\n\nUser: Your response was not properly formatted. Please use the FINAL ANSWER: marker for your final response, or use tool calls to complete the task.`;
+              continue;
             }
             
             trace("Maestro", C.yellow, `  [agentLoop] iteration ${i + 1}: ${calls.length} tool call(s)`);

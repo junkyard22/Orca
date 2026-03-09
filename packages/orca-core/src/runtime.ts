@@ -165,6 +165,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         } else if (!qcResult.repairTask) {
           result = { status: "FAIL", userFacingText: maestroResult.outputText, summary: qcResult.internalSummary };
         } else {
+          const originalRole = maestroResult.metadata?.role;
           result = await handleRepairLoop(
             taskSpec,
             qcResult,
@@ -174,6 +175,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             emitter,
             maxRepairPasses,
             maestroResult.outputText,
+            originalRole,
           );
           if (result.artifacts) {
             persistedMaestroResult = normalizeMaestroResult(result.artifacts as OrcaMaestroResult);

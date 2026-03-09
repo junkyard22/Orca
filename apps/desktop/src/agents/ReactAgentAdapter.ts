@@ -241,8 +241,9 @@ export class ReactAgentAdapter implements AgentAdapter {
           }
 
           currentOutputText = stripThoughtBlocks(cleanedOutput);
-          stoppedBecause = 'done';
-          break;
+          // Do not exit — continue to next iteration to allow model to retry
+          // with proper formatting. Only exit on FINAL ANSWER or max_iterations.
+          messages.push({ role: "user", content: "Your response was not properly formatted. Please use the FINAL ANSWER: marker for your final response, or use tool calls to complete the task." });
         }
         
         // Execute tool calls

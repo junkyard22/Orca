@@ -416,3 +416,123 @@ describe("runCompletenessChecks — semantic completeness case studies", () => {
     expect(goalCoverageIssue!.severity).toBe("MEDIUM");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Generic task handling — no false positives for action verbs
+// ---------------------------------------------------------------------------
+
+describe("runCompletenessChecks — generic task handling (no false positives)", () => {
+  it("does NOT flag COMPLETENESS_MISSING_DOMAIN_TERMS for 'create a file called config.json with a name and version'", () => {
+    const issues = runCompletenessChecks({
+      task: "create a file called config.json with a name, version, and description field",
+      outputText: "Created config.json with the required fields.",
+      filesChanged: [
+        {
+          path: "config.json",
+          changeType: "A",
+          diff: '{"name": "test", "version": "1.0.0", "description": "A test config"}',
+        },
+      ],
+    });
+
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    // Should NOT flag because "create", "file", "name", "version", "description" are generic
+    expect(domainTermsIssue).toBeUndefined();
+  });
+
+  it("does NOT flag COMPLETENESS_MISSING_DOMAIN_TERMS for 'write a function to sort an array'", () => {
+    const issues = runCompletenessChecks({
+      task: "write a function to sort an array",
+      outputText: "Here's a function that sorts an array:",
+      filesChanged: [
+        {
+          path: "sort.ts",
+          changeType: "A",
+          diff: "export function sortArray(arr: number[]) { return arr.sort((a, b) => a - b); }",
+        },
+      ],
+    });
+
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    // Should NOT flag because "write", "function", "array" are generic
+    expect(domainTermsIssue).toBeUndefined();
+  });
+
+  it("correctly extracts domain terms for 'build a REST API endpoint for user login'", () => {
+    const issues = runCompletenessChecks({
+      task: "build a REST API endpoint for user login",
+      outputText: "Created an API endpoint for authentication.",
+      filesChanged: [
+        {
+          path: "api/auth.ts",
+          changeType: "A",
+          diff: "export async function login(req, res) { /* auth logic */ }",
+        },
+      ],
+    });
+
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    // Should NOT flag because output mentions "API" and "authentication" (auth domain)
+    expect(domainTermsIssue).toBeUndefined();
+  });
+
+  it("correctly extracts domain terms for 'create a database schema for users'", () => {
+    const issues = runCompletenessChecks({
+      task: "create a database schema for users",
+      outputText: "Created a database schema with a users table.",
+      filesChanged: [
+        {
+          path: "schema.sql",
+          changeType: "A",
+          diff: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));",
+        },
+      ],
+    });
+
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    // Should NOT flag because output mentions "database" and "schema" and "table"
+    expect(domainTermsIssue).toBeUndefined();
+  });
+
+  it("skips domain term matching entirely for generic tasks with no domain nouns", () => {
+    const issues = runCompletenessChecks({
+      task: "make a script that prints hello",
+      outputText: "Created a script that prints hello.",
+      filesChanged: [
+        {
+          path: "hello.py",
+          changeType: "A",
+          diff: "print('hello')",
+        },
+      ],
+    });
+
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    // Should NOT flag because this is a generic task with no domain-specific nouns
+    expect(domainTermsIssue).toBeUndefined();
+  });
+
+  it("still flags domain terms for tasks with genuine domain-specific nouns", () => {
+    const issues = runCompletenessChecks({
+      task: "create a login form with email validation",
+      outputText: "The sky is blue.",
+    });
+
+    const domainTermsIssue = issues.find(
+      (i) => i.code === "COMPLETENESS_MISSING_DOMAIN_TERMS",
+    );
+    // SHOULD flag because "form", "login", "validation" are domain-specific nouns
+    expect(domainTermsIssue).toBeDefined();
+    expect(domainTermsIssue!.severity).toBe("MEDIUM");
+  });
+});

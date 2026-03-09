@@ -31,6 +31,7 @@ export async function handleRepairLoop(
   emitter: OrcaEmitter,
   maxPasses: number,
   initialOutputText?: string,
+  originalRole?: string,
 ): Promise<OrcaExecutionResult> {
   let currentQC = initialQCResult;
   // Seed with the initial output so we always have something to show
@@ -42,8 +43,12 @@ export async function handleRepairLoop(
     // Build a first-class repair task so Maestro understands it as work,
     // not a raw blob of text.  Context carries everything Maestro needs to
     // know: what the original intent was, and exactly which issues to fix.
+    
+    // Preserve the original role in the repair task message so Brain routes
+    // it back to the same role (e.g., reviewer) instead of a different one.
+    const roleHint = originalRole ? `\n\nOriginal role: ${originalRole}\nRe-run using the ${originalRole} role.` : '';
     const repairSpec: OrcaTaskSpec = {
-      originalUserMessage: currentQC.repairTask!,
+      originalUserMessage: `${currentQC.repairTask!}${roleHint}`,
       intent: "repair",
       goals: [
         ...originalTask.goals,
@@ -59,6 +64,7 @@ export async function handleRepairLoop(
             intent: originalTask.intent,
             goals: originalTask.goals,
             message: originalTask.originalUserMessage,
+            role: originalRole,
           },
           issues: currentQC.issues.map((i) => ({
             severity:    i.severity,
