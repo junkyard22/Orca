@@ -19,6 +19,8 @@ import type {
   OrcaLLMService,
   WorkspaceContext,
 } from "@clawde/orca-core";
+import { Dewey } from "@clawde/dewey-core";
+import type { BrainPlan } from "@clawde/dewey-core";
 import type { ExtendedOrcaToolService } from "./toolService.js";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +48,12 @@ const ALL_OPTIONAL_ROLES = new Set<OptionalRoleName>([
 
 export function createMaestroAdapter(): MaestroPort {
   const maestro = createMaestroCore();
+  const dewey = new Dewey();
+
+  // Start the Dewey session asynchronously — non-blocking at startup.
+  dewey.startSession().catch((err: unknown) => {
+    console.warn("[Dewey] Failed to start session:", err);
+  });
 
   return {
     async run(task: OrcaTaskSpec, ctx: OrcaRunCtx): Promise<OrcaMaestroResult> {
@@ -66,7 +74,10 @@ export function createMaestroAdapter(): MaestroPort {
         console.warn(`[MaestroAdapter] Role warning: ${warning}`);
       }
 
-      // 4. Subagent decomposition — only at top level, only for multiStep tasks.
+      // 4. Dewey pre-flight — brief the table before Brain routes.
+      const brief = await dewey.brief(task.originalUserMessage);
+
+      // 5. Subagent decomposition — only at top level, only for multiStep tasks.
       //    planner_deep breaks the task into independent parallel subtasks.
       //    subagentDepth guard prevents recursive subagent spawning.
       const depth = ctx.subagentDepth ?? 0;
@@ -77,8 +88,67 @@ export function createMaestroAdapter(): MaestroPort {
         }
       }
 
-      // 5. Single-agent path.
-      return runSingleAgent(task, role, isFallback, orch, ctx);
+      // 6. Build candidate plan for Dewey review then run single-agent path.
+      //    Dewey review loop: up to 3 attempts to get plan approved.
+      const candidatePlan: BrainPlan = {
+        steps: task.goals,
+        toolsRequired: ctx.tools ? ["tools_available"] : [],
+        role,
+      };
+
+      let approvedPlan = candidatePlan;
+      let approved = false;
+      let attempts = 0;
+      let lastConcerns: string[] = [];
+      let lastSuggestions: string[] = [];
+
+      while (!approved && attempts < 3) {
+        const deweyReview = await dewey.reviewPlan(approvedPlan, task.originalUserMessage);
+
+        if (deweyReview.approved) {
+          approved = true;
+        } else {
+          lastConcerns = deweyReview.concerns;
+          lastSuggestions = deweyReview.suggestions;
+          console.log("[Dewey] Pre-flight concerns:", deweyReview.concerns);
+
+          // Revise: inject concerns into goals for the next attempt.
+          approvedPlan = {
+            ...approvedPlan,
+            steps: [
+              ...approvedPlan.steps,
+              ...deweyReview.suggestions,
+            ],
+          };
+          attempts++;
+        }
+      }
+
+      if (!approved) {
+        return {
+          outputText: `I want to make sure I do this right for you. ${lastConcerns.join(" ")}`,
+          toolEvents: [],
+          filesChanged: [],
+          summary: `dewey_blocked concerns=${lastConcerns.length} suggestions=${lastSuggestions.length}`,
+        };
+      }
+
+      // 7. Single-agent path.
+      const result = await runSingleAgent(task, role, isFallback, orch, ctx);
+
+      // 8. Dewey post-flight observation.
+      dewey.observe({
+        taskType: String(orch.classification.type ?? "general"),
+        taskSummary: task.originalUserMessage.slice(0, 120),
+        timestamp: new Date().toISOString(),
+        verdict: result.toolEvents?.some((e) => !e.ok) ? "WARN" : "PASS",
+        preferencesApplied: brief.relevantPreferences,
+        newSignals: [],
+      }).catch((err: unknown) => {
+        console.warn("[Dewey] Failed to record observation:", err);
+      });
+
+      return result;
     },
   };
 }

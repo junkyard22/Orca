@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/miranda-core" },
+    { "path": "packages/dewey-core" },
     { "path": "packages/maestro-core" },
     { "path": "packages/workbench-core" },
     { "path": "packages/pappy-core" },
