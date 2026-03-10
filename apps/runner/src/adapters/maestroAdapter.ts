@@ -12,6 +12,7 @@ import type {
 import type {
   MaestroPort,
   OrcaMaestroResult,
+  OrcaFileChange,
   OrcaRunCtx,
   OrcaTaskSpec,
   OrcaToolService,
@@ -237,11 +238,13 @@ async function runSingleAgent(
 
   let outputText: string;
   let toolEvents: OrcaMaestroResult["toolEvents"] = [];
+  let filesChanged: OrcaFileChange[] = [];
 
   if (ctx.tools) {
     const result = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, ctx);
     outputText = result.text;
     toolEvents = result.toolEvents;
+    filesChanged = result.filesChanged;
   } else {
     const { text } = await ctx.llm.complete(
       `${systemPrompt}\n\n---\n\n${taskPrompt}`,
@@ -253,6 +256,7 @@ async function runSingleAgent(
   return {
     outputText,
     toolEvents,
+    filesChanged,
     summary: [
       `run_id=${orch.run_id}`,
       `role=${effectiveRole}${isFallback ? "(fallback)" : ""}`,
@@ -566,9 +570,11 @@ async function runAgentLoop(
 ): Promise<{
   text: string;
   toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]>;
+  filesChanged: OrcaFileChange[];
 }> {
   const MAX_ITERATIONS = 10;
   const toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
+  const filesChanged: OrcaFileChange[] = [];
 
   // Full conversation grows with each turn so the model always has context.
   let conversation =
@@ -629,6 +635,15 @@ async function runAgentLoop(
         raw: call.input,
       });
 
+      // Capture written content so Pappy can verify the diff.
+      if (call.tool === "write_file" && result.ok) {
+        const filePath = typeof call.input["path"] === "string" ? call.input["path"] : "";
+        const content  = typeof call.input["content"] === "string" ? call.input["content"] : undefined;
+        if (filePath) {
+          filesChanged.push({ path: filePath, changeType: "A", diff: content });
+        }
+      }
+
       console.error(
         `[MaestroAdapter] tool:result ok=${result.ok}  chars=${result.output.length}`,
       );
@@ -643,5 +658,5 @@ async function runAgentLoop(
     .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
     .trim();
 
-  return { text: cleanText, toolEvents };
+  return { text: cleanText, toolEvents, filesChanged };
 }
