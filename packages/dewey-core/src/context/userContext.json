@@ -1,0 +1,31 @@
+{
+  "hot": {
+    "name": "User",
+    "timezone": "America/Chicago",
+    "currentSession": {
+      "startedAt": "",
+      "recentTasks": []
+    }
+  },
+  "warm": {
+    "preferences": {
+      "scheduling": [],
+      "communication": [],
+      "food": [],
+      "work": [],
+      "general": []
+    },
+    "patterns": {
+      "commonTaskTypes": [],
+      "peakHours": []
+    },
+    "household": {
+      "notes": []
+    },
+    "connectedApps": {
+      "gmail": false,
+      "outlook": false,
+      "calendar": false
+    }
+  }
+}
