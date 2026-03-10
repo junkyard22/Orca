@@ -26,8 +26,9 @@ import {
   createPappyPort,
   getWorkspaceContext,
   SqliteStore,
+  exportTrainingData,
 } from "@clawde/orca-core";
-import type { OrcaRuntime, OrcaEvent, OrcaEventType } from "@clawde/orca-core";
+import type { OrcaRuntime, OrcaEvent, OrcaEventType, ExportOptions } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
 import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 
@@ -227,6 +228,78 @@ async function readPrompt(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// export-training-data sub-command
+//
+// Usage:
+//   orca export-training-data \
+//     --verdict PASS \
+//     --max-repair-passes 0 \
+//     --output moonshiner/data/orca_coding_prompts.jsonl \
+//     --task-type coder_strong \
+//     --limit 500
+// ---------------------------------------------------------------------------
+
+async function runExportCommand(args: string[]): Promise<void> {
+  const opts: Partial<ExportOptions> = {};
+
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    const value = args[i + 1];
+
+    switch (flag) {
+      case '--verdict':
+        if (value === 'PASS' || value === 'WARN' || value === 'FAIL') {
+          opts.verdict = value;
+          i++;
+        } else {
+          console.error(`[export] --verdict must be PASS, WARN, or FAIL. Got: ${value}`);
+          process.exit(1);
+        }
+        break;
+      case '--max-repair-passes':
+        opts.maxRepairPasses = parseInt(value ?? '0', 10);
+        i++;
+        break;
+      case '--output':
+        opts.outputPath = value;
+        i++;
+        break;
+      case '--task-type':
+        opts.taskType = value;
+        i++;
+        break;
+      case '--min-iterations':
+        opts.minIterations = parseInt(value ?? '1', 10);
+        i++;
+        break;
+      case '--limit':
+        opts.limit = parseInt(value ?? '0', 10);
+        i++;
+        break;
+    }
+  }
+
+  if (!opts.outputPath) {
+    console.error(
+      'Usage: orca export-training-data --output <path> [--verdict PASS|WARN|FAIL]\n' +
+      '  [--max-repair-passes N] [--task-type ROLE] [--min-iterations N] [--limit N]',
+    );
+    process.exit(1);
+  }
+
+  const dbPath = process.env['ORCA_DB_PATH']?.trim() ??
+    path.join(os.homedir(), '.orca', 'runs.db');
+  const store = new SqliteStore(dbPath);
+
+  try {
+    const summary = await exportTrainingData(store, opts as ExportOptions);
+    console.log(`[export] done — exported=${summary.exported} skipped=${summary.skipped} output=${summary.outputPath}`);
+  } finally {
+    store.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
@@ -234,6 +307,13 @@ async function readPrompt(): Promise<string> {
 let _store: SqliteStore | null = null;
 
 async function run(): Promise<void> {
+  // Check for sub-commands before the normal prompt-based flow.
+  const subCommand = process.argv[2]?.trim();
+  if (subCommand === 'export-training-data') {
+    await runExportCommand(process.argv.slice(3));
+    return;
+  }
+
   try {
     await main();
   } finally {

@@ -212,6 +212,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           inputTokens: persistedMaestroResult?.metadata?.inputTokens,
           outputTokens: persistedMaestroResult?.metadata?.outputTokens,
           costUsd: persistedMaestroResult?.metadata?.costUsd,
+          repairPasses,
         } as RunRecord,
         (persistedMaestroResult?.metadata?.thoughts ?? []).map((thought) => ({
           runId: taskId,

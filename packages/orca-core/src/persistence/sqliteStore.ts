@@ -92,8 +92,8 @@ export class SqliteStore implements OrcaStore {
           `INSERT INTO runs (
             id, created_at, intent, role, status, stopped_because,
             iteration_count, output_text, summary, verdict, confidence,
-            issue_count, input_tokens, output_tokens, cost_usd
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            issue_count, input_tokens, output_tokens, cost_usd, repair_passes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             run.id,
             run.createdAt,
@@ -110,6 +110,7 @@ export class SqliteStore implements OrcaStore {
             run.inputTokens ?? null,
             run.outputTokens ?? null,
             run.costUsd ?? null,
+            run.repairPasses ?? null,
           ]
         );
 
@@ -176,10 +177,10 @@ export class SqliteStore implements OrcaStore {
     if (!this.db) return [];
 
     const stmt = this.db.prepare(
-      `SELECT 
+      `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd
+        issue_count, input_tokens, output_tokens, cost_usd, repair_passes
       FROM runs
       ORDER BY created_at DESC
       LIMIT ?`
@@ -202,6 +203,7 @@ export class SqliteStore implements OrcaStore {
       input_tokens: number | null;
       output_tokens: number | null;
       cost_usd: number | null;
+      repair_passes: number | null;
     }> = [];
 
     while (stmt.step()) {
@@ -226,6 +228,7 @@ export class SqliteStore implements OrcaStore {
       inputTokens: row.input_tokens ?? undefined,
       outputTokens: row.output_tokens ?? undefined,
       costUsd: row.cost_usd ?? undefined,
+      repairPasses: row.repair_passes ?? undefined,
     }));
   }
 
@@ -237,10 +240,10 @@ export class SqliteStore implements OrcaStore {
     if (!this.db) return null;
 
     const stmt = this.db.prepare(
-      `SELECT 
+      `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd
+        issue_count, input_tokens, output_tokens, cost_usd, repair_passes
       FROM runs
       WHERE id = ?`
     );
@@ -270,6 +273,7 @@ export class SqliteStore implements OrcaStore {
       inputTokens: row.input_tokens ?? undefined,
       outputTokens: row.output_tokens ?? undefined,
       costUsd: row.cost_usd ?? undefined,
+      repairPasses: row.repair_passes ?? undefined,
     };
   }
 
@@ -358,10 +362,10 @@ export class SqliteStore implements OrcaStore {
 
     const searchTerm = `%${query}%`;
     const stmt = this.db.prepare(
-      `SELECT 
+      `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd
+        issue_count, input_tokens, output_tokens, cost_usd, repair_passes
       FROM runs
       WHERE intent LIKE ? OR output_text LIKE ?
       ORDER BY created_at DESC
@@ -385,6 +389,7 @@ export class SqliteStore implements OrcaStore {
       input_tokens: number | null;
       output_tokens: number | null;
       cost_usd: number | null;
+      repair_passes: number | null;
     }> = [];
 
     while (stmt.step()) {
@@ -409,6 +414,7 @@ export class SqliteStore implements OrcaStore {
       inputTokens: row.input_tokens ?? undefined,
       outputTokens: row.output_tokens ?? undefined,
       costUsd: row.cost_usd ?? undefined,
+      repairPasses: row.repair_passes ?? undefined,
     }));
   }
 
