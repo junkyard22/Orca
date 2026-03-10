@@ -79,6 +79,7 @@ CRITICAL RULES:
 - Your Thought/Observation/Next blocks are INTERNAL REASONING ONLY
 - They must NEVER appear in your final answer to the user
 - Never call a tool without a preceding Thought block
+- If the task asks you to write, create, or modify a file, you MUST use the write_file tool — never output file content inline in FINAL ANSWER
 - When the task is complete, write your final answer using EXACTLY this format:
 
 FINAL ANSWER:
