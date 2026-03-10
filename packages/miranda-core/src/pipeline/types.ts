@@ -198,29 +198,27 @@ export interface MirandaConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Default Models
+// Default Models (matching VS Code Maestro settings)
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_MODELS: Record<StageKind, ModelSpec[]> = {
   plan: [
-    { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
-    { id: "qwen/qwen-2.5-72b-instruct", label: "Qwen 2.5 72B" },
-    { id: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
+    { id: "openai/gpt-4o-mini", label: "OpenAI: GPT-4o-mini (2024-07-18) $0.150/M" },
+    { id: "qwen/qwen3-coder-next", label: "Qwen: Qwen3 Coder Next $0.120/M" },
+    { id: "deepseek/deepseek-chat", label: "DeepSeek: DeepSeek V3 0324 $0.200/M" },
   ],
   answer: [
-    { id: "qwen/qwen-2.5-72b-instruct", label: "Qwen 2.5 72B" },
-    { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
-    { id: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
+    { id: "qwen/qwen3-coder-next", label: "Qwen: Qwen3 Coder Next $0.120/M" },
+    { id: "openai/gpt-4o-mini", label: "OpenAI: GPT-4o-mini (2024-07-18) $0.150/M" },
+    { id: "deepseek/deepseek-chat", label: "DeepSeek: DeepSeek V3 0324 $0.200/M" },
   ],
   critique: [
-    { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
-    { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
-    { id: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
+    { id: "deepseek/deepseek-chat", label: "DeepSeek: DeepSeek V3 0324 $0.200/M" },
+    { id: "openai/gpt-4o-mini", label: "OpenAI: GPT-4o-mini (2024-07-18) $0.150/M" },
   ],
   rewrite: [
-    { id: "qwen/qwen-2.5-72b-instruct", label: "Qwen 2.5 72B" },
-    { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
-    { id: "anthropic/claude-3.5-haiku", label: "Claude 3.5 Haiku" },
+    { id: "qwen/qwen2.5-7b-instruct", label: "Qwen: Qwen2.5 7B Instruct $0.040/M" },
+    { id: "openai/gpt-4o-mini", label: "OpenAI: GPT-4o-mini (2024-07-18) $0.150/M" },
   ],
 };
 

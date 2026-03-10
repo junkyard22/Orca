@@ -2,10 +2,11 @@
  * apps/runner — minimal Orca pod CLI runner.
  *
  * Wiring:
- *   OpenRouterAdapter → createMirandaLLMService → OrcaLLMService
+ *   OpenRouterAdapter → createDirectLLMService → OrcaLLMService
+ *   createMirandaGate()                          → MirandaGate (compliance only, no LLM calls)
  *   createPappyPort()                            → PappyPort
  *   createMaestroAdapter()                       → MaestroPort
- *   createOrcaRuntime({ maestro, pappy, llm })   → OrcaRuntime
+ *   createOrcaRuntime({ maestro, pappy, llm, gate }) → OrcaRuntime
  *   createBenson({ executeTask })                → Benson
  *
  * Usage:
@@ -19,10 +20,10 @@ import "dotenv/config";
 
 import * as os from "os";
 import * as path from "path";
-import { OpenRouterAdapter, OllamaAdapter, createDefaultConfig } from "@clawde/miranda-core";
+import { OpenRouterAdapter, OllamaAdapter, createMirandaGate } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
-  createMirandaLLMService,
+  createDirectLLMService,
   createPappyPort,
   getWorkspaceContext,
   SqliteStore,
@@ -92,10 +93,12 @@ async function main(): Promise<void> {
 
   // 3. Wire the pod ──────────────────────────────────────────────────────────
 
-  const llm = createMirandaLLMService(
-    adapter,
-    createDefaultConfig(),
-  );
+  // Miranda is the compliance gate — she never calls the LLM.
+  // Maestro handles all LLM calls directly using role prompts.
+  // Default model matches VS Code Maestro BRAIN role setting
+  const modelId = process.env["LLM_MODEL"]?.trim() ?? "openai/gpt-4o-mini";
+  const llm = createDirectLLMService(adapter, modelId);
+  const gate = createMirandaGate({ verbose: process.env["MIRANDA_VERBOSE"] === "1" });
 
   const pappy = createPappyPort();
   const maestro = createMaestroAdapter();
@@ -120,6 +123,7 @@ async function main(): Promise<void> {
     llm,
     tools,
     store,
+    gate,
     getWorkspaceContext: () => getWorkspaceContext(workspaceRoot),
   });
 

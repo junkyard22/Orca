@@ -8,6 +8,57 @@ import type { ExecutionResult, TaskSpec } from "./types.js";
 //   - followUpQuestion: surface it directly.
 // ---------------------------------------------------------------------------
 
+/**
+ * Strip internal pipeline markup and agent planning monologue from text
+ * before showing it to the user. The user should only see the deliverable —
+ * code, answer, or result — not the agent's thinking process.
+ *
+ * Stripping order:
+ *   1. <tool_call> and <thought> blocks (closed and unclosed)
+ *   2. "FINAL ANSWER:" prefix
+ *   3. Planning monologue — if a code block exists, drop everything before it;
+ *      otherwise strip lines that are pure agent preamble (###, Step N:, etc.)
+ *   4. Collapse excess blank lines
+ */
+function cleanOutput(text: string): string {
+  // 1. Strip markup blocks (closed first, then unclosed tail)
+  let out = text
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+    .replace(/<tool_call>[\s\S]*/g, "")
+    .replace(/<thought>[\s\S]*?<\/thought>/g, "")
+    .replace(/<thought>[\s\S]*/g, "")
+    .replace(/^FINAL ANSWER:\s*/im, "");
+
+  // 2. If there's a code block, keep only from the first opening fence to
+  //    the last closing fence — drop the planning prefix AND any trailing prose.
+  const codeBlockIdx = out.indexOf("```");
+  if (codeBlockIdx > 0) {
+    const afterFirst = out.slice(codeBlockIdx);
+    // Find the last closing fence and drop anything after it
+    const lastFenceIdx = afterFirst.lastIndexOf("```");
+    out = lastFenceIdx > 0
+      ? afterFirst.slice(0, lastFenceIdx + 3).trimEnd()
+      : afterFirst;
+  } else {
+    // 3. No code block — strip pure preamble lines line-by-line.
+    const PREAMBLE = /^(#{1,3}\s|step\s+\d|let'?s\s+(proceed|start|begin|take|do)|i\s+will\s|i'll\s|let\s+me\s|first[,\s]|now[,\s])/i;
+    const lines = out.split("\n");
+    // Find the first line that is actual content (not a heading or preamble sentence)
+    let start = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i]!.trim() === "" || PREAMBLE.test(lines[i]!.trim())) {
+        start = i + 1;
+      } else {
+        break;
+      }
+    }
+    out = lines.slice(start).join("\n");
+  }
+
+  // 4. Collapse excess blank lines
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function presentResult(result: ExecutionResult, task: TaskSpec): string {
   // followUpQuestion takes precedence — the executor needs more info
   if (result.followUpQuestion) {
@@ -24,7 +75,7 @@ export function presentResult(result: ExecutionResult, task: TaskSpec): string {
 function presentSuccess(result: ExecutionResult, task: TaskSpec): string {
   // Prefer an explicit user-facing message from the executor
   if (result.userFacingText) {
-    return result.userFacingText.trim();
+    return cleanOutput(result.userFacingText);
   }
 
   // Construct a concise confirmation from the task goals
@@ -40,7 +91,7 @@ function presentFailure(result: ExecutionResult, task: TaskSpec): string {
   // flagged issues. Append the next-step question below so the user can act.
   if (result.userFacingText) {
     const nextStep = chooseNextStepQuestion(task);
-    return `${result.userFacingText.trim()}\n\n---\n*QC noted some issues with the above. ${nextStep}*`;
+    return `${cleanOutput(result.userFacingText)}\n\n---\n*QC noted some issues with the above. ${nextStep}*`;
   }
 
   // Truly empty output — nothing to show

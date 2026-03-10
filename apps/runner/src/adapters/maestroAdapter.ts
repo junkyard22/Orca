@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import {
   createMaestroCore,
   selectRole,
@@ -22,6 +24,7 @@ import type {
 import { Dewey } from "@clawde/dewey-core";
 import type { BrainPlan } from "@clawde/dewey-core";
 import type { ExtendedOrcaToolService } from "./toolService.js";
+import { traceEvent } from "./tracerHooks.js";
 
 // ---------------------------------------------------------------------------
 // MaestroAdapter — wraps maestro-core's MaestroCore to satisfy MaestroPort.
@@ -46,9 +49,63 @@ const ALL_OPTIONAL_ROLES = new Set<OptionalRoleName>([
   "vision",
 ]);
 
+// ---------------------------------------------------------------------------
+// Role Settings Loader
+// ---------------------------------------------------------------------------
+
+export interface RoleSettings {
+  provider: string;
+  model: string;
+  label: string;
+}
+
+export interface OrcaSettings {
+  roles: Record<string, RoleSettings>;
+}
+
+/**
+ * Load available roles from orca-settings.json at runtime.
+ * Falls back to default core roles if file is not found.
+ */
+function loadRoleSettings(): OrcaSettings {
+  const settingsPath = path.join(process.cwd(), "orca-settings.json");
+  
+  try {
+    const content = fs.readFileSync(settingsPath, "utf-8");
+    return JSON.parse(content) as OrcaSettings;
+  } catch {
+    // Fall back to default roles if file not found
+    return {
+      roles: {
+        brain: { provider: "openrouter", model: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
+        coder_strong: { provider: "openrouter", model: "qwen/qwen3-coder-next", label: "Qwen3 Coder Next" },
+        coder_cheap: { provider: "openrouter", model: "qwen/qwen3-coder-next", label: "Qwen3 Coder Next" },
+        utility: { provider: "openrouter", model: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
+        reviewer: { provider: "openrouter", model: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
+        narrator: { provider: "openrouter", model: "qwen/qwen2.5-7b-instruct", label: "Qwen2.5 7B Instruct" },
+      },
+    };
+  }
+}
+
+/**
+ * Get the list of available core role names from settings.
+ */
+function getAvailableCoreRoles(settings: OrcaSettings): string[] {
+  return Object.keys(settings.roles);
+}
+
+/**
+ * Format available roles as a comma-separated string for prompts.
+ */
+function formatAvailableRoles(settings: OrcaSettings): string {
+  return getAvailableCoreRoles(settings).join(", ");
+}
+
 export function createMaestroAdapter(): MaestroPort {
   const maestro = createMaestroCore();
   const dewey = new Dewey();
+  const settings = loadRoleSettings();
 
   // Start the Dewey session asynchronously — non-blocking at startup.
   dewey.startSession().catch((err: unknown) => {
@@ -67,22 +124,26 @@ export function createMaestroAdapter(): MaestroPort {
       const { role, isFallback, warning } = selectRole(
         roleCtx,
         ALL_OPTIONAL_ROLES,
-        pickCoreRole(task),
+        pickCoreRole(task, settings),
       );
 
       if (warning) {
         console.warn(`[MaestroAdapter] Role warning: ${warning}`);
       }
 
+      traceEvent({ type: "brain:route", data: { role, isFallback, warning, coreRole: pickCoreRole(task, settings) } });
+
       // 4. Dewey pre-flight — brief the table before Brain routes.
       const brief = await dewey.brief(task.originalUserMessage);
+      traceEvent({ type: "dewey:brief", data: brief });
 
       // 5. Subagent decomposition — only at top level, only for multiStep tasks.
       //    planner_deep breaks the task into independent parallel subtasks.
       //    subagentDepth guard prevents recursive subagent spawning.
+      //    DIRECT ROUTING: Skip decomposition for simple single-deliverable tasks.
       const depth = ctx.subagentDepth ?? 0;
-      if (depth === 0 && orch.classification.multiStep) {
-        const subtasks = await decomposeTask(task.originalUserMessage, ctx.llm);
+      if (depth === 0 && orch.classification.multiStep && shouldDecompose(task.originalUserMessage)) {
+        const subtasks = await decomposeTask(task.originalUserMessage, ctx.llm, settings);
         if (subtasks !== null && subtasks.length > 1) {
           return runSubagentPool(task, subtasks, orch, ctx);
         }
@@ -103,7 +164,8 @@ export function createMaestroAdapter(): MaestroPort {
       let lastSuggestions: string[] = [];
 
       while (!approved && attempts < 3) {
-        const deweyReview = await dewey.reviewPlan(approvedPlan, task.originalUserMessage);
+        const deweyReview = await dewey.reviewPlan(approvedPlan, task.originalUserMessage, brief);
+        traceEvent({ type: "dewey:review", data: deweyReview });
 
         if (deweyReview.approved) {
           approved = true;
@@ -180,29 +242,50 @@ function buildRoleSelectorContext(task: OrcaTaskSpec): RoleSelectorContext {
  * Priority order (first match wins):
  *   repair task      → coder_strong  (targeted fix)
  *   code/implement   → coder_strong
+ *   utility tasks    → utility
  *   quick edit hints → coder_cheap
  *   review/audit     → reviewer
  *   docs/write       → narrator
  *   default          → brain
  */
-function pickCoreRole(task: OrcaTaskSpec): "brain" | "coder_strong" | "coder_cheap" | "reviewer" | "narrator" | "utility" {
-  if (task.intent === "repair") return "coder_strong";
+function pickCoreRole(
+  task: OrcaTaskSpec,
+  settings: OrcaSettings,
+): "brain" | "coder_strong" | "coder_cheap" | "reviewer" | "narrator" | "utility" {
+  const availableRoles = new Set(getAvailableCoreRoles(settings));
+  
+  if (task.intent === "repair") {
+    if (availableRoles.has("coder_strong")) return "coder_strong";
+  }
 
   const msg = task.originalUserMessage.toLowerCase();
 
-  if (/\b(implement|build|create|add feature|write code|develop)\b/.test(msg))
-    return "coder_strong";
+  if (/\b(implement|build|create|add feature|write code|develop)\b/.test(msg)) {
+    if (availableRoles.has("coder_strong")) return "coder_strong";
+  }
 
-  if (/\b(rename|reformat|fix typo|small (fix|change|edit)|update import|add field)\b/.test(msg))
-    return "coder_cheap";
+  if (/\b(lint|format|rename|convert|transform|sort|cleanup|validate|parse|stringify|encode|decode)\b/.test(msg)) {
+    if (availableRoles.has("utility")) return "utility";
+  }
 
-  if (/\b(review|audit|critique|check for (bugs|issues|problems)|is this (correct|right|good))\b/.test(msg))
-    return "reviewer";
+  if (/\b(rename|reformat|fix typo|small (fix|change|edit)|update import|add field)\b/.test(msg)) {
+    if (availableRoles.has("coder_cheap")) return "coder_cheap";
+  }
 
-  if (/\b(document|write (a |the )?(readme|docs?|comment|jsdoc|tsdoc)|explain (to others|in plain))\b/.test(msg))
-    return "narrator";
+  if (/\b(review|audit|critique|check for (bugs|issues|problems)|is this (correct|right|good))\b/.test(msg)) {
+    if (availableRoles.has("reviewer")) return "reviewer";
+  }
 
-  return "brain";
+  if (/\b(document|write (a |the )?(readme|docs?|comment|jsdoc|tsdoc)|explain (to others|in plain))\b/.test(msg)) {
+    if (availableRoles.has("narrator")) return "narrator";
+  }
+
+  // Fallback to brain, or first available role if brain not configured
+  if (availableRoles.has("brain")) return "brain";
+  
+  // Return first available role as last resort
+  const firstRole = getAvailableCoreRoles(settings)[0];
+  return (firstRole as "brain" | "coder_strong" | "coder_cheap" | "reviewer" | "narrator" | "utility") ?? "brain";
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +297,7 @@ function buildTaskPrompt(
   role: string,
   isFallback: boolean,
   workspaceContext?: WorkspaceContext,
+  isSubagent: boolean = false,
 ): string {
   const isRepair = task.intent === "repair";
 
@@ -243,6 +327,17 @@ function buildTaskPrompt(
       ws.push(`recently modified: ${workspaceContext.recentlyModifiedFiles.slice(0, 10).join(", ")}`);
     }
     lines.push("", "### Workspace", ws.join("\n"));
+    
+    // ── Subagent workspace warning ───────────────────────────────────────────
+    // Prevents subagents from referencing files outside the current workspace.
+    if (isSubagent) {
+      lines.push(
+        "",
+        "⚠ **Important**: All file paths must be relative to cwd above.",
+        "Do not reference files in other packages (e.g. packages/dewey-core).",
+        "If you need to read a file, confirm it exists under cwd first."
+      );
+    }
   }
 
   if (task.constraints != null && Object.keys(task.constraints).length > 0) {
@@ -295,6 +390,7 @@ async function runSingleAgent(
   isFallback: boolean,
   orch: OrchestrationResult,
   ctx: OrcaRunCtx,
+  isSubagent: boolean = false,
 ): Promise<OrcaMaestroResult> {
   // Subagents may carry a forcedRole in context (set by runSubagentPool).
   const effectiveRole = (
@@ -304,7 +400,7 @@ async function runSingleAgent(
   ) as RoleName;
 
   const systemPrompt = getRolePrompt(effectiveRole);
-  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext);
+  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext, isSubagent);
 
   let outputText: string;
   let toolEvents: OrcaMaestroResult["toolEvents"] = [];
@@ -342,6 +438,48 @@ async function runSingleAgent(
 // ---------------------------------------------------------------------------
 
 /**
+ * Direct routing threshold — skip decomposition for simple tasks.
+ * Returns true only if the task appears to require multiple independent deliverables.
+ */
+function shouldDecompose(message: string): boolean {
+  // Count distinct deliverables by looking for plural/quantity indicators
+  const deliverableKeywords = [
+    /\b(files?|functions?|modules?|components?|endpoints?|routes?|services?)\b/gi,
+    /\b(each|every|all|multiple|several|various)\b/gi,
+    /\b(first|second|third|then|also|and)\b/gi,
+  ];
+
+  let deliverableCount = 0;
+  for (const regex of deliverableKeywords) {
+    const matches = message.match(regex);
+    if (matches) {
+      deliverableCount += matches.length;
+    }
+  }
+
+  // If fewer than 3 distinct deliverables, skip decomposition
+  if (deliverableCount < 3) {
+    return false;
+  }
+
+  // Check for explicit multi-file/function mentions
+  const filePattern = /\b([A-Za-z0-9_-]+\.(ts|js|tsx|jsx|py|json|md|yaml|yml))\b/gi;
+  const fileMatches = message.match(filePattern);
+  if (fileMatches && fileMatches.length > 2) {
+    return true;
+  }
+
+  // Check for multiple function names (camelCase or snake_case patterns)
+  const functionPattern = /\b([a-z]+[A-Z][a-zA-Z]*|[a-z]+_[a-z]+)\b/g;
+  const functionMatches = message.match(functionPattern);
+  if (functionMatches && functionMatches.length > 2) {
+    return true;
+  }
+
+  return deliverableCount >= 3;
+}
+
+/**
  * Ask planner_deep to break a multi-step task into independent parallel
  * subtasks. Returns an array of {role, task} objects, or null if decomposition
  * fails or produces a single-item list (fall through to single-agent).
@@ -349,8 +487,10 @@ async function runSingleAgent(
 async function decomposeTask(
   originalMessage: string,
   llm: OrcaLLMService,
+  settings: OrcaSettings,
 ): Promise<Array<{ role: string; task: string }> | null> {
   const systemPrompt = getRolePrompt("planner_deep");
+  const availableRoles = formatAvailableRoles(settings);
   const decompositionPrompt = [
     "## Task Decomposition",
     "",
@@ -359,7 +499,7 @@ async function decomposeTask(
     "",
     'Format: [{"role":"ROLE","task":"DESCRIPTION"},...]',
     "",
-    "Available roles: brain, coder_strong, coder_cheap, reviewer, narrator, debugger, reader",
+    `Available roles: ${availableRoles}, debugger, reader`,
     "Rules:",
     "- Maximum 5 subtasks",
     "- Each subtask MUST be fully independent (no subtask requires another's output)",
@@ -463,6 +603,7 @@ async function runSubagentPool(
         false,
         orch,
         childCtx,
+        true,  // isSubagent
       );
 
       ctx.emit?.({
@@ -580,7 +721,7 @@ async function synthesizeResults(
 
   const { text } = await llm.complete(
     `${brainPrompt}\n\n---\n\n${synthesisPrompt}`,
-    { maxTokens: 4096 },
+    { maxTokens: 4096, simple: true },
   );
   return text;
 }

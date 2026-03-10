@@ -57,6 +57,9 @@ importers:
       '@clawde/benson-core':
         specifier: workspace:*
         version: link:../../packages/benson-core
+      '@clawde/dewey-core':
+        specifier: workspace:*
+        version: link:../../packages/dewey-core
       '@clawde/miranda-core':
         specifier: workspace:*
         version: link:../../packages/miranda-core
@@ -96,6 +99,18 @@ importers:
         version: 5.9.3
 
   packages/benson-core:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.12.0
+        version: 22.19.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.13)
+
+  packages/dewey-core:
     devDependencies:
       '@types/node':
         specifier: ^22.12.0

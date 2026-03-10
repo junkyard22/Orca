@@ -55,8 +55,8 @@ export class Dewey {
     };
   }
 
-  async reviewPlan(plan: BrainPlan, task: string): Promise<DeweyReview> {
-    const brief = await this.brief(task);
+  async reviewPlan(plan: BrainPlan, task: string, existingBrief?: UserBrief): Promise<DeweyReview> {
+    const brief = existingBrief ?? await this.brief(task);
     console.log('[Dewey] Running pre-flight review');
     return this.reviewer.review(plan, brief);
   }

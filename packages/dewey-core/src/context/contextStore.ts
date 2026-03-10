@@ -27,6 +27,7 @@ function detectCategory(taskType: string): TaskCategory {
 export class ContextStore {
   private contextPath: string;
   private context: UserContext;
+  private _loadPromise: Promise<UserContext> | null = null;
 
   constructor(contextPath: string) {
     this.contextPath = contextPath;
@@ -34,20 +35,27 @@ export class ContextStore {
   }
 
   async load(): Promise<UserContext> {
-    try {
-      const raw = await fs.readFile(this.contextPath, 'utf-8');
-      this.context = JSON.parse(raw) as UserContext;
-      console.log('[Dewey] Context loaded from', this.contextPath);
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        console.log('[Dewey] Context file not found, creating default at', this.contextPath);
-        this.context = loadDefaultTemplate();
-        await this.save();
-      } else {
-        throw err;
+    if (this._loadPromise) return this._loadPromise;
+
+    this._loadPromise = (async () => {
+      try {
+        const raw = await fs.readFile(this.contextPath, 'utf-8');
+        this.context = JSON.parse(raw) as UserContext;
+        console.log('[Dewey] Context loaded from', this.contextPath);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          console.log('[Dewey] Context file not found, creating default at', this.contextPath);
+          this.context = loadDefaultTemplate();
+          await this.save();
+        } else {
+          this._loadPromise = null; // allow retry on transient errors
+          throw err;
+        }
       }
-    }
-    return this.context;
+      return this.context;
+    })();
+
+    return this._loadPromise;
   }
 
   async save(): Promise<void> {

@@ -1,0 +1,34 @@
+{
+  "roles": {
+    "brain": {
+      "provider": "openrouter",
+      "model": "openai/gpt-4o-mini",
+      "label": "OpenAI: GPT-4o-mini (2024-07-18) $0.150/M"
+    },
+    "coder_strong": {
+      "provider": "openrouter",
+      "model": "qwen/qwen3-coder-next",
+      "label": "Qwen: Qwen3 Coder Next $0.120/M"
+    },
+    "coder_cheap": {
+      "provider": "openrouter",
+      "model": "qwen/qwen3-coder-next",
+      "label": "Qwen: Qwen3 Coder Next $0.120/M"
+    },
+    "utility": {
+      "provider": "openrouter",
+      "model": "openai/gpt-4o-mini",
+      "label": "OpenAI: GPT-4o-mini $0.150/M"
+    },
+    "reviewer": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-chat",
+      "label": "DeepSeek: DeepSeek V3 0324 $0.200/M"
+    },
+    "narrator": {
+      "provider": "openrouter",
+      "model": "qwen/qwen2.5-7b-instruct",
+      "label": "Qwen: Qwen2.5 7B Instruct $0.040/M"
+    }
+  }
+}
