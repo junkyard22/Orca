@@ -396,11 +396,16 @@ Thought: [what did I just learn? what does it mean for the task?]
 Observation: [current state of the task based on everything so far]
 Next: [what to do next and why — or "Task is complete" if done]
 
+FILE WRITING — MANDATORY:
+If your task involves creating or modifying a file (any filename with an extension, e.g. .ts .js .py .json):
+1. Call write_file with the complete file content BEFORE writing your final answer
+2. Your FINAL ANSWER must confirm what was written — it must NOT contain the file content itself
+3. Never output source code inline as a substitute for calling write_file
+
 CRITICAL RULES:
 - Your Thought/Observation/Next blocks are INTERNAL REASONING ONLY
 - They must NEVER appear in your final answer to the user
 - Never call a tool without a preceding Thought block
-- If the task asks you to write, create, or modify a file, you MUST use the write_file tool — never output file content inline in FINAL ANSWER
 - When the task is complete, write your final answer using EXACTLY this format:
 
 FINAL ANSWER:
