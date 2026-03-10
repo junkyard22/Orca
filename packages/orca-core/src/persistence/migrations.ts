@@ -68,6 +68,13 @@ export function runMigrations(db: Database): void {
     );
   `);
 
+  // Add repair_passes column if it doesn't exist (idempotent migration)
+  try {
+    db.run(`ALTER TABLE runs ADD COLUMN repair_passes INTEGER;`);
+  } catch {
+    // Column already exists — safe to ignore.
+  }
+
   // Create indexes for common queries
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);

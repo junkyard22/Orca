@@ -22,6 +22,7 @@ export interface RunRecord {
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  repairPasses?: number;
 }
 
 export interface ThoughtRecord {

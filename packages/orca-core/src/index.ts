@@ -47,3 +47,7 @@ export type { WorkspaceContext } from "./workspaceContext.js";
 export type { RunRecord, ThoughtRecord, ToolEvent, FileChange, OrcaStore } from "./persistence/types.js";
 export { SqliteStore } from "./persistence/sqliteStore.js";
 
+// Training data export
+export { exportTrainingData } from "./export/exportTrainingData.js";
+export type { ExportOptions, TrainingRecord, ExportSummary } from "./export/exportTrainingData.js";
+
