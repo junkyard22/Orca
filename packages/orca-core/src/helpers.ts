@@ -44,14 +44,21 @@ export function deriveFilesChangedFromToolEvents(
     const changeType = changeTypeForTool(event.tool);
     if (!path || !changeType) continue;
 
+    // Fix 3: Capture file content for diff verification
+    const content = (event.raw as Record<string, unknown>)._contentForDiff as string | undefined;
+    const diff = content ? content.slice(0, 2000) : undefined; // Truncate for storage
+
     const current = byPath.get(path);
     if (!current) {
-      byPath.set(path, { path, changeType });
+      byPath.set(path, { path, changeType, diff });
       continue;
     }
 
     if (current.changeType !== "A" && changeType === "A") {
-      byPath.set(path, { ...current, changeType });
+      byPath.set(path, { ...current, changeType, diff });
+    } else if (diff) {
+      // Update existing entry with diff if available
+      byPath.set(path, { ...current, diff });
     }
   }
 

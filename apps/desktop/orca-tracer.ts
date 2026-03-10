@@ -558,11 +558,11 @@ function createTracingMaestro(
         trace("Maestro", C.cyan, `  Step 2a [direct]: running ${role} agent...`);
 
         // Emit agent start event
-        ctx.emit?.({ 
-          type: 'maestro:agent_start', 
-          taskId, 
-          role: role as RoleName, 
-          doneCriteria: dec.done_criteria || [] 
+        ctx.emit?.({
+          type: 'maestro:agent_start',
+          taskId,
+          role: role as RoleName,
+          doneCriteria: dec.done_criteria || []
         });
 
         const baseSystemPrompt = getRolePrompt(role as RoleName);
@@ -571,7 +571,21 @@ function createTracingMaestro(
         const taskPrompt   = buildTaskPrompt(task, role);
         const llmForRole   = roleAdapters[role] ?? ctx.llm;
 
-        trace("Maestro", C.blue, `  Passing ${availableToolNames.length} tools to ${role} agent: ${availableToolNames.join(', ')}`);
+        // Fix 1: Strip tools for pure generation tasks to prevent exploration
+        function isPureGenerationTask(taskText: string): boolean {
+          const explorationSignals = /existing|current|read|check|look at|find|my (code|file|project)|how does|show me|explain/i;
+          const generationSignals = /create|implement|write|build|add|generate|make a|make an|produce/i;
+          return generationSignals.test(taskText) && !explorationSignals.test(taskText);
+        }
+
+        const shouldStripTools = isPureGenerationTask(task.originalUserMessage);
+        const toolsForAgent = shouldStripTools ? [] : availableToolNames;
+        
+        if (shouldStripTools) {
+          trace("Maestro", C.yellow, `  Pure generation task detected — stripping tools to prevent exploration`);
+        } else {
+          trace("Maestro", C.blue, `  Passing ${availableToolNames.length} tools to ${role} agent: ${availableToolNames.join(', ')}`);
+        }
 
         // System prompt: save to file on first use, reference thereafter
         if (SHOW_MESSAGES) {
@@ -595,6 +609,11 @@ function createTracingMaestro(
         let currentOutputText = '';
         let iterationCount = 0;
         let stoppedBecause: 'done' | 'max_iterations' | 'error' = 'max_iterations';
+        
+        // Tool Use Discipline enforcement
+        let cumulativeToolCallCount = 0;
+        let toolLimitWarningInjected = false;
+        let finalAnswerFound = false;
 
         try {
           for (let i = 0; i < MAX_ITER; i++) {
@@ -635,19 +654,39 @@ function createTracingMaestro(
               trace("Maestro", C.dim, `    Raw output[0..200]: "${text.slice(0, 200).replace(/\n/g, "\\n")}..."`);
             }
             
+            // Check for FINAL ANSWER in any response to track if we've found one
+            const cleanedOutput = stripToolCalls(text);
+            const finalAnswer = extractFinalAnswer(cleanedOutput);
+            if (finalAnswer) {
+              finalAnswerFound = true;
+            }
+            
+            // Tool Use Discipline: Check if we've hit 3 tool calls without final answer
+            if (cumulativeToolCallCount >= 3 && !toolLimitWarningInjected && !finalAnswerFound) {
+              // Inject warning message - do NOT execute any more tools this iteration
+              toolLimitWarningInjected = true;
+              conversation += `\n\nUser: You have reached your 3-tool orientation limit. Do not call any more tools. Your next response must be your final answer.`;
+              trace("Maestro", C.yellow, `  [ToolLimit] 3-tool limit reached - warning injected`);
+              continue; // Skip tool execution, wait for model's final answer next iteration
+            }
+            
+            // If warning was already injected and this is the next iteration, extract output as final
+            if (toolLimitWarningInjected && !finalAnswerFound) {
+              // This is the iteration after warning injection - extract whatever we have as final answer
+              currentOutputText = stripThoughtBlocks(cleanedOutput);
+              stoppedBecause = 'done';
+              trace("Maestro", C.yellow, `  [ToolLimit] Forcing output after warning - extracted ${currentOutputText.length} chars`);
+              break;
+            }
+            
             const calls = parseToolCalls(text);
 
             if (calls.length === 0) {
-              const cleanedOutput = stripToolCalls(text);
-              const finalAnswer = extractFinalAnswer(cleanedOutput);
               if (finalAnswer) {
                 currentOutputText = finalAnswer;
                 stoppedBecause = 'done';
                 break;
               }
-              // No FINAL ANSWER and no tool calls — model output is malformed.
-              // Do not exit — continue to next iteration to allow model to retry
-              // with proper formatting. Only exit on FINAL ANSWER or max_iterations.
               currentOutputText = stripThoughtBlocks(cleanedOutput);
               conversation += `\n\nUser: Your response was not properly formatted. Please use the FINAL ANSWER: marker for your final response, or use tool calls to complete the task.`;
               continue;
@@ -658,17 +697,49 @@ function createTracingMaestro(
             
             for (const call of calls) {
               trace("Maestro", C.cyan, `    ➤ tool:${call.tool}  args=${JSON.stringify(call.input).slice(0, 80)}`);
+              
+              // Fix 1 (continued): Block tool execution if tools were stripped for generation task
+              if (shouldStripTools && toolsForAgent.length === 0) {
+                trace("Maestro", C.red, `    ✗ BLOCKED: Tools stripped for pure generation task`);
+                conversation += fmtToolResult(call.tool, false, '', 'Tools unavailable for pure generation task — produce output directly');
+                continue;
+              }
+              
+              // Fix 2: write_file content validation guard
+              if (call.tool === 'write_file' && typeof call.input.content !== 'string') {
+                trace("Maestro", C.red, `    ✗ BLOCKED: write_file requires "content" string parameter`);
+                conversation += fmtToolResult(call.tool, false, '', 'write_file requires a "content" string parameter');
+                toolEvents.push({
+                  tool:    call.tool,
+                  ok:      false,
+                  summary: `${call.tool}: failed — requires "content" string parameter`,
+                  raw: call.input,
+                });
+                continue;
+              }
+              
               const result = await toolService.execute(call.tool, call.input);
               trace("Maestro", result.ok ? C.green : C.red, `    ← ${result.ok ? 'ok' : 'FAIL'} (${result.output.length} chars)`);
+              
+              // Fix 3: Capture file content in tool event for diff verification
+              const enrichedRaw = { ...call.input };
+              if (result.ok && call.tool === 'write_file' && typeof call.input.content === 'string') {
+                // Store content in raw for deriveFilesChangedFromToolEvents to use
+                (enrichedRaw as any)._contentForDiff = call.input.content;
+              }
+              
               toolEvents.push({
                 tool:    call.tool,
                 ok:      result.ok,
                 summary: result.ok
                   ? `${call.tool}: ok (${result.output.length} chars)`
                   : `${call.tool}: failed — ${result.error ?? 'unknown'}`,
-                raw: call.input,
+                raw: enrichedRaw,
               });
               conversation += fmtToolResult(call.tool, result.ok, result.output, result.error);
+              
+              // Tool Use Discipline: Increment cumulative counter
+              cumulativeToolCallCount++;
             }
           }
         } catch (err) {

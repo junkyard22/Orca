@@ -151,6 +151,25 @@ export class ReactAgentAdapter implements AgentAdapter {
     let consecutiveEmptyResults = 0;
     let loopEvidence: { iteration: number; repeatedCall: string; occurrences: number } | undefined;
     
+    // Tool Use Discipline enforcement
+    let cumulativeToolCallCount = 0;
+    let toolLimitWarningInjected = false;
+    let finalAnswerFound = false;
+    
+    // Fix 1: Strip tools for pure generation tasks to prevent exploration
+    function isPureGenerationTask(taskText: string): boolean {
+      const explorationSignals = /existing|current|read|check|look at|find|my (code|file|project)|how does|show me|explain/i;
+      const generationSignals = /create|implement|write|build|add|generate|make a|make an|produce/i;
+      return generationSignals.test(taskText) && !explorationSignals.test(taskText);
+    }
+    
+    const shouldStripTools = isPureGenerationTask(task.intent);
+    const availableTools = shouldStripTools ? [] : tools;
+    
+    if (shouldStripTools) {
+      console.log(`[ReactAgent] Pure generation task detected — stripping tools to prevent exploration`);
+    }
+    
     // Build initial conversation history
     let conversationHistory = task.conversationHistory || [];
     
@@ -230,10 +249,30 @@ export class ReactAgentAdapter implements AgentAdapter {
         // Parse tool calls
         const toolCalls = parseToolCalls(modelOutput);
         
+        // Check for FINAL ANSWER in any response to track if we've found one
+        const cleanedOutput = stripToolCalls(modelOutput);
+        const finalAnswer = extractFinalAnswer(cleanedOutput);
+        if (finalAnswer) {
+          finalAnswerFound = true;
+        }
+        
+        // Tool Use Discipline: Check if we've hit 3 tool calls without final answer
+        if (cumulativeToolCallCount >= 3 && !toolLimitWarningInjected && !finalAnswerFound) {
+          // Inject warning message - do NOT execute any more tools this iteration
+          toolLimitWarningInjected = true;
+          messages.push({ role: "user", content: "You have reached your 3-tool orientation limit. Do not call any more tools. Your next response must be your final answer." });
+          continue; // Skip tool execution, wait for model's final answer next iteration
+        }
+        
+        // If warning was already injected and this is the next iteration, extract output as final
+        if (toolLimitWarningInjected && !finalAnswerFound) {
+          // This is the iteration after warning injection - extract whatever we have as final answer
+          currentOutputText = stripThoughtBlocks(cleanedOutput);
+          stoppedBecause = 'done';
+          break;
+        }
+        
         if (toolCalls.length === 0) {
-          const cleanedOutput = stripToolCalls(modelOutput);
-          const finalAnswer = extractFinalAnswer(cleanedOutput);
-
           if (finalAnswer) {
             currentOutputText = finalAnswer;
             stoppedBecause = 'done';
@@ -244,12 +283,27 @@ export class ReactAgentAdapter implements AgentAdapter {
           // Do not exit — continue to next iteration to allow model to retry
           // with proper formatting. Only exit on FINAL ANSWER or max_iterations.
           messages.push({ role: "user", content: "Your response was not properly formatted. Please use the FINAL ANSWER: marker for your final response, or use tool calls to complete the task." });
+          continue;
         }
         
         // Execute tool calls
         for (const call of toolCalls) {
+          // Fix 1 (continued): Block tool execution if tools were stripped for generation task
+          if (shouldStripTools && availableTools.length === 0) {
+            console.log(`[ReactAgent] BLOCKED: Tools stripped for pure generation task`);
+            const errorResult = formatToolResult(call.tool, false, '', 'Tools unavailable for pure generation task — produce output directly');
+            messages.push({ role: "user", content: errorResult });
+            toolsUsed.push({
+              tool: call.tool,
+              ok: false,
+              summary: `Tools stripped for pure generation task`,
+              raw: call.input
+            });
+            continue;
+          }
+          
           // Find the tool in the provided tools array
-          const tool = tools.find(t => t.name === call.tool);
+          const tool = availableTools.find(t => t.name === call.tool);
           if (!tool) {
             // Unknown tool - add error result
             const errorResult = formatToolResult(call.tool, false, '', `Unknown tool: ${call.tool}`);
@@ -263,9 +317,26 @@ export class ReactAgentAdapter implements AgentAdapter {
             continue;
           }
           
+          // Fix 2: write_file content validation guard
+          if (call.tool === 'write_file' && typeof call.input.content !== 'string') {
+            console.log(`[ReactAgent] BLOCKED: write_file requires "content" string parameter`);
+            const errorResult = formatToolResult(call.tool, false, '', 'write_file requires a "content" string parameter');
+            messages.push({ role: "user", content: errorResult });
+            toolsUsed.push({
+              tool: call.tool,
+              ok: false,
+              summary: `write_file: failed — requires "content" string parameter`,
+              raw: call.input
+            });
+            continue;
+          }
+          
           // Execute the tool
           const toolContext = { workspaceRoot: process.cwd(), runId: ctx.runId };
           const result = await tool.execute(call.input, toolContext);
+          
+          // Tool Use Discipline: Increment cumulative counter
+          cumulativeToolCallCount++;
           
           // Format tool result
           const toolResult = formatToolResult(call.tool, result.ok, result.output, result.error);
@@ -275,19 +346,22 @@ export class ReactAgentAdapter implements AgentAdapter {
           toolsUsed.push({
             tool: call.tool,
             ok: result.ok,
-            summary: result.ok 
+            summary: result.ok
               ? `${call.tool}: ok (${result.output.length} chars)`
               : `${call.tool}: failed — ${result.error ?? 'unknown'}`,
             raw: call.input
           });
           
-          // Track file changes (this would need to be enhanced based on actual tool implementations)
+          // Fix 3: Track file changes with content diff for Pappy verification
           if (result.ok && ['write_file', 'create_file', 'delete_file', 'modify_file'].includes(call.tool)) {
             const filePath = typeof call.input.path === 'string' ? call.input.path : '';
             if (filePath) {
+              const content = typeof call.input.content === 'string' ? call.input.content : undefined;
+              const diff = content ? content.slice(0, 2000) : undefined; // Truncate for storage
               filesChanged.push({
                 path: filePath,
-                changeType: call.tool === 'delete_file' ? 'D' : call.tool === 'create_file' ? 'A' : 'M'
+                changeType: call.tool === 'delete_file' ? 'D' : call.tool === 'create_file' ? 'A' : 'M',
+                diff
               });
             }
           }

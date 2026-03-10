@@ -93,45 +93,142 @@ function deriveAcceptanceCriteria(input: PappyInput): AcceptanceCriterion[] {
 // Receipt ledger — one entry per acceptance criterion
 // ---------------------------------------------------------------------------
 
+/**
+ * Verify an acceptance criterion against specific evidence in the output.
+ *
+ * ## Acceptance Criteria
+ *
+ * When you receive done_criteria, treat each item as a binding contract:
+ *
+ * - "Output contains a TypeScript implementation" → your response MUST contain a ``` code block with a class or function definition
+ * - "Output includes unit tests" → your response MUST contain describe(), it(), and expect() calls
+ * - "Supports configurable X" → the specific parameter (burstCapacity, refillRate, etc.) MUST appear in your code
+ * - "Tracks usage per Y" or "includes cleanup" → clientId, Map, cleanup, or stale MUST appear in your code
+ *
+ * Do not consider your task complete until every criterion is satisfied. If you finish writing and realize a criterion is missing, add it before submitting your final answer.
+ *
+ * Your output is evaluated by an automated QC system (Pappy) that checks for specific evidence of each criterion. A response that does not contain the required evidence will be rejected and sent back for repair. Save everyone the repair pass — get it right the first time.
+ */
+function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): { proved: boolean; evidence: string[] } {
+  const outputText = input.outputText ?? "";
+  const hasOutput  = outputText.trim().length > 0;
+  const hasFiles   = (input.filesChanged?.length ?? 0) > 0;
+  const hasTools   = (input.toolEvents?.length ?? 0) > 0;
+  const touched    = new Set((input.filesChanged ?? []).map((f) => f.path));
+  const lowerOutput = outputText.toLowerCase();
+  
+  // Build combined search text from output and diffs
+  const diffText = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
+  const searchText = `${lowerOutput} ${diffText.toLowerCase()}`;
+  
+  // Helper to check if a pattern matches
+  const matchesPattern = (pattern: RegExp): boolean => pattern.test(searchText);
+  const containsTerm = (term: string): boolean => matchesPattern(new RegExp(`\\b${term}\\w*\\b`, 'i'));
+  
+  // Required file criterion
+  const fileMatch = ac.text.match(/[Ff]ile ["`']?([^"`'\s]+)["`']? must be/);
+  if (fileMatch) {
+    const path = fileMatch[1] ?? "";
+    const proved = touched.has(path);
+    return {
+      proved,
+      evidence: proved ? [`filesChanged: ${path}`] : [],
+    };
+  }
+  
+  // Check for code block / implementation requirement
+  if (containsTerm("code") || containsTerm("implementation") || containsTerm("function") || containsTerm("class") || containsTerm("TypeScript")) {
+    const hasCodeBlock = /```/.test(outputText);
+    const hasCodeKeywords = /\b(function |class |const |let |var |export |import |type |interface |enum |def |async )/.test(outputText);
+    const hasCode = hasCodeBlock || hasCodeKeywords || hasFiles;
+    
+    if (hasCode) {
+      return {
+        proved: true,
+        evidence: hasCodeBlock ? ["code block (```) found"] : hasCodeKeywords ? ["code keywords found"] : ["file changes with code"],
+      };
+    }
+    return { proved: false, evidence: [] };
+  }
+  
+  // Check for unit test requirement
+  if (containsTerm("test") || containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha") || containsTerm("spec")) {
+    const hasTestFramework = containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha");
+    const hasTestFunctions = containsTerm("describe") || containsTerm("it") || containsTerm("expect") || containsTerm("test(");
+    const hasTestFile = (input.filesChanged ?? []).some(f => f.path.includes(".test.") || f.path.includes(".spec."));
+    
+    if (hasTestFramework || hasTestFunctions || hasTestFile) {
+      return {
+        proved: true,
+        evidence: [
+          ...(hasTestFramework ? ["test framework mentioned"] : []),
+          ...(hasTestFunctions ? ["test functions (describe/it/expect) found"] : []),
+          ...(hasTestFile ? ["test file in filesChanged"] : []),
+        ],
+      };
+    }
+    return { proved: false, evidence: [] };
+  }
+  
+  // Check for configurable parameter requirement
+  const configMatch = ac.text.match(/configurab\w*\s+(\w+)/i);
+  if (configMatch) {
+    const paramName = configMatch[1]?.toLowerCase();
+    if (paramName && (containsTerm(paramName) || containsTerm("parameter") || containsTerm("option") || containsTerm("config"))) {
+      return {
+        proved: true,
+        evidence: [`configurable parameter "${paramName}" or related term found`],
+      };
+    }
+    return { proved: false, evidence: [] };
+  }
+  
+  // Check for tracking/cleanup requirement
+  if (containsTerm("track") || containsTerm("per") || containsTerm("client") || containsTerm("cleanup") || containsTerm("stale")) {
+    const hasTracking = containsTerm("clientid") || containsTerm("client") || containsTerm("map") || containsTerm("track");
+    const hasCleanup = containsTerm("cleanup") || containsTerm("stale") || containsTerm("delete") || containsTerm("remove");
+    
+    if (hasTracking || hasCleanup) {
+      return {
+        proved: true,
+        evidence: [
+          ...(hasTracking ? ["tracking mechanism (clientId/Map) found"] : []),
+          ...(hasCleanup ? ["cleanup/stale handling found"] : []),
+        ],
+      };
+    }
+    return { proved: false, evidence: [] };
+  }
+  
+  // Default fallback: non-empty output is sufficient for generic criteria
+  const someProofExists = hasOutput || hasFiles || hasTools;
+  return {
+    proved: someProofExists,
+    evidence: [
+      ...(hasOutput ? ["outputText is non-empty"] : []),
+      ...(hasFiles  ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
+      ...(hasTools  ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
+    ],
+  };
+}
+
 function buildCriteriaLedger(
   input: PappyInput,
   criteria: AcceptanceCriterion[],
 ): ReceiptEntry[] {
   const entries: ReceiptEntry[] = [];
-  const hasOutput  = (input.outputText?.trim().length ?? 0) > 0;
-  const hasFiles   = (input.filesChanged?.length ?? 0) > 0;
-  const hasTools   = (input.toolEvents?.length ?? 0) > 0;
-  const touched    = new Set((input.filesChanged ?? []).map((f) => f.path));
 
   for (const ac of criteria) {
-    // Required file criterion
-    const fileMatch = ac.text.match(/[Ff]ile ["`']?([^"`'\s]+)["`']? must be/);
-    if (fileMatch) {
-      const path = fileMatch[1] ?? "";
-      const proved = touched.has(path);
-      entries.push({
-        ref: ac.id,
-        required_receipt: { type: "file_exists", details: `filesChanged entry for "${path}"` },
-        status: proved ? "PROVED" : "MISSING",
-        evidence: proved ? [`filesChanged: ${path}`] : [],
-      });
-      continue;
-    }
-
-    // General output criterion
-    const someProofExists = hasOutput || hasFiles || hasTools;
+    const { proved, evidence } = verifyAcceptanceCriterion(ac, input);
+    
     entries.push({
       ref: ac.id,
       required_receipt: {
-        type: "other",
-        details: "Non-empty outputText, filesChanged, or toolEvents",
+        type: "criterion_specific",
+        details: ac.text.slice(0, 80) + (ac.text.length > 80 ? "..." : ""),
       },
-      status: someProofExists ? "PROVED" : "MISSING",
-      evidence: [
-        ...(hasOutput ? ["outputText is non-empty"] : []),
-        ...(hasFiles  ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
-        ...(hasTools  ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
-      ],
+      status: proved ? "PROVED" : "MISSING",
+      evidence,
     });
   }
 
