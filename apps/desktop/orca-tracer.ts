@@ -302,8 +302,15 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
       "Address every issue listed in the context below without changing unrelated behaviour."
     : role ? `## Task\nRole: **${role}**` : "## Task";
 
+  // When the task involves writing a file, put a hard imperative first so
+  // even models that skip the system prompt can't miss it.
+  const needsFileWrite = /\.[a-z]{2,4}(\s|$)/i.test(task.originalUserMessage);
+  const fileWriteDirective = needsFileWrite
+    ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline — use the tool.**\n\n"
+    : "";
+
   const lines: string[] = [
-    header, "",
+    fileWriteDirective + header, "",
     "### Request", task.originalUserMessage, "",
     "### Goals", ...task.goals.map((g: string) => `- ${g}`),
   ];
