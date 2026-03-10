@@ -18,6 +18,7 @@ import type {
   OrcaLLMService,
   WorkspaceContext,
 } from "@clawde/orca-core";
+import type { ExtendedOrcaToolService } from "./toolService.js";
 
 // ---------------------------------------------------------------------------
 // MaestroAdapter — wraps maestro-core's MaestroCore to satisfy MaestroPort.
@@ -576,7 +577,7 @@ async function runAgentLoop(
   let lastText = "";
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const { text } = await ctx.llm.complete(conversation, { maxTokens: 4096 });
+    const { text } = await ctx.llm.complete(conversation, { maxTokens: 8192, simple: true });
     lastText = text;
 
     const calls = parseToolCalls(text);
@@ -596,7 +597,8 @@ async function runAgentLoop(
       );
 
       // Miranda: before_tool_run gate
-      const beforeGate = ctx.gate?.beforeToolRun({ tool: call.tool, args: call.input });
+      const schema = (ctx.tools as ExtendedOrcaToolService | undefined)?.getSchema?.(call.tool);
+      const beforeGate = ctx.gate?.beforeToolRun({ tool: call.tool, args: call.input, schema });
       if (beforeGate && !beforeGate.allowed) {
         console.error(`[MaestroAdapter] gate blocked tool "${call.tool}": ${beforeGate.reason}`);
         toolEvents.push({

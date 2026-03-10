@@ -100,7 +100,21 @@ export function createMirandaLLMService(
 ): OrcaLLMService {
   return {
     async complete(prompt, opts) {
-      const { record } = await runPipeline(prompt, adapter, config, {
+      // If the caller specifies maxTokens, override the answer + rewrite stage
+      // caps so large file writes are not truncated mid-content.
+      let effectiveConfig = config;
+      if (opts?.maxTokens != null) {
+        effectiveConfig = {
+          ...config,
+          stages: {
+            ...config.stages,
+            answer:  { ...config.stages.answer,  maxTokens: opts.maxTokens },
+            rewrite: { ...config.stages.rewrite, maxTokens: opts.maxTokens },
+          },
+        };
+      }
+
+      const { record } = await runPipeline(prompt, adapter, effectiveConfig, {
         onToken: opts?.onToken,
         onStreamReset: opts?.onStreamReset,
         gate,

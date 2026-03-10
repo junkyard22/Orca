@@ -1,5 +1,16 @@
 import type { OrcaToolService } from "@clawde/orca-core";
-import type { ToolRegistry, ToolRunCtx } from "@yakstacks/workbench-core";
+import type { ToolRegistry, ToolRunCtx, ToolSchema } from "@yakstacks/workbench-core";
+
+/**
+ * Extended OrcaToolService with schema access for Miranda gate validation.
+ */
+export interface ExtendedOrcaToolService extends OrcaToolService {
+  /**
+   * Get the JSON schema for a named tool.
+   * Returns undefined if the tool is not found.
+   */
+  getSchema(name: string): ToolSchema | undefined;
+}
 
 /**
  * createToolService — bridges workbench-core's ToolRegistry to the abstract
@@ -12,7 +23,7 @@ import type { ToolRegistry, ToolRunCtx } from "@yakstacks/workbench-core";
 export function createToolService(
   registry: ToolRegistry,
   workspaceRoot: string = process.cwd(),
-): OrcaToolService {
+): ExtendedOrcaToolService {
   return {
     execute(name: string, input: Record<string, unknown>) {
       const tool = registry.get(name);
@@ -29,6 +40,11 @@ export function createToolService(
 
     formatForPrompt() {
       return registry.formatForPrompt();
+    },
+
+    getSchema(name: string) {
+      const tool = registry.get(name);
+      return tool?.schema;
     },
   };
 }

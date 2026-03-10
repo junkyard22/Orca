@@ -39,6 +39,11 @@ export interface ToolGateContext {
   tool: string;
   /** Arguments the agent is passing to the tool */
   args: Record<string, unknown>;
+  /** Optional JSON schema for validating tool arguments */
+  schema?: {
+    required?: string[];
+    properties?: Record<string, { type: string }>;
+  };
 }
 
 export interface QCGateContext {
@@ -224,6 +229,40 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
         violations.push(
           `Tool "${ctx.tool}" received null/undefined args: ${nullArgs.join(", ")}`,
         );
+      }
+
+      // Required field validation
+      if (ctx.schema?.required) {
+        const missing = ctx.schema.required.filter(
+          field =>
+            !(field in ctx.args) ||
+            ctx.args[field] === null ||
+            ctx.args[field] === undefined ||
+            ctx.args[field] === ""
+        );
+        if (missing.length > 0) {
+          violations.push(
+            `Tool "${ctx.tool}" missing required fields: ${missing.join(", ")}`
+          );
+        }
+      }
+
+      // Type validation for fields that are present
+      if (ctx.schema?.properties) {
+        for (const [field, def] of Object.entries(ctx.schema.properties)) {
+          if (
+            field in ctx.args &&
+            ctx.args[field] !== null &&
+            ctx.args[field] !== undefined
+          ) {
+            const actualType = typeof ctx.args[field];
+            if (actualType !== def.type) {
+              violations.push(
+                `Tool "${ctx.tool}" field "${field}" must be ${def.type}, got ${actualType}`
+              );
+            }
+          }
+        }
       }
 
       if (violations.length > 0) {
