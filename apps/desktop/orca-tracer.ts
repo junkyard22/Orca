@@ -573,9 +573,17 @@ function createTracingMaestro(
 
         // Fix 1: Strip tools for pure generation tasks to prevent exploration
         function isPureGenerationTask(taskText: string): boolean {
-          const explorationSignals = /existing|current|read|check|look at|find|my (code|file|project)|how does|show me|explain/i;
-          const generationSignals = /create|implement|write|build|add|generate|make a|make an|produce/i;
-          return generationSignals.test(taskText) && !explorationSignals.test(taskText);
+          // If task expects file output, always provide tools
+          const needsFiles = /write to|save|create file|\.[a-z]{2,4}(\s|$)|add to|implement in/i;
+          if (needsFiles.test(taskText)) return false;
+
+          // If task references existing content, provide tools for reading
+          const explorationSignals = /existing|current|read|check|look at|find|my (code|file|project)/i;
+          if (explorationSignals.test(taskText)) return false;
+
+          // Pure generation — text output only, no files needed
+          const generationSignals = /create|implement|write|build|add|generate/i;
+          return generationSignals.test(taskText);
         }
 
         const shouldStripTools = isPureGenerationTask(task.originalUserMessage);
