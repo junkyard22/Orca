@@ -4,12 +4,14 @@ import {
   createMaestroCore,
   selectRole,
   getRolePrompt,
+  pickCoreRole as pickCoreRoleFromTask,
 } from "maestro-core";
 import type {
   RoleName,
   OptionalRoleName,
   TaskContext as RoleSelectorContext,
   OrchestrationResult,
+  CoreRoleName,
 } from "maestro-core";
 import type {
   MaestroPort,
@@ -239,53 +241,44 @@ function buildRoleSelectorContext(task: OrcaTaskSpec): RoleSelectorContext {
  * Heuristic core-role selection runs BEFORE selectRole's optional-role
  * detection. selectRole will override this if a special trigger fires.
  *
+ * Uses pickCoreRole from maestro-core which routes based on task keywords.
+ *
  * Priority order (first match wins):
- *   repair task      → coder_strong  (targeted fix)
- *   code/implement   → coder_strong
- *   utility tasks    → utility
- *   quick edit hints → coder_cheap
- *   review/audit     → reviewer
- *   docs/write       → narrator
- *   default          → brain
+ *   writing/creative   → narrator (song, poem, story, essay, letter, email, etc.)
+ *   planning           → brain (decompose and route only, never execute)
+ *   code/implement     → coder_strong
+ *   review/audit       → reviewer
+ *   utility tasks      → utility
+ *   quick edit hints   → coder_cheap
+ *   default/fallback   → narrator (NOT brain — brain is only for planning)
  */
 function pickCoreRole(
   task: OrcaTaskSpec,
   settings: OrcaSettings,
-): "brain" | "coder_strong" | "coder_cheap" | "reviewer" | "narrator" | "utility" {
+): CoreRoleName {
   const availableRoles = new Set(getAvailableCoreRoles(settings));
   
+  // Handle repair tasks first — always route to coder_strong
   if (task.intent === "repair") {
     if (availableRoles.has("coder_strong")) return "coder_strong";
   }
 
-  const msg = task.originalUserMessage.toLowerCase();
-
-  if (/\b(implement|build|create|add feature|write code|develop)\b/.test(msg)) {
-    if (availableRoles.has("coder_strong")) return "coder_strong";
+  // Use the maestro-core pickCoreRole function for pattern-based routing
+  // This handles writing/creative → narrator, planning → brain, etc.
+  const roleFromTask = pickCoreRoleFromTask(task.originalUserMessage);
+  
+  // If the selected role is available, use it
+  if (availableRoles.has(roleFromTask)) {
+    return roleFromTask;
   }
-
-  if (/\b(lint|format|rename|convert|transform|sort|cleanup|validate|parse|stringify|encode|decode)\b/.test(msg)) {
-    if (availableRoles.has("utility")) return "utility";
-  }
-
-  if (/\b(rename|reformat|fix typo|small (fix|change|edit)|update import|add field)\b/.test(msg)) {
-    if (availableRoles.has("coder_cheap")) return "coder_cheap";
-  }
-
-  if (/\b(review|audit|critique|check for (bugs|issues|problems)|is this (correct|right|good))\b/.test(msg)) {
-    if (availableRoles.has("reviewer")) return "reviewer";
-  }
-
-  if (/\b(document|write (a |the )?(readme|docs?|comment|jsdoc|tsdoc)|explain (to others|in plain))\b/.test(msg)) {
-    if (availableRoles.has("narrator")) return "narrator";
-  }
-
-  // Fallback to brain, or first available role if brain not configured
-  if (availableRoles.has("brain")) return "brain";
+  
+  // Fallback: if the preferred role is not available, fall back to narrator
+  // Brain is NOT used as fallback — brain is only for explicit planning requests
+  if (availableRoles.has("narrator")) return "narrator";
   
   // Return first available role as last resort
   const firstRole = getAvailableCoreRoles(settings)[0];
-  return (firstRole as "brain" | "coder_strong" | "coder_cheap" | "reviewer" | "narrator" | "utility") ?? "brain";
+  return (firstRole as CoreRoleName) ?? "narrator";
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +330,26 @@ function buildTaskPrompt(
         "Do not reference files in other packages (e.g. packages/dewey-core).",
         "If you need to read a file, confirm it exists under cwd first."
       );
+    }
+
+    // ── Subagent coordination context ────────────────────────────────────────
+    // Tells subagents about sibling files and coordination requirements.
+    // Read coordination from task.context which is populated by runSubagentPool.
+    if (isSubagent && task.context?.["coordination"]) {
+      const coord = task.context["coordination"] as { siblings?: string[]; exportName?: string; dependedOnBy?: string[]; message?: string };
+      lines.push("", "### Coordination Context");
+      if (coord.message) {
+        lines.push(coord.message);
+      }
+      if (coord.siblings && coord.siblings.length > 0) {
+        lines.push(`- **Sibling files being created**: ${coord.siblings.join(", ")}`);
+      }
+      if (coord.exportName) {
+        lines.push(`- **Your export name**: ${coord.exportName}`);
+      }
+      if (coord.dependedOnBy && coord.dependedOnBy.length > 0) {
+        lines.push(`- **Depended on by**: ${coord.dependedOnBy.join(", ")}`);
+      }
     }
   }
 
@@ -480,15 +493,27 @@ function shouldDecompose(message: string): boolean {
 }
 
 /**
+ * Subtask with coordination metadata for parallel execution.
+ */
+export interface DecomposedSubtask {
+  role: string;
+  task: string;
+  outputPath?: string;
+  exportName?: string;
+  dependedOnBy?: string[];
+  siblings?: string[];
+}
+
+/**
  * Ask planner_deep to break a multi-step task into independent parallel
- * subtasks. Returns an array of {role, task} objects, or null if decomposition
- * fails or produces a single-item list (fall through to single-agent).
+ * subtasks. Returns an array of subtask objects with coordination metadata,
+ * or null if decomposition fails or produces a single-item list.
  */
 async function decomposeTask(
   originalMessage: string,
   llm: OrcaLLMService,
   settings: OrcaSettings,
-): Promise<Array<{ role: string; task: string }> | null> {
+): Promise<DecomposedSubtask[] | null> {
   const systemPrompt = getRolePrompt("planner_deep");
   const availableRoles = formatAvailableRoles(settings);
   const decompositionPrompt = [
@@ -497,14 +522,31 @@ async function decomposeTask(
     "Break the following request into the smallest set of INDEPENDENT parallel subtasks.",
     "Respond with ONLY a valid JSON array — no markdown fences, no explanation.",
     "",
-    'Format: [{"role":"ROLE","task":"DESCRIPTION"},...]',
+    "Format: [{",
+    '  "role": "ROLE",',
+    '  "task": "DESCRIPTION",',
+    '  "outputPath": "src/utils/filename.ts (optional, for file-producing tasks)",',
+    '  "exportName": "functionName (optional, for function exports)",',
+    '  "dependedOnBy": ["src/utils/index.ts"] (optional, files that will import this)",',
+    '  "siblings": ["other1.ts", "other2.ts"] (optional, other files being created)',
+    "},...]",
     "",
     `Available roles: ${availableRoles}, debugger, reader`,
+    "",
+    "## Coordination Requirements",
+    "When multiple subtasks produce files that will be combined:",
+    "- Specify the exact output path for each subtask (outputPath)",
+    "- Specify the exact export name each subtask must use (exportName)",
+    "- Tell each subtask what the other subtasks are producing (siblings)",
+    "- Tell each subtask what will import or depend on its output (dependedOnBy)",
+    "",
     "Rules:",
     "- Maximum 5 subtasks",
     "- Each subtask MUST be fully independent (no subtask requires another's output)",
     "- If the task is a single unit of work, return exactly one item",
     "- Assign the most appropriate role to each subtask",
+    "- For file-producing tasks, always include outputPath",
+    "- For function exports, always include exportName",
     "",
     "Task to decompose:",
     originalMessage,
@@ -513,7 +555,7 @@ async function decomposeTask(
   try {
     const { text } = await llm.complete(
       `${systemPrompt}\n\n---\n\n${decompositionPrompt}`,
-      { maxTokens: 1024 },
+      { maxTokens: 2048 },
     );
 
     // Strip markdown code fences the model may wrap the JSON in.
@@ -526,13 +568,23 @@ async function decomposeTask(
     if (!Array.isArray(parsed)) return null;
 
     const subtasks = (parsed as unknown[])
-      .filter(
-        (item): item is { role: string; task: string } =>
-          typeof item === "object" &&
-          item !== null &&
-          typeof (item as Record<string, unknown>)["role"] === "string" &&
-          typeof (item as Record<string, unknown>)["task"] === "string",
+      .filter((item): item is DecomposedSubtask =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as Record<string, unknown>)["role"] === "string" &&
+        typeof (item as Record<string, unknown>)["task"] === "string",
       )
+      .map((item) => {
+        const obj = item as unknown as Record<string, unknown>;
+        return {
+          role: obj.role as string,
+          task: obj.task as string,
+          outputPath: typeof obj.outputPath === "string" ? obj.outputPath : undefined,
+          exportName: typeof obj.exportName === "string" ? obj.exportName : undefined,
+          dependedOnBy: Array.isArray(obj.dependedOnBy) ? obj.dependedOnBy as string[] : undefined,
+          siblings: Array.isArray(obj.siblings) ? obj.siblings as string[] : undefined,
+        };
+      })
       .slice(0, 5);
 
     return subtasks.length > 0 ? subtasks : null;
@@ -549,7 +601,7 @@ async function decomposeTask(
  */
 async function runSubagentPool(
   task: OrcaTaskSpec,
-  subtasks: Array<{ role: string; task: string }>,
+  subtasks: DecomposedSubtask[],
   orch: OrchestrationResult,
   ctx: OrcaRunCtx,
 ): Promise<OrcaMaestroResult> {
@@ -562,6 +614,12 @@ async function runSubagentPool(
     subagentDepth: (ctx.subagentDepth ?? 0) + 1,
   };
 
+  // Extract sibling file names for coordination context
+  const siblingFiles = subtasks
+    .map((st) => st.outputPath)
+    .filter((p): p is string => !!p)
+    .map((p) => path.basename(p));
+
   console.error(
     `[MaestroAdapter] decompose  subtasks=${subtasks.length}  run_id=${orch.run_id}`,
   );
@@ -571,6 +629,10 @@ async function runSubagentPool(
     subagentId: `${ctx.runId}_sa${i}`,
     role: st.role,
     task: st.task,
+    outputPath: st.outputPath,
+    exportName: st.exportName,
+    siblings: st.siblings || siblingFiles.filter((f) => f !== path.basename(st.outputPath || "")),
+    dependedOnBy: st.dependedOnBy,
   }));
 
   for (const agent of agents) {
@@ -588,12 +650,28 @@ async function runSubagentPool(
 
   // Run all agents concurrently.
   const agentPromises = agents.map(async (agent) => {
+    // Build coordination context for this subagent
+    const coordinationContext: Record<string, unknown> = {
+      forcedRole: agent.role,
+    };
+    
+    // Add coordination metadata if available
+    if (agent.outputPath) {
+      coordinationContext.outputPath = agent.outputPath;
+      coordinationContext.coordination = {
+        siblings: agent.siblings,
+        exportName: agent.exportName,
+        dependedOnBy: agent.dependedOnBy,
+        message: `Other agents are simultaneously creating: ${agent.siblings?.join(", ") || "related files"}. Your file will be imported by: ${agent.dependedOnBy?.join(", ") || "index files"}.`,
+      };
+    }
+
     const subSpec: OrcaTaskSpec = {
       originalUserMessage: agent.task,
       intent: agent.task,
       goals: [agent.task],
       constraints: task.constraints,
-      context: { ...task.context, forcedRole: agent.role },
+      context: { ...task.context, ...coordinationContext },
     };
 
     try {

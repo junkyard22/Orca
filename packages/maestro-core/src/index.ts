@@ -70,6 +70,7 @@ export { CancellationManager } from './cancellationManager';
 // ── Role Selector ────────────────────────────────────────────────────────────
 export {
   selectRole,
+  pickCoreRole,
   getAvailableOptionalRoles,
   isOptionalRole,
   getCoreRoles,
