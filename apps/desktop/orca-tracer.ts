@@ -128,6 +128,48 @@ const DEV_MODE = process.env["ORCA_DEV"] === "1";
 // Legacy alias — was ORCA_MESSAGES, keep working for anyone using it
 const SHOW_MESSAGES = DEV_MODE || process.env["ORCA_MESSAGES"] === "1";
 
+// ORCA_VERBOSE=1 — dumps the full conversation thread at each agent iteration.
+// More focused than DEV_MODE: no box-drawing, just the raw back-and-forth in order.
+// Useful for seeing exactly what the model receives at each step.
+//
+// Usage:
+//   ORCA_VERBOSE=1 node --experimental-strip-types ... orca-tracer.ts "prompt"
+//   $env:ORCA_VERBOSE="1"; node ...   (PowerShell)
+//
+// ORCA_VERBOSE + ORCA_DEV together gives maximum output.
+const VERBOSE_MODE = process.env["ORCA_VERBOSE"] === "1";
+
+function dumpConversation(role: string, iteration: number, conversation: string) {
+  if (!VERBOSE_MODE) return;
+  const bar = "\u2550".repeat(72);
+  console.log(`\n${C.blue}${bar}${C.reset}`);
+  console.log(`${C.blue}  CONVERSATION DUMP \u2014 role=${role}  iteration=${iteration}${C.reset}`);
+  console.log(`${C.blue}${bar}${C.reset}`);
+  const sections = conversation.split(/\n\n(?=(?:User:|Assistant:|<tool_result))/);
+  for (const section of sections) {
+    if (section.startsWith("Assistant:")) {
+      console.log(`\n${C.green}${section}${C.reset}`);
+    } else if (section.startsWith("User:")) {
+      console.log(`\n${C.yellow}${section}${C.reset}`);
+    } else if (section.startsWith("<tool_result")) {
+      console.log(`\n${C.cyan}${section}${C.reset}`);
+    } else {
+      console.log(`\n${C.dim}${section}${C.reset}`);
+    }
+  }
+  console.log(`\n${C.blue}${bar}${C.reset}\n`);
+}
+
+function dumpRawResponse(role: string, iteration: number, text: string) {
+  if (!VERBOSE_MODE && !DEV_MODE) return;
+  const bar = "\u2500".repeat(72);
+  console.log(`\n${C.green}\u250c\u2500 RAW RESPONSE \u2014 role=${role}  iter=${iteration} ${"\u2500".repeat(Math.max(0, 30 - role.length))}${C.reset}`);
+  for (const line of text.split("\n")) {
+    console.log(`${C.green}\u2502${C.reset} ${line}`);
+  }
+  console.log(`${C.green}\u2514${bar}${C.reset}\n`);
+}
+
 // System prompts are written to files on first use so the trace stays readable.
 // Subsequent calls for the same stage just say "see file" instead of re-printing.
 const PROMPT_CACHE_DIR = join(import.meta.dirname ?? ".", "trace-prompts");
@@ -716,14 +758,20 @@ function createTracingMaestro(
           for (let i = 0; i < MAX_ITER; i++) {
             iterationCount = i + 1;
             
+            // Dump full conversation state before sending to model
+            dumpConversation(role, iterationCount, conversation);
+
             const { text } = await llmForRole.complete(conversation, { maxTokens: 4096 });
             lastText = text;
+
+            // Dump raw model response
+            dumpRawResponse(role, iterationCount, text);
             
-            // Extract Thought/Observation/Next blocks with proper multiline matching
-            // Using [\s\S]*? with s flag (dotAll) to match across newlines
-            const thoughtMatch = text.match(/Thought:\s*([\s\S]*?)(?:\n|$)/i);
-            const observationMatch = text.match(/Observation:\s*([\s\S]*?)(?:\n|$)/i);
-            const nextMatch = text.match(/Next:\s*([\s\S]*?)(?:\n|$)/i);
+            // Extract Thought/Observation/Next blocks — multiline aware
+            // Each block runs until the next known block header or FINAL ANSWER
+            const thoughtMatch = text.match(/Thought:\s*([\s\S]*?)(?=\nObservation:|\nNext:|\nFINAL ANSWER:|<tool_call>|$)/i);
+            const observationMatch = text.match(/Observation:\s*([\s\S]*?)(?=\nThought:|\nNext:|\nFINAL ANSWER:|<tool_call>|$)/i);
+            const nextMatch = text.match(/Next:\s*([\s\S]*?)(?=\nThought:|\nObservation:|\nFINAL ANSWER:|<tool_call>|$)/i);
             
             if (thoughtMatch || observationMatch || nextMatch) {
               const thought = thoughtMatch ? thoughtMatch[1].trim() : "";
@@ -742,20 +790,24 @@ function createTracingMaestro(
               });
               
               trace("Maestro", C.white, `  [Thought] iter=${iterationCount}`);
-              if (DEV_MODE) {
-                // In dev mode: print the full raw model output for this iteration
-                printMsg(`${role} → iter ${iterationCount} [raw response]`, C.cyan, text);
+              // Always print full thought blocks — they are the core reasoning trace
+              if (thought) {
+                console.log(`${ts()} ${C.white}[Thought   ]${C.reset} ${C.dim}Thought:${C.reset}`);
+                for (const line of thought.split("\n")) console.log(`${" ".padStart(15)} ${C.dim}${line}${C.reset}`);
               }
-              if (thought) trace("Maestro", C.dim, `    Thought: ${thought}`);
-              if (observation) trace("Maestro", C.dim, `    Observation: ${observation}`);
-              if (next) trace("Maestro", C.dim, `    Next: ${next}`);
+              if (observation) {
+                console.log(`${ts()} ${C.white}[Thought   ]${C.reset} ${C.dim}Observation:${C.reset}`);
+                for (const line of observation.split("\n")) console.log(`${" ".padStart(15)} ${C.dim}${line}${C.reset}`);
+              }
+              if (next) {
+                console.log(`${ts()} ${C.white}[Thought   ]${C.reset} ${C.dim}Next:${C.reset}`);
+                for (const line of next.split("\n")) console.log(`${" ".padStart(15)} ${C.dim}${line}${C.reset}`);
+              }
             } else {
-              // Informational: model skipped thought formatting — not an error on healthy runs
-              if (DEV_MODE) {
-                trace("Maestro", C.dim, `  [iter ${iterationCount}] No Thought/Observation/Next blocks in response`);
-                printMsg(`${role} → iter ${iterationCount} [raw response]`, C.cyan, text);
-              } else {
-                trace("Maestro", C.dim, `  [iter ${iterationCount}] No Thought/Observation/Next blocks`);
+              // Model skipped thought formatting
+              trace("Maestro", C.dim, `  [iter ${iterationCount}] No Thought/Observation/Next blocks`);
+              if (DEV_MODE || VERBOSE_MODE) {
+                trace("Maestro", C.dim, `  Full response printed above via dumpRawResponse`);
               }
             }
             
@@ -1097,11 +1149,21 @@ const ALL_ROLES = [
 async function main() {
   console.log(`\n${"═".repeat(72)}`);
   console.log(`  ORCA PIPELINE TRACER — live API run`);
-  if (DEV_MODE) {
+  if (DEV_MODE && VERBOSE_MODE) {
+    console.log(`  ${C.yellow}⚙  DEV + VERBOSE MODE${C.reset} — maximum output: prompts, responses, full conversation threads`);
+    console.log(`  ${C.red}  NOT FOR PRODUCTION USE${C.reset}`);
+  } else if (DEV_MODE) {
     console.log(`  ${C.yellow}⚙  DEV MODE${C.reset} — full role↔role comms, prompts & responses visible`);
     console.log(`  ${C.red}  NOT FOR PRODUCTION USE${C.reset}`);
+    console.log(`  Tip: add ${C.cyan}ORCA_VERBOSE=1${C.reset} to also dump full conversation threads per iteration`);
+  } else if (VERBOSE_MODE) {
+    console.log(`  ${C.cyan}⚙  VERBOSE MODE${C.reset} — full conversation thread dumped at each agent iteration`);
+    console.log(`  Tip: add ${C.cyan}ORCA_DEV=1${C.reset} to also see system prompts and boxed responses`);
   } else {
-    console.log(`  Terse mode  (set ${C.cyan}ORCA_DEV=1${C.reset} to see full prompts & responses)`);
+    console.log(`  Terse mode`);
+    console.log(`  ${C.cyan}ORCA_DEV=1${C.reset}      — full prompts & responses`);
+    console.log(`  ${C.cyan}ORCA_VERBOSE=1${C.reset}  — full conversation thread per iteration (best for debugging thought process)`);
+    console.log(`  Both flags together for maximum output`);
   }
   console.log(`${"═".repeat(72)}\n`);
 
