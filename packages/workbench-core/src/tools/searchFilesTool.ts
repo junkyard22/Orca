@@ -65,7 +65,7 @@ function walk(
 
 export const searchFilesTool: Tool = {
   name: "search_files",
-  description: "Search for a text pattern across files in the workspace. Returns file:line matches.",
+  description: "Search file CONTENTS for a text pattern (like grep). Reads each file and returns matching file:line results. Does NOT search by filename — to find files or directories by name, use list_directory instead.",
   schema: {
     type: "object",
     properties: {

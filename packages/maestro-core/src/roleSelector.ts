@@ -179,12 +179,23 @@ export function pickCoreRole(task: string): CoreRoleName {
     }
   }
   
-  // BRAIN — planning, decomposition, orchestration ONLY (not execution)
+  // BRAIN — planning, decomposition, orchestration, and task-investigaton
+  // Also covers status / deployment / investigation queries that require
+  // fact-finding and analysis rather than code writing or formatting.
   const brainPatterns = [
     /\b(plan|schedule|organize)\b/i,
     /\b(break\s+down|decompose)\b/i,
     /\b(steps?\s+for|approach\s+to|strategy\s+for)\b/i,
     /\b(roadmap|timeline|phases?)\b/i,
+    // Status / state queries — show me what's running / deployed / configured
+    /\b(deployment|deployments|deployed|deploy\s+status)\b/i,
+    /\b(show\s+me|what\s+is|what'?s|tell\s+me)\b.{0,40}\b(status|state|current|running|deployed|version)\b/i,
+    /\b(current\s+(status|state|deployment|version|config))\b/i,
+    /\bstatus\s+of\b/i,
+    // Investigative / diagnostic queries not tied to an error traceback
+    /\b(investigat|troubleshoot|diagnos)\b/i,
+    /\b(what\s+(files?|changed|differ|broke|happened))\b/i,
+    /\b(repo|repository|codebase)\s+(status|state|overview|summary|structure)\b/i,
   ];
   
   for (const pattern of brainPatterns) {

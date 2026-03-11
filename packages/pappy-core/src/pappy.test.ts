@@ -222,8 +222,9 @@ describe("evaluateWithPappy — receipt ledger", () => {
       constraints: { requireFiles: ["index.ts"] },
       filesChanged: [{ path: "index.ts", changeType: "A", diff: "export {};" }],
     });
+    // The criteria ledger uses type "criterion_specific"; find by ref or details
     const entry = result.receipt_ledger.find(
-      (e) => e.required_receipt.type === "file_exists",
+      (e) => e.ref === "AC1" || e.required_receipt.details?.includes("index.ts"),
     );
     expect(entry?.status).toBe("PROVED");
   });
@@ -356,5 +357,114 @@ describe("evaluateWithPappy — edge cases", () => {
     expect(() =>
       evaluateWithPappy({ task: "Test" }),
     ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deployment / status routing reliability fixes
+// ---------------------------------------------------------------------------
+
+describe("evaluateWithPappy — deployment-status scenario reliability", () => {
+  it("FAILS when tools fired but no final output was produced (no_final_output)", () => {
+    const result = evaluateWithPappy({
+      task: "Show me the current deployment status",
+      outputText: "",   // empty — agent never answered
+      goals: ["Output describes the current deployment state"],
+      toolEvents: [
+        { tool: "read_file", ok: true, summary: "read package.json" },
+        { tool: "list_directory", ok: true, summary: "listed dist/" },
+      ],
+      // Simulate stoppedBecause=no_final_output from ReactAgentAdapter
+      metadata: { stoppedBecause: "no_final_output" },
+    } as any);
+
+    expect(result.verdict).toBe("FAIL");
+    expect(result.issues.some(i => i.code === "COMPLETENESS_NO_FINAL_OUTPUT")).toBe(true);
+  });
+
+  it("FAILS when all acceptance criteria are MISSING (CORE_GOAL_MISSING)", () => {
+    const result = evaluateWithPappy({
+      task: "Show me the current deployment status",
+      outputText: "",
+      goals: ["Output describes the current deployment state"],
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read file" }],
+    });
+
+    expect(result.verdict).toBe("FAIL");
+    expect(result.issues.some(i => i.code === "CORE_GOAL_MISSING")).toBe(true);
+  });
+
+  it("FAILS when parse_failure_loop is set in metadata", () => {
+    const result = evaluateWithPappy({
+      task: "Show me the current deployment status",
+      outputText: "Partial answer.",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read ok" }],
+      metadata: {
+        stoppedBecause: "parse_failure_loop",
+        loopEvidence: { repeatedCall: "malformed <tool_call> block", occurrences: 3 },
+      },
+    } as any);
+
+    expect(result.issues.some(i => i.code === "AGENT_LOOP_DETECTED")).toBe(true);
+    // parse_failure_loop raises HIGH → FAIL
+    expect(result.verdict).toBe("FAIL");
+  });
+
+  it("tool activity alone does NOT prove a specific goal AC", () => {
+    // Tools ran but output is empty — the fallback AC proof must NOT accept hasTools
+    const result = evaluateWithPappy({
+      task: "Show me the current deployment status",
+      outputText: "",
+      goals: ["Output describes the current deployment state"],
+      toolEvents: [
+        { tool: "read_file", ok: true, summary: "read file" },
+        { tool: "list_directory", ok: true, summary: "listed dir" },
+      ],
+    });
+
+    // The AC for the goal should be MISSING, not PROVED
+    const ac1 = result.receipt_ledger.find(e => e.ref === "AC1");
+    expect(ac1?.status).toBe("MISSING");
+  });
+
+  it("PASSES a deployment-status run that actually returned content", () => {
+    const result = evaluateWithPappy({
+      task: "Show me the current deployment status",
+      outputText: "Current deployment: v1.3.2 is running in production. Build pipeline is green. Staging environment is running v1.4.0-beta.",
+      goals: ["Output describes the current deployment state"],
+      toolEvents: [
+        { tool: "read_file", ok: true, summary: "read release info" },
+      ],
+    });
+
+    expect(result.verdict).toBe("PASS");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COMPLETENESS_NO_FINAL_OUTPUT
+// ---------------------------------------------------------------------------
+
+describe("evaluateWithPappy — COMPLETENESS_NO_FINAL_OUTPUT", () => {
+  it("fires when tools ran but output is empty and stoppedBecause=no_final_output", () => {
+    const result = evaluateWithPappy({
+      task: "Read the config and tell me what it says",
+      outputText: "",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read config.json" }],
+      metadata: { stoppedBecause: "no_final_output" },
+    } as any);
+
+    expect(result.issues.some(i => i.code === "COMPLETENESS_NO_FINAL_OUTPUT")).toBe(true);
+    expect(result.verdict).toBe("FAIL");
+  });
+
+  it("does NOT fire when output is present even with tools", () => {
+    const result = evaluateWithPappy({
+      task: "Read the config and tell me what it says",
+      outputText: "The config has apiKey and baseUrl fields.",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read config.json" }],
+    });
+
+    expect(result.issues.some(i => i.code === "COMPLETENESS_NO_FINAL_OUTPUT")).toBe(false);
   });
 });

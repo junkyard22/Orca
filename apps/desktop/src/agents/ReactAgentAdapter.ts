@@ -9,20 +9,41 @@ type ToolEvent = { tool: string; ok: boolean; summary: string; raw?: unknown };
 type FileChange = { path: string; changeType: "A" | "M" | "D"; diff?: string };
 
 const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+const OPEN_TOOL_CALL_TAG = '<tool_call>';
 
-function parseToolCalls(text: string): Array<{ tool: string; input: Record<string, unknown> }> {
+/**
+ * Parse tool calls from model output.
+ *
+ * Returns both the successfully parsed calls and a count of `<tool_call>`
+ * blocks that were found but could not be parsed by any strategy.
+ * Callers use `malformedCount` to emit diagnostics and track parse-failure loops.
+ */
+function parseToolCalls(text: string): {
+  calls: Array<{ tool: string; input: Record<string, unknown> }>;
+  malformedCount: number;
+} {
   const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
-  // Strict: closed <tool_call>...<tool_call>
+  let malformedCount = 0;
+
+  // ── Pass 1: strict closed <tool_call>…</tool_call> blocks ────────────────
   TOOL_CALL_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = TOOL_CALL_RE.exec(text)) !== null) {
+    const body = match[1]!;
+    let parsed = false;
+
+    // Strategy A – JSON with a "tool" key
     try {
-      const parsed = JSON.parse(match[1]!) as Record<string, unknown>;
-      const { tool, ...input } = parsed;
-      if (typeof tool === 'string' && tool) calls.push({ tool, input });
-    } catch {
-      // XML-attribute style: TOOLNAME<arg_key>k</arg_key><arg_value>v</arg_value>
-      const body = match[1]!;
+      const obj = JSON.parse(body) as Record<string, unknown>;
+      const { tool, ...input } = obj;
+      if (typeof tool === 'string' && tool) {
+        calls.push({ tool, input });
+        parsed = true;
+      }
+    } catch { /* fall through to next strategy */ }
+
+    // Strategy B – XML-attribute style inside the block
+    if (!parsed) {
       const toolNameMatch = /^([\w-]+)/.exec(body.trim());
       if (toolNameMatch) {
         const tool = toolNameMatch[1]!;
@@ -30,35 +51,73 @@ function parseToolCalls(text: string): Array<{ tool: string; input: Record<strin
         const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
         let m: RegExpExecArray | null;
         while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
-        if (tool) calls.push({ tool, input });
+        if (tool) {
+          calls.push({ tool, input });
+          parsed = true;
+        }
       }
     }
+
+    if (!parsed) {
+      malformedCount++;
+      console.warn(
+        `[ReactAgent] Malformed tool block — all parse strategies failed.\n` +
+        `  Block content (first 200 chars): ${body.slice(0, 200).replace(/\n/g, '\\n')}`
+      );
+    }
   }
-  // Lenient: unclosed <tool_call> at end of text (some models omit the closing tag)
+
+  // ── Pass 2: lenient — unclosed <tool_call> at end of text ────────────────
+  // Some models omit the closing tag; try to recover the trailing fragment.
   if (calls.length === 0) {
-    const openTag = '<tool_call>';
-    const idx = text.lastIndexOf(openTag);
+    const idx = text.lastIndexOf(OPEN_TOOL_CALL_TAG);
     if (idx !== -1) {
-      const body = text.slice(idx + openTag.length).replace(/<\/tool_call>[\s\S]*$/, '').trim();
-      try {
-        const parsed = JSON.parse(body) as Record<string, unknown>;
-        const { tool, ...input } = parsed;
-        if (typeof tool === 'string' && tool) calls.push({ tool, input });
-      } catch {
-        // XML-attribute style fallback
-        const toolNameMatch = /^([\w-]+)/.exec(body);
-        if (toolNameMatch) {
-          const tool = toolNameMatch[1]!;
-          const input: Record<string, unknown> = {};
-          const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
-          let m: RegExpExecArray | null;
-          while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
-          if (tool) calls.push({ tool, input });
+      const body = text.slice(idx + OPEN_TOOL_CALL_TAG.length)
+        .replace(/<\/tool_call>[\s\S]*$/, '')
+        .trim();
+
+      // Only try to recover if the fragment looks meaningful (>5 chars and not pure whitespace)
+      if (body.length > 5) {
+        let parsed = false;
+
+        try {
+          const obj = JSON.parse(body) as Record<string, unknown>;
+          const { tool, ...input } = obj;
+          if (typeof tool === 'string' && tool) {
+            calls.push({ tool, input });
+            parsed = true;
+          }
+        } catch { /* fall through */ }
+
+        if (!parsed) {
+          const toolNameMatch = /^([\w-]+)/.exec(body);
+          if (toolNameMatch) {
+            const tool = toolNameMatch[1]!;
+            const input: Record<string, unknown> = {};
+            const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
+            let m: RegExpExecArray | null;
+            while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
+            if (tool) {
+              calls.push({ tool, input });
+              parsed = true;
+            }
+          }
+        }
+
+        if (!parsed) {
+          // The unclosed fragment was also unparseable — count it only when no
+          // closed blocks were found (otherwise the closed-block count already covers it).
+          malformedCount++;
+          console.warn(
+            `[ReactAgent] Malformed unclosed tool block at end of response.\n` +
+            `  Fragment (first 200 chars): ${body.slice(0, 200).replace(/\n/g, '\\n')}`
+          );
         }
       }
     }
   }
-  return calls;
+
+  return { calls, malformedCount };
 }
 
 function formatToolResult(tool: string, ok: boolean, output: string, error?: string): string {
@@ -81,10 +140,10 @@ If your task involves creating or modifying a file (any filename with an extensi
 2. Your FINAL ANSWER must confirm what was written — it must NOT contain the file content itself
 3. Never output source code inline as a substitute for calling write_file
 
-CRITICAL RULES:
+PREFERRED FORMAT:
 - Your Thought/Observation/Next blocks are INTERNAL REASONING ONLY
 - They must NEVER appear in your final answer to the user
-- Never call a tool without a preceding Thought block
+- Prefer writing a Thought block before each tool call (not required, but helps reasoning quality)
 - When the task is complete, write your final answer using EXACTLY this format:
 
 FINAL ANSWER:
@@ -129,6 +188,7 @@ export class ReactAgentAdapter implements AgentAdapter {
   private readonly LOOP_WINDOW = 3;        // consecutive identical calls = loop
   private readonly THRASH_WINDOW = 6;      // alternating pattern window
   private readonly EMPTY_RESULT_LIMIT = 3; // consecutive empty/error results = loop
+  private readonly PARSE_FAILURE_LIMIT = 3; // consecutive iterations with malformed tool blocks
 
   constructor(
     llmAdapter: LLMAdapter,
@@ -149,12 +209,13 @@ export class ReactAgentAdapter implements AgentAdapter {
     let iterationCount = 0;
     let currentOutputText = '';
     let lastModelOutput = '';
-    let stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error' = 'max_iterations';
+    let stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error' = 'max_iterations';
     let error: string | undefined;
     
     // Loop detection state
     const callHistory: string[] = [];
     let consecutiveEmptyResults = 0;
+    let consecutiveParseFailures = 0;
     let loopEvidence: { iteration: number; repeatedCall: string; occurrences: number } | undefined;
     
     // Tool Use Discipline enforcement
@@ -268,7 +329,46 @@ export class ReactAgentAdapter implements AgentAdapter {
         }
         
         // Parse tool calls
-        const toolCalls = parseToolCalls(modelOutput);
+        const { calls: toolCalls, malformedCount } = parseToolCalls(modelOutput);
+
+        // ── Parse-failure loop guard ──────────────────────────────────────────
+        // If the model emitted <tool_call> blocks but none could be parsed,
+        // inject a corrective message and track the failure. Three consecutive
+        // iterations of this stops the run so it doesn't silently spin.
+        const hasRawToolCallTag = modelOutput.includes('<tool_call>');
+        if (hasRawToolCallTag && malformedCount > 0 && toolCalls.length === 0) {
+          consecutiveParseFailures++;
+          console.warn(
+            `[ReactAgent] Parse-failure #${consecutiveParseFailures} at iteration ${iterationCount}: ` +
+            `${malformedCount} malformed block(s), 0 valid calls. ` +
+            `(limit=${this.PARSE_FAILURE_LIMIT})`
+          );
+          messages.push({
+            role: 'user',
+            content:
+              'Your tool call was not properly formatted and could not be parsed.\n' +
+              'Tool calls MUST be valid JSON inside <tool_call>…</tool_call> tags with a "tool" key, e.g.:\n' +
+              '<tool_call>{"tool": "read_file", "path": "src/index.ts"}</tool_call>\n' +
+              'Please retry with a correctly formatted tool call, or write your FINAL ANSWER: if done.'
+          });
+          if (consecutiveParseFailures >= this.PARSE_FAILURE_LIMIT) {
+            console.warn(
+              `[ReactAgent] parse_failure_loop: ${consecutiveParseFailures} consecutive malformed ` +
+              `tool blocks — stopping run.`
+            );
+            stoppedBecause = 'parse_failure_loop';
+            loopEvidence = {
+              iteration: iterationCount,
+              repeatedCall: 'malformed <tool_call> block',
+              occurrences: consecutiveParseFailures
+            };
+            break;
+          }
+          continue; // give model a chance to correct its format
+        } else if (!hasRawToolCallTag || toolCalls.length > 0) {
+          // Reset counter when either no tool call was attempted or a valid call was parsed
+          consecutiveParseFailures = 0;
+        }
         
         // Check for FINAL ANSWER in any response to track if we've found one
         const cleanedOutput = stripToolCalls(modelOutput);
@@ -300,7 +400,11 @@ export class ReactAgentAdapter implements AgentAdapter {
             break;
           }
 
-          currentOutputText = stripThoughtBlocks(cleanedOutput);
+          // Only preserve non-empty text — don't overwrite a good draft with an empty response
+          const extractedText = stripThoughtBlocks(cleanedOutput);
+          if (extractedText.trim()) {
+            currentOutputText = extractedText;
+          }
           // Do not exit — continue to next iteration to allow model to retry
           // with proper formatting. Only exit on FINAL ANSWER or max_iterations.
           messages.push({ role: "user", content: "Your response was not properly formatted. Please use the FINAL ANSWER: marker for your final response, or use tool calls to complete the task." });
@@ -457,6 +561,24 @@ export class ReactAgentAdapter implements AgentAdapter {
       
       const cleanedLastOutput = stripToolCalls(lastModelOutput);
       const finalOutput = currentOutputText || stripThoughtBlocks(cleanedLastOutput);
+      
+      // ── No-final-output detection ─────────────────────────────────────────
+      // If the run ended without a FINAL ANSWER: and the derived output is empty
+      // (or only whitespace), surface this explicitly. Callers and Pappy need to
+      // know the run produced no deliverable even though tools may have fired.
+      const effectiveOutput = finalOutput.trim();
+      // Graceful fallback: a model that skipped the FINAL ANSWER: marker but produced
+      // real text is still done — don't penalise it with max_iterations.
+      if (effectiveOutput && stoppedBecause === 'max_iterations') {
+        stoppedBecause = 'done';
+      }
+      if (!finalAnswerFound && effectiveOutput.length === 0 && stoppedBecause === 'max_iterations') {
+        stoppedBecause = 'no_final_output';
+        console.warn(
+          `[ReactAgent] no_final_output: run completed ${iterationCount} iteration(s) ` +
+          `with ${toolsUsed.length} tool event(s) but produced no FINAL ANSWER.`
+        );
+      }
       
       return {
         outputText: finalOutput,

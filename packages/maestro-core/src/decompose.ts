@@ -71,6 +71,10 @@ Reply with ONLY valid JSON — no markdown fences, no explanation.
 - List 1-4 short, objective, verifiable statements about what the final output must contain or achieve.
 - Each criterion must be independently checkable (e.g. "Output contains a TypeScript function", "All exported functions have JSDoc comments").
 - Do NOT include process steps or explanations — only outcome facts.
+- CRITICAL: Criteria must describe what a CORRECT answer to THIS specific request looks like. Ground every criterion in the actual task wording.
+- NEVER invent capability limitations (e.g. "unable to access", "explains inability", "no filesystem access") unless the user's request explicitly states a constraint. If a tool can do it, assume it will.
+- NEVER introduce concepts not present in the user's request. If the user asks to "count R's in filenames", the criterion must mention "count", "R", and "filenames" — not "limitations" or "alternatives".
+- For counting/listing/status tasks: criteria must name what is being counted, listed, or shown. Bad: "Output summarises result". Good: "Output states the count of filenames containing the letter R".
 
 ## Role menu:
 brain         — reasoning, analysis, open-ended questions
@@ -95,6 +99,19 @@ utility       — general tasks that don't fit other categories
 - "explain how async/await works" → { "routing": "direct", "role": "brain" }
 - "fix the bug in line 42" → { "routing": "direct", "role": "debugger" }
 - "implement a login form" → { "routing": "direct", "role": "coder_strong" }
+- "show me the current deployment status" → { "routing": "direct", "role": "brain" }
+- "what is currently deployed in production" → { "routing": "direct", "role": "brain" }
+- "investigate why the service is down" → { "routing": "direct", "role": "debugger" }
+- "give me a repo overview" → { "routing": "direct", "role": "brain" }
+- "what files changed recently" → { "routing": "direct", "role": "brain" }
+- "count how many filenames contain R" → { "routing": "direct", "role": "brain", "done_criteria": ["Output states the count of top-level filenames containing the letter R", "Output states the count of top-level filenames containing the letter D"] }
+  BAD done_criteria for that task: ["Output explains inability to access filesystem"] ← NEVER invent limitations
+
+## Anti-patterns — DO NOT route to utility unless task is ONLY lint/format/cleanup:
+- status queries → brain, NOT utility
+- deployment queries → brain, NOT utility
+- investigation / fact-finding → brain or debugger, NOT utility
+- "show me" / "tell me" / "what is" → brain, NOT utility
 
 ## Examples — DECOMPOSE (multiple specialists):
 - "implement a login form AND write the JSDoc for it" → decompose: [coder_strong, narrator]

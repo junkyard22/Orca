@@ -186,11 +186,10 @@ Next: Write
 
     const result = await adapter.run(createTask(), tools as any, createCtx());
 
-    expect(result.stoppedBecause).toBe("loop_detected");
-    expect(result.loopEvidence).toBeDefined();
-    expect(result.loopEvidence?.occurrences).toBe(6);
-    // The repeatedCall should show the alternating pattern
-    expect(result.loopEvidence?.repeatedCall).toContain("↔");
+    // The 3-tool-call cap fires at iteration 4 (before the 6-call thrash window
+    // can fully develop), so the run ends cleanly via the tool-use-discipline path.
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.loopEvidence).toBeUndefined();
   });
 
   // Test 3: Empty result loop — tool returns '' three times in a row
@@ -373,9 +372,10 @@ Next: Continue
 
     const result = await adapter.run(createTask(), tools as any, createCtx());
 
-    // Should hit max iterations
-    expect(result.stoppedBecause).toBe("max_iterations");
-    expect(result.iterationCount).toBe(10);
+    // The 3-tool-call cap fires at iteration 4, so the run ends via the
+    // tool-use-discipline 'done' path well before the 10-iteration hard limit.
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.iterationCount).toBeLessThan(10);
     expect(result.loopEvidence).toBeUndefined();
   });
 
@@ -431,5 +431,98 @@ Next: Continue
 
     expect(result.stoppedBecause).toBe("done");
     expect(result.outputText).toBe("- apps/runner is a CLI wrapper around Orca\n- It configures LLM, Maestro, Pappy, and tools\n- It reads a prompt and prints the final reply");
+  });
+
+  // ── New tests for hardened failure modes ──────────────────────────────────
+
+  // Test 7: Malformed tool block — invalid JSON inside <tool_call> tags
+  it("should inject a correction message on malformed tool block and not crash", async () => {
+    const responses = [
+      // Malformed: not valid JSON
+      `Thought: I need to read the file
+Observation: Checking
+Next: Read
+
+<tool_call>NOT VALID JSON {broken: syntax here</tool_call>`,
+
+      // After correction, model produces a valid final answer
+      `Thought: Ok, I'll answer directly
+Observation: Done
+Next: Task is complete
+
+FINAL ANSWER:
+Here is the deployment status: all services up.`
+    ];
+
+    const mockAdapter = new MockLLMAdapter(responses);
+    const adapter = new ReactAgentAdapter(
+      mockAdapter,
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      10
+    );
+
+    const result = await adapter.run(createTask(), [], createCtx());
+
+    // Should eventually succeed because the model corrected itself
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.outputText).toContain("deployment status");
+  });
+
+  // Test 8: Parse-failure loop — 3 consecutive malformed tool blocks → stop
+  it("should detect parse_failure_loop after 3 consecutive malformed blocks", async () => {
+    const malformedIteration = `Thought: I need a tool
+Observation: Trying
+Next: Call it
+
+<tool_call>{ broken json no closing brace</tool_call>`;
+
+    const responses = [
+      malformedIteration,
+      malformedIteration,
+      malformedIteration,
+      // Would be a valid response but should never be reached
+      `FINAL ANSWER: This should not appear`
+    ];
+
+    const mockAdapter = new MockLLMAdapter(responses);
+    const adapter = new ReactAgentAdapter(
+      mockAdapter,
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      10
+    );
+
+    const result = await adapter.run(createTask(), [], createCtx());
+
+    expect(result.stoppedBecause).toBe("parse_failure_loop");
+    expect(result.loopEvidence).toBeDefined();
+    expect(result.loopEvidence?.occurrences).toBe(3);
+    expect(result.loopEvidence?.repeatedCall).toContain("malformed");
+  });
+
+  // Test 9: no_final_output — tools ran forever, max_iterations hit, no answer
+  it("should report no_final_output when tools fired but no FINAL ANSWER produced", async () => {
+    // 3 iterations each calling a tool but never writing FINAL ANSWER:
+    const responses = [
+      `Thought: Read the file\n<tool_call>{"tool": "read_file", "path": "a.txt"}</tool_call>`,
+      `Thought: Read again\n<tool_call>{"tool": "read_file", "path": "b.txt"}</tool_call>`,
+      `Thought: Read more\n<tool_call>{"tool": "read_file", "path": "c.txt"}</tool_call>`,
+    ];
+
+    const mockAdapter = new MockLLMAdapter(responses);
+    const tools = [createMockTool("read_file", "some content")];
+    const adapter = new ReactAgentAdapter(
+      mockAdapter,
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      3  // maxIterations = 3
+    );
+
+    const result = await adapter.run(createTask(), tools as any, createCtx());
+
+    // max_iterations reached with no final answer → no_final_output
+    expect(result.stoppedBecause).toBe("no_final_output");
+    expect(result.toolsUsed.length).toBeGreaterThan(0);
   });
 });

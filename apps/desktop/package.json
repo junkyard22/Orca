@@ -9,22 +9,25 @@
   "scripts": {
     "dev": "node build-main.mjs && electron .",
     "build": "node build-main.mjs",
-    "dist": "node build-dist.mjs"
+    "dist": "node build-dist.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@clawde/benson-core": "workspace:*",
     "@clawde/miranda-core": "workspace:*",
     "@clawde/orca-core": "workspace:*",
     "@yakstacks/workbench-core": "workspace:*",
-    "maestro-core": "workspace:*",
-    "dotenv": "^16.4.0"
+    "dotenv": "^16.4.0",
+    "maestro-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.9"
   },
   "build": {
     "appId": "com.clawde.orca",
@@ -41,8 +44,18 @@
     ],
     "win": {
       "target": [
-        { "target": "nsis",     "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {

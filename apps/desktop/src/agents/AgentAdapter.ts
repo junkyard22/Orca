@@ -22,7 +22,7 @@ export interface AgentResult {
   toolsUsed: ToolEvent[];
   filesChanged: FileChange[];
   iterationCount: number;
-  stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error';
+  stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error';
   error?: string;
   loopEvidence?: {
     iteration: number;

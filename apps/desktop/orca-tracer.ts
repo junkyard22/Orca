@@ -16,6 +16,7 @@ import { createBenson } from "@clawde/benson-core";
 import {
   createOrcaRuntime,
   createDirectLLMService,
+  createPappyPort,
   createDebugPappyPort,
   deriveFilesChangedFromToolEvents,
   SqliteStore,
@@ -112,11 +113,20 @@ function trace(layer: string, color: string, msg: string) {
   console.log(`${ts()} ${color}[${layer.padEnd(10)}]${C.reset} ${msg}`);
 }
 
-// ── Message detail toggle ─────────────────────────────────────────────────
-// Set ORCA_MESSAGES=1 to dump full prompts and responses.
-// Unset (or 0) for the normal terse summary view.
+// ── Dev mode toggle ───────────────────────────────────────────────────────
+// Set ORCA_DEV=1 to dump full role↔role communication: prompts, responses,
+// tool results, per-iteration headers. NEVER ship this enabled to end users.
+//
+// Usage examples:
+//   ORCA_DEV=1 node --experimental-strip-types ... orca-tracer.ts "prompt"
+//   $env:ORCA_DEV="1"; node ...   (PowerShell)
+//
+// Without ORCA_DEV the trace stays terse: timings, token counts, verdicts.
 
-const SHOW_MESSAGES = process.env["ORCA_MESSAGES"] === "1";
+const DEV_MODE = process.env["ORCA_DEV"] === "1";
+
+// Legacy alias — was ORCA_MESSAGES, keep working for anyone using it
+const SHOW_MESSAGES = DEV_MODE || process.env["ORCA_MESSAGES"] === "1";
 
 // System prompts are written to files on first use so the trace stays readable.
 // Subsequent calls for the same stage just say "see file" instead of re-printing.
@@ -212,8 +222,10 @@ class TracingLiveAdapter implements LLMAdapter {
     const stage = this.detectStage(sys);
 
     trace("Adapter", C.magenta, `Call #${callNum}  stage=${stage}  model=${request.model}  msgs=${request.messages.length}`);
-    const promptPreview = sys.slice(0, 150).replace(/\n/g, "\\n");
-    trace("Adapter", C.dim, `  system[0..150]: "${promptPreview}…"`);
+    if (DEV_MODE) {
+      const promptPreview = sys.slice(0, 150).replace(/\n/g, "\\n");
+      trace("Adapter", C.dim, `  system[0..150]: "${promptPreview}…"`);
+    }
     this.printMessages(stage, request.messages);
     trace("Adapter", C.magenta, `  → calling API...`);
 
@@ -223,9 +235,14 @@ class TracingLiveAdapter implements LLMAdapter {
       `  ← ${ms}ms  ${response.usage?.totalTokens ?? "?"}tok` +
       `  (in=${response.usage?.promptTokens ?? "?"} out=${response.usage?.completionTokens ?? "?"})` +
       `  ${response.content.length} chars`);
-    const preview = response.content.slice(0, 120).replace(/\n/g, "\\n");
-    trace("Adapter", C.dim, `  content[0..120]: "${preview}…"`);
-    printMsg(`← ${stage} [assistant]`, C.green, response.content);
+    if (DEV_MODE) {
+      // In dev mode print the full response in a box so you can read it
+      printMsg(`← ${stage} [assistant response]`, C.green, response.content);
+    } else {
+      // Terse mode: one-line 120-char preview
+      const preview = response.content.slice(0, 120).replace(/\n/g, "\\n");
+      trace("Adapter", C.dim, `  content[0..120]: "${preview}…"`);
+    }
     return response;
   }
 
@@ -336,20 +353,36 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
 // ── Agent loop helpers (mirrors main.ts) ───────────────────────────────
 
 const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+const OPEN_TOOL_CALL_TAG = '<tool_call>';
 
-function parseToolCalls(text: string): Array<{ tool: string; input: Record<string, unknown> }> {
+/**
+ * Parse tool calls from model output — tracer version with malformed-block diagnostics.
+ * Returns `{ calls, malformedCount }` so the agent loop can surface parse failures.
+ */
+function parseToolCalls(text: string): {
+  calls: Array<{ tool: string; input: Record<string, unknown> }>;
+  malformedCount: number;
+} {
   const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
-  // Strict: closed <tool_call>...</tool_call>
+  let malformedCount = 0;
+
+  // ── Pass 1: strict closed <tool_call>…</tool_call> blocks ────────────────
   TOOL_CALL_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = TOOL_CALL_RE.exec(text)) !== null) {
+    const body = match[1]!;
+    let parsed = false;
+
     try {
-      const parsed = JSON.parse(match[1]!) as Record<string, unknown>;
-      const { tool, ...input } = parsed;
-      if (typeof tool === 'string' && tool) calls.push({ tool, input });
-    } catch {
-      // XML-attribute style: TOOLNAME<arg_key>k</arg_key><arg_value>v</arg_value>
-      const body = match[1]!;
+      const obj = JSON.parse(body) as Record<string, unknown>;
+      const { tool, ...input } = obj;
+      if (typeof tool === 'string' && tool) {
+        calls.push({ tool, input });
+        parsed = true;
+      }
+    } catch { /* fall through */ }
+
+    if (!parsed) {
       const toolNameMatch = /^([\w-]+)/.exec(body.trim());
       if (toolNameMatch) {
         const tool = toolNameMatch[1]!;
@@ -357,36 +390,59 @@ function parseToolCalls(text: string): Array<{ tool: string; input: Record<strin
         const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
         let m: RegExpExecArray | null;
         while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
-        if (tool) calls.push({ tool, input });
+        if (tool) { calls.push({ tool, input }); parsed = true; }
       }
     }
+
+    if (!parsed) {
+      malformedCount++;
+      trace("Maestro", C.red,
+        `  ⚠ Malformed tool block — all parse strategies failed.\n` +
+        `    Block (first 200 chars): ${body.slice(0, 200).replace(/\n/g, '\\n')}`
+      );
+    }
   }
-  // Lenient: unclosed <tool_call> at end of text (some models omit the closing tag)
+
+  // ── Pass 2: lenient unclosed <tool_call> at end of text ──────────────────
   if (calls.length === 0) {
-    const openTag = '<tool_call>';
-    const idx = text.lastIndexOf(openTag);
+    const idx = text.lastIndexOf(OPEN_TOOL_CALL_TAG);
     if (idx !== -1) {
-      const body = text.slice(idx + openTag.length).replace(/<\/tool_call>[\s\S]*$/, '').trim();
-      // Try JSON first
-      try {
-        const parsed = JSON.parse(body) as Record<string, unknown>;
-        const { tool, ...input } = parsed;
-        if (typeof tool === 'string' && tool) calls.push({ tool, input });
-      } catch {
-        // Try XML-attribute style: <tool_call>tool_name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>
-        const toolNameMatch = /^([\w-]+)/.exec(body);
-        if (toolNameMatch) {
-          const tool = toolNameMatch[1]!;
-          const input: Record<string, unknown> = {};
-          const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
-          let m: RegExpExecArray | null;
-          while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
-          if (tool) calls.push({ tool, input });
+      const body = text.slice(idx + OPEN_TOOL_CALL_TAG.length)
+        .replace(/<\/tool_call>[\s\S]*$/, '')
+        .trim();
+
+      if (body.length > 5) {
+        let parsed = false;
+        try {
+          const obj = JSON.parse(body) as Record<string, unknown>;
+          const { tool, ...input } = obj;
+          if (typeof tool === 'string' && tool) { calls.push({ tool, input }); parsed = true; }
+        } catch { /* fall through */ }
+
+        if (!parsed) {
+          const toolNameMatch = /^([\w-]+)/.exec(body);
+          if (toolNameMatch) {
+            const tool = toolNameMatch[1]!;
+            const input: Record<string, unknown> = {};
+            const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
+            let m: RegExpExecArray | null;
+            while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
+            if (tool) { calls.push({ tool, input }); parsed = true; }
+          }
+        }
+
+        if (!parsed) {
+          malformedCount++;
+          trace("Maestro", C.red,
+            `  ⚠ Malformed unclosed tool block at end of response.\n` +
+            `    Fragment (first 200 chars): ${body.slice(0, 200).replace(/\n/g, '\\n')}`
+          );
         }
       }
     }
   }
-  return calls;
+
+  return { calls, malformedCount };
 }
 
 function fmtToolResult(tool: string, ok: boolean, output: string, error?: string): string {
@@ -466,7 +522,7 @@ async function runAgentLoop(
   for (let i = 0; i < MAX_ITER; i++) {
     const { text } = await llm.complete(conversation, { maxTokens: 4096 });
     lastText = text;
-    const calls = parseToolCalls(text);
+    const { calls } = parseToolCalls(text);
     if (calls.length === 0) break;
     trace("Maestro", C.yellow, `  [agentLoop] iteration ${i + 1}: ${calls.length} tool call(s)`);
     conversation += `\n\nAssistant:\n${text}`;
@@ -474,6 +530,10 @@ async function runAgentLoop(
       trace("Maestro", C.cyan, `    ➤ tool:${call.tool}  args=${JSON.stringify(call.input).slice(0, 80)}`);
       const result = await tools.execute(call.tool, call.input);
       trace("Maestro", result.ok ? C.green : C.red, `    ← ${result.ok ? 'ok' : 'FAIL'} (${result.output.length} chars)`);
+      if (DEV_MODE) {
+        printMsg(`tool:${call.tool} result`, result.ok ? C.green : C.red,
+          result.ok ? (result.output || '(empty)') : `ERROR: ${result.error ?? 'unknown'}`);
+      }
       toolEvents.push({
         tool:    call.tool,
         ok:      result.ok,
@@ -629,12 +689,14 @@ function createTracingMaestro(
         let lastText = '';
         let currentOutputText = '';
         let iterationCount = 0;
-        let stoppedBecause: 'done' | 'max_iterations' | 'error' = 'max_iterations';
+        let stoppedBecause: 'done' | 'max_iterations' | 'parse_failure_loop' | 'no_final_output' | 'error' = 'max_iterations';
         
         // Tool Use Discipline enforcement
         let cumulativeToolCallCount = 0;
         let toolLimitWarningInjected = false;
         let finalAnswerFound = false;
+        let consecutiveParseFailures = 0;
+        const PARSE_FAILURE_LIMIT = 3;
 
         try {
           for (let i = 0; i < MAX_ITER; i++) {
@@ -666,13 +728,21 @@ function createTracingMaestro(
               });
               
               trace("Maestro", C.white, `  [Thought] iter=${iterationCount}`);
+              if (DEV_MODE) {
+                // In dev mode: print the full raw model output for this iteration
+                printMsg(`${role} → iter ${iterationCount} [raw response]`, C.cyan, text);
+              }
               if (thought) trace("Maestro", C.dim, `    Thought: ${thought}`);
               if (observation) trace("Maestro", C.dim, `    Observation: ${observation}`);
               if (next) trace("Maestro", C.dim, `    Next: ${next}`);
             } else {
               // Defensive logging: log when thought extraction fails
               trace("Maestro", C.yellow, `  [Thought] No Thought block found in iteration ${iterationCount} — model may have skipped format`);
-              trace("Maestro", C.dim, `    Raw output[0..200]: "${text.slice(0, 200).replace(/\n/g, "\\n")}..."`);
+              if (DEV_MODE) {
+                printMsg(`${role} → iter ${iterationCount} [raw response — no Thought block]`, C.yellow, text);
+              } else {
+                trace("Maestro", C.dim, `    Raw output[0..200]: "${text.slice(0, 200).replace(/\n/g, "\\n")}..."`);
+              }
             }
             
             // Check for FINAL ANSWER in any response to track if we've found one
@@ -700,7 +770,33 @@ function createTracingMaestro(
               break;
             }
             
-            const calls = parseToolCalls(text);
+            const { calls, malformedCount } = parseToolCalls(text);
+
+            // ── Parse-failure loop guard ──────────────────────────────────────
+            const hasRawToolCallTag = text.includes('<tool_call>');
+            if (hasRawToolCallTag && malformedCount > 0 && calls.length === 0) {
+              consecutiveParseFailures++;
+              trace("Maestro", C.red,
+                `  ⚠ parse-failure #${consecutiveParseFailures} at iter ${iterationCount}: ` +
+                `${malformedCount} malformed block(s), 0 valid calls (limit=${PARSE_FAILURE_LIMIT})`
+              );
+              conversation +=
+                `\n\nUser: Your tool call was not properly formatted and could not be parsed.\n` +
+                `Tool calls MUST be valid JSON inside <tool_call>…</tool_call> tags with a "tool" key, e.g.:\n` +
+                `<tool_call>{"tool": "read_file", "path": "src/index.ts"}</tool_call>\n` +
+                `Please retry with a correctly formatted tool call, or write your FINAL ANSWER: if done.`;
+              if (consecutiveParseFailures >= PARSE_FAILURE_LIMIT) {
+                trace("Maestro", C.red,
+                  `  ✗ parse_failure_loop: ${consecutiveParseFailures} consecutive malformed ` +
+                  `tool blocks — stopping run.`
+                );
+                stoppedBecause = 'parse_failure_loop';
+                break;
+              }
+              continue;
+            } else if (!hasRawToolCallTag || calls.length > 0) {
+              consecutiveParseFailures = 0;
+            }
 
             if (calls.length === 0) {
               if (finalAnswer) {
@@ -741,6 +837,10 @@ function createTracingMaestro(
               
               const result = await toolService.execute(call.tool, call.input);
               trace("Maestro", result.ok ? C.green : C.red, `    ← ${result.ok ? 'ok' : 'FAIL'} (${result.output.length} chars)`);
+              if (DEV_MODE) {
+                printMsg(`tool:${call.tool} result`, result.ok ? C.green : C.red,
+                  result.ok ? (result.output || '(empty)') : `ERROR: ${result.error ?? 'unknown'}`);
+              }
               
               // Fix 3: Capture file content in tool event for diff verification
               const enrichedRaw = { ...call.input };
@@ -782,6 +882,16 @@ function createTracingMaestro(
           const finalAnswer = extractFinalAnswer(cleanedOutput);
           return finalAnswer || stripThoughtBlocks(cleanedOutput);
         })();
+
+        // ── No-final-output detection ─────────────────────────────────────────
+        const effectiveText = text.trim();
+        if (!finalAnswerFound && effectiveText.length === 0 && stoppedBecause === 'max_iterations') {
+          stoppedBecause = 'no_final_output';
+          trace("Maestro", C.red,
+            `  ✗ no_final_output: ${iterationCount} iteration(s), ${toolEvents.length} tool event(s), ` +
+            `no FINAL ANSWER produced.`
+          );
+        }
 
         trace("Maestro", C.cyan, `  Agent stopped: ${stoppedBecause} after ${iterationCount} iterations`);
         trace("Maestro", C.dim,  `  Final text[0..120]: "${text.slice(0, 120).replace(/\n/g, "\\n")}…"`);
@@ -973,6 +1083,12 @@ const ALL_ROLES = [
 async function main() {
   console.log(`\n${"═".repeat(72)}`);
   console.log(`  ORCA PIPELINE TRACER — live API run`);
+  if (DEV_MODE) {
+    console.log(`  ${C.yellow}⚙  DEV MODE${C.reset} — full role↔role comms, prompts & responses visible`);
+    console.log(`  ${C.red}  NOT FOR PRODUCTION USE${C.reset}`);
+  } else {
+    console.log(`  Terse mode  (set ${C.cyan}ORCA_DEV=1${C.reset} to see full prompts & responses)`);
+  }
   console.log(`${"═".repeat(72)}\n`);
 
   trace("Init", C.blue, `Loading settings from: ${SETTINGS_PATH}`);
@@ -1043,8 +1159,8 @@ async function main() {
   trace("Init", C.blue, "Creating tracing Maestro adapter...");
   const maestro = createTracingMaestro(roleAdapters, availableToolNames, toolService);
 
-  trace("Init", C.blue, "Creating Pappy QC port (debug trace enabled)...");
-  const pappy = createDebugPappyPort();
+  trace("Init", C.blue, `Creating Pappy QC port (${DEV_MODE ? "debug trace — full output" : "terse — set ORCA_DEV=1 for full trace"})...`);
+  const pappy = DEV_MODE ? createDebugPappyPort() : createPappyPort();
 
   trace("Init", C.blue, "Creating Orca runtime...");
   

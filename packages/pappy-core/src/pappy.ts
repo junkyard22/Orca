@@ -200,14 +200,35 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
     return { proved: false, evidence: [] };
   }
   
-  // Default fallback: non-empty output is sufficient for generic criteria
-  const someProofExists = hasOutput || hasFiles || hasTools;
+  // Limitation / negative-outcome criteria
+  // If the AC text describes a failure, inability, or limitation state (e.g.
+  // "Output explains inability to access filesystem", "Response explains why
+  // the task cannot be completed"), it should only be proved if the output
+  // actually contains those failure-indicating terms.
+  // Without this guard, ANY non-empty output silently proves such criteria,
+  // even when the agent succeeded at the task and never said "cannot" at all.
+  const LIMITATION_TERMS = /\b(inability|unable|cannot|can't|can not|could not|couldn't|fail(ed|ure)?|no.access|not.possible|not.support|unavailable|error|exception|limitation|constraint|denied|reject(ed)?|prohibit|cannot.be|not.be.able|out.of.scope)\b/i;
+  if (LIMITATION_TERMS.test(ac.text)) {
+    const outputMentionsLimitation = LIMITATION_TERMS.test(lowerOutput);
+    return {
+      proved: outputMentionsLimitation,
+      evidence: outputMentionsLimitation
+        ? ["output contains limitation/inability language matching criterion"]
+        : [],
+    };
+  }
+
+  // Default fallback: actual output text or file changes must exist.
+  // Tool activity alone (hasTools) is NOT sufficient proof of semantic success —
+  // the user expects a response, not just evidence that tools were invoked.
+  // This prevents runs that silently fired tools but produced no final answer
+  // from being marked as having proved their acceptance criteria.
+  const someProofExists = hasOutput || hasFiles;
   return {
     proved: someProofExists,
     evidence: [
       ...(hasOutput ? ["outputText is non-empty"] : []),
       ...(hasFiles  ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
-      ...(hasTools  ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
     ],
   };
 }
@@ -327,8 +348,7 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
   const { issues: claimIssues, ledger: claimLedger, claims } = runClaimProofChecks(input);
 
   // Step 3: run all remaining checks
-
-  const rawIssues = [
+  const rawIssues: Omit<Issue, "issueId">[] = [
     ...claimIssues,
     ...runSafetyChecks(input),
     ...runToolResultChecks(input),
@@ -337,11 +357,37 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
     ...runSatisfactionChecks(input),
   ];
 
-  const issues = stampIssueIds(rawIssues);
-
-  // Step 4: build receipt ledger (criteria + claim entries merged)
+  // Step 4: build receipt ledger (criteria + claim entries merged).
+  // Must happen BEFORE stampIssueIds so CORE_GOAL_MISSING can inspect the ledger.
   const criteriaLedger = buildCriteriaLedger(input, acceptance_criteria);
   const receipt_ledger: ReceiptEntry[] = [...criteriaLedger, ...claimLedger];
+
+  // ── CORE_GOAL_MISSING: all specific-goal criteria unproved ───────────────
+  // When the task has explicit goals (i.e. more than just the generic fallback AC)
+  // and every single one is MISSING, raise HIGH so a FAIL is guaranteed.
+  // This catches runs where tool activity is present but the agent never
+  // synthesised findings into a user-facing answer.
+  const isGenericFallbackOnly = acceptance_criteria.length === 1 &&
+    /produce non-?empty output/i.test(acceptance_criteria[0]!.text);
+
+  if (!isGenericFallbackOnly) {
+    const allMissing = criteriaLedger.every(e => e.status === 'MISSING');
+    if (allMissing) {
+      rawIssues.push({
+        severity: 'HIGH',
+        code: 'CORE_GOAL_MISSING',
+        category: 'Completeness',
+        description: `None of the ${criteriaLedger.length} acceptance criteria were proved — the core task goal was not achieved.`,
+        expected_receipt: 'At least one acceptance criterion must be proved in the receipt ledger.',
+        evidence: criteriaLedger.map(e => `${e.ref}: MISSING`).join('; '),
+        fix_hint: 'Re-run the task and ensure the output directly addresses all acceptance criteria.',
+        message: 'Core task goal unachieved — no acceptance criteria proved.',
+        suggestedFix: 'Ensure the agent produces a final answer that satisfies every acceptance criterion.',
+      });
+    }
+  }
+
+  const issues = stampIssueIds(rawIssues);
 
   // Step 5: verdict
   const verdict  = deriveVerdict(issues);

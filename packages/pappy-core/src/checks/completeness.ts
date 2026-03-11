@@ -52,6 +52,9 @@ const CONCEPT_SYNONYMS: Record<string, string[]> = {
   'error':       ['error', 'errors', 'throw', 'throws', 'catch', 'catches', 'try', 'except', 'fail', 'fails', 'exception', 'exceptions'],
   'explain':     ['explain', 'explains', 'explanation', 'describes', 'description', 'summarizes', 'summary', 'overview', 'analysis', 'purpose', 'purposes', 'what', 'does', 'how', 'works', 'contains', 'contain', 'returns', 'return', 'structure', 'structures', 'key points', 'key', 'points', 'example', 'examples', 'basic', 'simple'],
   'analyze':     ['analyze', 'analyzes', 'analysis', 'examine', 'examines', 'review', 'reviews', 'inspect', 'inspects', 'assess', 'assesses'],
+  // Deployment / infrastructure status queries
+  'deployment':  ['deploy', 'deployed', 'deployment', 'deployments', 'release', 'releases', 'rollout', 'staging', 'production', 'prod', 'environment', 'env', 'pipeline', 'ci', 'cd'],
+  'status':      ['status', 'state', 'health', 'running', 'stopped', 'active', 'inactive', 'live', 'down', 'up', 'current', 'version', 'build', 'revision'],
 };
 
 const STOP_WORDS = new Set([
@@ -572,9 +575,10 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   const hasSuccessfulToolUse = (input.toolEvents ?? []).some((event) => event.ok);
 
   // ── Loop detection check ─────────────────────────────────────────────────────
-  // If agent stopped due to loop detection, always surface as at least WARN
-  // This ensures loop-detected runs can never silently PASS
-  if ((input as any).metadata?.stoppedBecause === 'loop_detected') {
+  // If agent stopped due to loop detection or parse failures, always surface as MEDIUM+.
+  // This ensures such runs can never silently PASS.
+  const stoppedBecause = (input as any).metadata?.stoppedBecause as string | undefined;
+  if (stoppedBecause === 'loop_detected') {
     issues.push({
       severity: 'MEDIUM',
       code: 'AGENT_LOOP_DETECTED',
@@ -585,6 +589,20 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
       fix_hint: 'Review the task specification — the agent may have been given insufficient context to complete the task.',
       message: 'Agent stopped due to detected tool call loop — output may be incomplete.',
       suggestedFix: 'Review the task specification — the agent may have been given insufficient context to complete the task.'
+    });
+  }
+
+  if (stoppedBecause === 'parse_failure_loop') {
+    issues.push({
+      severity: 'HIGH',
+      code: 'AGENT_LOOP_DETECTED',
+      category: 'Completeness',
+      description: 'Agent stopped after repeated malformed tool call blocks — the model failed to follow the tool-call format.',
+      expected_receipt: 'Tool calls must be valid JSON inside <tool_call>…</tool_call> tags.',
+      evidence: (input as any).metadata?.loopEvidence?.repeatedCall ?? 'malformed <tool_call> block',
+      fix_hint: 'Check model output format handling and ensure the system prompt is clear about the required tool-call JSON format.',
+      message: 'Agent stopped after repeated malformed tool call blocks.',
+      suggestedFix: 'Ensure the model receives a clear tool-call format instruction and retry.'
     });
   }
 
@@ -608,6 +626,28 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
     }
   }
 
+  // ── Routing-criteria mismatch check ──────────────────────────────────────
+  // If the router's done_criteria describe a failure/limitation outcome (e.g.
+  // "Output explains inability to access the filesystem") BUT the agent's tool
+  // events all succeeded — the router invented a bad rubric that contradicts
+  // what actually happened. Flag this as HIGH so it surfaces clearly.
+  const LIMITATION_CRITERIA_TERMS = /\b(inability|unable|cannot|can't|can not|could not|couldn't|fail(ed|ure)?|no.access|not.possible|not.support|unavailable|limitation|constraint|denied|reject(ed)?|prohibit|cannot.be|not.be.able|out.of.scope)\b/i;
+  const allToolsSucceeded = hasTools && (input.toolEvents ?? []).every((e) => e.ok === true);
+  const limitationCriteria = (input.goals ?? []).filter((g) => LIMITATION_CRITERIA_TERMS.test(g));
+  if (limitationCriteria.length > 0 && allToolsSucceeded) {
+    issues.push({
+      severity: "HIGH",
+      code: "ROUTING_CRITERIA_MISMATCH",
+      category: "Completeness",
+      description: `Router generated done_criteria describing failure/limitation states, but all tool calls succeeded. The router invented a rubric that does not reflect the actual task.`,
+      expected_receipt: "done_criteria must be grounded in what a correct answer to the task looks like — not assumed limitations.",
+      evidence: `Limitation criteria: ${limitationCriteria.map((c) => `"${c}"`).join(", ")}. All ${(input.toolEvents ?? []).length} tool event(s) returned ok=true.`,
+      fix_hint: "The router's done_criteria must describe what SUCCESS looks like for this task. Remove any criteria that assume inability or failure when the tools are available and working.",
+      message: `done_criteria contain limitation language but all tools succeeded — criteria do not match actual task execution.`,
+      suggestedFix: "Fix the router prompt to ground done_criteria in expected successful outcomes, not assumed failure states.",
+    });
+  }
+
   // ── task goals completeness: warn if no output and no files ──────────────
   if (!hasOutput && !hasFiles && !hasTools) {
     issues.push({
@@ -619,6 +659,22 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
       evidence: "outputText is empty, filesChanged is empty, toolEvents is empty.",
       fix_hint: "Re-run the task and capture output/artifacts.",
       message: "Run produced no output of any kind.",
+    });
+  }
+
+  // ── No final answer despite tool activity ────────────────────────────────
+  // The agent ran tools (or files changed) but never produced a FINAL ANSWER.
+  // Tool activity alone is not a deliverable — the user expects a response.
+  if (!hasOutput && (hasTools || hasFiles) && stoppedBecause === 'no_final_output') {
+    issues.push({
+      severity: "HIGH",
+      code: "COMPLETENESS_NO_FINAL_OUTPUT",
+      category: "Completeness",
+      description: "Agent completed tool calls but produced no final answer for the user.",
+      expected_receipt: "Run must end with a FINAL ANSWER that addresses the task.",
+      evidence: `toolEvents=${(input.toolEvents?.length ?? 0)} filesChanged=${(input.filesChanged?.length ?? 0)} outputText=empty.`,
+      fix_hint: "The agent must synthesise its tool findings into a FINAL ANSWER before completing the run.",
+      message: "Run has tool activity but no user-facing final answer.",
     });
   }
 
