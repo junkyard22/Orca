@@ -465,10 +465,10 @@ If your task involves creating or modifying a file (any filename with an extensi
 2. Your FINAL ANSWER must confirm what was written — it must NOT contain the file content itself
 3. Never output source code inline as a substitute for calling write_file
 
-CRITICAL RULES:
+PREFERRED FORMAT:
 - Your Thought/Observation/Next blocks are INTERNAL REASONING ONLY
 - They must NEVER appear in your final answer to the user
-- Never call a tool without a preceding Thought block
+- Prefer writing a Thought block before each tool call (not required, but helps reasoning quality)
 - When the task is complete, write your final answer using EXACTLY this format:
 
 FINAL ANSWER:
@@ -643,6 +643,10 @@ function createTracingMaestro(
         const systemPrompt = `${baseSystemPrompt}${REACT_PROMPT_BLOCK}`;
         const taskPrompt   = buildTaskPrompt(task, role);
         const llmForRole   = roleAdapters[role] ?? ctx.llm;
+        const usingDedicatedAdapter = roleAdapters[role] != null;
+        trace("Maestro", C.cyan,
+          `  Role dispatch: selected=${role}  llm=${usingDedicatedAdapter ? 'dedicated' : 'ctx.llm fallback (adapter stage labels will show as brain)'}`
+        );
 
         // Fix 1: Strip tools for pure generation tasks to prevent exploration
         function isPureGenerationTask(taskText: string): boolean {
@@ -663,9 +667,9 @@ function createTracingMaestro(
         const toolsForAgent = shouldStripTools ? [] : availableToolNames;
         
         if (shouldStripTools) {
-          trace("Maestro", C.yellow, `  Pure generation task detected — stripping tools to prevent exploration`);
+          trace("Maestro", C.dim, `  Tool availability: stripped (pure generation task — model will not see tools in prompt)`);
         } else {
-          trace("Maestro", C.blue, `  Passing ${availableToolNames.length} tools to ${role} agent: ${availableToolNames.join(', ')}`);
+          trace("Maestro", C.blue, `  Tool availability: ${availableToolNames.length} tools available — ${availableToolNames.join(', ')}`);
         }
 
         // System prompt: save to file on first use, reference thereafter
@@ -676,6 +680,12 @@ function createTracingMaestro(
           } else {
             const filePath = saveSystemPrompt(role, systemPrompt);
             savedSystemByStage.set(role, filePath);
+            // If this role falls back to ctx.llm (brain's adapter, stage label="brain"),
+            // pre-register "brain" so printMessages() won't overwrite brain-system.md
+            // with this role's prompt when the adapter logs its first call.
+            if (!usingDedicatedAdapter) {
+              savedSystemByStage.set('brain', filePath);
+            }
             printMsg(`→ ${role} [system → ${filePath}]`, C.yellow, systemPrompt);
           }
         }
@@ -685,7 +695,11 @@ function createTracingMaestro(
         const MAX_ITER = 10;
         const toolEvents: NonNullable<OrcaMaestroResult['toolEvents']> = [];
         const thoughts: NonNullable<NonNullable<OrcaMaestroResult['metadata']>['thoughts']> = [];
-        let conversation = `${systemPrompt}\n\n${toolService.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
+        // When tools are stripped, do not advertise them in the prompt — runtime and prompt must match
+        const toolSection = shouldStripTools
+          ? `(No tools available for this task — produce your answer directly without calling tools.)`
+          : toolService.formatForPrompt();
+        let conversation = `${systemPrompt}\n\n${toolSection}\n\n---\n\n${taskPrompt}`;
         let lastText = '';
         let currentOutputText = '';
         let iterationCount = 0;
@@ -736,12 +750,12 @@ function createTracingMaestro(
               if (observation) trace("Maestro", C.dim, `    Observation: ${observation}`);
               if (next) trace("Maestro", C.dim, `    Next: ${next}`);
             } else {
-              // Defensive logging: log when thought extraction fails
-              trace("Maestro", C.yellow, `  [Thought] No Thought block found in iteration ${iterationCount} — model may have skipped format`);
+              // Informational: model skipped thought formatting — not an error on healthy runs
               if (DEV_MODE) {
-                printMsg(`${role} → iter ${iterationCount} [raw response — no Thought block]`, C.yellow, text);
+                trace("Maestro", C.dim, `  [iter ${iterationCount}] No Thought/Observation/Next blocks in response`);
+                printMsg(`${role} → iter ${iterationCount} [raw response]`, C.cyan, text);
               } else {
-                trace("Maestro", C.dim, `    Raw output[0..200]: "${text.slice(0, 200).replace(/\n/g, "\\n")}..."`);
+                trace("Maestro", C.dim, `  [iter ${iterationCount}] No Thought/Observation/Next blocks`);
               }
             }
             

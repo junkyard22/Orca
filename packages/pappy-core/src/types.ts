@@ -21,6 +21,7 @@ export type ReceiptType =
   | "command_exit_0"
   | "tool_event"
   | "citations"
+  | "criterion_specific"
   | "other";
 
 export type ReceiptStatus = "PROVED" | "MISSING" | "PARTIAL";

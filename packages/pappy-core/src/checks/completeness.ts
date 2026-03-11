@@ -498,7 +498,7 @@ function hasKeywordEvidence(
 
   // If keyword is in CONCEPT_SYNONYMS, check for any of its synonyms
   if (CONCEPT_SYNONYMS[keyword.toLowerCase()]) {
-    const synonyms = CONCEPT_SYNONYMS[keyword.toLowerCase()];
+    const synonyms = CONCEPT_SYNONYMS[keyword.toLowerCase()]!;
     for (const synonym of synonyms) {
       if (wordOrStemMatches(lowerSearchText, synonym)) {
         return true;
@@ -776,7 +776,12 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
     // Skip criteria that reference the original task / existing behavior — meta-scope constraints.
     !/\b(original\s+task|original\s+behav|existing\s+behav|existing\s+function)\b/i.test(g) &&
     // Skip "Response must/should/is" patterns not already covered above.
-    !/^response\s+(is\b|must\b|should\b|will\b|includes?\b|contains?\b|provides?\b)/i.test(g)
+    !/^response\s+(is\b|must\b|should\b|will\b|includes?\b|contains?\b|provides?\b)/i.test(g) &&
+    // Skip data-quality / accuracy meta-claims: "Counts are based on actual...", "Results are correct", etc.
+    // These are verification claims about HOW the answer was derived, not missing content to include.
+    !/^(counts?|results?|data|values?|numbers?|information|output)\s+(are|is)\s+(accurate|correct|based|derived|verified|from|on|provided)\b/i.test(g) &&
+    // Skip "Output clearly/correctly/accurately distinguishes/separates/shows X" patterns
+    !/^(output|response)\s+(clearly|correctly|accurately|explicitly|properly)\s+\w+/i.test(g)
   );
 
   if (meaningfulGoals.length > 0 && (hasOutput || hasFiles || hasTools)) {
