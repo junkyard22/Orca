@@ -94,6 +94,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       emit: (event) => emitter.emit(event),
       workspaceContext,
       gate: deps.gate,
+      requestToolApproval: deps.requestToolApproval,
     };
     const taskId = ctx.runId;
     const startTime = Date.now();

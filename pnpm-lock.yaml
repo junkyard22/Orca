@@ -60,6 +60,15 @@ importers:
       '@clawde/dewey-core':
         specifier: workspace:*
         version: link:../../packages/dewey-core
+      '@clawde/ext-docs':
+        specifier: workspace:*
+        version: link:../../packages/ext-docs
+      '@clawde/ext-github':
+        specifier: workspace:*
+        version: link:../../packages/ext-github
+      '@clawde/ext-web':
+        specifier: workspace:*
+        version: link:../../packages/ext-web
       '@clawde/miranda-core':
         specifier: workspace:*
         version: link:../../packages/miranda-core

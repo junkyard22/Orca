@@ -12,6 +12,9 @@
   "dependencies": {
     "@clawde/benson-core": "workspace:*",
     "@clawde/dewey-core": "workspace:*",
+    "@clawde/ext-docs": "workspace:*",
+    "@clawde/ext-github": "workspace:*",
+    "@clawde/ext-web": "workspace:*",
     "@clawde/miranda-core": "workspace:*",
     "@clawde/orca-core": "workspace:*",
     "@yakstacks/workbench-core": "workspace:*",

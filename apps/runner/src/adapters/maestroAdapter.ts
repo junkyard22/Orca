@@ -910,6 +910,22 @@ async function runAgentLoop(
         continue;
       }
 
+      // User approval gate — desktop shows a dialog; CLI auto-approves.
+      if (ctx.requestToolApproval) {
+        const approved = await ctx.requestToolApproval(call.tool, call.input);
+        if (!approved) {
+          console.error(`[MaestroAdapter] tool:denied  name=${call.tool}`);
+          toolEvents.push({
+            tool: call.tool,
+            ok: false,
+            summary: `${call.tool}: denied by user`,
+            raw: call.input,
+          });
+          conversation += formatToolResult(call.tool, false, "Tool call denied by user.");
+          continue;
+        }
+      }
+
       const result = await tools.execute(call.tool, call.input);
 
       // Miranda: after_tool_run gate

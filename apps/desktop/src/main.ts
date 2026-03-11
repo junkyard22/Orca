@@ -422,7 +422,7 @@ function initOrca(s: OrcaSettings): string | null {
       join(app.getPath('userData'), 'orca-runs.db')
     );
 
-    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store });
+    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store, requestToolApproval });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {

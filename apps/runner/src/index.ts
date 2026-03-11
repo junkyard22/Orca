@@ -32,6 +32,11 @@ import {
 import type { OrcaRuntime, OrcaEvent, OrcaEventType, ExportOptions } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
 import { createCoreToolRegistry } from "@yakstacks/workbench-core";
+import type { Tool } from "@yakstacks/workbench-core";
+import { createExtensionRegistry } from "@clawde/orca-core";
+import { githubExtension } from "@clawde/ext-github";
+import { docsExtension } from "@clawde/ext-docs";
+import { webExtension } from "@clawde/ext-web";
 
 import { createMaestroAdapter } from "./adapters/maestroAdapter.js";
 import { createToolService } from "./adapters/toolService.js";
@@ -108,6 +113,14 @@ async function main(): Promise<void> {
   // a specific project rather than wherever the runner process starts).
   const workspaceRoot = process.env["WORKSPACE_ROOT"]?.trim() ?? process.cwd();
   const toolRegistry = createCoreToolRegistry();
+
+  // Load extensions and register their tools into the core registry.
+  // Extensions are structurally compatible with workbench-core's Tool interface.
+  const extRegistry = await createExtensionRegistry([githubExtension, docsExtension, webExtension]);
+  for (const extTool of extRegistry.allTools()) {
+    toolRegistry.register(extTool as unknown as Tool);
+  }
+
   const tools = createToolService(toolRegistry, workspaceRoot);
 
   // Persistent run store — saves every task to ~/.orca/runs.db

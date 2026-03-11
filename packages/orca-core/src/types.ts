@@ -166,6 +166,13 @@ export interface OrcaRunCtx {
    * The LLM gates (before/after_llm_call) live inside the Miranda pipeline.
    */
   gate?: MirandaGate;
+  /**
+   * Optional approval hook — when set, the agent loop calls this before
+   * executing each tool. Return false to deny the call.
+   * Used by the desktop app to show the tool-approval dialog.
+   * When absent (CLI mode), tools execute without prompting.
+   */
+  requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +228,12 @@ export interface OrcaRuntimeDeps {
    * Injected here so it flows through OrcaRunCtx to every adapter.
    */
   gate?: MirandaGate;
+  /**
+   * Per-tool approval hook. When supplied, every agent tool call is gated
+   * behind this function before execution. Return false to deny.
+   * Inject requestToolApproval from apps/desktop/src/main.ts for the UI dialog.
+   */
+  requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
 }
 
 export interface OrcaRuntime {
