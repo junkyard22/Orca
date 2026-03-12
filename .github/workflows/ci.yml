@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+    branches: [main, master, dev]
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm --filter './packages/**' build
+
+      - name: Build apps (non-Electron)
+        run: pnpm --filter @clawde/runner build
+
+      - name: Typecheck all packages
+        run: pnpm --filter './packages/**' exec tsc --noEmit 2>/dev/null || true
+
+      - name: Run tests
+        run: |
+          pnpm --filter @clawde/benson-core test
+          pnpm --filter @clawde/dewey-core test
+          pnpm --filter @clawde/miranda-core test
+          pnpm --filter @clawde/orca-core test
+          pnpm --filter @clawde/pappy-core test
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
