@@ -29,8 +29,9 @@ import {
   SqliteStore,
   exportTrainingData,
 } from "@clawde/orca-core";
-import type { OrcaRuntime, OrcaEvent, OrcaEventType, ExportOptions } from "@clawde/orca-core";
+import type { OrcaRuntime, OrcaEvent, OrcaEventType, ExportOptions, OrcaTaskSpec, OrcaExecutionResult } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
+import type { TaskSpec, ExecutionResult } from "@clawde/benson-core";
 import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 import type { Tool } from "@yakstacks/workbench-core";
 import { createExtensionRegistry } from "@clawde/orca-core";
@@ -141,8 +142,12 @@ async function main(): Promise<void> {
   });
 
   // Benson receives executeTask via injection — orca-core never depends on Benson.
+  // Wrap to adapt OrcaTaskSpec/OrcaExecutionResult to benson-core's TaskSpec/ExecutionResult
   const benson = createBenson({
-    executeTask: runtime.executeTask.bind(runtime),
+    executeTask: async (task: TaskSpec): Promise<ExecutionResult> => {
+      const orcaResult = await runtime.executeTask(task as OrcaTaskSpec);
+      return orcaResult as unknown as ExecutionResult;
+    },
     maxHistoryTurns: parseInt(process.env["ORCA_HISTORY_TURNS"] ?? "8", 10),
   });
 
