@@ -1,0 +1,18 @@
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: apps/runner/Dockerfile
+    image: orca-runner:latest
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_SITE_URL=${OPENROUTER_SITE_URL:-http://localhost}
+      - OPENROUTER_APP_NAME=${OPENROUTER_APP_NAME:-orca-runner}
+    volumes:
+      # Persist SQLite DB and task outputs across runs
+      - orca-data:/data
+    stdin_open: true
+    tty: true
+
+volumes:
+  orca-data:

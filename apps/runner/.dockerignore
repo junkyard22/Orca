@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-exe
+*.exe
+*.log
+*.jsonl
+.env
+.env.local
+tsconfig.tsbuildinfo

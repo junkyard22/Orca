@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/dist-exe
+**/*.exe
+**/*.log
+**/*.jsonl
+**/.env
+**/.env.local
+**/*.tsbuildinfo
+.github
+apps/desktop
+temp_extract*
+*.tar
+*.zip
