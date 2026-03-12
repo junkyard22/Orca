@@ -11,10 +11,17 @@ const statusDot     = document.getElementById("status-dot");
 const statusText    = document.getElementById("status-text");
 const chatView      = document.getElementById("chat-view");
 const settingsView  = document.getElementById("settings-view");
+const attachBtn     = document.getElementById("attach-btn");
+const fileInput     = document.getElementById("file-input");
+const attachBar     = document.getElementById("attachments-bar");
 
 // ── State ─────────────────────────────────────────────────────────────────
 
 let busy = false;
+
+// ── Pending file attachments ───────────────────────────────────────────────
+// Each entry: { name, type, content, dataUrl?, isImage }
+const pendingAttachments = [];
 
 // Streaming: active bubble element + accumulated raw text while tokens arrive.
 // Finalised (markdown-rendered) when sendMessage resolves.
@@ -133,8 +140,9 @@ function setStatus(text, active = false) {
 }
 
 function setInputEnabled(enabled) {
-  inputEl.disabled  = !enabled;
-  sendBtn.disabled  = !enabled;
+  inputEl.disabled    = !enabled;
+  sendBtn.disabled    = !enabled;
+  attachBtn.disabled  = !enabled;
 }
 
 function scrollToBottom() {
@@ -209,6 +217,61 @@ function appendMsg(role, text) {
   } else {
     bubble.innerHTML = renderContent(text);
   }
+  div.appendChild(label);
+  div.appendChild(bubble);
+  messages.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+/** User message with optional image attachment thumbnails */
+function appendUserMsg(text, attachments = []) {
+  showMessages();
+  const div = document.createElement("div");
+  div.className = "msg user";
+
+  const label = document.createElement("div");
+  label.className = "msg-label";
+  label.textContent = "You";
+
+  const bubble = document.createElement("div");
+  bubble.className = "msg-bubble";
+
+  // Image thumbnails above the text
+  const images = (attachments ?? []).filter((a) => a.isImage && a.dataUrl);
+  if (images.length) {
+    const imgRow = document.createElement("div");
+    imgRow.className = "msg-attachments";
+    images.forEach((a) => {
+      const img = document.createElement("img");
+      img.className = "msg-attachment-img";
+      img.src = a.dataUrl;
+      img.alt = a.name;
+      img.title = a.name;
+      imgRow.appendChild(img);
+    });
+    bubble.appendChild(imgRow);
+  }
+
+  // Non-image file chips
+  const files = (attachments ?? []).filter((a) => !a.isImage);
+  if (files.length) {
+    const fileRow = document.createElement("div");
+    fileRow.className = "msg-file-chips";
+    files.forEach((a) => {
+      const chip = document.createElement("span");
+      chip.className = "msg-file-chip";
+      chip.textContent = a.name;
+      fileRow.appendChild(chip);
+    });
+    bubble.appendChild(fileRow);
+  }
+
+  if (text) {
+    const textNode = document.createTextNode(text);
+    bubble.appendChild(textNode);
+  }
+
   div.appendChild(label);
   div.appendChild(bubble);
   messages.appendChild(div);
@@ -330,20 +393,31 @@ function appendToolCard(id, tool, args) {
 
 async function sendMessage() {
   const text = inputEl.value.replace(/\r\n?/g, "\n").trim();
-  if (!text || busy) return;
+  const hasAttachments = pendingAttachments.length > 0;
+  if (!text && !hasAttachments) return;
+  if (busy) return;
 
   busy = true;
   setInputEnabled(false);
   inputEl.value = "";
   autoResize();
 
-  appendMsg("user", text);
+  // Snapshot and clear attachments before async work
+  const snapshotAttachments = pendingAttachments.splice(0);
+  renderAttachmentBar();
+
+  // Build the text that actually gets sent to the model
+  const attachCtx = buildAttachmentContextFrom(snapshotAttachments);
+  const fullText   = attachCtx ? (text ? `${attachCtx}\n\n${text}` : attachCtx) : text;
+
+  // Show user bubble (with optional image previews)
+  appendUserMsg(text, snapshotAttachments);
   appendThinking();
   setStatus("planning…", true);
 
   let finalStatus = "ready";
   try {
-    const result = await orca.sendMessage(text);
+    const result = await orca.sendMessage(fullText);
     removeThinking();
 
     if (streamBubble) {
@@ -394,6 +468,148 @@ function autoResize() {
   inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + "px";
 }
 inputEl.addEventListener("input", autoResize);
+
+// ── File attachment logic ─────────────────────────────────────────────────
+
+const IMAGE_TYPES = new Set(["image/png","image/jpeg","image/gif","image/webp","image/svg+xml","image/bmp"]);
+const MAX_TEXT_BYTES = 200_000; // 200 KB text cap before truncation
+
+function readAsText(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsText(file);
+  });
+}
+
+function readAsDataURL(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function addAttachment(file) {
+  const isImage = IMAGE_TYPES.has(file.type) || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
+  let content = null;
+  let dataUrl = null;
+
+  if (isImage) {
+    dataUrl = await readAsDataURL(file);
+  } else {
+    // Try reading as text (will work for text/code files)
+    const raw = await readAsText(file);
+    if (raw !== null) {
+      content = raw.length > MAX_TEXT_BYTES
+        ? raw.slice(0, MAX_TEXT_BYTES) + `\n\n[… truncated — file is ${formatBytes(file.size)} total]`
+        : raw;
+    }
+  }
+
+  const att = { name: file.name, type: file.type, size: file.size, isImage, content, dataUrl };
+  pendingAttachments.push(att);
+  renderAttachmentBar();
+}
+
+function removeAttachment(idx) {
+  pendingAttachments.splice(idx, 1);
+  renderAttachmentBar();
+}
+
+function renderAttachmentBar() {
+  if (!pendingAttachments.length) {
+    attachBar.style.display = "none";
+    attachBar.innerHTML = "";
+    return;
+  }
+  attachBar.style.display = "flex";
+  attachBar.innerHTML = pendingAttachments.map((att, i) => {
+    if (att.isImage && att.dataUrl) {
+      return `
+        <div class="attach-chip attach-chip--image" data-idx="${i}">
+          <img class="attach-thumb" src="${escapeHtml(att.dataUrl)}" alt="${escapeHtml(att.name)}" />
+          <span class="attach-chip-name">${escapeHtml(att.name)}</span>
+          <button class="attach-chip-remove" data-idx="${i}" title="Remove">✕</button>
+        </div>`;
+    }
+    const icon = att.content === null ? "📄" : "📝";
+    return `
+      <div class="attach-chip" data-idx="${i}">
+        <span class="attach-chip-icon">${icon}</span>
+        <span class="attach-chip-name">${escapeHtml(att.name)}</span>
+        <span class="attach-chip-size">${formatBytes(att.size)}</span>
+        <button class="attach-chip-remove" data-idx="${i}" title="Remove">✕</button>
+      </div>`;
+  }).join("");
+
+  attachBar.querySelectorAll(".attach-chip-remove").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeAttachment(+btn.dataset.idx);
+    });
+  });
+}
+
+// Build the context block from a given attachment array (not pendingAttachments directly).
+function buildAttachmentContextFrom(attachments) {
+  if (!attachments.length) return "";
+  const parts = [];
+  for (const att of attachments) {
+    if (att.isImage) {
+      parts.push(`[Attached image: ${att.name}]`);
+    } else if (att.content !== null) {
+      const ext = att.name.split(".").pop() ?? "";
+      parts.push(`[Attached file: ${att.name}]\n\`\`\`${ext}\n${att.content}\n\`\`\``);
+    } else {
+      parts.push(`[Attached file: ${att.name} (binary, ${formatBytes(att.size)})]`);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+// Button wiring
+attachBtn.addEventListener("click", () => fileInput.click());
+
+fileInput.addEventListener("change", async () => {
+  const files = Array.from(fileInput.files ?? []);
+  fileInput.value = ""; // allow re-selecting the same file
+  for (const f of files) await addAttachment(f);
+});
+
+// Drag-and-drop onto the input area
+const inputWrap = document.getElementById("input-wrap");
+inputWrap.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  inputWrap.classList.add("drag-over");
+});
+inputWrap.addEventListener("dragleave", () => inputWrap.classList.remove("drag-over"));
+inputWrap.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  inputWrap.classList.remove("drag-over");
+  const files = Array.from(e.dataTransfer?.files ?? []);
+  for (const f of files) await addAttachment(f);
+});
+
+// Paste images directly into the chat
+inputEl.addEventListener("paste", async (e) => {
+  const items = Array.from(e.clipboardData?.items ?? []);
+  const imageItems = items.filter((item) => item.kind === "file" && IMAGE_TYPES.has(item.type));
+  if (!imageItems.length) return;
+  e.preventDefault();
+  for (const item of imageItems) {
+    const file = item.getAsFile();
+    if (file) await addAttachment(file);
+  }
+});
 
 // ── Keyboard ──────────────────────────────────────────────────────────────
 
@@ -784,50 +1000,82 @@ document.getElementById("btn-close").addEventListener("click",    () => orca.clo
 
 // ── Tool approval dialog ────────────────────────────────────────────
 
+// Tools the user has permanently approved for this session
+const sessionApprovedTools = new Set();
+
+let approvalTimerInterval = null;
+const APPROVAL_TIMEOUT_S  = 60;
+
+function clearApprovalTimer() {
+  if (approvalTimerInterval) { clearInterval(approvalTimerInterval); approvalTimerInterval = null; }
+  const el = document.getElementById("approval-timer");
+  if (el) el.textContent = "";
+}
+
+function startApprovalTimer(onTimeout) {
+  clearApprovalTimer();
+  let remaining = APPROVAL_TIMEOUT_S;
+  const el = document.getElementById("approval-timer");
+  const tick = () => {
+    if (el) el.textContent = `${remaining}s`;
+    if (remaining <= 0) { clearApprovalTimer(); onTimeout(); }
+    remaining--;
+  };
+  tick();
+  approvalTimerInterval = setInterval(tick, 1000);
+}
+
+function resolveApproval(approved) {
+  clearApprovalTimer();
+  const dialog = document.getElementById("tool-approval-dialog");
+  const id   = dialog.dataset.approvalId;
+  const tool = document.getElementById("approval-tool-name").textContent;
+  const card = toolCallCards.get(id);
+
+  if (approved && document.getElementById("chk-always-approve").checked) {
+    sessionApprovedTools.add(tool);
+  }
+
+  if (card) {
+    card.classList.replace("pending", approved ? "approved" : "denied");
+    card.querySelector(".tool-card-status").textContent = approved ? "\u2713 Approved" : "\u2717 Denied";
+  }
+  toolCallCards.delete(id);
+  orca.approveToolCall(id, approved);
+  dialog.style.display = "none";
+  document.getElementById("chk-always-approve").checked = false;
+}
+
 orca.onToolRequest((id, tool, args) => {
-  // Ignore spurious requests with no/blank tool name (can arrive via IPC
-  // with undefined data during internal pipeline cycles).
   if (!tool || !String(tool).trim()) return;
-  // Add a tool call card to the message thread so the user can see what's running.
+
   const card = appendToolCard(id, tool, args);
   toolCallCards.set(id, card);
 
-  // Show the approval overlay dialog.
+  // Auto-approve if the user approved this tool for the session
+  if (sessionApprovedTools.has(tool)) {
+    card.classList.replace("pending", "approved");
+    card.querySelector(".tool-card-status").textContent = "\u2713 Auto-approved";
+    toolCallCards.delete(id);
+    orca.approveToolCall(id, true);
+    return;
+  }
+
   const dialog = document.getElementById("tool-approval-dialog");
-  document.getElementById("approval-tool-name").textContent = tool;
+  document.getElementById("approval-tool-name").textContent  = tool;
+  document.getElementById("approval-tool-name-2").textContent = tool;
   document.getElementById("approval-args").textContent =
     typeof args === "object" && args !== null
       ? JSON.stringify(args, null, 2)
       : String(args);
   dialog.dataset.approvalId = id;
   dialog.style.display      = "flex";
+
+  startApprovalTimer(() => resolveApproval(false));
 });
 
-document.getElementById("btn-approve-tool").addEventListener("click", () => {
-  const dialog = document.getElementById("tool-approval-dialog");
-  const id = dialog.dataset.approvalId;
-  const card = toolCallCards.get(id);
-  if (card) {
-    card.classList.replace("pending", "approved");
-    card.querySelector(".tool-card-status").textContent = "\u2713 Approved";
-  }
-  toolCallCards.delete(id);
-  orca.approveToolCall(id, true);
-  dialog.style.display = "none";
-});
-
-document.getElementById("btn-deny-tool").addEventListener("click", () => {
-  const dialog = document.getElementById("tool-approval-dialog");
-  const id = dialog.dataset.approvalId;
-  const card = toolCallCards.get(id);
-  if (card) {
-    card.classList.replace("pending", "denied");
-    card.querySelector(".tool-card-status").textContent = "\u2717 Denied";
-  }
-  toolCallCards.delete(id);
-  orca.approveToolCall(id, false);
-  dialog.style.display = "none";
-});
+document.getElementById("btn-approve-tool").addEventListener("click", () => resolveApproval(true));
+document.getElementById("btn-deny-tool").addEventListener("click",    () => resolveApproval(false));
 
 // ── Focus input on load ───────────────────────────────────────────────────
 

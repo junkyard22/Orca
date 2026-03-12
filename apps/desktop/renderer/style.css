@@ -371,12 +371,49 @@ body {
 /* ── Input area ─────────────────────────────────────────────────────────── */
 #input-wrap {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 12px 14px;
+  flex-direction: column;
+  padding: 10px 14px 12px;
   border-top: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
+  gap: 8px;
+  transition: border-color 0.15s;
+}
+#input-wrap.drag-over {
+  border-color: var(--accent);
+  background: #0d1f17;
+}
+
+/* Row containing attach · textarea · send */
+#input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* Attach button */
+#attach-btn {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+#attach-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(16,185,129,0.06);
+}
+#attach-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 #input {
@@ -432,6 +469,109 @@ body {
 #send-btn:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+/* ── Attachment preview bar ──────────────────────────────────────────────── */
+#attachments-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 0;
+}
+
+.attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px 4px 7px;
+  font-size: 11.5px;
+  color: var(--text);
+  max-width: 220px;
+  animation: fadeUp 0.15s ease;
+}
+
+.attach-chip--image {
+  padding: 4px 8px 4px 4px;
+}
+
+.attach-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 5px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+
+.attach-chip-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.attach-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.attach-chip-size {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.attach-chip-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 0 0 3px;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: color 0.1s;
+}
+.attach-chip-remove:hover {
+  color: var(--danger);
+}
+
+/* ── Attachment previews inside user message bubbles ─────────────────────── */
+.msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.msg-attachment-img {
+  max-width: 200px;
+  max-height: 160px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  cursor: zoom-in;
+}
+
+.msg-file-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+
+.msg-file-chip {
+  font-size: 11px;
+  background: rgba(16,185,129,0.08);
+  border: 1px solid rgba(16,185,129,0.2);
+  color: var(--accent);
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
 }
 
 /* ── Animations ─────────────────────────────────────────────────────────── */
@@ -940,16 +1080,66 @@ body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
+.approval-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .approval-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
 }
 
+.approval-timer {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 7px;
+  min-width: 36px;
+  text-align: center;
+}
+
 .approval-body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.approval-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.approval-always-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.approval-always-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.approval-always-row code {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(16,185,129,0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
 }
 
 .approval-row {
@@ -991,6 +1181,7 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 2px;
 }
 
 .btn-deny {

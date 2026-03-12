@@ -235,29 +235,56 @@
 
       <!-- ── Input area ─────────────────────────────────────────────────── -->
       <div id="input-wrap">
-        <textarea
-          id="input"
-          placeholder="Ask Orca anything…"
-          rows="1"
-        ></textarea>
-        <button id="send-btn" title="Send  (Enter)">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path
-              d="M8 13V3M3 8l5-5 5 5"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
+        <!-- Attachment preview bar — hidden until files are attached -->
+        <div id="attachments-bar"></div>
+        <!-- Input row: attach · textarea · send -->
+        <div id="input-row">
+          <button id="attach-btn" title="Attach file (image, text, code, PDF…)">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+              <path
+                d="M13.5 6.5L7 13a4.243 4.243 0 01-6-6L7.5 1A2.828 2.828 0 1111.5 5L5 11.5a1.414 1.414 0 01-2-2L9 4"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+          <textarea
+            id="input"
+            placeholder="Ask Orca anything…"
+            rows="1"
+          ></textarea>
+          <button id="send-btn" title="Send  (Enter)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 13V3M3 8l5-5 5 5"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <!-- Hidden native file picker -->
+        <input
+          type="file"
+          id="file-input"
+          multiple
+          accept="image/*,text/*,.pdf,.md,.ts,.tsx,.js,.jsx,.json,.yaml,.yml,.toml,.env,.csv,.xml,.html,.css,.py,.go,.rs,.java,.c,.cpp,.h,.sh,.bat,.ps1,.sql,.graphql,.prisma,.lock"
+          style="display:none"
+        />
       </div>
     </div>
 
     <!-- ── Tool approval dialog ───────────────────────────────────────── -->
     <div id="tool-approval-dialog" class="hidden">
       <div class="approval-card">
-        <div class="approval-title">Tool call request</div>
+        <div class="approval-header">
+          <div class="approval-title">Tool call request</div>
+          <span class="approval-timer" id="approval-timer"></span>
+        </div>
         <div class="approval-body">
           <div class="approval-row">
             <span class="approval-label">Tool</span>
@@ -268,9 +295,15 @@
             <pre class="approval-args" id="approval-args"></pre>
           </div>
         </div>
-        <div class="approval-actions">
-          <button class="btn-deny" id="btn-deny-tool">Deny</button>
-          <button class="btn-approve" id="btn-approve-tool">Approve</button>
+        <div class="approval-footer">
+          <label class="approval-always-row">
+            <input type="checkbox" id="chk-always-approve" />
+            <span>Always approve <code id="approval-tool-name-2"></code> this session</span>
+          </label>
+          <div class="approval-actions">
+            <button class="btn-deny" id="btn-deny-tool">Deny</button>
+            <button class="btn-approve" id="btn-approve-tool">Approve</button>
+          </div>
         </div>
       </div>
     </div>
