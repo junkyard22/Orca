@@ -30,11 +30,12 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     sans-serif;
   font-size: 14px;
   line-height: 1.55;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
   user-select: none;
 }
 
@@ -64,19 +65,20 @@ body {
   gap: 9px;
 }
 
-.brand-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px #10b98166;
+.brand-logo {
+  height: 20px;
+  width: auto;
+  filter: brightness(0) invert(1);
+  opacity: 0.9;
+  flex-shrink: 0;
 }
 
 .brand-name {
   font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   color: var(--text);
+  text-transform: uppercase;
 }
 
 .win-controls {
@@ -127,27 +129,49 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 16px;
   padding: 40px;
   pointer-events: none;
 }
 
-.welcome-glyph svg {
-  opacity: 0.9;
+.welcome-glow {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(16,185,129,0.08) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.welcome-logo {
+  width: 88px;
+  height: auto;
+  opacity: 0.88;
+  filter: drop-shadow(0 0 18px rgba(16,185,129,0.25));
+  animation: logo-float 4s ease-in-out infinite;
+  position: relative;
+}
+
+@keyframes logo-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
 }
 
 .welcome-title {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
   color: var(--text-muted);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+  position: relative;
 }
 
 .welcome-sub {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-dim);
   text-align: center;
   max-width: 280px;
+  position: relative;
+  line-height: 1.6;
 }
 
 /* Message feed */
@@ -215,9 +239,10 @@ body {
 .msg.orca .msg-bubble {
   background: var(--surface);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(16,185,129,0.15);
   border-bottom-left-radius: 4px;
   white-space: normal; /* allow HTML rendering */
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
 }
 
 /* Markdown content inside orca bubbles */
@@ -345,6 +370,14 @@ body {
   letter-spacing: 0.02em;
 }
 
+.statusbar-cost {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
 .status-dot {
   width: 5px;
   height: 5px;
@@ -355,6 +388,7 @@ body {
 }
 .status-dot.active {
   background: var(--accent);
+  box-shadow: 0 0 6px rgba(16,185,129,0.5);
   animation: status-pulse 1.3s ease infinite;
 }
 
@@ -364,7 +398,7 @@ body {
     opacity: 1;
   }
   50% {
-    opacity: 0.2;
+    opacity: 0.25;
   }
 }
 
@@ -430,7 +464,7 @@ body {
   min-height: 38px;
   max-height: 140px;
   line-height: 1.5;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
   user-select: text;
 }
 #input::placeholder {
@@ -438,6 +472,7 @@ body {
 }
 #input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(16,185,129,0.1);
 }
 #input:disabled {
   opacity: 0.45;
@@ -1059,11 +1094,17 @@ body {
   position: fixed;
   inset: 0;
   z-index: 999;
-  display: flex;
+  display: none; /* JS controls: style.display = 'flex' to show */
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(3px);
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  animation: dialog-fade-in 0.15s ease;
+}
+
+@keyframes dialog-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .approval-card {

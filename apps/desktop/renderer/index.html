@@ -4,9 +4,12 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     />
     <title>Orca</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -14,7 +17,7 @@
       <!-- ── Title bar ─────────────────────────────────────────────────── -->
       <div id="titlebar">
         <div class="brand">
-          <div class="brand-dot"></div>
+          <img src="orca-logo.png" class="brand-logo" alt="Orca" />
           <span class="brand-name">Orca</span>
         </div>
         <div class="win-controls">
@@ -64,28 +67,13 @@
         <div id="chat-view">
           <!-- Welcome (shown when chat is empty) -->
           <div id="welcome">
+            <div class="welcome-glow"></div>
             <div class="welcome-glyph">
-              <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                <circle
-                  cx="24"
-                  cy="24"
-                  r="22"
-                  stroke="#10b981"
-                  stroke-width="2"
-                />
-                <path
-                  d="M13 28c2-4 5-7 11-7s9 3 11 7"
-                  stroke="#10b981"
-                  stroke-width="2.2"
-                  stroke-linecap="round"
-                />
-                <circle cx="18" cy="20" r="2.5" fill="#10b981" />
-                <circle cx="30" cy="20" r="2.5" fill="#10b981" />
-              </svg>
+              <img src="orca-logo.png" class="welcome-logo" alt="Orca" />
             </div>
             <p class="welcome-title">How can Orca help?</p>
             <p class="welcome-sub">
-              Plan, generate, and quality-check — all in one pass.
+              Plan, generate, and quality-check &mdash; all in one pass.
             </p>
           </div>
 
@@ -231,6 +219,7 @@
       <div id="statusbar">
         <div class="status-dot" id="status-dot"></div>
         <span id="status-text">ready</span>
+        <span class="statusbar-cost" id="statusbar-cost"></span>
       </div>
 
       <!-- ── Input area ─────────────────────────────────────────────────── -->
@@ -279,7 +268,7 @@
     </div>
 
     <!-- ── Tool approval dialog ───────────────────────────────────────── -->
-    <div id="tool-approval-dialog" class="hidden">
+    <div id="tool-approval-dialog">
       <div class="approval-card">
         <div class="approval-header">
           <div class="approval-title">Tool call request</div>

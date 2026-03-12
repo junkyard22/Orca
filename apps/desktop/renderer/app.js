@@ -9,6 +9,7 @@ const inputEl       = document.getElementById("input");
 const sendBtn       = document.getElementById("send-btn");
 const statusDot     = document.getElementById("status-dot");
 const statusText    = document.getElementById("status-text");
+const statusbarCost = document.getElementById("statusbar-cost");
 const chatView      = document.getElementById("chat-view");
 const settingsView  = document.getElementById("settings-view");
 const attachBtn     = document.getElementById("attach-btn");
@@ -328,8 +329,11 @@ function appendStatsPill(stats) {
   div.className = "stats-pill";
   const inTok  = Number(stats.inputTokensEst).toLocaleString();
   const outTok = Number(stats.outputTokensEst).toLocaleString();
-  div.textContent = `~${inTok} in · ~${outTok} out (est.)`;
+  const text = `~${inTok} in · ~${outTok} out (est.)`;
+  div.textContent = text;
   messages.appendChild(div);
+  // Also update statusbar cost slot
+  if (statusbarCost) statusbarCost.textContent = text;
   scrollToBottom();
 }
 
@@ -401,6 +405,7 @@ async function sendMessage() {
   setInputEnabled(false);
   inputEl.value = "";
   autoResize();
+  if (statusbarCost) statusbarCost.textContent = "";
 
   // Snapshot and clear attachments before async work
   const snapshotAttachments = pendingAttachments.splice(0);
@@ -612,11 +617,25 @@ inputEl.addEventListener("paste", async (e) => {
 });
 
 // ── Keyboard ──────────────────────────────────────────────────────────────
+// Enter        → send
+// Alt+Enter or Shift+Enter → insert a newline
 
 inputEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
+  if (e.key === "Enter") {
+    if (e.altKey || e.shiftKey) {
+      // Insert a literal newline at the cursor position
+      e.preventDefault();
+      const start = inputEl.selectionStart;
+      const end   = inputEl.selectionEnd;
+      inputEl.value =
+        inputEl.value.slice(0, start) + "\n" + inputEl.value.slice(end);
+      inputEl.selectionStart = inputEl.selectionEnd = start + 1;
+      autoResize();
+    } else {
+      // Plain Enter → send
+      e.preventDefault();
+      sendMessage();
+    }
   }
 });
 
