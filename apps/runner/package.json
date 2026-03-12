@@ -7,7 +7,9 @@
     "dev": "tsx src/index.ts",
     "build": "tsc --build",
     "build:exe": "node build-exe.mjs",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@clawde/benson-core": "workspace:*",
@@ -28,6 +30,7 @@
     "esbuild": "^0.24.0",
     "postject": "^1.0.0-alpha.6",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
   }
 }

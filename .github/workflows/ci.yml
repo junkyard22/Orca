@@ -49,5 +49,9 @@ jobs:
           pnpm --filter @clawde/miranda-core test
           pnpm --filter @clawde/orca-core test
           pnpm --filter @clawde/pappy-core test
+          pnpm --filter @clawde/ext-docs test
+          pnpm --filter @clawde/ext-github test
+          pnpm --filter @clawde/ext-web test
+          pnpm --filter @clawde/runner test
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
