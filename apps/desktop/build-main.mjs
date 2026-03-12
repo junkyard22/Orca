@@ -4,7 +4,7 @@
  * so no `pnpm build` of packages is required first.
  */
 import { build } from "esbuild";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,5 +35,11 @@ await Promise.all([
   build({ ...shared, entryPoints: ["src/main.ts"],    outfile: "dist-main/main.js"    }),
   build({ ...shared, entryPoints: ["src/preload.ts"], outfile: "dist-main/preload.js" }),
 ]);
+
+// Copy sql-wasm.wasm (sql.js loads it at runtime from the same directory as main.js)
+const wasmSrc = resolve(__dirname, "..", "..", "node_modules", ".pnpm", "sql.js@1.14.1", "node_modules", "sql.js", "dist", "sql-wasm.wasm");
+if (existsSync(wasmSrc)) {
+  copyFileSync(wasmSrc, resolve(__dirname, "dist-main", "sql-wasm.wasm"));
+}
 
 console.log("✓  dist-main/main.js + preload.js");

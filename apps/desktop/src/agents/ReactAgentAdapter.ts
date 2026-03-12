@@ -226,7 +226,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     // Fix 1: Strip tools for pure generation tasks to prevent exploration
     function isPureGenerationTask(taskText: string): boolean {
       // If task expects file output, always provide tools
-      const needsFiles = /write to|save|create file|\.[a-z]{2,4}(\s|$)|add to|implement in/i;
+      const needsFiles = /write to|save|\bfile\b|\.[a-z]{2,4}(\s|$)|add to|implement in/i;
       if (needsFiles.test(taskText)) return false;
 
       // If task references existing content, provide tools for reading
@@ -238,7 +238,7 @@ export class ReactAgentAdapter implements AgentAdapter {
       return generationSignals.test(taskText);
     }
     
-    const shouldStripTools = isPureGenerationTask(task.intent);
+    const shouldStripTools = false; // Tool discipline (3-call limit) handles overuse instead
     const availableTools = shouldStripTools ? [] : tools;
     
     if (shouldStripTools) {
