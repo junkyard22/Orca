@@ -3,7 +3,7 @@ import { githubExtension } from "./index.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const ctx = { workspaceRoot: process.cwd() };
+const ctx = { workspaceRoot: process.cwd(), runId: "test-run" };
 
 function tool(name: string) {
   const t = githubExtension.tools.find((t) => t.name === name);

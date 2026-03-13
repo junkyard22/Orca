@@ -3,7 +3,7 @@ import { webExtension } from "./index.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const ctx = { workspaceRoot: process.cwd() };
+const ctx = { workspaceRoot: process.cwd(), runId: "test-run" };
 
 function tool(name: string) {
   const t = webExtension.tools.find((t) => t.name === name);

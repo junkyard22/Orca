@@ -6,7 +6,7 @@ import { docsExtension } from "./index.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const ctx = { workspaceRoot: process.cwd() };
+const ctx = { workspaceRoot: process.cwd(), runId: "test-run" };
 
 function tool(name: string) {
   const t = docsExtension.tools.find((t) => t.name === name);
@@ -66,7 +66,7 @@ describe("docs_read", () => {
   });
 
   it("resolves relative paths against workspaceRoot", async () => {
-    const cwdCtx = { workspaceRoot: tmpDir };
+    const cwdCtx = { workspaceRoot: tmpDir, runId: "test-run" };
     const result = await read().execute({ path: "hello.md" }, cwdCtx);
     expect(result.ok).toBe(true);
     expect(result.output).toContain("# Hello");
