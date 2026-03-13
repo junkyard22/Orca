@@ -18,13 +18,15 @@ function makeTool(name: string, output: string, fail = false): Tool {
 
 function makeRegistry(tools: Tool[]): ToolRegistry {
   const map = new Map(tools.map((t) => [t.name, t]));
-  const registry: ToolRegistry = {
+  // Cast through unknown: ToolRegistry.tools is private, so plain object literals
+  // are never structurally compatible with the class even when all public members match.
+  const stub = {
     get: (name: string) => map.get(name),
     list: () => tools,
-    register: (_tool: Tool) => registry,
+    register: (_tool: Tool): ToolRegistry => stub as unknown as ToolRegistry,
     formatForPrompt: () => tools.map((t) => `- ${t.name}: ${t.description}`).join("\n"),
   };
-  return registry;
+  return stub as unknown as ToolRegistry;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
