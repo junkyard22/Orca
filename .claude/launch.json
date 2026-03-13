@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "orca-renderer-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-p", "5199", "apps/desktop/renderer"],
+      "port": 5199
+    }
+  ]
+}

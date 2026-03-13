@@ -31,9 +31,25 @@ export interface AgentResult {
   };
 }
 
+/**
+ * Callback for streaming output tokens.
+ * Called for each token/chunk as the model generates output.
+ */
+export type StreamCallback = (chunk: string) => void;
+
+/**
+ * Extended agent context that includes streaming support.
+ */
+export interface AgentRunContext extends OrcaRunCtx {
+  /** Optional callback for streaming output tokens */
+  onStreamToken?: StreamCallback;
+  /** Optional callback when stream is reset (e.g., before a new response) */
+  onStreamReset?: () => void;
+}
+
 export interface AgentAdapter {
   readonly role: RoleName;
-  run(task: AgentTask, tools: Tool[], ctx: OrcaRunCtx): Promise<AgentResult>;
+  run(task: AgentTask, tools: Tool[], ctx: AgentRunContext): Promise<AgentResult>;
 }
 
 // Type definitions for tools and events

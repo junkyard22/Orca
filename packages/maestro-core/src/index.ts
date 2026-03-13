@@ -125,3 +125,18 @@ export type {
   ConfigMode,
   EffectiveConfig,
 } from './modelUtils';
+
+// ── Model Fallback Pools ─────────────────────────────────────────────────────
+export {
+  ModelFallbackPoolManager,
+  createSimpleFallbackPool,
+  createFallbackPoolFromRoleConfigs,
+  mergeFallbackModels,
+} from './modelFallbackPool';
+export type {
+  PoolModelEntry,
+  RoleFallbackPool,
+  FallbackPoolConfig,
+  PoolModelState,
+  PoolRuntimeState,
+} from './modelFallbackPool';

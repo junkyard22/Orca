@@ -30,6 +30,9 @@ import {
   BRAIN_DECOMPOSE_SYSTEM,
   parseBrainDecision,
   buildSynthesisPrompt,
+  ModelFallbackPoolManager,
+  createSimpleFallbackPool,
+  type PoolModelEntry,
 } from "maestro-core";
 import type {
   RoleName,
@@ -38,6 +41,7 @@ import type {
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
+import type { AgentRunContext } from "./agents/AgentAdapter";
 
 type AgentTool = {
   name: string;
@@ -174,6 +178,10 @@ function buildMaestroAdapter(
   /** Per-role LLM adapters. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
   configuredAdapters: Map<RoleName, LLMAdapter>,
   availableTools: AgentTool[],
+  /** Model entries for fallback support */
+  modelEntries?: Map<string, { provider: ProviderEntry; model: string }>,
+  /** Fallback pool manager for model selection */
+  poolManager?: ModelFallbackPoolManager,
 ): MaestroPort {
   const maestroCore = createMaestroCore();
   const logger = console;
@@ -199,7 +207,18 @@ function buildMaestroAdapter(
       
       const routing = await brainRoute(task, ctx, roleAdapters);
       
-      // 3. Get the agent for the selected role
+      // 3. Select model from fallback pool if available
+      if (poolManager && modelEntries) {
+        const selectedModel = poolManager.selectModel(routing.role);
+        if (selectedModel) {
+          const entry = modelEntries.get(selectedModel.id);
+          if (entry) {
+            logger.info(`[Maestro] Selected model ${selectedModel.id} for role ${routing.role}`);
+          }
+        }
+      }
+      
+      // 4. Get the agent for the selected role
       const agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
 
       if (!availableTools || availableTools.length === 0) {
@@ -207,21 +226,50 @@ function buildMaestroAdapter(
       }
       logger.info(`[Maestro] Passing ${availableTools.length} tools to ${routing.role} agent: ${availableTools.map((tool) => tool.name).join(', ')}`);
       
-      // 4. Hand off to the agent — it runs autonomously until done
+      // 5. Build agent context with streaming support
+      const agentCtx: AgentRunContext = {
+        ...ctx,
+        onStreamToken: (chunk: string) => {
+          // Emit stream:token event to renderer
+          ctx.emit?.({
+            type: 'stream:token',
+            taskId: ctx.runId,
+            chunk,
+          });
+        },
+        onStreamReset: () => {
+          // Emit stream:reset event to renderer
+          ctx.emit?.({
+            type: 'stream:reset',
+            taskId: ctx.runId,
+          });
+        },
+      };
+      
+      // 6. Hand off to the agent — it runs autonomously until done
       const result = await agent.run(
         {
           intent: task.intent,
-          goals: task.goals,
+          goals: task.goals ?? [],
           doneCriteria: routing.doneCriteria,
           conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
         },
         availableTools,
-        ctx
+        agentCtx
       );
+
+      // 7. Record success/failure to fallback pool manager
+      if (poolManager) {
+        if (result.stoppedBecause === 'done') {
+          poolManager.recordSuccess(routing.role, `${routing.role}_primary`);
+        } else if (result.error) {
+          poolManager.recordFailure(routing.role, `${routing.role}_primary`, result.error);
+        }
+      }
 
       const filesChanged = deriveFilesChangedFromToolEvents(result.toolsUsed, result.filesChanged);
       
-      // 5. Map AgentResult → OrcaMaestroResult
+      // 8. Map AgentResult → OrcaMaestroResult
       return {
         outputText: result.outputText,
         summary: `${routing.role} agent — ${result.iterationCount} iterations — stopped: ${result.stoppedBecause}`,
@@ -256,10 +304,10 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
     header,
     "",
     "### Request",
-    task.originalUserMessage,
+    task.originalUserMessage ?? task.intent,
     "",
     "### Goals",
-    ...task.goals.map((g: string) => `- ${g}`),
+    ...(task.goals?.map((g: string) => `- ${g}`) ?? ['- Complete the task']),
   ];
 
   if (task.constraints != null && Object.keys(task.constraints).length > 0) {
@@ -297,6 +345,7 @@ type BensonHandle = ReturnType<typeof createBenson>;
 let runtime: OrcaRuntime | null = null;
 let benson: BensonHandle | null = null;
 let store: SqliteStore | null = null;
+let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 
 function buildAdapterForProvider(provider: ProviderEntry, model: string): LLMAdapter {
   if (provider.type === 'ollama') {
@@ -313,9 +362,63 @@ function buildAdapterForProvider(provider: ProviderEntry, model: string): LLMAda
   });
 }
 
+/**
+ * Build fallback pool configuration from settings.
+ * Each role can have a primary model and fallback models.
+ */
+function buildFallbackPoolConfig(s: OrcaSettings): {
+  poolManager: ModelFallbackPoolManager;
+  modelEntries: Map<string, { provider: ProviderEntry; model: string }>;
+} {
+  const modelEntries = new Map<string, { provider: ProviderEntry; model: string }>();
+  const pools: Partial<Record<RoleName, ReturnType<typeof createSimpleFallbackPool>>> = {};
+
+  const ALL_ROLES: RoleName[] = [
+    'brain', 'coder_strong', 'coder_cheap', 'utility',
+    'reviewer', 'narrator', 'planner_deep', 'debugger', 'reader', 'vision',
+  ];
+
+  for (const roleName of ALL_ROLES) {
+    const roleEntry = s.roles?.[roleName];
+    if (!roleEntry?.providerId || !roleEntry?.model) continue;
+
+    const primaryProvider = s.providers?.find((p) => p.id === roleEntry.providerId);
+    if (!primaryProvider) continue;
+
+    // Build model entries for this role
+    const models: Array<{ id: string; model: string; providerId: string }> = [];
+
+    // Primary model
+    const primaryId = `${roleName}_primary`;
+    models.push({ id: primaryId, model: roleEntry.model, providerId: roleEntry.providerId });
+    modelEntries.set(primaryId, { provider: primaryProvider, model: roleEntry.model });
+
+    // Fallback models
+    if (roleEntry.fallbacks) {
+      roleEntry.fallbacks.forEach((fallback, index) => {
+        const fallbackProvider = s.providers?.find((p) => p.id === fallback.providerId);
+        if (!fallbackProvider) return;
+
+        const fallbackId = `${roleName}_fallback_${index}`;
+        models.push({ id: fallbackId, model: fallback.model, providerId: fallback.providerId });
+        modelEntries.set(fallbackId, { provider: fallbackProvider, model: fallback.model });
+      });
+    }
+
+    // Create pool for this role
+    if (models.length > 0) {
+      pools[roleName] = createSimpleFallbackPool(roleName, models);
+    }
+  }
+
+  const poolManager = new ModelFallbackPoolManager({ pools }, false);
+  return { poolManager, modelEntries };
+}
+
 function initOrca(s: OrcaSettings): string | null {
   runtime = null;
   benson  = null;
+  fallbackPoolManager = null;
 
   const brainRole = s.roles?.['brain'];
   if (!brainRole?.providerId || !brainRole?.model) {
@@ -333,6 +436,10 @@ function initOrca(s: OrcaSettings): string | null {
 
   try {
     const model = brainRole.model;
+
+    // Build fallback pool configuration
+    const { poolManager, modelEntries } = buildFallbackPoolConfig(s);
+    fallbackPoolManager = poolManager;
 
     // Brain is the fallback LLM used by ctx.llm for any role without a
     // dedicated entry in roleAdapters.
@@ -414,7 +521,8 @@ function initOrca(s: OrcaSettings): string | null {
       },
     };
 
-    const maestro = buildMaestroAdapter(adapterMap, availableTools);
+    // Pass model entries to maestro adapter for fallback support
+    const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager);
     const pappy   = createPappyPort();
 
     // Create SQLite store for persistence

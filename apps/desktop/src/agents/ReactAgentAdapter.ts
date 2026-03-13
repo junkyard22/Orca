@@ -1,6 +1,6 @@
 import type { LLMAdapter } from "@clawde/miranda-core";
 import type { OrcaRunCtx, OrcaToolService } from "@clawde/orca-core";
-import type { AgentAdapter, AgentTask, AgentResult, ThoughtRecord } from "./AgentAdapter";
+import type { AgentAdapter, AgentTask, AgentResult, ThoughtRecord, AgentRunContext, StreamCallback } from "./AgentAdapter";
 import type { RoleName } from "maestro-core";
 
 // Type definitions that should be imported from existing files
@@ -202,7 +202,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     this.maxIterations = maxIterations;
   }
 
-  async run(task: AgentTask, tools: Tool[], ctx: OrcaRunCtx): Promise<AgentResult> {
+  async run(task: AgentTask, tools: Tool[], ctx: AgentRunContext): Promise<AgentResult> {
     const thoughts: ThoughtRecord[] = [];
     const toolsUsed: ToolEvent[] = [];
     const filesChanged: FileChange[] = [];
@@ -271,7 +271,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     const fullSystemPrompt = `${this.systemPrompt}${REACT_PROMPT_BLOCK}`;
     
     // Initialize conversation with system prompt, prior turns, then the new task.
-    let messages = [
+    let messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
       { role: "system", content: fullSystemPrompt },
       ...conversationHistory,
       { role: "user", content: taskContext }
@@ -281,12 +281,30 @@ export class ReactAgentAdapter implements AgentAdapter {
       for (let iteration = 0; iteration < this.maxIterations; iteration++) {
         iterationCount = iteration + 1;
         
-        // Call the model
-        const response = await this.llmAdapter.complete({
-          messages,
-          maxTokens: 4096,
-          temperature: 0.7
-        });
+        // Call the model - use streaming if available and callback provided
+        let response;
+        const useStreaming = ctx.onStreamToken && this.llmAdapter.stream;
+        
+        if (useStreaming) {
+          // Streaming call - tokens are emitted as they arrive
+          response = await this.llmAdapter.stream!(
+            {
+              model: 'default', // Model is typically set on adapter construction
+              messages,
+              maxTokens: 4096,
+              temperature: 0.7
+            },
+            ctx.onStreamToken!
+          );
+        } else {
+          // Non-streaming fallback
+          response = await this.llmAdapter.complete({
+            model: 'default', // Model is typically set on adapter construction
+            messages,
+            maxTokens: 4096,
+            temperature: 0.7
+          });
+        }
         
         const modelOutput = response.content;
         lastModelOutput = modelOutput;
