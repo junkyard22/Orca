@@ -8,7 +8,7 @@ function makeTool(name: string, output: string, fail = false): Tool {
   return {
     name,
     description: `Mock ${name}`,
-    schema: { type: "object", properties: { input: { type: "string" } }, required: [] },
+    schema: { type: "object", properties: { input: { type: "string", description: "Input value" } }, required: [] },
     execute: async (_input: Record<string, unknown>, _ctx: ToolRunCtx) =>
       fail
         ? { ok: false, output: "", error: `${name} failed` }
@@ -18,12 +18,13 @@ function makeTool(name: string, output: string, fail = false): Tool {
 
 function makeRegistry(tools: Tool[]): ToolRegistry {
   const map = new Map(tools.map((t) => [t.name, t]));
-  return {
+  const registry: ToolRegistry = {
     get: (name: string) => map.get(name),
     list: () => tools,
-    register: () => {},
+    register: (_tool: Tool) => registry,
     formatForPrompt: () => tools.map((t) => `- ${t.name}: ${t.description}`).join("\n"),
   };
+  return registry;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
