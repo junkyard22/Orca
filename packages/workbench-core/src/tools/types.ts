@@ -1,3 +1,5 @@
+import type { SandboxPolicy } from "./sandbox.js";
+
 /**
  * Tool system — core types.
  *
@@ -12,6 +14,10 @@ export interface ToolRunCtx {
   workspaceRoot: string;
   /** Correlation ID for logging — matches the orca-core runId. */
   runId: string;
+  /** Optional sandbox policy for command execution. */
+  sandbox?: SandboxPolicy;
+  /** Optional approval callback — return true to approve, false to deny. */
+  requestApproval?: (tool: string, args: Record<string, unknown>, reason: string) => Promise<boolean>;
 }
 
 export interface ToolResult {

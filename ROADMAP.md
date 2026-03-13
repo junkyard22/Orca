@@ -289,19 +289,21 @@ A simple registry in `orca-core` that loads extensions at startup and makes thei
 
 Before going deep on implementation, these decisions affect everything:
 
-### 1. Synchronous vs streaming output
+### 1. Synchronous vs streaming output ⚠️ PENDING
 Miranda's pipeline returns completed text. For good UX, you want streaming — the user sees output appearing as it's generated. This requires changes to `LLMAdapter`, `OrcaLLMService`, and the IPC bridge. **Decide before the UI layer is built.**
 
-### 2. One model per role vs model pools
+### 2. One model per role vs model pools ⚠️ PENDING
 The current `RoleSelector` picks a single role. Miranda already supports model fallback ladders per stage. Decide whether roles map 1:1 to models or whether each role can have a primary/fallback pool.
 
-### 3. Tool execution sandboxing
-When Maestro runs shell commands, you need a security model. Options:
-- Sandboxed Docker container
-- User-approved tool calls
-- Allowlist of safe commands
+### 3. Tool execution sandboxing ✅ COMPLETE
+When Maestro runs shell commands, you need a security model. **Implemented:**
+- Command allowlist for safe read-only operations
+- Denied patterns for dangerous commands (sudo, curl | bash, rm -rf /*, credential access)
+- Policy-based approval callback system
+- Configurable via `SandboxPolicy` in [`workbench-core/src/tools/sandbox.ts`](packages/workbench-core/src/tools/sandbox.ts)
 
-**Decide before shipping to real users.**
+### 4. API key storage ✅ COMPLETE
+API keys are now encrypted using Electron's `safeStorage` API (uses OS keychain on Windows/macOS, base64 fallback on Linux without secret service). See [`apps/desktop/src/settings.ts`](apps/desktop/src/settings.ts).
 
-### 4. Multi-workspace support
+### 5. Multi-workspace support ⚠️ PENDING
 Can a single Orca instance manage multiple codebases simultaneously? The current `workspaceRoot` in `Context` is a single path. If yes, this needs to be a first-class concept in the run context.

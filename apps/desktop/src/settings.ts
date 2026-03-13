@@ -1,4 +1,4 @@
-import { app } from "electron";
+import { app, safeStorage } from "electron";
 import { join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
@@ -43,7 +43,7 @@ export interface ProviderEntry {
   type: ProviderType;
   /** Base API URL (without /chat/completions) */
   baseUrl: string;
-  /** Bearer API key (empty for local Ollama) */
+  /** Bearer API key (empty for local Ollama). Stored encrypted in file. */
   apiKey: string;
 }
 
@@ -86,6 +86,92 @@ function settingsPath(): string {
   return join(app.getPath("userData"), "orca-settings.json");
 }
 
+// ── API Key Encryption ──────────────────────────────────────────────────────
+
+/**
+ * Encrypt an API key using Electron's safeStorage (uses OS keychain).
+ * Falls back to base64 encoding if encryption is unavailable (e.g., Linux without secret service).
+ */
+function encryptApiKey(plaintext: string): string {
+  if (!plaintext) return "";
+  
+  // safeStorage.isEncryptionAvailable() may be false on Linux without a keyring
+  if (!safeStorage.isEncryptionAvailable()) {
+    // Fallback: base64 encode with a prefix marker
+    return "b64:" + Buffer.from(plaintext, "utf-8").toString("base64");
+  }
+  
+  const encrypted = safeStorage.encryptString(plaintext);
+  return "enc:" + encrypted.toString("base64");
+}
+
+/**
+ * Decrypt an API key that was encrypted with encryptApiKey.
+ * Returns the plaintext key, or empty string if decryption fails.
+ */
+function decryptApiKey(stored: string): string {
+  if (!stored) return "";
+  
+  // Handle unencrypted legacy keys (plain text)
+  if (!stored.startsWith("enc:") && !stored.startsWith("b64:")) {
+    return stored;  // Legacy plain text
+  }
+  
+  // Handle base64 fallback
+  if (stored.startsWith("b64:")) {
+    try {
+      return Buffer.from(stored.slice(4), "base64").toString("utf-8");
+    } catch {
+      return "";
+    }
+  }
+  
+  // Handle encrypted keys
+  if (stored.startsWith("enc:")) {
+    try {
+      const buffer = Buffer.from(stored.slice(4), "base64");
+      if (!safeStorage.isEncryptionAvailable()) {
+        console.warn("[Settings] Cannot decrypt API key: encryption unavailable");
+        return "";
+      }
+      return safeStorage.decryptString(buffer);
+    } catch (err) {
+      console.error("[Settings] Failed to decrypt API key:", err);
+      return "";
+    }
+  }
+  
+  return stored;
+}
+
+/**
+ * Encrypt all API keys in the settings before saving to disk.
+ */
+function encryptSettings(settings: OrcaSettings): OrcaSettings {
+  return {
+    ...settings,
+    providers: settings.providers.map((p) => ({
+      ...p,
+      apiKey: encryptApiKey(p.apiKey),
+    })),
+  };
+}
+
+/**
+ * Decrypt all API keys in the settings after loading from disk.
+ */
+function decryptSettings(settings: OrcaSettings): OrcaSettings {
+  return {
+    ...settings,
+    providers: settings.providers.map((p) => ({
+      ...p,
+      apiKey: decryptApiKey(p.apiKey),
+    })),
+  };
+}
+
+// ── Load / Save ─────────────────────────────────────────────────────────────
+
 export function loadSettings(): OrcaSettings {
   let stored: Partial<OrcaSettings> = {};
   const path = settingsPath();
@@ -101,7 +187,9 @@ export function loadSettings(): OrcaSettings {
     return { ...DEFAULTS, ...migrateFromLegacy(raw) };
   }
 
-  return { ...DEFAULTS, ...stored };
+  // Decrypt API keys after loading
+  const decrypted = decryptSettings({ ...DEFAULTS, ...stored });
+  return decrypted;
 }
 
 function migrateFromLegacy(raw: Record<string, unknown>): Partial<OrcaSettings> {
@@ -134,15 +222,19 @@ function migrateFromLegacy(raw: Record<string, unknown>): Partial<OrcaSettings> 
     roles["brain"] = { providerId: id, model: "anthropic/claude-3.5-sonnet" };
   }
 
-  return {
+  // Decrypt after migration
+  return decryptSettings({
     providers,
     roles,
     budgetUsd:       (raw["budgetUsd"]      as number)  ?? 0.10,
     maxRepairPasses: (raw["maxRepairPasses"] as number)  ?? 2,
     verbose:         (raw["verbose"]         as boolean) ?? false,
-  };
+    workspaceRoot:   "",
+  });
 }
 
 export function saveSettings(s: OrcaSettings): void {
-  writeFileSync(settingsPath(), JSON.stringify(s, null, 2), "utf-8");
+  // Encrypt API keys before saving to disk
+  const encrypted = encryptSettings(s);
+  writeFileSync(settingsPath(), JSON.stringify(encrypted, null, 2), "utf-8");
 }

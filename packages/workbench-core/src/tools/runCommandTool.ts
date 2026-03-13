@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
+import { evaluateCommandPolicy, createSandboxPolicy } from "./sandbox.js";
 
 /**
  * Parse a shell command to detect file redirections (e.g., > file.py, >> file.py).
@@ -68,14 +69,38 @@ export const runCommandTool: Tool = {
     required: ["command"],
   },
 
-  execute(input: Record<string, unknown>, ctx: ToolRunCtx): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>, ctx: ToolRunCtx): Promise<ToolResult> {
     const command = input["command"];
     if (typeof command !== "string" || !command) {
-      return Promise.resolve({
+      return {
         ok: false,
         output: "",
         error: '"command" is required and must be a string',
-      });
+      };
+    }
+
+    // Evaluate command against sandbox policy
+    const sandbox = ctx.sandbox ?? createSandboxPolicy();
+    const policyResult = evaluateCommandPolicy(command, sandbox);
+    
+    if (!policyResult.allowed) {
+      return {
+        ok: false,
+        output: "",
+        error: `Command blocked: ${policyResult.reason}`,
+      };
+    }
+    
+    // Request approval if required
+    if (policyResult.requiresApproval && ctx.requestApproval) {
+      const approved = await ctx.requestApproval("run_command", input, policyResult.reason);
+      if (!approved) {
+        return {
+          ok: false,
+          output: "",
+          error: "Command execution denied by user",
+        };
+      }
     }
 
     const rawCwd = input["cwd"];
@@ -86,10 +111,12 @@ export const runCommandTool: Tool = {
           : path.resolve(ctx.workspaceRoot, rawCwd)
         : ctx.workspaceRoot;
 
-    const timeout =
+    // Cap timeout at sandbox max
+    const requestedTimeout =
       typeof input["timeout"] === "number" && input["timeout"] > 0
         ? input["timeout"]
         : 30_000;
+    const timeout = Math.min(requestedTimeout, sandbox.maxTimeout);
 
     // Detect file changes before executing the command
     const fileChanges = detectFileChanges(command, cwd);

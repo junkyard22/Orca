@@ -10,6 +10,19 @@ export type {
 // Registry
 export { ToolRegistry } from "./registry.js";
 
+// Sandbox policy system
+export {
+  evaluateCommandPolicy,
+  createSandboxPolicy,
+  DEFAULT_SANDBOX_POLICY,
+} from "./sandbox.js";
+
+export type {
+  SandboxPolicy,
+  CommandPolicyResult,
+  CommandCategory,
+} from "./sandbox.js";
+
 // Core tools (individually exported so callers can cherry-pick)
 export { readFileTool } from "./readFileTool.js";
 export { writeFileTool } from "./writeFileTool.js";

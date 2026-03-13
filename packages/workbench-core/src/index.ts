@@ -67,6 +67,16 @@ export {
   listDirectoryTool,
   searchFilesTool,
   createCoreToolRegistry,
+  // Sandbox policy
+  evaluateCommandPolicy,
+  createSandboxPolicy,
+  DEFAULT_SANDBOX_POLICY,
+} from './tools/index.js';
+
+export type {
+  SandboxPolicy,
+  CommandPolicyResult,
+  CommandCategory,
 } from './tools/index.js';
 
 export {
