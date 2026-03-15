@@ -171,10 +171,14 @@ function extractFinalAnswer(rawText: string): string | null {
 }
 
 function stripThoughtBlocks(text: string): string {
+  // Strip only the ReAct header lines themselves (Thought: / Observation: / Next:).
+  // Using the multiline flag (m) + line anchors so we never cross into the next
+  // line — the dotall (s) flag was previously causing lazy .*? to consume the
+  // entire rest of the string when no \n\n paragraph break was present, silently
+  // wiping recipe-style responses that used single newlines throughout.
   return text
-    .replace(/Thought:.*?(?=\n\n|\nObservation:|\nNext:|\nFINAL ANSWER:|$)/gs, '')
-    .replace(/Observation:.*?(?=\n\n|\nThought:|\nNext:|\nFINAL ANSWER:|$)/gs, '')
-    .replace(/Next:.*?(?=\n\n|\nThought:|\nObservation:|\nFINAL ANSWER:|$)/gs, '')
+    .replace(/^(Thought|Observation|Next):.*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -578,7 +582,11 @@ export class ReactAgentAdapter implements AgentAdapter {
       }
       
       const cleanedLastOutput = stripToolCalls(lastModelOutput);
-      const finalOutput = currentOutputText || stripThoughtBlocks(cleanedLastOutput);
+      // Prefer accumulated output (set on each iteration) over a fresh strip of
+      // the last response — if stripping left nothing, fall back to the raw
+      // tool-stripped output so the user always sees something rather than an
+      // empty string that bubbles up as "did not complete as expected".
+      const finalOutput = currentOutputText || cleanedLastOutput.trim();
       
       // ── No-final-output detection ─────────────────────────────────────────
       // If the run ended without a FINAL ANSWER: and the derived output is empty
