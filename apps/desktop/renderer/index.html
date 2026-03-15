@@ -20,6 +20,12 @@
           <img src="orca-logo.png" class="brand-logo" alt="Orca" />
         </div>
         <div class="win-controls">
+          <button class="win-btn" id="btn-history" title="Chat history">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </button>
           <button class="win-btn" id="btn-settings" title="Settings">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="3"/>
@@ -51,6 +57,15 @@
 
       <!-- ── Content area ───────────────────────────────────────────────── -->
       <div id="content">
+        <!-- Sidebar (history) -->
+        <div id="sidebar">
+          <div id="sidebar-header">
+            <span class="sidebar-title">History</span>
+            <button id="btn-new-chat" title="Start a new chat">+ New</button>
+          </div>
+          <div id="session-list"></div>
+        </div>
+
         <!-- Chat view -->
         <div id="chat-view">
           <!-- Welcome (shown when chat is empty) -->

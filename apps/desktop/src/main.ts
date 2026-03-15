@@ -420,6 +420,14 @@ function initOrca(s: OrcaSettings): string | null {
   benson  = null;
   fallbackPoolManager = null;
 
+  // Always initialise the store so session history is accessible even when
+  // the brain role isn't configured yet.
+  if (!store) {
+    store = new SqliteStore(
+      join(app.getPath('userData'), 'orca-runs.db')
+    );
+  }
+
   const brainRole = s.roles?.['brain'];
   if (!brainRole?.providerId || !brainRole?.model) {
     return "Brain role not configured.\nClick ⚙ Settings → add a provider and assign it to the Brain role.";
@@ -524,11 +532,6 @@ function initOrca(s: OrcaSettings): string | null {
     // Pass model entries to maestro adapter for fallback support
     const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager);
     const pappy   = createPappyPort();
-
-    // Create SQLite store for persistence
-    store = new SqliteStore(
-      join(app.getPath('userData'), 'orca-runs.db')
-    );
 
     runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store, requestToolApproval });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
@@ -691,6 +694,18 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+});
+
+// ── Session history ────────────────────────────────────────────────────────
+
+ipcMain.handle("sessions:list", async () => {
+  if (!store) return [];
+  return store.getRecentRuns(30);
+});
+
+ipcMain.handle("session:load", async (_ev, id: string) => {
+  if (!store) return null;
+  return store.getRun(id);
 });
 
 ipcMain.handle("send-message", async (_ev, text: string) => {

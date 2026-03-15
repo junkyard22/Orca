@@ -4,16 +4,40 @@ export type OrcaEventData = Record<string, unknown>;
 export type BensonReply  = { kind: "CLARIFY" | "RESULT"; text: string; options?: string[] };
 export type SendResult   = { ok: boolean; reply?: BensonReply; error?: string };
 export type InitStatus   = { ok: boolean; error?: string | null };
+export type SaveResult   = { ok: boolean; error?: string };
+
+export type ProviderEntry = {
+  id:      string;
+  name:    string;
+  type:    string;
+  baseUrl: string;
+  apiKey:  string;
+};
+
+export type RoleEntry = {
+  providerId: string;
+  model:      string;
+  fallbacks?: Array<{ providerId: string; model: string }>;
+};
+
 export type OrcaSettings = {
-  apiKey:          string;
+  providers:       ProviderEntry[];
+  roles:           Partial<Record<string, RoleEntry>>;
   budgetUsd:       number;
   maxRepairPasses: number;
-  siteUrl:         string;
-  appName:         string;
   verbose:         boolean;
   workspaceRoot:   string;
 };
-export type SaveResult   = { ok: boolean; error?: string };
+
+export type SessionSummary = {
+  id:          string;
+  createdAt:   string;
+  intent:      string;
+  role?:       string;
+  status:      "SUCCESS" | "FAIL";
+  outputText?: string;
+  costUsd?:    number;
+};
 
 contextBridge.exposeInMainWorld("orca", {
   sendMessage: (text: string): Promise<SendResult> =>
@@ -67,4 +91,13 @@ contextBridge.exposeInMainWorld("orca", {
   // connection details. Returns { ok, models?, error? }.
   fetchModels: (p: { type: string; baseUrl: string; apiKey: string }): Promise<{ ok: boolean; models?: string[]; error?: string }> =>
     ipcRenderer.invoke("models:fetch", p),
+
+  // ── Session history ──────────────────────────────────────────────────────
+  // Returns up to 30 recent runs for the sidebar session list.
+  listSessions: (): Promise<SessionSummary[]> =>
+    ipcRenderer.invoke("sessions:list"),
+
+  // Load a single run by ID for display in the chat view.
+  loadSession: (id: string): Promise<SessionSummary | null> =>
+    ipcRenderer.invoke("session:load", id),
 });

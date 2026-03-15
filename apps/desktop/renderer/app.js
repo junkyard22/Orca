@@ -1,6 +1,28 @@
 /* ── Orca desktop renderer ───────────────────────────────────────────────── */
 "use strict";
 
+// ── Browser-preview stub ──────────────────────────────────────────────────
+// In production, window.orca is injected by Electron's contextBridge preload.
+// In a plain browser (static file preview / CI), it's absent — provide a
+// no-op stub so the UI boots and can be inspected without Electron.
+if (!window.orca) {
+  window.orca = {
+    onInitStatus:    () => {},
+    onOrcaEvent:     () => () => {},
+    onToolRequest:   () => () => {},
+    sendMessage:     async () => ({ ok: false, error: "No Electron context" }),
+    getSettings:     async () => ({ providers: [], roles: {}, budgetUsd: 0.10, maxRepairPasses: 2, verbose: false, workspaceRoot: "" }),
+    saveSettings:    async () => ({ ok: false, error: "No Electron context" }),
+    minimize:        () => {},
+    close:           () => {},
+    approveToolCall: () => {},
+    selectWorkspace: async () => "",
+    fetchModels:     async () => ({ ok: false, models: [] }),
+    listSessions:    async () => [],
+    loadSession:     async () => null,
+  };
+}
+
 // ── DOM refs ──────────────────────────────────────────────────────────────
 
 const messages      = document.getElementById("messages");
@@ -15,6 +37,8 @@ const settingsView  = document.getElementById("settings-view");
 const attachBtn     = document.getElementById("attach-btn");
 const fileInput     = document.getElementById("file-input");
 const attachBar     = document.getElementById("attachments-bar");
+const sidebar       = document.getElementById("sidebar");
+const sessionList   = document.getElementById("session-list");
 
 // ── State ─────────────────────────────────────────────────────────────────
 
@@ -1095,6 +1119,100 @@ orca.onToolRequest((id, tool, args) => {
 
 document.getElementById("btn-approve-tool").addEventListener("click", () => resolveApproval(true));
 document.getElementById("btn-deny-tool").addEventListener("click",    () => resolveApproval(false));
+
+// ── Chat session sidebar ──────────────────────────────────────────────────
+
+let sidebarOpen = false;
+
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  sidebar.classList.toggle("open", sidebarOpen);
+  if (sidebarOpen) refreshSessionList();
+}
+
+async function refreshSessionList() {
+  sessionList.innerHTML = '<p class="sidebar-empty">Loading\u2026</p>';
+  let sessions;
+  try {
+    sessions = await orca.listSessions();
+  } catch {
+    sessionList.innerHTML = '<p class="sidebar-empty">Could not load history.</p>';
+    return;
+  }
+  if (!sessions || !sessions.length) {
+    sessionList.innerHTML = '<p class="sidebar-empty">No history yet.</p>';
+    return;
+  }
+  sessionList.innerHTML = sessions.map((s) => {
+    const label  = truncateSession(s.intent, 58);
+    const date   = fmtSessionDate(s.createdAt);
+    const cost   = s.costUsd != null ? `<span class="session-cost">$${s.costUsd.toFixed(4)}</span>` : "";
+    const failed = s.status === "FAIL" ? ' session-failed' : '';
+    return `<div class="session-item${failed}" data-sid="${escapeHtml(s.id)}" title="${escapeHtml(s.intent)}">
+      <div class="session-intent">${escapeHtml(label)}</div>
+      <div class="session-meta"><span>${escapeHtml(date)}</span>${cost}</div>
+    </div>`;
+  }).join("");
+  sessionList.querySelectorAll(".session-item").forEach((item) => {
+    item.addEventListener("click", () => loadSession(item.dataset.sid));
+  });
+}
+
+async function loadSession(id) {
+  let session;
+  try {
+    session = await orca.loadSession(id);
+  } catch {
+    return;
+  }
+  if (!session) return;
+
+  // Switch to chat view and replace contents with this run
+  settingsView.style.display = "none";
+  chatView.style.display     = "flex";
+  messages.innerHTML         = "";
+  showMessages();
+
+  appendMsg("user", session.intent);
+  if (session.outputText) {
+    appendMsg("orca", cleanPipelineOutput(session.outputText));
+  } else if (session.status === "FAIL") {
+    appendSys("This run failed — no output was recorded.", "warn");
+  }
+  scrollToBottom();
+}
+
+function newChat() {
+  messages.innerHTML         = "";
+  welcome.style.display      = "";
+  messages.style.display     = "none";
+  settingsView.style.display = "none";
+  chatView.style.display     = "flex";
+  if (statusbarCost) statusbarCost.textContent = "";
+  inputEl.focus();
+}
+
+function truncateSession(s, n) {
+  const clean = String(s ?? "").replace(/\s+/g, " ").trim();
+  return clean.length > n ? clean.slice(0, n) + "\u2026" : clean;
+}
+
+function fmtSessionDate(iso) {
+  try {
+    const d    = new Date(iso);
+    const diff = Date.now() - d.getTime();
+    if (diff < 60_000)        return "just now";
+    if (diff < 3_600_000)     return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000)    return `${Math.floor(diff / 3_600_000)}h ago`;
+    if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+document.getElementById("btn-history").addEventListener("click",  toggleSidebar);
+document.getElementById("btn-new-chat").addEventListener("click", () => { newChat(); toggleSidebar(); });
 
 // ── Focus input on load ───────────────────────────────────────────────────
 
