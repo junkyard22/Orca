@@ -94,6 +94,13 @@ function presentFailure(result: ExecutionResult, task: TaskSpec): string {
     return `${cleanOutput(result.userFacingText)}\n\n---\n*QC noted some issues with the above. ${nextStep}*`;
   }
 
+  // Surface the internal error/summary so the user can diagnose the problem
+  // (e.g. "API error 401: invalid key", "Brain role not configured", etc.)
+  if (result.summary && !result.summary.startsWith("ok")) {
+    const nextStep = chooseNextStepQuestion(task);
+    return `That did not complete as expected.\n\n> ${result.summary}\n\n${nextStep}`;
+  }
+
   // Truly empty output — nothing to show
   const nextStep = chooseNextStepQuestion(task);
   return `That did not complete as expected. ${nextStep}`;
