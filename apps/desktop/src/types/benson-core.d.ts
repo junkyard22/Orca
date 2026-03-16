@@ -1,31 +1,45 @@
 /**
  * Type declarations for @clawde/benson-core
+ *
+ * These types are designed to be structurally compatible with @clawde/orca-core
+ * types since benson-core receives executeTask from orca-core at construction time.
+ *
+ * Note: TaskSpec and ExecutionResult are aligned with OrcaTaskSpec and OrcaExecutionResult
+ * from orca-core to ensure type compatibility when passing runtime.executeTask to createBenson.
  */
 declare module '@clawde/benson-core' {
-  export interface TaskSpec {
-    intent: string;
-    goals?: string[];
-    permissions?: TaskPermissions | Permission[];
-    context?: Record<string, unknown>;
-  }
+  import type { LLMMessage } from '@clawde/miranda-core';
 
   export interface TaskPermissions {
-    fileRead?: boolean;
-    fileWrite?: boolean;
-    shellExec?: boolean;
-    toolsAllowed?: string[];
+    fileRead: boolean;
+    fileWrite: boolean;
+    shellExec: boolean;
+    toolsAllowed: string[];
   }
 
-  export interface Permission {
-    type: string;
-    resource?: string;
+  export interface TaskSpec {
+    originalUserMessage: string;
+    intent: string;
+    goals: string[];
+    constraints?: Record<string, unknown>;
+    context?: {
+      conversationHistory?: LLMMessage[];
+      hasImages?: boolean;
+      errorOutput?: string;
+      fileCount?: number;
+      deepPlan?: boolean;
+      filePath?: string;
+      [key: string]: unknown;
+    };
+    permissions?: TaskPermissions;
   }
 
   export interface ExecutionResult {
-    success: boolean;
-    output?: string;
-    error?: string;
-    status: 'SUCCESS' | 'FAIL';
+    status: "SUCCESS" | "FAIL";
+    userFacingText?: string;
+    summary?: string;
+    artifacts?: unknown;
+    followUpQuestion?: string;
   }
 
   export interface ExecuteTaskFn {

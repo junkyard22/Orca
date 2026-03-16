@@ -871,6 +871,11 @@ async function runAgentLoop(
 
   let lastText = "";
 
+  // Dedup guard — skip any tool call with the exact same signature as one
+  // already executed this run. Prevents the model from calling write_file
+  // (or any tool) in a loop with identical arguments.
+  const executedCallSigs = new Set<string>();
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const { text } = await ctx.llm.complete(conversation, { maxTokens: 8192, simple: true });
     lastText = text;
@@ -887,6 +892,15 @@ async function runAgentLoop(
 
     // Execute each tool call and append results.
     for (const call of calls) {
+      // Dedup: skip if we've already executed the exact same call this run.
+      const callSig = `${call.tool}:${JSON.stringify(call.input)}`;
+      if (executedCallSigs.has(callSig)) {
+        console.warn(`[MaestroAdapter] Skipping duplicate tool call: ${call.tool} (identical args already executed)`);
+        conversation += formatToolResult(call.tool, false, "Duplicate call skipped — this exact call was already executed successfully.");
+        continue;
+      }
+      executedCallSigs.add(callSig);
+
       console.error(
         `[MaestroAdapter] tool:call  name=${call.tool}  iteration=${i + 1}/${MAX_ITERATIONS}`,
       );
@@ -954,6 +968,14 @@ async function runAgentLoop(
       );
 
       conversation += formatToolResult(call.tool, result.ok, result.output, result.error);
+
+      // Completion signal: after a successful write_file, tell the model the
+      // task is done. Ask it to output the full written content so the user
+      // sees the actual result, not a summary of what was saved.
+      if (call.tool === "write_file" && result.ok) {
+        const writtenPath = typeof call.input["path"] === "string" ? call.input["path"] : "the file";
+        conversation += `\n\nUser: "${writtenPath}" has been written successfully. The task is complete. Output the full content you just wrote so the user can see it. Do not call any more tools.`;
+      }
     }
   }
 

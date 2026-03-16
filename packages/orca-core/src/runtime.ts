@@ -42,7 +42,7 @@ function generateRunId(): string {
  *   passes per task?", "which specific issues were resolved?"
  */
 export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
-  const { maestro, pappy, llm, maxRepairPasses = 2, tools } = deps;
+  const { maestro, pappy, llm, maxRepairPasses = 2, tools, budgetUsd } = deps;
   const qcEnabled = pappy != null;
   const emitter = new OrcaEmitter();
 
@@ -117,6 +117,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
       const maestroResult = normalizeMaestroResult(await maestro.run(taskSpec, ctx));
       persistedMaestroResult = maestroResult;
+      const initialSpendUsd = maestroResult.metadata?.costUsd ?? 0;
       emitter.emit({ type: "maestro:done", taskId, attempt: 0, isRepair: false, hasOutput: !!maestroResult.outputText });
 
       if (!qcEnabled) {
@@ -165,6 +166,13 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           };
         } else if (!qcResult.repairTask) {
           result = { status: "FAIL", userFacingText: maestroResult.outputText, summary: qcResult.internalSummary };
+        } else if (budgetUsd && budgetUsd > 0 && initialSpendUsd >= budgetUsd) {
+          // ── Budget cap hit on initial pass — skip repair entirely ─────────
+          result = {
+            status: "WARN",
+            userFacingText: maestroResult.outputText,
+            summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${initialSpendUsd.toFixed(4)} spent on initial pass). Repair skipped.`,
+          };
         } else {
           const originalRole = maestroResult.metadata?.role;
           result = await handleRepairLoop(
@@ -177,6 +185,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             maxRepairPasses,
             maestroResult.outputText,
             originalRole,
+            budgetUsd,
+            initialSpendUsd,
           );
           if (result.artifacts) {
             persistedMaestroResult = normalizeMaestroResult(result.artifacts as OrcaMaestroResult);

@@ -13,11 +13,13 @@ export class RoleAgentAdapter implements AgentAdapter {
   constructor(
     role: RoleName,
     llmAdapter: LLMAdapter,
-    maxIterations?: number
+    maxIterations?: number,
+    maxTokens?: number,
+    temperature?: number,
   ) {
     this.role = role;
     const systemPrompt = getRolePrompt(role);
-    this.agent = new ReactAgentAdapter(llmAdapter, systemPrompt, role, maxIterations);
+    this.agent = new ReactAgentAdapter(llmAdapter, systemPrompt, role, maxIterations, maxTokens, temperature);
   }
 
   run(task: AgentTask, tools: Tool[], ctx: AgentRunContext): Promise<AgentResult> {

@@ -19,6 +19,10 @@ const shared = {
   format:   "cjs",
   target:   "node20",
   external: ["electron"],   // never bundle Electron itself
+  // Use banner to define a cached electron reference that works at runtime
+  banner: {
+    js: `const electron = require("electron");`
+  },
   alias: {
     "@clawde/miranda-core":    resolve(PACKAGES, "miranda-core",    "src", "index.ts"),
     "@clawde/pappy-core":      resolve(PACKAGES, "pappy-core",      "src", "index.ts"),

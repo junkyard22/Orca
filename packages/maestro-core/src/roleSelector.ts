@@ -225,6 +225,12 @@ export function pickCoreRole(task: string): CoreRoleName {
     /\b(architecture|design\s+pattern|refactor)\b/i,
     /\b(test|unit\s+test|integration\s+test)\b.*\b(write|create|add)\b/i,
     /\b(migrate|migration|convert)\b.*\b(code|implementation)\b/i,
+    // Generic function/class/method writing — "write a function", "create a class", etc.
+    /\b(write|create|add|implement)\b.{0,30}\b(function|method|class|interface|hook|handler|util|helper|script)\b/i,
+    // "function that..." pattern — unambiguous code-gen request
+    /\bfunction\s+that\b/i,
+    // Any task asking to write code to a file
+    /\b(write|generate)\b.{0,30}\b(code|script|program)\b/i,
   ];
   
   for (const pattern of coderStrongPatterns) {
@@ -261,9 +267,10 @@ export function pickCoreRole(task: string): CoreRoleName {
     }
   }
   
-  // FALLBACK: narrator for general tasks that don't match other patterns
-  // Brain is NOT used as fallback — brain is only for explicit planning requests
-  return 'narrator';
+  // FALLBACK: coder_strong for unclassified tasks (most unclassified tasks are coding)
+  // Narrator is NOT the default — it is only for explicit writing/doc requests above.
+  // Brain is NOT the default — brain is only for explicit planning requests.
+  return 'coder_strong';
 }
 
 /**

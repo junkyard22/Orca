@@ -69,6 +69,10 @@ export function presentResult(result: ExecutionResult, task: TaskSpec): string {
     return presentSuccess(result, task);
   }
 
+  if (result.status === "WARN") {
+    return presentWarn(result, task);
+  }
+
   return presentFailure(result, task);
 }
 
@@ -84,6 +88,15 @@ function presentSuccess(result: ExecutionResult, task: TaskSpec): string {
     : task.goals.map((g, i) => `${i + 1}. ${g}`).join("\n");
 
   return `Done. Here is what was completed:\n\n${summary}`;
+}
+
+function presentWarn(result: ExecutionResult, task: TaskSpec): string {
+  // Budget cap or soft-stop — show whatever output exists, with a clear note.
+  const budgetNote = result.summary ?? "Spending limit reached.";
+  if (result.userFacingText) {
+    return `${cleanOutput(result.userFacingText)}\n\n---\n*Note: ${budgetNote}*`;
+  }
+  return `Completed with a warning.\n\n> ${budgetNote}`;
 }
 
 function presentFailure(result: ExecutionResult, task: TaskSpec): string {

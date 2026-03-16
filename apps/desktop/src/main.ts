@@ -182,6 +182,8 @@ function buildMaestroAdapter(
   modelEntries?: Map<string, { provider: ProviderEntry; model: string }>,
   /** Fallback pool manager for model selection */
   poolManager?: ModelFallbackPoolManager,
+  /** Per-role generation settings sourced from orca-settings.json */
+  roleSettings?: Map<RoleName, { maxTokens?: number; temperature?: number }>,
 ): MaestroPort {
   const maestroCore = createMaestroCore();
   const logger = console;
@@ -189,7 +191,8 @@ function buildMaestroAdapter(
   // Build one RoleAgentAdapter per configured role
   const roleAgents = new Map<RoleName, RoleAgentAdapter>();
   for (const [role, llmAdapter] of configuredAdapters) {
-    roleAgents.set(role, new RoleAgentAdapter(role, llmAdapter));
+    const rs = roleSettings?.get(role);
+    roleAgents.set(role, new RoleAgentAdapter(role, llmAdapter, undefined, rs?.maxTokens, rs?.temperature));
   }
 
   return {
@@ -202,7 +205,7 @@ function buildMaestroAdapter(
       // for compatibility with brainRoute function
       const roleAdapters: Partial<Record<RoleName, OrcaLLMService>> = {};
       for (const [role, adapter] of configuredAdapters) {
-        roleAdapters[role] = createDirectLLMService(adapter, 'model', { maxTokens: 8192, temperature: 0.7 });
+        roleAdapters[role] = createDirectLLMService(adapter, '', { maxTokens: 8192, temperature: 0.7 });
       }
       
       const routing = await brainRoute(task, ctx, roleAdapters);
@@ -347,7 +350,11 @@ let benson: BensonHandle | null = null;
 let store: SqliteStore | null = null;
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 
-function buildAdapterForProvider(provider: ProviderEntry, model: string): LLMAdapter {
+function buildAdapterForProvider(
+  provider: ProviderEntry,
+  model: string,
+  enableThinking?: boolean,
+): LLMAdapter {
   if (provider.type === 'ollama') {
     return new OllamaAdapter({
       baseUrl:      provider.baseUrl || 'http://localhost:11434',
@@ -356,9 +363,10 @@ function buildAdapterForProvider(provider: ProviderEntry, model: string): LLMAda
   }
   // openrouter, deepseek, siliconflow, openai, anthropic, zai, custom
   return new OpenAICompatAdapter({
-    baseUrl:      provider.baseUrl,
-    apiKey:       provider.apiKey || undefined,
-    defaultModel: model,
+    baseUrl:        provider.baseUrl,
+    apiKey:         provider.apiKey || undefined,
+    defaultModel:   model,
+    enableThinking,
   });
 }
 
@@ -472,9 +480,9 @@ function initOrca(s: OrcaSettings): string | null {
       if (!roleProv) continue;
       if (roleProv.type !== 'ollama' && !roleProv.apiKey) continue;
       roleAdapters[roleName] = createDirectLLMService(
-        buildAdapterForProvider(roleProv, roleEntry.model),
+        buildAdapterForProvider(roleProv, roleEntry.model, roleEntry.enableThinking),
         roleEntry.model,
-        { maxTokens: 8192, temperature: 0.7 },
+        { maxTokens: roleEntry.maxTokens ?? 8192, temperature: roleEntry.temperature ?? 0.7 },
       );
     }
 
@@ -486,7 +494,7 @@ function initOrca(s: OrcaSettings): string | null {
       const roleName = role as RoleName;
       // We need to get the original adapter - for now we'll use brain's adapter as fallback
       if (roleName === 'brain') {
-        adapterMap.set(roleName, buildAdapterForProvider(provider, model));
+        adapterMap.set(roleName, buildAdapterForProvider(provider, model, s.roles?.['brain']?.enableThinking));
       }
     }
     // Add other configured roles
@@ -498,7 +506,7 @@ function initOrca(s: OrcaSettings): string | null {
       if (!adapterMap.has(roleName) && s.roles?.[roleName]?.providerId && s.roles?.[roleName]?.model) {
         const roleProv = s.providers?.find((p) => p.id === s.roles![roleName]!.providerId);
         if (roleProv) {
-          adapterMap.set(roleName, buildAdapterForProvider(roleProv, s.roles![roleName]!.model!));
+          adapterMap.set(roleName, buildAdapterForProvider(roleProv, s.roles![roleName]!.model!, s.roles![roleName]!.enableThinking));
         }
       }
     }
@@ -529,11 +537,22 @@ function initOrca(s: OrcaSettings): string | null {
       },
     };
 
+    // Build per-role generation settings map (maxTokens, temperature) from config
+    const roleGenSettings = new Map<RoleName, { maxTokens?: number; temperature?: number }>();
+    for (const [roleName, roleEntry] of Object.entries(s.roles ?? {})) {
+      if (roleEntry && (roleEntry.maxTokens !== undefined || roleEntry.temperature !== undefined)) {
+        roleGenSettings.set(roleName as RoleName, {
+          maxTokens:   roleEntry.maxTokens,
+          temperature: roleEntry.temperature,
+        });
+      }
+    }
+
     // Pass model entries to maestro adapter for fallback support
-    const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager);
+    const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager, roleGenSettings);
     const pappy   = createPappyPort();
 
-    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store, requestToolApproval });
+    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store, requestToolApproval, budgetUsd: s.budgetUsd });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {
@@ -558,6 +577,7 @@ function createWindow(): void {
     hasShadow:       true,
     show:            false,
     center:          true,
+    icon:            join(__dirname, "..", "orca.ico"),
     webPreferences: {
       preload:          join(__dirname, "preload.js"),
       nodeIntegration:  false,
@@ -708,6 +728,16 @@ ipcMain.handle("session:load", async (_ev, id: string) => {
   return store.getRun(id);
 });
 
+ipcMain.handle("session:delete", async (_ev, id: string) => {
+  if (!store) return { ok: false, error: "Store not initialized" };
+  try {
+    await store.deleteRun(id);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
 ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!benson || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
@@ -758,18 +788,35 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   }
 });
 
-// ── Lifecycle ──────────────────────────────────────────────────────────────
+// ── Single-instance lock ────────────────────────────────────────────────────
+// If another instance is already running, focus its window and quit this one.
 
-app.whenReady().then(() => {
-  createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+const gotLock = app.requestSingleInstanceLock();
+
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const [win] = BrowserWindow.getAllWindows();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
   });
-});
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+  // ── Lifecycle ────────────────────────────────────────────────────────────
+
+  app.whenReady().then(() => {
+    createWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+}
 
 // Close SQLite store on quit
 app.on("before-quit", () => {

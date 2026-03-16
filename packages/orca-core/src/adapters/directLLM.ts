@@ -32,10 +32,11 @@ export function createDirectLLMService(
         : [{ role: "user", content: prompt }];
 
       const request: LLMRequest = {
-        model:       modelId,
+        model:          modelId,
         messages,
-        temperature: opts?.temperature ?? defaults?.temperature ?? 0.7,
-        maxTokens:   opts?.maxTokens   ?? defaults?.maxTokens   ?? 4096,
+        temperature:    opts?.temperature ?? defaults?.temperature ?? 0.7,
+        maxTokens:      opts?.maxTokens   ?? defaults?.maxTokens   ?? 4096,
+        ...(opts?.enableThinking !== undefined && { enableThinking: opts.enableThinking }),
       };
 
       if (opts?.onToken && adapter.stream) {

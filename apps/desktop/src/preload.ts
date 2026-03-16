@@ -100,4 +100,8 @@ contextBridge.exposeInMainWorld("orca", {
   // Load a single run by ID for display in the chat view.
   loadSession: (id: string): Promise<SessionSummary | null> =>
     ipcRenderer.invoke("session:load", id),
+
+  // Delete a run and all its related data from SQLite.
+  deleteSession: (id: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("session:delete", id),
 });

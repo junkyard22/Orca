@@ -24,6 +24,32 @@
   --warn-text: #fbbf24;
 }
 
+/* ── Light theme overrides ───────────────────────────────────────────────── */
+body.light {
+  --bg: #f5f5f5;
+  --surface: #ffffff;
+  --surface-2: #ebebeb;
+  --border: #d4d4d4;
+  --text: #171717;
+  --text-muted: #6b7280;
+  --text-dim: #9ca3af;
+  --user-bg: #eef2ff;
+  --user-text: #4338ca;
+  --warn-bg: #fffbeb;
+  --warn-text: #d97706;
+}
+
+/* Theme toggle icons: sun in dark mode, moon in light mode */
+.icon-moon { display: none; }
+body.light .icon-sun  { display: none; }
+body.light .icon-moon { display: inline; }
+
+/* Light mode: logo has a white bg — multiply blends it into the surface */
+body.light .brand-logo,
+body.light .welcome-logo {
+  mix-blend-mode: multiply;
+}
+
 html,
 body {
   height: 100%;
@@ -68,7 +94,6 @@ body {
 .brand-logo {
   height: 26px;
   width: auto;
-  filter: invert(1);
   opacity: 0;
   flex-shrink: 0;
   animation: logo-appear 0.6s ease 0.3s forwards;
@@ -141,19 +166,14 @@ body {
 }
 
 .welcome-glow {
-  position: absolute;
-  width: 320px;
-  height: 320px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%);
-  pointer-events: none;
+  display: none;
 }
 
 .welcome-logo {
-  width: 88px;
-  height: auto;
-  opacity: 0.88;
-  filter: drop-shadow(0 0 18px rgba(59,130,246,0.25));
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  overflow: visible;
   animation: logo-float 4s ease-in-out infinite;
   position: relative;
 }
@@ -916,6 +936,13 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+.prov-custom-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .provider-key-row {
   display: flex;
   gap: 7px;
@@ -933,7 +960,7 @@ body {
 }
 .role-row {
   display: grid;
-  grid-template-columns: 136px 1fr 1fr;
+  grid-template-columns: 136px 1fr 1fr auto;
   gap: 8px;
   align-items: center;
 }
@@ -985,6 +1012,43 @@ body {
 .role-model-inp {
   font-size: 12px;
   padding: 6px 9px;
+}
+
+/* ── Per-role thinking toggle ────────────────────────────────────────────── */
+.role-thinking-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 52px;
+}
+.role-thinking-cell .toggle {
+  width: 34px;
+  height: 18px;
+}
+.role-thinking-cell .toggle-track {
+  border-radius: 9px;
+}
+.role-thinking-cell .toggle-track::after {
+  width: 12px;
+  height: 12px;
+  top: 3px;
+  left: 3px;
+}
+.role-thinking-cell .toggle input:checked + .toggle-track::after {
+  transform: translateX(16px);
+}
+.role-thinking-lbl {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+.role-thinking-cell.role-thinking-hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* ── Toggle switch ───────────────────────────────────────────────────────── */
@@ -1517,13 +1581,47 @@ body {
 #session-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .session-item {
-  padding: 9px 14px;
+  position: relative;
+  padding: 9px 34px 9px 14px;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background 0.1s, opacity 0.18s;
   border-bottom: 1px solid rgba(255,255,255,0.03);
 }
 .session-item:hover {
   background: var(--surface-2);
+}
+.session-item.session-deleting {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-delete-btn {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  line-height: 1;
+  -webkit-app-region: no-drag;
+}
+.session-item:hover .session-delete-btn {
+  display: flex;
+}
+.session-delete-btn:hover {
+  background: rgba(239,68,68,0.18);
+  color: var(--danger);
 }
 
 .session-intent {

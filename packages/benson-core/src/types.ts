@@ -28,7 +28,7 @@ export type BensonReply =
   | { kind: "RESULT"; text: string; task: TaskSpec };
 
 export interface ExecutionResult {
-  status: "SUCCESS" | "FAIL";
+  status: "SUCCESS" | "WARN" | "FAIL";
   userFacingText?: string;
   summary?: string;
   artifacts?: unknown;

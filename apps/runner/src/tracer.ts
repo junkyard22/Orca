@@ -88,16 +88,14 @@ function line(label: string, value: string, color = C.white): void {
 
 function detail(label: string, value: string, color = C.gray): void {
   if (!DEBUG) return;
-  const preview = value.length > 500 ? `${value.slice(0, 500)}${C.dim}…(+${value.length - 500})${C.reset}` : value;
-  process.stdout.write(`  ${C.dim}${label}:${C.reset} ${color}${preview}${C.reset}\n`);
+  process.stdout.write(`  ${C.dim}${label}:${C.reset} ${color}${value}${C.reset}\n`);
 }
 
 function detailList(label: string, items: string[], color = C.gray): void {
   if (!DEBUG || items.length === 0) return;
   process.stdout.write(`  ${C.dim}${label}:${C.reset}\n`);
   for (const item of items) {
-    const preview = item.length > 200 ? `${item.slice(0, 200)}…` : item;
-    process.stdout.write(`    ${color}• ${preview}${C.reset}\n`);
+    process.stdout.write(`    ${color}• ${item}${C.reset}\n`);
   }
 }
 
@@ -122,10 +120,10 @@ function createTracingLLMService(adapter: LLMAdapter, modelId: string): OrcaLLMS
       if (DEBUG) {
         const sepIdx = prompt.indexOf(SEP);
         if (sepIdx !== -1) {
-          detail(`system[0..300]`, prompt.slice(0, Math.min(300, sepIdx)));
-          detail(`user[0..300]`, prompt.slice(sepIdx + SEP.length, sepIdx + SEP.length + 300));
+          detail(`system`, prompt.slice(0, sepIdx));
+          detail(`user`, prompt.slice(sepIdx + SEP.length));
         } else {
-          detail(`prompt[0..300]`, prompt.slice(0, 300));
+          detail(`prompt`, prompt);
         }
       }
 
@@ -135,7 +133,7 @@ function createTracingLLMService(adapter: LLMAdapter, modelId: string): OrcaLLMS
 
       line("duration", `${ms}ms`, C.yellow);
       line("response", `${result.text.length} chars`, C.white);
-      if (DEBUG) detail(`response[0..500]`, result.text);
+      if (DEBUG) detail(`response`, result.text);
 
       return result;
     },
@@ -394,8 +392,8 @@ async function main(): Promise<void> {
     reply.options?.forEach((opt, i) => process.stdout.write(`  ${i + 1}. ${opt}\n`));
   } else {
     line("chars", `${reply.text.length}`, C.gray);
-    if (DEBUG) detail("preview[0..500]", reply.text);
-    process.stdout.write(`\n${C.white}${truncate(reply.text, 500)}${C.reset}\n`);
+    if (DEBUG) detail("preview", reply.text);
+    process.stdout.write(`\n${C.white}${reply.text}${C.reset}\n`);
   }
 
   const totalSec = ((Date.now() - T0) / 1000).toFixed(2);

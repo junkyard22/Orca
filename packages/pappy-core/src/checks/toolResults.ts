@@ -122,17 +122,20 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
   }
 
   // ── Instrumentation check: task implies tool use but no tools recorded ───
-  // Uses broader keywords here intentionally — it's just a MEDIUM warning.
-  // Excludes "write" and "create" — they commonly appear in code-gen requests
-  // ("write a function", "create a class") and don't imply tool use.
-  // "save" already covers intentional file-write scenarios.
-  const hasToolUsePatterns = /\b(read|run|execute|save|list|search|find|build|test)\b/i.test(input.task);
+  // MEDIUM only — this is a heuristic and has known false positives.
+  // Excludes "write", "create", and noun-form "test" to avoid matching
+  // code-gen phrases like "write a function" or "a test file".
+  // "test" is only matched as a verb (run/execute tests), not as a noun.
+  const hasToolUsePatterns = (
+    /\b(read|run|execute|save|list|search|find|build)\b/i.test(input.task) ||
+    /\b(run|execute)\s+(the\s+)?(tests?|specs?|suite)\b/i.test(input.task)
+  );
   const hasNoToolEvents = (input.toolEvents?.length ?? 0) === 0;
   const hasNoFiles = (input.filesChanged?.length ?? 0) === 0;
 
   if (hasToolUsePatterns && hasNoToolEvents && hasNoFiles) {
     issues.push({
-      severity: "HIGH",
+      severity: "MEDIUM",
       code: "TOOL_INSTRUMENTATION_MISSING",
       category: "Tooling",
       description: "Task implies tool use but no tool events were recorded.",

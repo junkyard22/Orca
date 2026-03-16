@@ -752,12 +752,16 @@ function renderProviders() {
     const typeOpts = PROVIDER_TYPES.map((t) =>
       `<option value="${t.value}"${t.value === p.type ? " selected" : ""}>${t.label}</option>`
     ).join("");
+    const isCustom = p.type === "custom";
+    const fetchBtn = isCustom
+      ? `<span class="prov-custom-hint">Type model names directly in the role fields</span>`
+      : `<button class="btn-fetch-models" data-prov-idx="${i}" title="Fetch available models from this provider">Fetch models</button>`;
     return `
       <div class="provider-item" data-prov-idx="${i}">
         <div class="provider-row-top">
           <input class="setting-input prov-name" placeholder="Display name" value="${escHtml(p.name)}" />
           <select class="prov-type">${typeOpts}</select>
-          <button class="btn-fetch-models" data-prov-idx="${i}" title="Fetch available models from this provider">Fetch models</button>
+          ${fetchBtn}
           <button class="btn-remove" data-remove-prov="${i}" title="Remove">✕</button>
         </div>
         <input class="setting-input prov-url" placeholder="Base URL" value="${escHtml(p.baseUrl)}" />
@@ -860,8 +864,11 @@ function renderRoleList(containerId, roles, badgeClass) {
   if (!el || !editingSettings) return;
 
   el.innerHTML = roles.map((role) => {
-    const entry = editingSettings.roles[role.id] ?? { providerId: "", model: "" };
-    const hint  = MODEL_HINTS[getProviderType(entry.providerId)] ?? "model";
+    const entry           = editingSettings.roles[role.id] ?? { providerId: "", model: "" };
+    const hint            = MODEL_HINTS[getProviderType(entry.providerId)] ?? "model";
+    const hasProvider     = !!entry.providerId;
+    const thinkingChecked = entry.enableThinking === true ? " checked" : "";
+    const hiddenClass     = hasProvider ? "" : " role-thinking-hidden";
     return `
       <div class="role-row" data-role-id="${role.id}">
         <div class="role-label" title="${escHtml(role.hint)}">
@@ -872,6 +879,13 @@ function renderRoleList(containerId, roles, badgeClass) {
           ${buildProviderOptions(entry.providerId)}
         </select>
         <input class="setting-input role-model-inp" placeholder="${escHtml(hint)}" value="${escHtml(entry.model)}" />
+        <div class="role-thinking-cell${hiddenClass}" title="Enable deep thinking / chain-of-thought for this role">
+          <label class="toggle">
+            <input type="checkbox" class="role-thinking-cb"${thinkingChecked} />
+            <span class="toggle-track"></span>
+          </label>
+          <span class="role-thinking-lbl">Thinking</span>
+        </div>
       </div>`;
   }).join("");
 
@@ -882,6 +896,9 @@ function renderRoleList(containerId, roles, badgeClass) {
       editingSettings.roles[roleId].providerId = this.value;
       const modelInp = this.closest(".role-row").querySelector(".role-model-inp");
       modelInp.placeholder = MODEL_HINTS[getProviderType(this.value)] ?? "model";
+      // Show or hide the thinking toggle based on whether a provider is now set
+      const thinkingCell = this.closest(".role-row").querySelector(".role-thinking-cell");
+      if (thinkingCell) thinkingCell.classList.toggle("role-thinking-hidden", !this.value);
       updateModelDataLists();
     });
   });
@@ -891,6 +908,14 @@ function renderRoleList(containerId, roles, badgeClass) {
       const roleId = this.closest(".role-row").dataset.roleId;
       if (!editingSettings.roles[roleId]) editingSettings.roles[roleId] = { providerId: "", model: "" };
       editingSettings.roles[roleId].model = this.value;
+    });
+  });
+
+  el.querySelectorAll(".role-thinking-cb").forEach((cb) => {
+    cb.addEventListener("change", function () {
+      const roleId = this.closest(".role-row").dataset.roleId;
+      if (!editingSettings.roles[roleId]) editingSettings.roles[roleId] = { providerId: "", model: "" };
+      editingSettings.roles[roleId].enableThinking = this.checked ? true : false;
     });
   });
 }
@@ -1144,17 +1169,27 @@ async function refreshSessionList() {
     return;
   }
   sessionList.innerHTML = sessions.map((s) => {
-    const label  = truncateSession(s.intent, 58);
+    const label  = truncateSession(s.intent, 50);
     const date   = fmtSessionDate(s.createdAt);
     const cost   = s.costUsd != null ? `<span class="session-cost">$${s.costUsd.toFixed(4)}</span>` : "";
     const failed = s.status === "FAIL" ? ' session-failed' : '';
     return `<div class="session-item${failed}" data-sid="${escapeHtml(s.id)}" title="${escapeHtml(s.intent)}">
       <div class="session-intent">${escapeHtml(label)}</div>
       <div class="session-meta"><span>${escapeHtml(date)}</span>${cost}</div>
+      <button class="session-delete-btn" data-sid="${escapeHtml(s.id)}" title="Delete this session" aria-label="Delete session">✕</button>
     </div>`;
   }).join("");
   sessionList.querySelectorAll(".session-item").forEach((item) => {
-    item.addEventListener("click", () => loadSession(item.dataset.sid));
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".session-delete-btn")) return;
+      loadSession(item.dataset.sid);
+    });
+  });
+  sessionList.querySelectorAll(".session-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSession(btn.dataset.sid);
+    });
   });
 }
 
@@ -1180,6 +1215,25 @@ async function loadSession(id) {
     appendSys("This run failed — no output was recorded.", "warn");
   }
   scrollToBottom();
+}
+
+async function deleteSession(id) {
+  try {
+    await orca.deleteSession(id);
+  } catch {
+    // silently ignore — still remove from UI
+  }
+  // Optimistically remove the item from the DOM without full reload
+  const el = sessionList.querySelector(`.session-item[data-sid="${CSS.escape(id)}"]`);
+  if (el) {
+    el.classList.add("session-deleting");
+    setTimeout(() => {
+      el.remove();
+      if (!sessionList.querySelector(".session-item")) {
+        sessionList.innerHTML = '<p class="sidebar-empty">No history yet.</p>';
+      }
+    }, 180);
+  }
 }
 
 function newChat() {
@@ -1213,6 +1267,34 @@ function fmtSessionDate(iso) {
 
 document.getElementById("btn-history").addEventListener("click",  toggleSidebar);
 document.getElementById("btn-new-chat").addEventListener("click", () => { newChat(); toggleSidebar(); });
+
+// ── Theme toggle ──────────────────────────────────────────────────────────
+
+// Titlebar: tight-cropped _only_ variants (small, clean)
+const BRAND_DARK  = "orca-logo-dark.png";
+const BRAND_LIGHT = "orca-logo-light.png";
+// Welcome screen: padded variants (more canvas, no clipping)
+const WELCOME_DARK  = "orca-welcome-dark.png";
+const WELCOME_LIGHT = "orca-welcome-light.png";
+
+function setThemeLogos(isLight) {
+  const brand   = document.getElementById("logo-brand");
+  const welcome = document.getElementById("logo-welcome");
+  if (brand)   brand.src   = isLight ? BRAND_LIGHT   : BRAND_DARK;
+  if (welcome) welcome.src = isLight ? WELCOME_LIGHT  : WELCOME_DARK;
+}
+
+(function initTheme() {
+  const isLight = localStorage.getItem("orca-theme") === "light";
+  if (isLight) document.body.classList.add("light");
+  setThemeLogos(isLight);
+})();
+
+document.getElementById("btn-theme").addEventListener("click", () => {
+  const isLight = document.body.classList.toggle("light");
+  localStorage.setItem("orca-theme", isLight ? "light" : "dark");
+  setThemeLogos(isLight);
+});
 
 // ── Focus input on load ───────────────────────────────────────────────────
 

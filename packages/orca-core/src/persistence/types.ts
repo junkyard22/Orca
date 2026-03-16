@@ -58,6 +58,7 @@ export interface OrcaStore {
   getRun(id: string): RunRecord | null | Promise<RunRecord | null>;
   getRunThoughts(runId: string): ThoughtRecord[] | Promise<ThoughtRecord[]>;
   getRunToolEvents(runId: string): ToolEvent[] | Promise<ToolEvent[]>;
+  deleteRun(id: string): void | Promise<void>;
   searchRuns(query: string, limit?: number): RunRecord[] | Promise<RunRecord[]>;
   getStats(): {
     totalRuns: number;

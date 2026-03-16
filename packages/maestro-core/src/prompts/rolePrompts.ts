@@ -17,6 +17,14 @@ You have access to tools (read_file, write_file, run_command, list_directory, se
 Use them whenever the task requires interacting with files or the system.
 Do not simulate or describe tool actions — actually call the tools.`;
 
+const NO_CHAT_RULES = `
+EXECUTION RULES — NO EXCEPTIONS:
+- Do not explain what you are about to do before doing it.
+- Do not ask clarifying questions. Pick the most reasonable interpretation and execute.
+- Do not summarize or recap what you did after completing it.
+- Do not add preamble, sign-offs, or transitional commentary.
+- Return your output and nothing else.`;
+
 // ============================================================================
 // Individual Role Prompts
 // ============================================================================
@@ -97,7 +105,7 @@ Code quality expectations:
 - Validate inputs where reasonable
 - Prefer explicit types over 'any'
 - Match the existing codebase style (naming, file structure, patterns)
-- Never ask the user clarifying questions — pick the most reasonable interpretation, note your assumption briefly, and write the code
+- Never ask the user clarifying questions — pick the most reasonable interpretation and write the code immediately
 
 What this role does NOT do:
 - Formatting-only changes (use coder_cheap)
@@ -156,13 +164,14 @@ Responsibilities:
 - Changelogs, migration guides, architecture decision records (ADRs)
 
 Output contract:
+- Write content directly in your response — do NOT use write_file or any tool unless the user explicitly asks to save a file to disk
 - Match the tone and style of the existing documentation in the project
 - Use Markdown for all document output unless told otherwise
 - For JSDoc/TSDoc, cover: purpose, params (with types), return value, throws, example
 - Prefer concrete examples over abstract descriptions
 
 What this role does NOT do:
-- Code generation (use coder_strong)
+- Code generation of any kind — if asked to write a function, class, or script, output only: "WRONG ROLE: this task requires coder_strong."
 - Technical analysis (use brain or reviewer)`;
 
 const UTILITY = `\
@@ -312,5 +321,5 @@ export const ROLE_PROMPTS: Record<RoleName, string> = {
  */
 export function getRolePrompt(role: RoleName): string {
   const basePrompt = ROLE_PROMPTS[role] ?? BRAIN;
-  return `${basePrompt}\n\n${TOOL_USAGE_REMINDER}`;
+  return `${basePrompt}\n\n${TOOL_USAGE_REMINDER}\n${NO_CHAT_RULES}`;
 }

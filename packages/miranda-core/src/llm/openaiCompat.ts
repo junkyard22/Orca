@@ -31,6 +31,13 @@ export interface OpenAICompatConfig {
   defaultModel?: string;
   /** Extra HTTP headers (e.g. OpenRouter's HTTP-Referer, X-Title). */
   extraHeaders?: Record<string, string>;
+  /**
+   * Adapter-level default for `enable_thinking`.
+   * Individual requests can override via `LLMRequest.enableThinking`.
+   * Set to `false` to suppress chain-of-thought on models like qwen3.5-plus
+   * that default to deep thinking. Omit to leave provider default unchanged.
+   */
+  enableThinking?: boolean;
 }
 
 interface OpenAIChatResponse {
@@ -53,23 +60,27 @@ export class OpenAICompatAdapter implements LLMAdapter {
   private readonly apiKey?: string;
   private readonly defaultModel: string;
   private readonly extraHeaders: Record<string, string>;
+  private readonly defaultEnableThinking?: boolean;
 
   constructor(config: OpenAICompatConfig) {
     if (!config.baseUrl) {
       throw new Error("OpenAICompatAdapter: baseUrl is required");
     }
     const base = config.baseUrl.replace(/\/+$/, "");
-    this.url          = `${base}/chat/completions`;
-    this.apiKey       = config.apiKey;
-    this.defaultModel = config.defaultModel ?? "";
-    this.extraHeaders = config.extraHeaders ?? {};
+    this.url                  = `${base}/chat/completions`;
+    this.apiKey               = config.apiKey;
+    this.defaultModel         = config.defaultModel ?? "";
+    this.extraHeaders         = config.extraHeaders ?? {};
+    this.defaultEnableThinking = config.enableThinking;
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const startMs = Date.now();
     const model = request.model || this.defaultModel;
 
-    const body = {
+    const resolvedThinking = request.enableThinking ?? this.defaultEnableThinking;
+
+    const body: Record<string, unknown> = {
       model,
       messages: request.messages.map((m) => ({
         role: m.role,
@@ -78,6 +89,10 @@ export class OpenAICompatAdapter implements LLMAdapter {
       temperature: request.temperature,
       max_tokens: request.maxTokens,
     };
+
+    if (resolvedThinking !== undefined) {
+      body["enable_thinking"] = resolvedThinking;
+    }
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -97,6 +112,21 @@ export class OpenAICompatAdapter implements LLMAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown error");
+      if (response.status >= 400 && response.status < 500) {
+        console.error(`[4xx DEBUG] URL: ${this.url}`);
+        console.error(`[4xx DEBUG] Status: ${response.status}`);
+        console.error(`[4xx DEBUG] Request headers:`);
+        for (const [name, value] of Object.entries(headers)) {
+          const lname = name.toLowerCase();
+          if (lname === "authorization") {
+            // Only log header name + first 8 chars of value to avoid leaking full key
+            console.error(`[4xx DEBUG]   ${name}: ${value.slice(0, 15)}... (truncated — showing first 8 key chars: ${value.replace(/^Bearer\s+/i, "").slice(0, 8)}...)`);
+          } else {
+            console.error(`[4xx DEBUG]   ${name}: ${value}`);
+          }
+        }
+        console.error(`[4xx DEBUG] Response body: ${errorText}`);
+      }
       throw new Error(`API error ${response.status}: ${errorText}`);
     }
 
@@ -132,13 +162,19 @@ export class OpenAICompatAdapter implements LLMAdapter {
     const startMs = Date.now();
     const model = request.model || this.defaultModel;
 
-    const body = {
+    const resolvedThinking = request.enableThinking ?? this.defaultEnableThinking;
+
+    const body: Record<string, unknown> = {
       model,
       messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
       temperature: request.temperature,
       max_tokens: request.maxTokens,
       stream: true,
     };
+
+    if (resolvedThinking !== undefined) {
+      body["enable_thinking"] = resolvedThinking;
+    }
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -155,6 +191,20 @@ export class OpenAICompatAdapter implements LLMAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown error");
+      if (response.status >= 400 && response.status < 500) {
+        console.error(`[4xx DEBUG] URL: ${this.url}`);
+        console.error(`[4xx DEBUG] Status: ${response.status}`);
+        console.error(`[4xx DEBUG] Request headers:`);
+        for (const [name, value] of Object.entries(headers)) {
+          const lname = name.toLowerCase();
+          if (lname === "authorization") {
+            console.error(`[4xx DEBUG]   ${name}: ${value.slice(0, 15)}... (truncated — showing first 8 key chars: ${value.replace(/^Bearer\s+/i, "").slice(0, 8)}...)`);
+          } else {
+            console.error(`[4xx DEBUG]   ${name}: ${value}`);
+          }
+        }
+        console.error(`[4xx DEBUG] Response body: ${errorText}`);
+      }
       throw new Error(`API error ${response.status}: ${errorText}`);
     }
     if (!response.body) throw new Error("Response body is null");

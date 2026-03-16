@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/context/userContext.json','dist/context/userContext.json')\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },

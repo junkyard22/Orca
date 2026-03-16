@@ -37,7 +37,7 @@ export interface OrcaTaskSpec {
 }
 
 export interface OrcaExecutionResult {
-  status: "SUCCESS" | "FAIL";
+  status: "SUCCESS" | "WARN" | "FAIL";
   userFacingText?: string;
   summary?: string;
   artifacts?: unknown;
@@ -110,7 +110,7 @@ export interface OrcaLLMService {
    */
   complete(
     prompt: string,
-    opts?: { maxTokens?: number; temperature?: number; onToken?: (chunk: string) => void; onStreamReset?: () => void; simple?: boolean },
+    opts?: { maxTokens?: number; temperature?: number; onToken?: (chunk: string) => void; onStreamReset?: () => void; simple?: boolean; enableThinking?: boolean },
   ): Promise<{ text: string }>;
 }
 
@@ -223,6 +223,13 @@ export interface OrcaRuntimeDeps {
   /** Maximum repair passes before giving up on a FAIL verdict. Default: 2 */
   maxRepairPasses?: number;
   /**
+   * Per-run cost ceiling in USD. When accumulated spend across all LLM calls
+   * for a single task reaches this limit, repair passes are skipped and the
+   * best result so far is returned with status WARN.
+   * Undefined or 0 means no limit.
+   */
+  budgetUsd?: number;
+  /**
    * Miranda's gate — the compliance and governance layer.
    * Wraps every LLM call, tool execution, and QC run with validation checkpoints.
    * Injected here so it flows through OrcaRunCtx to every adapter.
@@ -264,7 +271,7 @@ export type OrcaEvent =
   | { type: "maestro:done";       taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean }
   | { type: "qc:result";          taskId: string; attempt: number; isRepair: boolean; verdict: "PASS" | "WARN" | "FAIL"; issueCount: number }
   | { type: "repair:start";       taskId: string; pass: number; maxPasses: number }
-  | { type: "task:done";          taskId: string; status: "SUCCESS" | "FAIL" }
+  | { type: "task:done";          taskId: string; status: "SUCCESS" | "WARN" | "FAIL" }
   | { type: "stream:token";       taskId: string; chunk: string }
   | { type: "stream:reset";       taskId: string }
   | { type: "subagent:spawned";   taskId: string; subagentId: string; role: string; task: string }

@@ -57,6 +57,16 @@ export interface RoleEntry {
    * Miranda attempts primary first, then each fallback in order.
    */
   fallbacks?: Array<{ providerId: string; model: string }>;
+  /**
+   * Controls the provider's `enable_thinking` parameter.
+   * Set to `false` to suppress deep thinking on models like qwen3.5-plus.
+   * Set to `true` to force it on. Omit to use the provider's default.
+   */
+  enableThinking?: boolean;
+  /** Max tokens for completions on this role. Default: 8192. */
+  maxTokens?: number;
+  /** Sampling temperature for this role (0–2). Default: 0.7. */
+  temperature?: number;
 }
 
 // ── Settings ────────────────────────────────────────────────────────────────

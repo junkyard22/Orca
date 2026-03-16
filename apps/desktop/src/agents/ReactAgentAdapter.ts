@@ -187,7 +187,9 @@ export class ReactAgentAdapter implements AgentAdapter {
   private llmAdapter: LLMAdapter;
   private systemPrompt: string;
   private maxIterations: number;
-  
+  private maxTokens: number;
+  private temperature: number;
+
   // Loop detection constants
   private readonly LOOP_WINDOW = 3;        // consecutive identical calls = loop
   private readonly THRASH_WINDOW = 6;      // alternating pattern window
@@ -198,12 +200,16 @@ export class ReactAgentAdapter implements AgentAdapter {
     llmAdapter: LLMAdapter,
     systemPrompt: string,
     role: RoleName,
-    maxIterations: number = 10
+    maxIterations: number = 10,
+    maxTokens: number = 8192,
+    temperature: number = 0.7,
   ) {
-    this.llmAdapter = llmAdapter;
-    this.systemPrompt = systemPrompt;
-    this.role = role;
+    this.llmAdapter    = llmAdapter;
+    this.systemPrompt  = systemPrompt;
+    this.role          = role;
     this.maxIterations = maxIterations;
+    this.maxTokens     = maxTokens;
+    this.temperature   = temperature;
   }
 
   async run(task: AgentTask, tools: Tool[], ctx: AgentRunContext): Promise<AgentResult> {
@@ -293,20 +299,20 @@ export class ReactAgentAdapter implements AgentAdapter {
           // Streaming call - tokens are emitted as they arrive
           response = await this.llmAdapter.stream!(
             {
-              model: 'default', // Model is typically set on adapter construction
+              model: '', // empty → adapter uses its own defaultModel
               messages,
-              maxTokens: 4096,
-              temperature: 0.7
+              maxTokens: this.maxTokens,
+              temperature: this.temperature,
             },
             ctx.onStreamToken!
           );
         } else {
           // Non-streaming fallback
           response = await this.llmAdapter.complete({
-            model: 'default', // Model is typically set on adapter construction
+            model: '', // empty → adapter uses its own defaultModel
             messages,
-            maxTokens: 4096,
-            temperature: 0.7
+            maxTokens: this.maxTokens,
+            temperature: this.temperature,
           });
         }
         

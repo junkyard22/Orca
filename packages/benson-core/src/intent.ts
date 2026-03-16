@@ -10,6 +10,11 @@ const AMBIGUOUS_PATTERNS = [
   /^(yes|no|ok|okay|sure|maybe|idk|dunno)$/i,                   // single-word response with no prior context
 ];
 
+// Phrases that mean "redo the previous task"
+const RETRY_PATTERNS = [
+  /^(try again|retry|redo|do it again|run it again|try it again|try once more|one more time|again)\.?$/i,
+];
+
 function isAmbiguous(message: string, history?: Message[]): boolean {
   const trimmed = message.trim();
   
@@ -77,7 +82,7 @@ function extractIntent(message: string): string {
   
   if (nounStart === -1) return verb;
   
-  const nounPhrase = words.slice(nounStart, nounStart + 4).join(' ');
+  const nounPhrase = words.slice(nounStart).join(' ');
   return `${verb} ${nounPhrase}`.trim();
 }
 
@@ -210,6 +215,11 @@ function buildTaskSpec(message: string, history?: Message[]): TaskSpec {
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
+
+export function isRetryMessage(message: string): boolean {
+  const trimmed = message.trim();
+  return RETRY_PATTERNS.some((p) => p.test(trimmed));
+}
 
 export function parseIntent(message: string, history?: Message[]): ParseResult {
   const trimmed = message.trim();

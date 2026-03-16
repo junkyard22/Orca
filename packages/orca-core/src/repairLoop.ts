@@ -32,12 +32,23 @@ export async function handleRepairLoop(
   maxPasses: number,
   initialOutputText?: string,
   originalRole?: string,
+  budgetUsd?: number,
+  spentSoFarUsd?: number,
 ): Promise<OrcaExecutionResult> {
   let currentQC = initialQCResult;
   // Seed with the initial output so we always have something to show
   let lastOutputText: string | undefined = initialOutputText;
+  let spentUsd = spentSoFarUsd ?? 0;
 
   for (let pass = 1; pass <= maxPasses; pass++) {
+    // ── Budget guard — abort before spending more ──────────────────────────
+    if (budgetUsd && budgetUsd > 0 && spentUsd >= budgetUsd) {
+      return {
+        status: "WARN",
+        userFacingText: lastOutputText,
+        summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${spentUsd.toFixed(4)} spent). Skipped ${maxPasses - pass + 1} repair pass(es).`,
+      };
+    }
     emitter.emit({ type: "repair:start", taskId: ctx.runId, pass, maxPasses });
 
     // Build a first-class repair task so Maestro understands it as work,
@@ -79,6 +90,7 @@ export async function handleRepairLoop(
     emitter.emit({ type: "maestro:start", taskId: ctx.runId, attempt: pass, isRepair: true });
     const maestroResult = normalizeMaestroResult(await maestro.run(repairSpec, ctx));
     lastOutputText = maestroResult.outputText ?? lastOutputText;
+    spentUsd += maestroResult.metadata?.costUsd ?? 0;
     emitter.emit({ type: "maestro:done", taskId: ctx.runId, attempt: pass, isRepair: true, hasOutput: !!maestroResult.outputText });
 
     // Evaluate THIS pass's maestroResult (latest artifacts) against the

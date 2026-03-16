@@ -41,6 +41,13 @@ export interface LLMRequest {
   messages: LLMMessage[];
   temperature: number;
   maxTokens: number;
+  /**
+   * When set, injects `enable_thinking` into the request body.
+   * Use `false` to suppress chain-of-thought on models that default to deep
+   * thinking (e.g. qwen3.5-plus). Use `true` to force it on. Omit to let the
+   * provider use its own default.
+   */
+  enableThinking?: boolean;
 }
 
 export interface LLMMessage {

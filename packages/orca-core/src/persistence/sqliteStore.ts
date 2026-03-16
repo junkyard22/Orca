@@ -352,6 +352,32 @@ export class SqliteStore implements OrcaStore {
   }
 
   /**
+   * Delete a single run and all its related records (thoughts, tool_events, files_changed).
+   * Uses CASCADE via foreign keys if enabled, otherwise explicit deletes.
+   */
+  async deleteRun(id: string): Promise<void> {
+    await this.ensureInitialized();
+    if (!this.db) return;
+
+    try {
+      this.db.run("BEGIN TRANSACTION");
+      try {
+        this.db.run("DELETE FROM thoughts     WHERE run_id = ?", [id]);
+        this.db.run("DELETE FROM tool_events  WHERE run_id = ?", [id]);
+        this.db.run("DELETE FROM files_changed WHERE run_id = ?", [id]);
+        this.db.run("DELETE FROM runs         WHERE id = ?",     [id]);
+        this.db.run("COMMIT");
+        this.persistToDisk();
+      } catch (err) {
+        this.db.run("ROLLBACK");
+        throw err;
+      }
+    } catch (err) {
+      console.error("[SqliteStore] deleteRun failed:", err);
+    }
+  }
+
+  /**
    * Search runs by query string (matches intent and output_text).
    * Uses LIKE %query% for partial matching.
    * Defaults to 20 results if no limit specified.

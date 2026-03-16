@@ -261,9 +261,11 @@ function buildCriteriaLedger(
 // ---------------------------------------------------------------------------
 
 const HARD_FAIL_CODES = new Set([
-  "TOOL_INSTRUMENTATION_MISSING",
   "AGENT_LOOP_DETECTED",
   "SAFETY_VIOLATION",
+  // TOOL_INSTRUMENTATION_MISSING is intentionally excluded: it is a heuristic
+  // with known false positives (e.g. "test file" triggering the "test" keyword).
+  // It fires as MEDIUM and triggers a WARN verdict, not a hard repair pass.
 ]);
 
 function deriveVerdict(issues: Issue[]): Verdict {
