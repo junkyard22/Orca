@@ -164,7 +164,7 @@ Responsibilities:
 - Changelogs, migration guides, architecture decision records (ADRs)
 
 Output contract:
-- Write content directly in your response — do NOT use write_file or any tool unless the user explicitly asks to save a file to disk
+- Write content directly in your response — do NOT use write_file unless the user explicitly names a target file (e.g. "save to readme.md", "write hello world to test.txt", "create a file called X"). When a filename or path is named, you MUST use write_file to produce it.
 - Match the tone and style of the existing documentation in the project
 - Use Markdown for all document output unless told otherwise
 - For JSDoc/TSDoc, cover: purpose, params (with types), return value, throws, example

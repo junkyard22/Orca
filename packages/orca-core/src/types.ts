@@ -173,6 +173,12 @@ export interface OrcaRunCtx {
    * When absent (CLI mode), tools execute without prompting.
    */
   requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+  /**
+   * Absolute path to the user's configured workspace folder.
+   * Passed through to tool execution so write_file resolves relative paths
+   * against the workspace root rather than process.cwd().
+   */
+  workspaceRoot?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -184,6 +184,8 @@ function buildMaestroAdapter(
   poolManager?: ModelFallbackPoolManager,
   /** Per-role generation settings sourced from orca-settings.json */
   roleSettings?: Map<RoleName, { maxTokens?: number; temperature?: number }>,
+  /** Workspace folder — flows into tool execution so write_file uses the right root */
+  workspaceRoot?: string,
 ): MaestroPort {
   const maestroCore = createMaestroCore();
   const logger = console;
@@ -232,6 +234,7 @@ function buildMaestroAdapter(
       // 5. Build agent context with streaming support
       const agentCtx: AgentRunContext = {
         ...ctx,
+        workspaceRoot: workspaceRoot,   // ensure configured folder flows into tool execution
         onStreamToken: (chunk: string) => {
           // Emit stream:token event to renderer
           ctx.emit?.({
@@ -549,7 +552,7 @@ function initOrca(s: OrcaSettings): string | null {
     }
 
     // Pass model entries to maestro adapter for fallback support
-    const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager, roleGenSettings);
+    const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager, roleGenSettings, workspaceRoot);
     const pappy   = createPappyPort();
 
     runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store, requestToolApproval, budgetUsd: s.budgetUsd });

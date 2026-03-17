@@ -485,7 +485,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           }
           
           // Execute the tool
-          const toolContext = { workspaceRoot: process.cwd(), runId: ctx.runId };
+          const toolContext = { workspaceRoot: ctx.workspaceRoot ?? process.cwd(), runId: ctx.runId };
           const result = await tool.execute(call.input, toolContext);
           
           // Tool Use Discipline: Increment cumulative counter

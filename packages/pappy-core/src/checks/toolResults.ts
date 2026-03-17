@@ -35,7 +35,8 @@ function detectExpectedTools(
     /\b(write|save|output)\b.{0,30}\b(file|files|module|script|config|json|yaml|csv|log)\b/.test(lower) ||
     /\bcreate (a |the |an )?(new )?(file|module|script|config)\b/.test(lower) ||
     /\b(save|persist|write) (to|into) (a |the |disk|file)/.test(lower) ||
-    /\bgenerate (a |the |an )?(file|report|output file)\b/.test(lower)
+    /\bgenerate (a |the |an )?(file|report|output file)\b/.test(lower) ||
+    /\b(write|save|output)\b.{0,50}\b\w+\.\w{1,5}\b/.test(lower)   // "write X to foo.txt" — explicit filename with extension
   ) {
     expected.push({
       tool: "write_file",
