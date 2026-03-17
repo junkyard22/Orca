@@ -8,8 +8,10 @@ const DANGEROUS_PATTERNS: RegExp[] = [
   />\s*\/dev\/[sh]d[a-z]/i,
   /format\s+[a-z]:/i,
   /diskpart/i,
-  /wipe\s+/i,
-  /shred\s+/i,
+  // "wipe" only flags disk/drive/partition targets — not prose like "wipe the counter"
+  /\bwipe\s+(--?[\w-]+|[\/~]|disk\b|drive\b|partition\b|\/dev\/)/i,
+  // "shred" only flags when followed by a flag (-u, --remove) or path — not "shred into bite-sized pieces"
+  /\bshred\s+(--?[\w-]+|[\/~]|\.\/)/i,
   /del\s+\/[sf]/i,
   /rd\s+\/s/i,
   /rmdir\s+\/s/i,

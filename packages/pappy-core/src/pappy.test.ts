@@ -87,14 +87,16 @@ describe("evaluateWithPappy — verdict", () => {
     expect(result.verdict).toBe("WARN");
   });
 
-  it("returns FAIL when TOOL_INSTRUMENTATION_MISSING is present", () => {
+  it("returns WARN (not FAIL) when TOOL_INSTRUMENTATION_MISSING is present", () => {
     const result = evaluateWithPappy({
       task: "Read the config file and update it.",
       outputText: "Updated the configuration.",
     });
 
     expect(result.issues.some((issue) => issue.code === "TOOL_INSTRUMENTATION_MISSING")).toBe(true);
-    expect(result.verdict).toBe("FAIL");
+    // TOOL_INSTRUMENTATION_MISSING is a MEDIUM heuristic with known false positives —
+    // it intentionally produces WARN, not a hard FAIL.
+    expect(result.verdict).toBe("WARN");
   });
 
   it("returns FAIL when AGENT_LOOP_DETECTED is present", () => {
