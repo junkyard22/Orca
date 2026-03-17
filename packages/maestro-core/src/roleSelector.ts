@@ -162,7 +162,7 @@ export function selectRole(
 export function pickCoreRole(task: string): CoreRoleName {
   const lowerTask = task.toLowerCase();
   
-  // NARRATOR — writing, creative, documentation, explanations
+  // NARRATOR — writing, creative, documentation, explanations, general questions
   const narratorPatterns = [
     /\bwrite\s+(a\s+)?(song|poem|story|essay|letter|email|article|post|message)\b/i,
     /\b(compose|draft|create)\b.*\b(writing|content|copy|message|document)\b/i,
@@ -171,6 +171,9 @@ export function pickCoreRole(task: string): CoreRoleName {
     /\b(creative|writing|narrative|prose)\b/i,
     /\b(translat[e|ing])\b/i,
     /\b(edit|proofread|revise)\b.*\b(text|writing|content|document)\b/i,
+    // General knowledge / conversational questions — not code, not status queries
+    /^(what|how|why|when|where|who)\s+(is|are|was|were|does|do|did|can|could|should|would|will)\b/i,
+    /^(what'?s|how'?s)\b/i,
   ];
   
   for (const pattern of narratorPatterns) {

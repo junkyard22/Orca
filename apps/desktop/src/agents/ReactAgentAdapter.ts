@@ -599,12 +599,16 @@ export class ReactAgentAdapter implements AgentAdapter {
       // (or only whitespace), surface this explicitly. Callers and Pappy need to
       // know the run produced no deliverable even though tools may have fired.
       const effectiveOutput = finalOutput.trim();
+      // Strip thought blocks before classifying — "Thought: …" lines are internal
+      // reasoning, not user-facing output. If the only content left after stripping
+      // is thought blocks, the run produced no real deliverable.
+      const strippedForClassification = stripThoughtBlocks(effectiveOutput).trim();
       // Graceful fallback: a model that skipped the FINAL ANSWER: marker but produced
       // real text is still done — don't penalise it with max_iterations.
-      if (effectiveOutput && stoppedBecause === 'max_iterations') {
+      if (strippedForClassification && stoppedBecause === 'max_iterations') {
         stoppedBecause = 'done';
       }
-      if (!finalAnswerFound && effectiveOutput.length === 0 && stoppedBecause === 'max_iterations') {
+      if (!finalAnswerFound && strippedForClassification.length === 0 && stoppedBecause === 'max_iterations') {
         stoppedBecause = 'no_final_output';
         console.warn(
           `[ReactAgent] no_final_output: run completed ${iterationCount} iteration(s) ` +

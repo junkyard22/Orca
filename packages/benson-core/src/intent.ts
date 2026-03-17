@@ -67,7 +67,11 @@ function extractLeadingVerb(message: string): string | null {
 function extractIntent(message: string): string {
   const verb = extractLeadingVerb(message);
   if (!verb) {
-    // Fallback: use first few words as intent
+    // Short messages (questions, commands without a recognised verb) — use the
+    // full text so nothing is silently truncated (e.g. "What is 2 + 2?").
+    // Only fall back to first-3-words for long messages where the tail adds no
+    // useful intent signal.
+    if (message.length <= 80) return message.trim();
     const words = message.split(/\s+/).slice(0, 3);
     return words.join(' ');
   }
