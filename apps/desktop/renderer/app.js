@@ -165,9 +165,12 @@ function setStatus(text, active = false) {
 }
 
 function setInputEnabled(enabled) {
-  inputEl.disabled    = !enabled;
-  sendBtn.disabled    = !enabled;
-  attachBtn.disabled  = !enabled;
+  inputEl.disabled   = !enabled;
+  attachBtn.disabled = !enabled;
+  // While running, morph send→stop; while idle, revert.
+  sendBtn.disabled   = false;   // always clickable (it becomes Stop while running)
+  sendBtn.classList.toggle("is-running", !enabled);
+  sendBtn.title = enabled ? "Send  (Enter)" : "Stop";
 }
 
 function scrollToBottom() {
@@ -467,6 +470,8 @@ async function sendMessage() {
       const replyText = result.reply?.text ?? result.reply?.outputText ?? JSON.stringify(result.reply);
       const msgDiv = appendMsg("orca", cleanPipelineOutput(replyText));
       if (currentRole) attachRoleBadge(msgDiv, currentRole);
+    } else if (result.error === "Stopped.") {
+      appendSys("Stopped.", "info");
     } else {
       appendSys(result.error ?? "Unknown error.", "error");
     }
@@ -1060,7 +1065,13 @@ document.getElementById("btn-pick-workspace").addEventListener("click", async ()
 
 // ── Button wiring ─────────────────────────────────────────────────────────
 
-sendBtn.addEventListener("click", sendMessage);
+sendBtn.addEventListener("click", () => {
+  if (busy) {
+    orca.abortTask();
+  } else {
+    sendMessage();
+  }
+});
 document.getElementById("btn-settings").addEventListener("click",      openSettings);
 document.getElementById("btn-settings-back").addEventListener("click", closeSettings);
 document.getElementById("btn-minimize").addEventListener("click", () => orca.minimize());

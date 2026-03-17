@@ -104,4 +104,7 @@ contextBridge.exposeInMainWorld("orca", {
   // Delete a run and all its related data from SQLite.
   deleteSession: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("session:delete", id),
+
+  // Abort the currently running task (if any).
+  abortTask: (): void => ipcRenderer.send("task:abort"),
 });

@@ -738,6 +738,17 @@ ipcMain.handle("session:delete", async (_ev, id: string) => {
   }
 });
 
+// ── Abort control for the active task ──────────────────────────────────────
+let activeAbortResolve: (() => void) | null = null;
+
+ipcMain.on("task:abort", () => {
+  if (activeAbortResolve) {
+    console.log("[Orca] ✖ task:abort requested by user");
+    activeAbortResolve();
+    activeAbortResolve = null;
+  }
+});
+
 ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!benson || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
@@ -746,6 +757,11 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!normalizedText) {
     return { ok: false, error: "Message is empty." };
   }
+
+  // Build a promise that resolves when the user hits Stop.
+  const abortPromise = new Promise<{ ok: false; error: string }>((resolve) => {
+    activeAbortResolve = () => resolve({ ok: false, error: "Stopped." });
+  });
 
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
@@ -779,11 +795,15 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   );
 
   try {
-    const reply = await benson.handleUserMessage(normalizedText);
-    return { ok: true, reply };
+    const result = await Promise.race([
+      benson.handleUserMessage(normalizedText).then((reply) => ({ ok: true as const, reply })),
+      abortPromise,
+    ]);
+    return result;
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
+    activeAbortResolve = null;   // clean up if task finished naturally
     unsubs.forEach((u) => u());
   }
 });

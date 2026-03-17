@@ -266,7 +266,8 @@
             rows="1"
           ></textarea>
           <button id="send-btn" title="Send  (Enter)">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <!-- send arrow (shown when idle) -->
+            <svg class="icon-send" width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path
                 d="M8 13V3M3 8l5-5 5 5"
                 stroke="currentColor"
@@ -274,6 +275,10 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
               />
+            </svg>
+            <!-- stop square (shown while running) -->
+            <svg class="icon-stop" width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <rect x="2" y="2" width="10" height="10" rx="2"/>
             </svg>
           </button>
         </div>

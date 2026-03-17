@@ -381,6 +381,10 @@ body {
   background: var(--warn-bg);
   border-color: #3d2910;
 }
+.sys-msg.info {
+  color: var(--text-muted);
+  font-style: italic;
+}
 
 /* ── Status bar ─────────────────────────────────────────────────────────── */
 #statusbar {
@@ -531,6 +535,17 @@ body {
   opacity: 0.3;
   cursor: default;
 }
+/* Stop state — red background, square icon */
+#send-btn.is-running {
+  background: #dc2626;
+}
+#send-btn.is-running:hover {
+  background: #b91c1c;
+}
+/* Icon visibility — show send arrow by default, stop square when running */
+#send-btn .icon-stop  { display: none; }
+#send-btn.is-running .icon-send { display: none; }
+#send-btn.is-running .icon-stop { display: inline; }
 
 /* ── Attachment preview bar ──────────────────────────────────────────────── */
 #attachments-bar {

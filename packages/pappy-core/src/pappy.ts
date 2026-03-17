@@ -154,7 +154,7 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
   // Check for unit test requirement
   if (containsTerm("test") || containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha") || containsTerm("spec")) {
     const hasTestFramework = containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha");
-    const hasTestFunctions = containsTerm("describe") || containsTerm("it") || containsTerm("expect") || containsTerm("test(");
+    const hasTestFunctions = containsTerm("describe") || containsTerm("it") || containsTerm("expect") || searchText.includes("test(");
     const hasTestFile = (input.filesChanged ?? []).some(f => f.path.includes(".test.") || f.path.includes(".spec."));
     
     if (hasTestFramework || hasTestFunctions || hasTestFile) {
