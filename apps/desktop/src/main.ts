@@ -769,6 +769,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
+    "pipeline:summary",
   ];
   const unsubs = EVENT_TYPES.map((type) =>
     runtime!.on(type, (e: OrcaEvent) => {
@@ -792,6 +793,9 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
           break;
         case "task:done":
           console.log(`[Orca] ■ task:done`);
+          break;
+        case "pipeline:summary":
+          console.log(`[Orca]   pipeline:summary  role=${e.role}  verdict=${e.verdict}  confidence=${Math.round(e.confidence * 100)}%  issues=${e.issueCount}  duration=${e.durationMs}ms`);
           break;
       }
     }),

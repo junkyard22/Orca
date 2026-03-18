@@ -20,6 +20,8 @@ if (!window.orca) {
     fetchModels:     async () => ({ ok: false, models: [] }),
     listSessions:    async () => [],
     loadSession:     async () => null,
+    deleteSession:   async () => ({ ok: false, error: "No Electron context" }),
+    abortTask:       () => {},
   };
 }
 
@@ -57,6 +59,8 @@ let streamText   = "";
 let currentRole = null;
 // Token estimate for the current task (from run:stats event).
 let pendingStats = null;
+// Pipeline summary received during the current task; rendered after the response bubble.
+let pendingPipelineSummary = null;
 // Tool call cards keyed by pending approval id.
 const toolCallCards = new Map();
 
@@ -102,6 +106,13 @@ orca.onOrcaEvent((e) => {
   }
   // Token/cost estimate — saved and rendered below the completed reply.
   if (e.type === "run:stats") { pendingStats = e; return; }
+
+  // Pipeline summary — store for rendering after the response bubble is finalised.
+  // The event arrives before sendMessage resolves, so we buffer it here.
+  if (e.type === "pipeline:summary") {
+    pendingPipelineSummary = e;
+    return;
+  }
 
   // Stream reset: REWRITE is about to start — clear the ANSWER text from the
   // bubble so the polished output replaces it instead of appending.
@@ -398,6 +409,68 @@ function appendDiffCards(filesChanged) {
   scrollToBottom();
 }
 
+// ── Pipeline summary badge ────────────────────────────────────────────────
+// Rendered once per task, below the final response bubble.
+// Collapsed by default; click to expand for full trace detail.
+
+function appendPipelineBadge(summary) {
+  if (!summary) return;
+
+  const verdictClass = summary.verdict === "PASS" ? "pass"
+    : summary.verdict === "WARN" ? "warn"
+    : "fail";
+  const confidencePct = Math.round((summary.confidence ?? 1) * 100);
+  const durationSec   = ((summary.durationMs ?? 0) / 1000).toFixed(2);
+  const repairText    = summary.repairPasses > 0
+    ? ` · ${summary.repairPasses} repair${summary.repairPasses !== 1 ? "s" : ""}`
+    : "";
+
+  // Build acceptance-criteria rows
+  const criteriaHtml = (summary.acceptanceCriteria ?? []).map((c) => {
+    const icon  = c.met ? "✓" : "○";
+    const cls   = c.met ? "met" : "unmet";
+    const label = c.required ? "" : ' <span class="pb-optional">(optional)</span>';
+    return `<div class="pb-criterion">
+      <span class="pb-criterion-icon ${cls}">${icon}</span>
+      <span>${escapeHtml(c.text)}${label}</span>
+    </div>`;
+  }).join("");
+
+  // Build issue rows
+  const issuesHtml = (summary.issues ?? []).map((issue) => {
+    return `<div class="pb-issue">
+      <div class="pb-issue-header">
+        <span class="pb-severity ${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)}</span>
+        <span class="pb-issue-code">${escapeHtml(issue.code)}</span>
+      </div>
+      <div class="pb-issue-desc">${escapeHtml(issue.description)}</div>
+    </div>`;
+  }).join("");
+
+  const div = document.createElement("div");
+  div.className = "pipeline-badge";
+  div.innerHTML = `
+    <div class="pipeline-badge-header">
+      <span class="pb-role">${escapeHtml(String(summary.role ?? "unknown"))}</span>
+      <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
+      <span class="pb-confidence">${confidencePct}%</span>
+      <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
+      <span class="pb-chevron">▶</span>
+    </div>
+    <div class="pipeline-badge-detail">
+      ${criteriaHtml ? `<div><div class="pb-section-title">Acceptance criteria</div><div class="pb-criteria-list">${criteriaHtml}</div></div>` : ""}
+      ${issuesHtml   ? `<div><div class="pb-section-title">Issues</div><div class="pb-issues-list">${issuesHtml}</div></div>` : ""}
+      <div class="pb-footer-row">${durationSec}s total · ${summary.repairPasses ?? 0} repair pass${(summary.repairPasses ?? 0) !== 1 ? "es" : ""}</div>
+    </div>`;
+
+  div.querySelector(".pipeline-badge-header").addEventListener("click", () => {
+    div.classList.toggle("expanded");
+  });
+
+  messages.appendChild(div);
+  scrollToBottom();
+}
+
 // ── Tool call card ────────────────────────────────────────────────────────
 
 function appendToolCard(id, tool, args) {
@@ -479,6 +552,7 @@ async function sendMessage() {
     // Post-reply metadata
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
+    if (pendingPipelineSummary) { appendPipelineBadge(pendingPipelineSummary); pendingPipelineSummary = null; }
 
     if (!result.ok) finalStatus = "error";
   } catch (err) {
@@ -488,6 +562,7 @@ async function sendMessage() {
     finalStatus = "error";
   } finally {
     currentRole  = null;
+    pendingPipelineSummary = null;   // discard if not yet rendered (abort / error path)
     busy = false;          // clear busy FIRST so late events won't override status
     setStatus(finalStatus, false);
     setInputEnabled(true);

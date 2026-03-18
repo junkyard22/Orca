@@ -175,6 +175,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           };
         } else {
           const originalRole = maestroResult.metadata?.role;
+          // Reset the streaming bubble in the UI before the repair pass starts
+          // so the fresh repair output replaces the initial (failed) attempt.
+          emitter.emit({ type: "stream:reset", taskId });
           result = await handleRepairLoop(
             taskSpec,
             qcResult,
@@ -200,8 +203,38 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     }
 
     // ── Always runs — emit completion, persist, clean up ──────────────────
+    const durationMs = Date.now() - startTime;
     unsubRepair();
     emitter.emit({ type: "task:done", taskId, status: result.status });
+
+    // Emit pipeline summary so the UI can render the badge without
+    // needing to aggregate individual events itself.
+    if (persistedQcResult) {
+      emitter.emit({
+        type: "pipeline:summary",
+        taskId,
+        role: persistedMaestroResult?.metadata?.role ?? "unknown",
+        verdict: persistedQcResult.verdict,
+        confidence: persistedQcResult.confidence,
+        issueCount: persistedQcResult.issues.length,
+        issues: persistedQcResult.issues.map((i) => ({
+          severity: i.severity,
+          code: i.code,
+          description: i.description,
+        })),
+        acceptanceCriteria: persistedQcResult.acceptance_criteria.map((c) => {
+          const ledger = persistedQcResult!.receipt_ledger.find((r) => r.ref === c.id);
+          return {
+            id: c.id,
+            text: c.text,
+            required: c.required,
+            met: ledger?.status === "PROVED",
+          };
+        }),
+        durationMs,
+        repairPasses,
+      });
+    }
 
     // Persist the run if store is available
     // Persistence failure must never crash the runtime

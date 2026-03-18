@@ -1671,3 +1671,188 @@ body {
   padding: 24px 14px;
   line-height: 1.5;
 }
+
+/* ── Pipeline summary badge ───────────────────────────────────────────────── */
+/* Rendered once per task below the assistant bubble. Collapsed by default.   */
+
+.pipeline-badge {
+  margin: 2px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface);
+  user-select: none;
+  max-width: 540px;        /* match the assistant bubble width cap */
+}
+
+.pipeline-badge-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pipeline-badge-header:hover {
+  background: var(--surface-2);
+}
+
+/* role chip */
+.pb-role {
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* verdict dot + label */
+.pb-verdict {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.pb-verdict::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.pb-verdict.pass  { color: #22c55e; }
+.pb-verdict.pass::before  { background: #22c55e; }
+.pb-verdict.warn  { color: var(--warn-text); }
+.pb-verdict.warn::before  { background: var(--warn-text); }
+.pb-verdict.fail  { color: var(--danger); }
+.pb-verdict.fail::before  { background: var(--danger); }
+
+.pb-confidence {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.pb-duration {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* chevron rotates when expanded */
+.pb-chevron {
+  font-size: 9px;
+  color: var(--text-dim);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.pipeline-badge.expanded .pb-chevron {
+  transform: rotate(90deg);
+}
+
+/* ── Expanded detail panel ─────────────────────────────────────────────── */
+.pipeline-badge-detail {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.pipeline-badge.expanded .pipeline-badge-detail {
+  display: flex;
+}
+
+.pb-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+/* acceptance criteria list */
+.pb-criteria-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pb-criterion {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.pb-criterion-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.pb-criterion-icon.met   { color: #22c55e; }
+.pb-criterion-icon.unmet { color: var(--text-dim); }
+.pb-optional {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* issues list */
+.pb-issues-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pb-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pb-issue-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pb-severity {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.pb-severity.CRITICAL,
+.pb-severity.HIGH   { background: rgba(239,68,68,0.12); color: #ef4444; }
+.pb-severity.MEDIUM { background: rgba(251,191,36,0.12); color: var(--warn-text); }
+.pb-severity.LOW    { background: rgba(115,115,115,0.12); color: var(--text-muted); }
+.pb-issue-code {
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.pb-issue-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding-left: 2px;
+}
+
+/* footer row inside expanded panel */
+.pb-footer-row {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Light-theme overrides for pipeline badge ───────────────────────────── */
+body.light .pb-severity.CRITICAL,
+body.light .pb-severity.HIGH   { background: rgba(239,68,68,0.08); }
+body.light .pb-severity.MEDIUM { background: rgba(217,119,6,0.08); color: #d97706; }
+body.light .pb-severity.LOW    { background: rgba(107,114,128,0.08); }

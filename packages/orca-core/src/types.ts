@@ -285,4 +285,23 @@ export type OrcaEvent =
   | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string }
   | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
   | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
-  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } };
+  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }
+  /**
+   * Emitted once per task after task:done, summarising the final pipeline outcome.
+   * Carries everything the UI needs to render the collapsed pipeline-summary badge
+   * without the renderer having to aggregate individual events itself.
+   */
+  | {
+      type: "pipeline:summary";
+      taskId: string;
+      /** Role that generated the final answer (after any repair passes). */
+      role: string;
+      verdict: "PASS" | "WARN" | "FAIL";
+      /** 0–1 confidence score from Pappy. */
+      confidence: number;
+      issueCount: number;
+      issues: Array<{ severity: string; code: string; description: string }>;
+      acceptanceCriteria: Array<{ id: string; text: string; required: boolean; met: boolean }>;
+      durationMs: number;
+      repairPasses: number;
+    };
