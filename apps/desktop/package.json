@@ -6,7 +6,7 @@
   "private": true,
   "main": "dist-main/main.js",
   "scripts": {
-    "dev": "node build-main.mjs && electron .",
+    "dev": "node build-main.mjs && node run-dev.mjs",
     "build": "node build-main.mjs",
     "dist": "node build-dist.mjs",
     "test": "vitest run",

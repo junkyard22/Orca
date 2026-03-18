@@ -1,12 +1,23 @@
 import { promises as fs } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import type { UserContext } from '../types.js';
 
-const require = createRequire(import.meta.url);
+const DEFAULT_CONTEXT: UserContext = {
+  hot: {
+    name: "User",
+    timezone: "America/Chicago",
+    currentSession: { startedAt: "", recentTasks: [] },
+  },
+  warm: {
+    preferences: { scheduling: [], communication: [], food: [], work: [], general: [] },
+    patterns:    { commonTaskTypes: [], peakHours: [] },
+    household:   { notes: [] },
+    connectedApps: { gmail: false, outlook: false, calendar: false },
+  },
+};
 
 function loadDefaultTemplate(): UserContext {
-  return require('./userContext.json') as UserContext;
+  return structuredClone(DEFAULT_CONTEXT);
 }
 
 type TaskCategory = keyof UserContext['warm']['preferences'];
