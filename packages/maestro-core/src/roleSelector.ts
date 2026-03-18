@@ -171,9 +171,6 @@ export function pickCoreRole(task: string): CoreRoleName {
     /\b(creative|writing|narrative|prose)\b/i,
     /\b(translat[e|ing])\b/i,
     /\b(edit|proofread|revise)\b.*\b(text|writing|content|document)\b/i,
-    // General knowledge / conversational questions — not code, not status queries
-    /^(what|how|why|when|where|who)\s+(is|are|was|were|does|do|did|can|could|should|would|will)\b/i,
-    /^(what'?s|how'?s)\b/i,
   ];
   
   for (const pattern of narratorPatterns) {
