@@ -109,66 +109,6 @@ async function brainRoute(
   return { role: role as RoleName, doneCriteria };
 }
 
-// ── Agent loop helpers (tool call parsing + multi-turn execution) ──────────
-
-const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
-
-function parseToolCalls(text: string): Array<{ tool: string; input: Record<string, unknown> }> {
-  const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
-  // Strict: closed <tool_call>...</tool_call>
-  TOOL_CALL_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = TOOL_CALL_RE.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1]!) as Record<string, unknown>;
-      const { tool, ...input } = parsed;
-      if (typeof tool === 'string' && tool) calls.push({ tool, input });
-    } catch {
-      // XML-attribute style: TOOLNAME<arg_key>k</arg_key><arg_value>v</arg_value>
-      const body = match[1]!;
-      const toolNameMatch = /^([\w-]+)/.exec(body.trim());
-      if (toolNameMatch) {
-        const tool = toolNameMatch[1]!;
-        const input: Record<string, unknown> = {};
-        const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
-        let m: RegExpExecArray | null;
-        while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
-        if (tool) calls.push({ tool, input });
-      }
-    }
-  }
-  // Lenient: unclosed <tool_call> at end of text (some models omit the closing tag)
-  if (calls.length === 0) {
-    const openTag = '<tool_call>';
-    const idx = text.lastIndexOf(openTag);
-    if (idx !== -1) {
-      const body = text.slice(idx + openTag.length).replace(/<\/tool_call>[\s\S]*$/, '').trim();
-      try {
-        const parsed = JSON.parse(body) as Record<string, unknown>;
-        const { tool, ...input } = parsed;
-        if (typeof tool === 'string' && tool) calls.push({ tool, input });
-      } catch {
-        // XML-attribute style fallback
-        const toolNameMatch = /^([\w-]+)/.exec(body);
-        if (toolNameMatch) {
-          const tool = toolNameMatch[1]!;
-          const input: Record<string, unknown> = {};
-          const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
-          let m: RegExpExecArray | null;
-          while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
-          if (tool) calls.push({ tool, input });
-        }
-      }
-    }
-  }
-  return calls;
-}
-
-function formatToolResult(tool: string, ok: boolean, output: string, error?: string): string {
-  const status = ok ? 'ok="true"' : 'ok="false"';
-  const body   = ok ? output : (error ?? output ?? 'unknown error');
-  return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
-}
 
 // ── Maestro adapter ────────────────────────────────────────────────────────
 // Three-tier architecture:

@@ -233,27 +233,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     let toolLimitWarningInjected = false;
     let finalAnswerFound = false;
     
-    // Fix 1: Strip tools for pure generation tasks to prevent exploration
-    function isPureGenerationTask(taskText: string): boolean {
-      // If task expects file output, always provide tools
-      const needsFiles = /write to|save|\bfile\b|\.[a-z]{2,4}(\s|$)|add to|implement in/i;
-      if (needsFiles.test(taskText)) return false;
-
-      // If task references existing content, provide tools for reading
-      const explorationSignals = /existing|current|read|check|look at|find|my (code|file|project)/i;
-      if (explorationSignals.test(taskText)) return false;
-
-      // Pure generation — text output only, no files needed
-      const generationSignals = /create|implement|write|build|add|generate/i;
-      return generationSignals.test(taskText);
-    }
-    
-    const shouldStripTools = false; // Tool discipline (3-call limit) handles overuse instead
-    const availableTools = shouldStripTools ? [] : tools;
-    
-    if (shouldStripTools) {
-      console.log(`[ReactAgent] Pure generation task detected — stripping tools to prevent exploration`);
-    }
+    const availableTools = tools;
     
     // Build initial conversation history
     let conversationHistory = task.conversationHistory || [];
@@ -448,20 +428,6 @@ export class ReactAgentAdapter implements AgentAdapter {
         
         // Execute tool calls
         for (const call of toolCalls) {
-          // Fix 1 (continued): Block tool execution if tools were stripped for generation task
-          if (shouldStripTools && availableTools.length === 0) {
-            console.log(`[ReactAgent] BLOCKED: Tools stripped for pure generation task`);
-            const errorResult = formatToolResult(call.tool, false, '', 'Tools unavailable for pure generation task — produce output directly');
-            messages.push({ role: "user", content: errorResult });
-            toolsUsed.push({
-              tool: call.tool,
-              ok: false,
-              summary: `Tools stripped for pure generation task`,
-              raw: call.input
-            });
-            continue;
-          }
-          
           // Find the tool in the provided tools array
           const tool = availableTools.find(t => t.name === call.tool);
           if (!tool) {
