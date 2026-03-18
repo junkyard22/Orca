@@ -280,6 +280,8 @@ export type OrcaEvent =
   | { type: "task:done";          taskId: string; status: "SUCCESS" | "WARN" | "FAIL" }
   | { type: "stream:token";       taskId: string; chunk: string }
   | { type: "stream:reset";       taskId: string }
+  | { type: "dewey:brief";        taskId: string; userName: string; suggestedTone: string; relevantPreferences: string[]; relevantContext: string[] }
+  | { type: "miranda:checkpoint"; taskId: string; gate: "before_qc" | "after_qc"; allowed: boolean; reason: string }
   | { type: "subagent:spawned";   taskId: string; subagentId: string; role: string; task: string }
   | { type: "subagent:done";      taskId: string; subagentId: string; role: string; ok: boolean }
   | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string }
@@ -304,4 +306,6 @@ export type OrcaEvent =
       acceptanceCriteria: Array<{ id: string; text: string; required: boolean; met: boolean }>;
       durationMs: number;
       repairPasses: number;
+      deweyBrief?: { userName: string; suggestedTone: string; relevantPreferences: string[]; relevantContext: string[] };
+      mirandaCheckpoints?: Array<{ gate: string; allowed: boolean; reason: string }>;
     };

@@ -61,6 +61,8 @@ let currentRole = null;
 let pendingStats = null;
 // Pipeline summary received during the current task; rendered after the response bubble.
 let pendingPipelineSummary = null;
+// Pipeline event log — collects key events during a task for display in the badge.
+let pipelineEventLog = [];
 // Tool call cards keyed by pending approval id.
 const toolCallCards = new Map();
 
@@ -112,6 +114,12 @@ orca.onOrcaEvent((e) => {
   if (e.type === "pipeline:summary") {
     pendingPipelineSummary = e;
     return;
+  }
+
+  // Collect key events for the pipeline log section of the badge.
+  const LOG_TYPES = new Set(['task:start','maestro:start','maestro:done','qc:result','repair:start','task:done','dewey:brief','miranda:checkpoint']);
+  if (LOG_TYPES.has(e.type)) {
+    pipelineEventLog.push({ ...e, _ts: Date.now() });
   }
 
   // Stream reset: REWRITE is about to start — clear the ANSWER text from the
@@ -416,16 +424,49 @@ function appendDiffCards(filesChanged) {
 function appendPipelineBadge(summary) {
   if (!summary) return;
 
-  const verdictClass = summary.verdict === "PASS" ? "pass"
-    : summary.verdict === "WARN" ? "warn"
-    : "fail";
+  const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : "fail";
   const confidencePct = Math.round((summary.confidence ?? 1) * 100);
   const durationSec   = ((summary.durationMs ?? 0) / 1000).toFixed(2);
   const repairText    = summary.repairPasses > 0
     ? ` · ${summary.repairPasses} repair${summary.repairPasses !== 1 ? "s" : ""}`
     : "";
 
-  // Build acceptance-criteria rows
+  // ── Dewey brief ─────────────────────────────────────────────────────────
+  let deweyHtml = "";
+  if (summary.deweyBrief) {
+    const d = summary.deweyBrief;
+    const toneHtml = `<span class="pb-tone-chip">${escapeHtml(d.suggestedTone)}</span>`;
+    const prefsHtml = (d.relevantPreferences ?? []).map(p => `<li>${escapeHtml(p)}</li>`).join("");
+    const ctxHtml   = (d.relevantContext    ?? []).map(c => `<li>${escapeHtml(c)}</li>`).join("");
+    deweyHtml = `
+      <div>
+        <div class="pb-section-title">Dewey brief — ${escapeHtml(d.userName ?? "")}</div>
+        <div class="pb-dewey-row">tone: ${toneHtml}</div>
+        ${prefsHtml ? `<ul class="pb-dewey-list">${prefsHtml}</ul>` : ""}
+        ${ctxHtml   ? `<ul class="pb-dewey-list pb-dewey-ctx">${ctxHtml}</ul>` : ""}
+      </div>`;
+  }
+
+  // ── Miranda checkpoints ──────────────────────────────────────────────────
+  let mirandaHtml = "";
+  if (summary.mirandaCheckpoints?.length) {
+    const rows = summary.mirandaCheckpoints.map(c => {
+      const cls  = c.allowed ? "allowed" : "blocked";
+      const icon = c.allowed ? "✓" : "✕";
+      return `<div class="pb-checkpoint">
+        <span class="pb-checkpoint-gate">${escapeHtml(c.gate)}</span>
+        <span class="pb-checkpoint-status ${cls}">${icon} ${c.allowed ? "ALLOWED" : "BLOCKED"}</span>
+        <span class="pb-checkpoint-reason">${escapeHtml(c.reason)}</span>
+      </div>`;
+    }).join("");
+    mirandaHtml = `
+      <div>
+        <div class="pb-section-title">Miranda checkpoints</div>
+        <div class="pb-checkpoints-list">${rows}</div>
+      </div>`;
+  }
+
+  // ── Acceptance criteria ──────────────────────────────────────────────────
   const criteriaHtml = (summary.acceptanceCriteria ?? []).map((c) => {
     const icon  = c.met ? "✓" : "○";
     const cls   = c.met ? "met" : "unmet";
@@ -436,17 +477,47 @@ function appendPipelineBadge(summary) {
     </div>`;
   }).join("");
 
-  // Build issue rows
-  const issuesHtml = (summary.issues ?? []).map((issue) => {
-    return `<div class="pb-issue">
+  // ── Issues ───────────────────────────────────────────────────────────────
+  const issuesHtml = (summary.issues ?? []).map((issue) =>
+    `<div class="pb-issue">
       <div class="pb-issue-header">
         <span class="pb-severity ${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)}</span>
         <span class="pb-issue-code">${escapeHtml(issue.code)}</span>
       </div>
       <div class="pb-issue-desc">${escapeHtml(issue.description)}</div>
-    </div>`;
-  }).join("");
+    </div>`
+  ).join("");
 
+  // ── Pipeline event log ───────────────────────────────────────────────────
+  let logHtml = "";
+  const log = summary._eventLog ?? [];
+  if (log.length) {
+    const t0 = log[0]._ts ?? 0;
+    const rows = log.map(e => {
+      const rel = ((e._ts - t0) / 1000).toFixed(2);
+      let label = e.type;
+      if (e.type === "maestro:start")     label = e.isRepair ? `repair pass ${e.attempt}` : "generating";
+      if (e.type === "maestro:done")      label = e.isRepair ? `repair done` : "reviewing";
+      if (e.type === "qc:result")         label = `QC: ${e.verdict} (${e.issueCount} issue${e.issueCount !== 1 ? "s" : ""})`;
+      if (e.type === "repair:start")      label = `repair ${e.pass}/${e.maxPasses}`;
+      if (e.type === "dewey:brief")       label = `Dewey brief — tone: ${e.suggestedTone}`;
+      if (e.type === "miranda:checkpoint") label = `Miranda ${e.gate}: ${e.allowed ? "ALLOWED" : "BLOCKED"}`;
+      const cls = e.type === "qc:result" && e.verdict === "FAIL" ? " log-fail"
+                : e.type === "qc:result" && e.verdict === "WARN" ? " log-warn"
+                : "";
+      return `<div class="pb-log-row${cls}">
+        <span class="pb-log-ts">+${rel}s</span>
+        <span class="pb-log-label">${escapeHtml(label)}</span>
+      </div>`;
+    }).join("");
+    logHtml = `
+      <div>
+        <div class="pb-section-title">Pipeline log</div>
+        <div class="pb-log">${rows}</div>
+      </div>`;
+  }
+
+  // ── Assemble ─────────────────────────────────────────────────────────────
   const div = document.createElement("div");
   div.className = "pipeline-badge";
   div.innerHTML = `
@@ -458,8 +529,11 @@ function appendPipelineBadge(summary) {
       <span class="pb-chevron">▶</span>
     </div>
     <div class="pipeline-badge-detail">
+      ${deweyHtml}
+      ${mirandaHtml}
       ${criteriaHtml ? `<div><div class="pb-section-title">Acceptance criteria</div><div class="pb-criteria-list">${criteriaHtml}</div></div>` : ""}
       ${issuesHtml   ? `<div><div class="pb-section-title">Issues</div><div class="pb-issues-list">${issuesHtml}</div></div>` : ""}
+      ${logHtml}
       <div class="pb-footer-row">${durationSec}s total · ${summary.repairPasses ?? 0} repair pass${(summary.repairPasses ?? 0) !== 1 ? "es" : ""}</div>
     </div>`;
 
@@ -502,6 +576,7 @@ async function sendMessage() {
   if (busy) return;
 
   busy = true;
+  pipelineEventLog = [];
   setInputEnabled(false);
   inputEl.value = "";
   autoResize();
@@ -552,7 +627,11 @@ async function sendMessage() {
     // Post-reply metadata
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
-    if (pendingPipelineSummary) { appendPipelineBadge(pendingPipelineSummary); pendingPipelineSummary = null; }
+    if (pendingPipelineSummary) {
+      pendingPipelineSummary._eventLog = pipelineEventLog.slice();
+      appendPipelineBadge(pendingPipelineSummary);
+      pendingPipelineSummary = null;
+    }
 
     if (!result.ok) finalStatus = "error";
   } catch (err) {

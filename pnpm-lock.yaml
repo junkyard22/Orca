@@ -20,6 +20,9 @@ importers:
       '@clawde/benson-core':
         specifier: workspace:*
         version: link:../../packages/benson-core
+      '@clawde/dewey-core':
+        specifier: workspace:*
+        version: link:../../packages/dewey-core
       '@clawde/miranda-core':
         specifier: workspace:*
         version: link:../../packages/miranda-core

@@ -1856,3 +1856,94 @@ body.light .pb-severity.CRITICAL,
 body.light .pb-severity.HIGH   { background: rgba(239,68,68,0.08); }
 body.light .pb-severity.MEDIUM { background: rgba(217,119,6,0.08); color: #d97706; }
 body.light .pb-severity.LOW    { background: rgba(107,114,128,0.08); }
+
+/* ── Dewey brief section ────────────────────────────────────────────────── */
+.pb-dewey-row {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 2px 0 4px;
+}
+.pb-tone-chip {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: rgba(59,130,246,0.10);
+  color: var(--accent);
+  text-transform: capitalize;
+  margin-left: 4px;
+}
+.pb-dewey-list {
+  margin: 2px 0 2px 14px;
+  padding: 0;
+  list-style: disc;
+}
+.pb-dewey-list li {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 1px 0;
+}
+.pb-dewey-ctx li {
+  color: var(--text-muted);
+}
+
+/* ── Miranda checkpoint rows ────────────────────────────────────────────── */
+.pb-checkpoints-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pb-checkpoint {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11px;
+}
+.pb-checkpoint-gate {
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  min-width: 90px;
+}
+.pb-checkpoint-status {
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.pb-checkpoint-status.allowed { color: #22c55e; }
+.pb-checkpoint-status.blocked { color: var(--danger); }
+.pb-checkpoint-reason {
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Pipeline event log ─────────────────────────────────────────────────── */
+.pb-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pb-log-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+.pb-log-ts {
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  min-width: 44px;
+  text-align: right;
+}
+.pb-log-label {
+  color: var(--text-muted);
+}
+.pb-log-row.log-warn .pb-log-label { color: var(--warn-text); }
+.pb-log-row.log-fail .pb-log-label { color: var(--danger); }

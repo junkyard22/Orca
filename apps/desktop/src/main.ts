@@ -2,6 +2,8 @@ import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import { join } from "node:path";
 
+import { Dewey } from "@clawde/dewey-core";
+import { createMirandaGate } from "@clawde/miranda-core";
 import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
 import type { LLMAdapter, LLMMessage as Message } from "@clawde/miranda-core";
 import {
@@ -211,7 +213,23 @@ function buildMaestroAdapter(
       }
       
       const routing = await brainRoute(task, ctx, roleAdapters);
-      
+
+      // Dewey brief — inject user context into the pipeline event stream.
+      // Non-critical: a Dewey failure must never abort the task.
+      if (dewey) {
+        try {
+          const brief = await dewey.brief(task.intent);
+          ctx.emit?.({
+            type: 'dewey:brief',
+            taskId: ctx.runId,
+            userName:            brief.userName,
+            suggestedTone:       brief.suggestedTone,
+            relevantPreferences: brief.relevantPreferences,
+            relevantContext:     brief.relevantContext,
+          });
+        } catch { /* non-critical */ }
+      }
+
       // 3. Select model from fallback pool if available
       if (poolManager && modelEntries) {
         const selectedModel = poolManager.selectModel(routing.role);
@@ -352,6 +370,7 @@ let runtime: OrcaRuntime | null = null;
 let benson: BensonHandle | null = null;
 let store: SqliteStore | null = null;
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
+let dewey: InstanceType<typeof Dewey> | null = null;
 
 function buildAdapterForProvider(
   provider: ProviderEntry,
@@ -430,6 +449,10 @@ function initOrca(s: OrcaSettings): string | null {
   runtime = null;
   benson  = null;
   fallbackPoolManager = null;
+
+  if (!dewey) {
+    dewey = new Dewey();
+  }
 
   // Always initialise the store so session history is accessible even when
   // the brain role isn't configured yet.
@@ -555,7 +578,8 @@ function initOrca(s: OrcaSettings): string | null {
     const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager, roleGenSettings, workspaceRoot);
     const pappy   = createPappyPort();
 
-    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store, requestToolApproval, budgetUsd: s.budgetUsd });
+    const gate = createMirandaGate({ verbose: false });
+    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store, requestToolApproval, budgetUsd: s.budgetUsd, gate });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {
@@ -770,6 +794,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     "task:start", "maestro:start", "maestro:done",
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
     "pipeline:summary",
+    "dewey:brief", "miranda:checkpoint",
   ];
   const unsubs = EVENT_TYPES.map((type) =>
     runtime!.on(type, (e: OrcaEvent) => {

@@ -102,6 +102,24 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     // Track repair passes via events so we don't thread extra state through
     // the repair loop's return value.
     let repairPasses = 0;
+    let bufferedDeweyBrief: { userName: string; suggestedTone: string; relevantPreferences: string[]; relevantContext: string[] } | undefined;
+    const bufferedMirandaCheckpoints: Array<{ gate: string; allowed: boolean; reason: string }> = [];
+
+    const unsubDewey = emitter.on("dewey:brief", (e) => {
+      if (e.type === "dewey:brief") {
+        bufferedDeweyBrief = {
+          userName:            e.userName,
+          suggestedTone:       e.suggestedTone,
+          relevantPreferences: e.relevantPreferences,
+          relevantContext:     e.relevantContext,
+        };
+      }
+    });
+    const unsubMiranda = emitter.on("miranda:checkpoint", (e) => {
+      if (e.type === "miranda:checkpoint") {
+        bufferedMirandaCheckpoints.push({ gate: e.gate, allowed: e.allowed, reason: e.reason });
+      }
+    });
     const unsubRepair = emitter.on("repair:start", () => { repairPasses++; });
 
     emitter.emit({ type: "task:start", taskId, intent: taskSpec.intent });
@@ -132,14 +150,20 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         // ── 2. Pappy evaluates ───────────────────────────────────────────────
         const qcInput = buildPappyInput(taskSpec, maestroResult);
 
-        ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
+        const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
+        if (beforeQcGate) {
+          emitter.emit({ type: "miranda:checkpoint", taskId, gate: "before_qc", allowed: beforeQcGate.allowed, reason: beforeQcGate.reason });
+        }
         const qcResult = pappy!.evaluate(qcInput);
         persistedQcResult = qcResult;
-        ctx.gate?.afterQC(
+        const afterQcGate = ctx.gate?.afterQC(
           { taskId, outputText: maestroResult.outputText ?? "" },
           qcResult.verdict,
           qcResult.issues.length,
         );
+        if (afterQcGate) {
+          emitter.emit({ type: "miranda:checkpoint", taskId, gate: "after_qc", allowed: afterQcGate.allowed, reason: afterQcGate.reason });
+        }
 
         emitter.emit({
           type: "qc:result",
@@ -205,6 +229,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     // ── Always runs — emit completion, persist, clean up ──────────────────
     const durationMs = Date.now() - startTime;
     unsubRepair();
+    unsubDewey();
+    unsubMiranda();
     emitter.emit({ type: "task:done", taskId, status: result.status });
 
     // Emit pipeline summary so the UI can render the badge without
@@ -233,6 +259,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         }),
         durationMs,
         repairPasses,
+        deweyBrief: bufferedDeweyBrief,
+        mirandaCheckpoints: bufferedMirandaCheckpoints.length > 0 ? bufferedMirandaCheckpoints : undefined,
       });
     }
 
