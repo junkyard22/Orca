@@ -291,6 +291,13 @@ export class ReactAgentAdapter implements AgentAdapter {
       for (let iteration = 0; iteration < this.maxIterations; iteration++) {
         iterationCount = iteration + 1;
         
+        // On iterations after the first, reset the stream bubble so users
+        // only see the latest generation — not accumulated thought blocks or
+        // tool call XML from prior iterations.
+        if (iteration > 0) {
+          ctx.onStreamReset?.();
+        }
+
         // Call the model - use streaming if available and callback provided
         let response;
         const useStreaming = ctx.onStreamToken && this.llmAdapter.stream;
