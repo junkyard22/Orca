@@ -26,6 +26,12 @@ npm-debug.log*
 pnpm-debug.log*
 miranda-runs.jsonl
 
+# Backup / scratch files
+*.backup
+*.bak
+apps/runner/fun_facts.txt
+apps/runner/random_fun_fact.txt
+
 # Editor
 .vscode/
 .idea/
