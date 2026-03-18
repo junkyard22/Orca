@@ -491,50 +491,19 @@ function initOrca(s: OrcaSettings): string | null {
       { maxTokens: 8192, temperature: 0.7 },
     );
 
-    // Build a per-role LLM service for every role that has a configured
-    // provider + model in settings.  Roles that share the same provider/model
-    // as brain will reuse the same adapter instance.
-    const roleAdapters: Partial<Record<string, OrcaLLMService>> = {};
-    const ALL_ROLES = [
+    // Build a per-role LLM adapter for every role that has a configured provider + model.
+    const ALL_ROLES: RoleName[] = [
       'brain', 'coder_strong', 'coder_cheap', 'utility',
       'reviewer', 'narrator', 'planner_deep', 'debugger', 'reader', 'vision',
-    ] as const;
+    ];
+    const adapterMap = new Map<RoleName, LLMAdapter>();
     for (const roleName of ALL_ROLES) {
       const roleEntry = s.roles?.[roleName];
       if (!roleEntry?.providerId || !roleEntry?.model) continue;
       const roleProv = s.providers?.find((p) => p.id === roleEntry.providerId);
       if (!roleProv) continue;
       if (roleProv.type !== 'ollama' && !roleProv.apiKey) continue;
-      roleAdapters[roleName] = createDirectLLMService(
-        buildAdapterForProvider(roleProv, roleEntry.model, roleEntry.enableThinking),
-        roleEntry.model,
-        { maxTokens: roleEntry.maxTokens ?? 8192, temperature: roleEntry.temperature ?? 0.7 },
-      );
-    }
-
-    // Convert roleAdapters to Map<RoleName, LLMAdapter> for buildMaestroAdapter
-    const adapterMap = new Map<RoleName, LLMAdapter>();
-    for (const [role, service] of Object.entries(roleAdapters)) {
-      // Extract the underlying LLMAdapter from the OrcaLLMService wrapper
-      // This is a bit hacky but works with the current structure
-      const roleName = role as RoleName;
-      // We need to get the original adapter - for now we'll use brain's adapter as fallback
-      if (roleName === 'brain') {
-        adapterMap.set(roleName, buildAdapterForProvider(provider, model, s.roles?.['brain']?.enableThinking));
-      }
-    }
-    // Add other configured roles
-    const ALL_ROLES_LIST = [
-      'brain', 'coder_strong', 'coder_cheap', 'utility',
-      'reviewer', 'narrator', 'planner_deep', 'debugger', 'reader', 'vision',
-    ] as RoleName[];
-    for (const roleName of ALL_ROLES_LIST) {
-      if (!adapterMap.has(roleName) && s.roles?.[roleName]?.providerId && s.roles?.[roleName]?.model) {
-        const roleProv = s.providers?.find((p) => p.id === s.roles![roleName]!.providerId);
-        if (roleProv) {
-          adapterMap.set(roleName, buildAdapterForProvider(roleProv, s.roles![roleName]!.model!, s.roles![roleName]!.enableThinking));
-        }
-      }
+      adapterMap.set(roleName, buildAdapterForProvider(roleProv, roleEntry.model, roleEntry.enableThinking));
     }
     
     const toolRegistry = createCoreToolRegistry();
@@ -708,6 +677,9 @@ async function fetchModelsFromProvider(
       }
     } catch { /* fall through to static list */ }
     return [
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5-20251001",
       "claude-3-7-sonnet-20250219",
       "claude-3-5-sonnet-20241022",
       "claude-3-5-haiku-20241022",

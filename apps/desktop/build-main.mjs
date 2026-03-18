@@ -28,6 +28,7 @@ const shared = {
     "@clawde/pappy-core":      resolve(PACKAGES, "pappy-core",      "src", "index.ts"),
     "@clawde/orca-core":       resolve(PACKAGES, "orca-core",       "src", "index.ts"),
     "@clawde/benson-core":     resolve(PACKAGES, "benson-core",     "src", "index.ts"),
+    "@clawde/dewey-core":      resolve(PACKAGES, "dewey-core",      "src", "index.ts"),
     "@clawde/secretary-core":  resolve(PACKAGES, "secretary-core",  "src", "index.ts"),
     "maestro-core":            resolve(PACKAGES, "maestro-core",    "src", "index.ts"),
   },

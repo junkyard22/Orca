@@ -1,11 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import type { UserContext } from '../types.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const require = createRequire(import.meta.url);
 
