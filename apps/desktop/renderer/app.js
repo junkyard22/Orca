@@ -199,7 +199,7 @@ function scrollToBottom() {
 // ── Safe markdown renderer ────────────────────────────────────────────────
 
 function escapeHtml(str) {
-  return str
+  return String(str ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -840,8 +840,9 @@ const PROVIDER_TYPES = [
   { value: "siliconflow", label: "SiliconFlow",  defaultUrl: "https://api.siliconflow.cn/v1", needsKey: true  },
   { value: "openai",      label: "OpenAI",       defaultUrl: "https://api.openai.com/v1",     needsKey: true  },
   { value: "anthropic",   label: "Anthropic",    defaultUrl: "https://api.anthropic.com/v1",  needsKey: true  },
-  { value: "zai",         label: "ZAI",          defaultUrl: "https://api.z.ai/v1",           needsKey: true  },
-  { value: "custom",      label: "Custom",       defaultUrl: "",                              needsKey: true  },
+  { value: "zai",         label: "ZAI",          defaultUrl: "https://api.z.ai/v1",                                   needsKey: true  },
+  { value: "alibaba",     label: "Alibaba",      defaultUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",     needsKey: true  },
+  { value: "custom",      label: "Custom",       defaultUrl: "",                                                      needsKey: true  },
 ];
 
 const MODEL_HINTS = {
@@ -852,6 +853,7 @@ const MODEL_HINTS = {
   openai:      "e.g. gpt-4o",
   anthropic:   "e.g. claude-3-5-sonnet-20241022",
   zai:         "e.g. gpt-4o",
+  alibaba:     "e.g. qwen-max, qwen-plus",
   custom:      "model name",
 };
 
@@ -885,11 +887,7 @@ function genId(prefix) {
   return `${prefix}_${Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0")}`;
 }
 
-function escHtml(s) {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+const escHtml = escapeHtml;
 
 function getProviderType(id) {
   return editingSettings?.providers?.find((p) => p.id === id)?.type ?? "openrouter";

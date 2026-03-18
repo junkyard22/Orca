@@ -15,9 +15,12 @@ export type ProviderEntry = {
 };
 
 export type RoleEntry = {
-  providerId: string;
-  model:      string;
-  fallbacks?: Array<{ providerId: string; model: string }>;
+  providerId:      string;
+  model:           string;
+  fallbacks?:      Array<{ providerId: string; model: string }>;
+  enableThinking?: boolean;
+  maxTokens?:      number;
+  temperature?:    number;
 };
 
 export type OrcaSettings = {
