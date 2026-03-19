@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { join } from "node:path";
 
 import { Dewey } from "@clawde/dewey-core";
@@ -499,6 +499,51 @@ function initOrca(s: OrcaSettings): string | null {
 // ── Window ─────────────────────────────────────────────────────────────────
 
 let win: BrowserWindow | null = null;
+let tray: Tray | null = null;
+
+function createTray(): void {
+  const icon = nativeImage.createFromPath(join(__dirname, "..", "orca.ico"));
+  tray = new Tray(icon);
+  tray.setToolTip("Orca");
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: "Show Orca",
+      click: () => {
+        if (win) {
+          win.show();
+          win.focus();
+        } else {
+          createWindow();
+        }
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit",
+      click: () => {
+        tray?.destroy();
+        tray = null;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(menu);
+
+  tray.on("double-click", () => {
+    if (win) {
+      if (win.isVisible()) {
+        win.hide();
+      } else {
+        win.show();
+        win.focus();
+      }
+    } else {
+      createWindow();
+    }
+  });
+}
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -532,13 +577,27 @@ function createWindow(): void {
     win!.webContents.send("init-status", { ok: err === null, error: err });
   });
 
+  // Intercept close → hide to tray instead of destroying the window.
+  win.on("close", (e) => {
+    if (tray) {
+      e.preventDefault();
+      win?.hide();
+    }
+  });
+
   win.on("closed", () => { win = null; });
 }
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 
 ipcMain.on("win:minimize", () => win?.minimize());
-ipcMain.on("win:close",    () => win?.close());
+ipcMain.on("win:close",    () => {
+  if (tray) {
+    win?.hide();
+  } else {
+    win?.close();
+  }
+});
 
 // ── Tool approval: renderer approves/denies each tool call before it runs ──
 // When the desktop app runs tools (agent-loop mode), each call sends a
@@ -771,14 +830,17 @@ if (!gotLock) {
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
   app.whenReady().then(() => {
+    createTray();
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 
+  // With a tray icon the app stays alive even when all windows are closed.
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
+    if (process.platform === "darwin") app.quit();
+    // On Windows/Linux: do nothing — tray keeps the process alive.
   });
 }
 
