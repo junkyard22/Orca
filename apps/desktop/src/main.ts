@@ -502,7 +502,14 @@ let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
 function createTray(): void {
-  const icon = nativeImage.createFromPath(join(__dirname, "..", "orca.ico"));
+  // Use the light-mark PNG explicitly (white mark on transparent bg) rather
+  // than inheriting from the window ICO. Crop to square then resize to 16×16
+  // so the mark is never distorted or scaled from a non-square canvas.
+  const raw = nativeImage.createFromPath(join(__dirname, "..", "renderer", "orca-logo-dark.png"));
+  const { width: w, height: h } = raw.getSize();
+  const cropSz = Math.min(w, h);
+  const square = raw.crop({ x: Math.floor((w - cropSz) / 2), y: Math.floor((h - cropSz) / 2), width: cropSz, height: cropSz });
+  const icon = square.resize({ width: 16, height: 16, quality: "best" });
   tray = new Tray(icon);
   tray.setToolTip("Orca");
 

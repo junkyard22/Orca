@@ -89,6 +89,7 @@ body {
   display: flex;
   align-items: center;
   gap: 9px;
+  padding: 4px;
 }
 
 .brand-logo {
