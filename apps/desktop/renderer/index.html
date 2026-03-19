@@ -16,8 +16,15 @@
     <div id="app">
       <!-- ── Title bar ─────────────────────────────────────────────────── -->
       <div id="titlebar">
-        <div class="brand">
-          <img src="orca-logo-dark.png" class="brand-logo" alt="Orca" id="logo-brand" />
+        <div class="topbar-left">
+          <button class="win-btn" id="btn-hamburger" title="Toggle sidebar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+          </button>
+          <span id="topbar-title" class="topbar-title">orca</span>
         </div>
         <div class="win-controls">
           <button class="win-btn" id="btn-theme" title="Toggle light / dark mode">
@@ -36,12 +43,6 @@
             <!-- moon icon (shown in light mode) -->
             <svg class="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-            </svg>
-          </button>
-          <button class="win-btn" id="btn-history" title="Chat history">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <polyline points="12 6 12 12 16 14"/>
             </svg>
           </button>
           <button class="win-btn" id="btn-settings" title="Settings">
@@ -77,12 +78,18 @@
       <div id="content">
         <!-- Sidebar (history) -->
         <div id="sidebar">
-          <div id="sidebar-header">
-            <span class="sidebar-title">History</span>
-            <button id="btn-new-chat" title="Start a new chat">+ New</button>
+          <div class="sidebar-inner">
+            <button id="btn-sidebar-new-chat">+ New chat</button>
+            <div id="session-list"></div>
+            <div id="sidebar-footer">
+              <button class="sidebar-footer-btn" id="sidebar-btn-settings">Settings</button>
+              <button class="sidebar-footer-btn" id="sidebar-btn-history">History</button>
+            </div>
           </div>
-          <div id="session-list"></div>
         </div>
+
+        <!-- Main panel (chat + settings) -->
+        <div id="main-panel">
 
         <!-- Chat view -->
         <div id="chat-view">
@@ -234,6 +241,8 @@
             <p class="settings-status" id="settings-status"></p>
           </div>
         </div>
+
+        </div><!-- /#main-panel -->
       </div>
 
       <!-- ── Status bar ─────────────────────────────────────────────────── -->

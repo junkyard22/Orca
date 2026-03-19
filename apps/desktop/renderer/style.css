@@ -85,32 +85,32 @@ body {
   -webkit-app-region: drag;
 }
 
-.brand {
+.topbar-left {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 4px;
+  gap: 2px;
+  -webkit-app-region: no-drag;
 }
 
-.brand-logo {
-  height: 26px;
-  width: auto;
-  opacity: 0;
-  flex-shrink: 0;
-  animation: logo-appear 0.6s ease 0.3s forwards;
+.topbar-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  text-transform: lowercase;
+  padding-left: 2px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
 }
 
-@keyframes logo-appear {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 0.9; transform: translateY(0); }
-}
-
-.brand-name {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--text);
-  text-transform: uppercase;
+.topbar-title.has-chat {
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.01em;
 }
 
 .win-controls {
@@ -148,9 +148,17 @@ body {
 #content {
   flex: 1;
   display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+#main-panel {
+  flex: 1;
+  display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  min-width: 0;
 }
 
 /* Welcome screen */
@@ -1534,55 +1542,77 @@ body {
 
 /* ── Chat session sidebar ────────────────────────────────────────────────── */
 #sidebar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 224px;
+  width: 0;
+  overflow: hidden;
+  flex-shrink: 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  transform: translateX(-100%);
-  transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  box-shadow: 4px 0 16px rgba(0,0,0,0.4);
+  transition: width 0.22s ease;
 }
 
 #sidebar.open {
-  transform: translateX(0);
+  width: 220px;
 }
 
-#sidebar-header {
+.sidebar-inner {
+  width: 220px;
+  height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  flex-direction: column;
 }
 
-.sidebar-title {
-  font-size: 11px;
+#btn-sidebar-new-chat {
+  width: 100%;
+  padding: 11px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
+}
+#btn-sidebar-new-chat:hover {
+  background: var(--surface-2);
+}
+
+.session-group-label {
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--text-dim);
+  padding: 10px 14px 3px;
+  user-select: none;
 }
 
-#btn-new-chat {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 9px;
-  border: 1px solid var(--border);
+#sidebar-footer {
+  padding: 6px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-footer-btn {
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
+  font-size: 12px;
+  text-align: left;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
   -webkit-app-region: no-drag;
 }
-#btn-new-chat:hover {
+.sidebar-footer-btn:hover {
   background: var(--surface-2);
   color: var(--text);
 }

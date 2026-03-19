@@ -41,6 +41,7 @@ const fileInput     = document.getElementById("file-input");
 const attachBar     = document.getElementById("attachments-bar");
 const sidebar       = document.getElementById("sidebar");
 const sessionList   = document.getElementById("session-list");
+const topbarTitle   = document.getElementById("topbar-title");
 
 // ── State ─────────────────────────────────────────────────────────────────
 
@@ -598,6 +599,7 @@ async function sendMessage() {
 
   // Show user bubble (with optional image previews)
   appendUserMsg(text, snapshotAttachments);
+  if (text) setTopbarTitle(text);
   appendThinking();
   setStatus("planning…", true);
 
@@ -1318,6 +1320,17 @@ document.getElementById("btn-deny-tool").addEventListener("click",    () => reso
 
 let sidebarOpen = false;
 
+function setTopbarTitle(text) {
+  if (!topbarTitle) return;
+  if (!text) {
+    topbarTitle.textContent = "orca";
+    topbarTitle.classList.remove("has-chat");
+  } else {
+    topbarTitle.textContent = truncateSession(text, 42);
+    topbarTitle.classList.add("has-chat");
+  }
+}
+
 function toggleSidebar() {
   sidebarOpen = !sidebarOpen;
   sidebar.classList.toggle("open", sidebarOpen);
@@ -1337,17 +1350,37 @@ async function refreshSessionList() {
     sessionList.innerHTML = '<p class="sidebar-empty">No history yet.</p>';
     return;
   }
-  sessionList.innerHTML = sessions.map((s) => {
+  const startToday     = new Date(); startToday.setHours(0,0,0,0);
+  const startYesterday = new Date(startToday); startYesterday.setDate(startYesterday.getDate() - 1);
+
+  function getGroup(iso) {
+    const t = new Date(iso).getTime();
+    if (t >= startToday.getTime())     return "Today";
+    if (t >= startYesterday.getTime()) return "Yesterday";
+    return "Earlier";
+  }
+
+  const groups = [["Today", []], ["Yesterday", []], ["Earlier", []]];
+  const groupMap = { Today: groups[0][1], Yesterday: groups[1][1], Earlier: groups[2][1] };
+  sessions.forEach((s) => groupMap[getGroup(s.createdAt)].push(s));
+
+  function renderItem(s) {
     const label  = truncateSession(s.intent, 50);
     const date   = fmtSessionDate(s.createdAt);
-    const cost   = s.costUsd != null ? `<span class="session-cost">$${s.costUsd.toFixed(4)}</span>` : "";
     const failed = s.status === "FAIL" ? ' session-failed' : '';
     return `<div class="session-item${failed}" data-sid="${escapeHtml(s.id)}" title="${escapeHtml(s.intent)}">
       <div class="session-intent">${escapeHtml(label)}</div>
-      <div class="session-meta"><span>${escapeHtml(date)}</span>${cost}</div>
+      <div class="session-meta"><span>${escapeHtml(date)}</span></div>
       <button class="session-delete-btn" data-sid="${escapeHtml(s.id)}" title="Delete this session" aria-label="Delete session">✕</button>
     </div>`;
-  }).join("");
+  }
+
+  sessionList.innerHTML = groups
+    .filter(([, items]) => items.length > 0)
+    .map(([label, items]) =>
+      `<div class="session-group-label">${escapeHtml(label)}</div>` +
+      items.map(renderItem).join("")
+    ).join("");
   sessionList.querySelectorAll(".session-item").forEach((item) => {
     item.addEventListener("click", (e) => {
       if (e.target.closest(".session-delete-btn")) return;
@@ -1376,6 +1409,7 @@ async function loadSession(id) {
   chatView.style.display     = "flex";
   messages.innerHTML         = "";
   showMessages();
+  setTopbarTitle(session.intent);
 
   appendMsg("user", session.intent);
   if (session.outputText) {
@@ -1412,6 +1446,7 @@ function newChat() {
   settingsView.style.display = "none";
   chatView.style.display     = "flex";
   if (statusbarCost) statusbarCost.textContent = "";
+  setTopbarTitle(null);
   inputEl.focus();
 }
 
@@ -1434,8 +1469,10 @@ function fmtSessionDate(iso) {
   }
 }
 
-document.getElementById("btn-history").addEventListener("click",  toggleSidebar);
-document.getElementById("btn-new-chat").addEventListener("click", () => { newChat(); toggleSidebar(); });
+document.getElementById("btn-hamburger").addEventListener("click",      toggleSidebar);
+document.getElementById("btn-sidebar-new-chat").addEventListener("click", () => { newChat(); if (sidebarOpen) toggleSidebar(); });
+document.getElementById("sidebar-btn-settings").addEventListener("click", () => { if (sidebarOpen) toggleSidebar(); openSettings(); });
+document.getElementById("sidebar-btn-history").addEventListener("click",  () => { refreshSessionList(); });
 
 // ── Theme toggle ──────────────────────────────────────────────────────────
 
