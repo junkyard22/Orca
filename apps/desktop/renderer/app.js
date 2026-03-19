@@ -526,7 +526,7 @@ function appendPipelineBadge(summary) {
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
       <span class="pb-confidence">${confidencePct}%</span>
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
-      <span class="pb-chevron">▶</span>
+      <button class="pb-details-btn">Details <span class="pb-chevron">›</span></button>
     </div>
     <div class="pipeline-badge-detail">
       ${deweyHtml}
@@ -537,7 +537,13 @@ function appendPipelineBadge(summary) {
       <div class="pb-footer-row">${durationSec}s total · ${summary.repairPasses ?? 0} repair pass${(summary.repairPasses ?? 0) !== 1 ? "es" : ""}</div>
     </div>`;
 
-  div.querySelector(".pipeline-badge-header").addEventListener("click", () => {
+  // Auto-expand on hard failure so the user immediately sees why.
+  if (verdictClass === "fail") {
+    div.classList.add("expanded");
+  }
+
+  div.querySelector(".pb-details-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
     div.classList.toggle("expanded");
   });
 

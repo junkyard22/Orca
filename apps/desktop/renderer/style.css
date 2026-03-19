@@ -1692,11 +1692,6 @@ body {
   align-items: center;
   gap: 8px;
   padding: 5px 10px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.pipeline-badge-header:hover {
-  background: var(--surface-2);
 }
 
 /* role chip */
@@ -1747,12 +1742,33 @@ body {
   flex-shrink: 0;
 }
 
-/* chevron rotates when expanded */
-.pb-chevron {
-  font-size: 9px;
-  color: var(--text-dim);
-  transition: transform 0.2s;
+/* "Details ›" toggle button */
+.pb-details-btn {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: none;
+  border: none;
+  padding: 1px 4px;
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
   flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.pb-details-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+/* chevron inside Details button — rotates 90° when expanded */
+.pb-chevron {
+  font-size: 13px;
+  line-height: 1;
+  display: inline-block;
+  transition: transform 0.2s ease;
 }
 .pipeline-badge.expanded .pb-chevron {
   transform: rotate(90deg);
@@ -1760,14 +1776,18 @@ body {
 
 /* ── Expanded detail panel ─────────────────────────────────────────────── */
 .pipeline-badge-detail {
-  display: none;
+  display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--border);
+  padding: 0 12px;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.22s ease, padding 0.22s ease;
 }
 .pipeline-badge.expanded .pipeline-badge-detail {
-  display: flex;
+  max-height: 800px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
 }
 
 .pb-section-title {
