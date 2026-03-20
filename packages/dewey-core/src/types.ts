@@ -1,3 +1,11 @@
+export interface PreferenceBuckets {
+  scheduling: string[];
+  communication: string[];
+  food: string[];
+  work: string[];
+  general: string[];
+}
+
 export interface UserContext {
   hot: {
     name: string;
@@ -9,13 +17,7 @@ export interface UserContext {
   };
 
   warm: {
-    preferences: {
-      scheduling: string[];
-      communication: string[];
-      food: string[];
-      work: string[];
-      general: string[];
-    };
+    learnedPreferences: PreferenceBuckets;
     patterns: {
       commonTaskTypes: string[];
       peakHours: string[];

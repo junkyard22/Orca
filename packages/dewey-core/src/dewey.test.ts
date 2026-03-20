@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Dewey } from "./dewey.js";
@@ -34,7 +34,7 @@ describe("ContextStore", () => {
     const ctx = await store.load();
     expect(ctx.hot.name).toBeDefined();
     expect(ctx.hot.timezone).toBeDefined();
-    expect(ctx.warm.preferences).toBeDefined();
+    expect(ctx.warm.learnedPreferences).toBeDefined();
   });
 
   it("persists and reloads context", async () => {
@@ -43,7 +43,7 @@ describe("ContextStore", () => {
 
     const store2 = new ContextStore(join(tmpDir, "context.json"));
     const ctx2 = await store2.load();
-    expect(ctx2.warm.preferences.communication).toContain("prefer_email");
+    expect(ctx2.warm.learnedPreferences.communication).toContain("prefer_email");
   });
 
   it("getRelevantContext returns preferences for the task type", async () => {
@@ -71,6 +71,35 @@ describe("ContextStore", () => {
     const result = store.getRelevantContext("communication");
     const count = result.preferences.filter((p) => p === "prefer_brief").length;
     expect(count).toBe(1);
+  });
+
+  it("migrates legacy preference buckets into learned preferences", async () => {
+    writeFileSync(
+      join(tmpDir, "context.json"),
+      JSON.stringify({
+        hot: {
+          name: "User",
+          timezone: "America/New_York",
+          currentSession: { startedAt: "", recentTasks: [] },
+        },
+        warm: {
+          preferences: {
+            scheduling: [],
+            communication: ["prefer_brief"],
+            food: [],
+            work: [],
+            general: [],
+          },
+          patterns: { commonTaskTypes: [], peakHours: [] },
+          household: { notes: [] },
+          connectedApps: { gmail: false, outlook: false, calendar: false },
+        },
+      }),
+      "utf-8",
+    );
+
+    const ctx = await store.load();
+    expect(ctx.warm.learnedPreferences.communication).toContain("prefer_brief");
   });
 
   it("startSession resets recent tasks and records start time", async () => {
@@ -144,6 +173,55 @@ describe("Dewey", () => {
       const brief = await dewey.brief("help me with something");
       expect(brief.suggestedTone).toBe("casual");
     });
+
+    it("does not turn profile data into learned preferences", async () => {
+      writeFileSync(
+        join(tmpDir, "context.json"),
+        JSON.stringify({
+          hot: {
+            name: "James",
+            timezone: "America/New_York",
+            currentSession: { startedAt: "", recentTasks: [] },
+          },
+          warm: {
+            learnedPreferences: {
+              scheduling: [],
+              communication: [],
+              food: [],
+              work: [],
+              general: [],
+            },
+            patterns: { commonTaskTypes: [], peakHours: [] },
+            household: { notes: ["Prefers local tools when available"] },
+            connectedApps: { gmail: true, outlook: false, calendar: false },
+          },
+        }),
+        "utf-8",
+      );
+
+      const brief = await dewey.brief("help me with something");
+      expect(brief.userName).toBe("James");
+      expect(brief.timezone).toBe("America/New_York");
+      expect(brief.availableApps).toContain("gmail");
+      expect(brief.relevantContext).toContain("Prefers local tools when available");
+      expect(brief.relevantPreferences).toEqual([]);
+      expect(brief.suggestedTone).toBe("casual");
+    });
+
+    it("applies communication preferences across task types", async () => {
+      await dewey.observe({
+        taskType: "work",
+        taskSummary: "Implement feature",
+        timestamp: new Date().toISOString(),
+        verdict: "PASS",
+        preferencesApplied: [],
+        newSignals: ["prefer_brief"],
+      });
+
+      const brief = await dewey.brief("summarize this file");
+      expect(brief.suggestedTone).toBe("brief");
+      expect(brief.relevantPreferences).toContain("prefer_brief");
+    });
   });
 
   describe("reviewPlan()", () => {
@@ -200,6 +278,20 @@ describe("Dewey", () => {
       const dewey2 = new Dewey(join(tmpDir, "context.json"));
       const brief = await dewey2.brief("send an email");
       expect(brief.relevantPreferences).toContain("prefer_formal_tone");
+    });
+
+    it("routes response-style signals into communication preferences", async () => {
+      await dewey.observe({
+        taskType: "work",
+        taskSummary: "Explain code",
+        timestamp: new Date().toISOString(),
+        verdict: "PASS",
+        preferencesApplied: [],
+        newSignals: ["prefer_bullets"],
+      });
+
+      const ctx = await new ContextStore(join(tmpDir, "context.json")).load();
+      expect(ctx.warm.learnedPreferences.communication).toContain("prefer_bullets");
     });
 
     it("does not throw on empty newSignals", async () => {

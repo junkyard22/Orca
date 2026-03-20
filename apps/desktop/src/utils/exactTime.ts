@@ -56,6 +56,72 @@ export interface ExactTimeResult {
   isoString: string;
 }
 
+type TimeComponents = ExactTimeResult['components'];
+
+function getUtcComponents(date: Date): Omit<TimeComponents, 'millisecond'> {
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+    hour: date.getUTCHours(),
+    minute: date.getUTCMinutes(),
+    second: date.getUTCSeconds(),
+    dayOfWeek: new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(date),
+  };
+}
+
+function getLocalComponents(date: Date): Omit<TimeComponents, 'millisecond'> {
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+    hour: date.getHours(),
+    minute: date.getMinutes(),
+    second: date.getSeconds(),
+    dayOfWeek: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(date),
+  };
+}
+
+function getTimeZoneComponents(date: Date, timeZone: string): Omit<TimeComponents, 'millisecond'> {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    weekday: 'long',
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(date);
+  const partMap = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value]),
+  );
+
+  return {
+    year: parseInt(partMap.year || '0', 10),
+    month: parseInt(partMap.month || '0', 10),
+    day: parseInt(partMap.day || '0', 10),
+    hour: parseInt(partMap.hour || '0', 10),
+    minute: parseInt(partMap.minute || '0', 10),
+    second: parseInt(partMap.second || '0', 10),
+    dayOfWeek: partMap.weekday || new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone }).format(date),
+  };
+}
+
+function formatIsoWallClock(components: TimeComponents, includeMilliseconds: boolean): string {
+  const pad = (num: number) => num.toString().padStart(2, '0');
+  const msPart = includeMilliseconds
+    ? `.${components.millisecond.toString().padStart(3, '0')}`
+    : '';
+
+  return `${components.year}-${pad(components.month)}-${pad(components.day)}T${pad(components.hour)}:${pad(components.minute)}:${pad(components.second)}${msPart}`;
+}
+
 /**
  * Get the exact current time with high precision
  * @param options - Configuration options for time formatting
@@ -86,57 +152,23 @@ export function getExactTime(options: ExactTimeOptions = {}): ExactTimeResult {
   } = options;
 
   const date = new Date();
-  
-  // Handle timezone conversion with proper error handling
-  let adjustedDate = date;
-  if (timeZone && Intl.DateTimeFormat().resolvedOptions().timeZone !== timeZone) {
+  let baseComponents: Omit<TimeComponents, 'millisecond'>;
+
+  if (timeZone) {
     try {
-      const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        fractionalSecondDigits: 3,
-        hour12: false
-      });
-      
-      const parts = formatter.formatToParts(date);
-      const partMap = Object.fromEntries(parts.map(p => [p.type, p.value]));
-      
-      // Parse components and create a new date
-      const year = parseInt(partMap.year || '0');
-      const month = parseInt(partMap.month || '1') - 1;
-      const day = parseInt(partMap.day || '1');
-      const hour = parseInt(partMap.hour || '0');
-      const minute = parseInt(partMap.minute || '0');
-      const second = parseInt(partMap.second || '0');
-      const millisecond = parseInt(partMap.fractionalSecondDigits?.substring(0, 3) || '0');
-      
-      adjustedDate = new Date(Date.UTC(year, month, day, hour, minute, second, millisecond));
+      baseComponents = getTimeZoneComponents(date, timeZone);
     } catch (error) {
-      // Proper error handling for invalid timezone
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.warn(`Invalid timezone '${timeZone}': ${errorMessage}, using local time`);
+      console.warn(`Invalid timezone '${timeZone}': ${errorMessage}, using ${useUTC ? 'UTC' : 'local'} time`);
+      baseComponents = useUTC ? getUtcComponents(date) : getLocalComponents(date);
     }
+  } else {
+    baseComponents = useUTC ? getUtcComponents(date) : getLocalComponents(date);
   }
 
-  // Get time components with proper handling for UTC/local selection
-  const getComponent = (method: keyof Date) => {
-    return useUTC ? (adjustedDate as any)[method]() : date[method]();
-  };
-
-  const components = {
-    year: getComponent('getFullYear'),
-    month: getComponent('getMonth') + 1,
-    day: getComponent('getDate'),
-    hour: getComponent('getHours'),
-    minute: getComponent('getMinutes'),
-    second: getComponent('getSeconds'),
-    millisecond: includeMilliseconds ? getComponent('getMilliseconds') : 0,
-    dayOfWeek: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(date)
+  const components: TimeComponents = {
+    ...baseComponents,
+    millisecond: includeMilliseconds ? date.getMilliseconds() : 0,
   };
 
   // Format the time based on requested format with proper error handling
@@ -148,9 +180,9 @@ export function getExactTime(options: ExactTimeOptions = {}): ExactTimeResult {
         return `${pad(components.month)}/${pad(components.day)}/${components.year} ${pad(components.hour)}:${pad(components.minute)}:${pad(components.second)}`;
       
       case 'iso':
-        return useUTC 
-          ? adjustedDate.toISOString()
-          : adjustedDate.toISOString().replace('Z', '');
+        return useUTC && !timeZone
+          ? (includeMilliseconds ? date.toISOString() : date.toISOString().replace(/\.\d{3}Z$/, 'Z'))
+          : formatIsoWallClock(components, includeMilliseconds);
       
       case 'human':
         const ampm = components.hour >= 12 ? 'PM' : 'AM';
@@ -159,7 +191,7 @@ export function getExactTime(options: ExactTimeOptions = {}): ExactTimeResult {
         return `${components.dayOfWeek}, ${components.month}/${components.day}/${components.year} ${timeStr}`;
       
       case 'timestamp':
-        return adjustedDate.getTime().toString();
+        return date.getTime().toString();
       
       case 'full':
       default:
@@ -169,11 +201,11 @@ export function getExactTime(options: ExactTimeOptions = {}): ExactTimeResult {
   };
 
   return {
-    date: adjustedDate,
+    date,
     formatted: formatTime(),
-    timestamp: adjustedDate.getTime(),
+    timestamp: date.getTime(),
     components,
-    isoString: adjustedDate.toISOString()
+    isoString: date.toISOString()
   };
 }
 

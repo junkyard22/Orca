@@ -397,6 +397,16 @@ describe("parseIntent", () => {
     }
   });
 
+  it("keeps read-only permissions when only mentioning a test script", () => {
+    const result = parseIntent(
+      "Read package.json and say whether a top-level test script exists",
+    );
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.permissions).toEqual(["read"]);
+    }
+  });
+
   it("includes write permission for 'create a file called notes.txt'", () => {
     const result = parseIntent("create a file called notes.txt");
     expect(result.kind).toBe("TASK");
@@ -434,6 +444,14 @@ describe("parseIntent", () => {
     expect(result.kind).toBe("TASK");
     if (result.kind === "TASK") {
       expect(result.spec.outputFormat).toBe("json");
+    }
+  });
+
+  it("does not treat .json filenames as a JSON output request", () => {
+    const result = parseIntent("Read package.json and tell me the project name");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.outputFormat).toBe("prose");
     }
   });
 

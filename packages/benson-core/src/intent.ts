@@ -130,22 +130,26 @@ function extractConstraints(message: string): Record<string, unknown> | undefine
 
 function extractPermissions(message: string): Permission[] {
   const permissions: Permission[] = ["read"];
+  const leadingVerb = extractLeadingVerb(message);
 
   const writeSignals = /\b(create|write|save|edit|modify|update|delete|remove|add|append)\b/i;
-  const shellSignals = /\b(run|execute|install|build|test|deploy|compile|start|stop)\b/i;
+  const shellSignals = /\b(run|execute|install|build|deploy|compile|start|stop)\b/i;
   const networkSignals = /\b(fetch|download|upload|request|call|api|url|http)\b/i;
 
   if (writeSignals.test(message)) permissions.push("write");
-  if (shellSignals.test(message)) permissions.push("shell");
+  if (shellSignals.test(message) || leadingVerb === "test") permissions.push("shell");
   if (networkSignals.test(message)) permissions.push("network");
 
   return permissions;
 }
 
 function extractOutputFormat(message: string): OutputFormat {
+  const requestsJsonOutput =
+    /\b(as|in)\s+json\b|\bjson\s+(format|output)\b|\b(return|respond|answer|reply)\s+(with\s+)?json\b|\bmachine[- ]readable\b|\bstructured output\b/i;
+
   if (/\b(bullet|list|points?)\b/i.test(message)) return "bullets";
   if (/\b(table|tabular|columns?)\b/i.test(message)) return "table";
-  if (/\b(json|structured|machine.readable)\b/i.test(message)) return "json";
+  if (requestsJsonOutput.test(message)) return "json";
   if (/\b(diff|patch|changes?)\b/i.test(message)) return "file_diff";
   if (/\b(code|function|class|script|implement)\b/i.test(message)) return "code";
   return "prose";

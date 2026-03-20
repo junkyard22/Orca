@@ -24,7 +24,7 @@ import type {
   WorkspaceContext,
 } from "@clawde/orca-core";
 import { Dewey } from "@clawde/dewey-core";
-import type { BrainPlan } from "@clawde/dewey-core";
+import type { BrainPlan, UserBrief } from "@clawde/dewey-core";
 import type { ExtendedOrcaToolService } from "./toolService.js";
 import { traceEvent } from "./tracerHooks.js";
 
@@ -137,14 +137,21 @@ export function createMaestroAdapter(): MaestroPort {
 
       // 4. Dewey pre-flight — brief the table before Brain routes.
       const brief = await dewey.brief(task.originalUserMessage);
+      ctx.emit?.({
+        type: "dewey:brief",
+        taskId: ctx.runId,
+        userName: brief.userName,
+        suggestedTone: brief.suggestedTone,
+        relevantPreferences: brief.relevantPreferences,
+        relevantContext: brief.relevantContext,
+      });
       traceEvent({ type: "dewey:brief", data: brief });
 
       // 5. Subagent decomposition — only at top level, only for multiStep tasks.
       //    planner_deep breaks the task into independent parallel subtasks.
       //    subagentDepth guard prevents recursive subagent spawning.
       //    DIRECT ROUTING: Skip decomposition for simple single-deliverable tasks.
-      const depth = ctx.subagentDepth ?? 0;
-      if (depth === 0 && orch.classification.multiStep && shouldDecompose(task.originalUserMessage)) {
+      if (shouldAttemptSubagentDecomposition(task, orch, ctx)) {
         const subtasks = await decomposeTask(task.originalUserMessage, ctx.llm, settings);
         if (subtasks !== null && subtasks.length > 1) {
           return runSubagentPool(task, subtasks, orch, ctx);
@@ -198,7 +205,7 @@ export function createMaestroAdapter(): MaestroPort {
       }
 
       // 7. Single-agent path.
-      const result = await runSingleAgent(task, role, isFallback, orch, ctx);
+      const result = await runSingleAgent(task, role, isFallback, orch, ctx, false, brief);
 
       // 8. Dewey post-flight observation.
       dewey.observe({
@@ -207,7 +214,7 @@ export function createMaestroAdapter(): MaestroPort {
         timestamp: new Date().toISOString(),
         verdict: result.toolEvents?.some((e) => !e.ok) ? "WARN" : "PASS",
         preferencesApplied: brief.relevantPreferences,
-        newSignals: [],
+        newSignals: deriveDeweySignals(task),
       }).catch((err: unknown) => {
         console.warn("[Dewey] Failed to record observation:", err);
       });
@@ -281,6 +288,55 @@ function pickCoreRole(
   return (firstRole as CoreRoleName) ?? "narrator";
 }
 
+function describeDeweySignal(signal: string): string {
+  switch (signal) {
+    case "prefer_brief":
+      return "Prefer brief responses.";
+    case "prefer_detailed":
+      return "Prefer detailed explanations when useful.";
+    case "prefer_formal_tone":
+      return "Prefer a formal tone.";
+    case "prefer_bullets":
+      return "Prefer bullet lists for structured answers.";
+    case "prefer_json":
+      return "Prefer JSON for structured output when appropriate.";
+    case "prefer_table":
+      return "Prefer tables for comparisons or structured data.";
+    default:
+      return signal.replace(/_/g, " ");
+  }
+}
+
+export function deriveDeweySignals(task: OrcaTaskSpec): string[] {
+  const message = task.originalUserMessage.toLowerCase();
+  const signals = new Set<string>();
+  const requestsJsonOutput =
+    task.outputFormat === "json" ||
+    /\b(as|in)\s+json\b|\bjson\s+(format|output)\b|\b(return|respond|answer|reply)\s+(with\s+)?json\b|\bmachine-readable\b|\bstructured output\b/.test(message);
+
+  if (/\bbrief\b|\bconcise\b|\bshort\b|\bquick summary\b/.test(message)) {
+    signals.add("prefer_brief");
+  }
+  if (/\bdetailed\b|\bthorough\b|\bin depth\b|\bstep[- ]by[- ]step\b/.test(message)) {
+    signals.add("prefer_detailed");
+  }
+  if (/\bformal\b|\bprofessionally\b|\bprofessional tone\b/.test(message)) {
+    signals.add("prefer_formal_tone");
+  }
+
+  if (task.outputFormat === "bullets" || /\bbullet(s)?\b|\blist\b/.test(message)) {
+    signals.add("prefer_bullets");
+  }
+  if (requestsJsonOutput) {
+    signals.add("prefer_json");
+  }
+  if (task.outputFormat === "table" || /\btable\b|\btabular\b|\bcolumns?\b/.test(message)) {
+    signals.add("prefer_table");
+  }
+
+  return [...signals];
+}
+
 // ---------------------------------------------------------------------------
 // Task prompt builder
 // ---------------------------------------------------------------------------
@@ -290,6 +346,7 @@ function buildTaskPrompt(
   role: string,
   isFallback: boolean,
   workspaceContext?: WorkspaceContext,
+  deweyBrief?: Pick<UserBrief, "suggestedTone" | "relevantPreferences">,
   isSubagent: boolean = false,
 ): string {
   const isRepair = task.intent === "repair";
@@ -309,8 +366,37 @@ function buildTaskPrompt(
     ...task.goals.map((g: string) => `- ${g}`),
   ];
 
+  if (task.permissions) {
+    const executionLimits: string[] = [];
+    if (!task.permissions.fileWrite) {
+      executionLimits.push("Read-only task: do not create, modify, or delete files.");
+    }
+    if (!task.permissions.shellExec) {
+      executionLimits.push("Do not run shell commands for this task.");
+    }
+    const allowedTools = Array.isArray(task.permissions.toolsAllowed)
+      ? task.permissions.toolsAllowed.filter((tool): tool is string => typeof tool === "string" && tool.length > 0)
+      : [];
+    if (allowedTools.length > 0) {
+      executionLimits.push(`Allowed tools: ${allowedTools.join(", ")}`);
+    }
+    if (executionLimits.length > 0) {
+      lines.push("", "### Execution Limits", ...executionLimits.map((line) => `- ${line}`));
+    }
+  }
+
   // ── Workspace context ──────────────────────────────────────────────────────
   // Gives the model grounding: which branch, what recently changed, etc.
+  if (deweyBrief) {
+    const preferenceLines = [
+      ...(deweyBrief.suggestedTone !== "casual" ? [`Suggested tone: ${deweyBrief.suggestedTone}`] : []),
+      ...deweyBrief.relevantPreferences.slice(0, 6).map(describeDeweySignal),
+    ];
+    if (preferenceLines.length > 0) {
+      lines.push("", "### User Preferences", ...preferenceLines.map((line) => `- ${line}`));
+    }
+  }
+
   if (workspaceContext) {
     const ws: string[] = [`cwd: ${workspaceContext.cwd}`];
     if (workspaceContext.gitBranch)        ws.push(`branch: ${workspaceContext.gitBranch}`);
@@ -372,9 +458,10 @@ function buildTaskPrompt(
 
     // ── Conversation history ───────────────────────────────────────────────
     // Rendered as readable dialogue so the model can resolve back-references.
-    if (Array.isArray(convHistory) && convHistory.length > 0) {
+    const conversationTurns = normalizeConversationHistory(convHistory);
+    if (conversationTurns.length > 0) {
       lines.push("", "### Conversation History");
-      for (const turn of convHistory as Array<{ user: string; assistant: string }>) {
+      for (const turn of conversationTurns) {
         lines.push(`**User:** ${turn.user}`);
         const preview = turn.assistant.length > 400
           ? `${turn.assistant.slice(0, 400)}…`
@@ -392,6 +479,58 @@ function buildTaskPrompt(
   return lines.join("\n");
 }
 
+export function normalizeConversationHistory(
+  history: unknown,
+): Array<{ user: string; assistant: string }> {
+  if (!Array.isArray(history)) return [];
+
+  const turns: Array<{ user: string; assistant: string }> = [];
+  let pendingUserMessage: string | undefined;
+
+  for (const entry of history) {
+    if (!entry || typeof entry !== "object") continue;
+
+    const record = entry as Record<string, unknown>;
+
+    if (typeof record["user"] === "string" && typeof record["assistant"] === "string") {
+      turns.push({ user: record["user"], assistant: record["assistant"] });
+      pendingUserMessage = undefined;
+      continue;
+    }
+
+    if (record["role"] === "user" && typeof record["content"] === "string") {
+      pendingUserMessage = record["content"];
+      continue;
+    }
+
+    if (
+      record["role"] === "assistant" &&
+      typeof record["content"] === "string" &&
+      pendingUserMessage !== undefined
+    ) {
+      turns.push({ user: pendingUserMessage, assistant: record["content"] });
+      pendingUserMessage = undefined;
+    }
+  }
+
+  return turns;
+}
+
+export function normalizeToolText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+
+  try {
+    const json = JSON.stringify(value, null, 2);
+    return typeof json === "string" ? json : String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Single-agent execution — the shared workhorse used both for top-level tasks
 // (when no decomposition fires) and for individual subagents.
@@ -404,6 +543,7 @@ async function runSingleAgent(
   orch: OrchestrationResult,
   ctx: OrcaRunCtx,
   isSubagent: boolean = false,
+  deweyBrief?: Pick<UserBrief, "suggestedTone" | "relevantPreferences">,
 ): Promise<OrcaMaestroResult> {
   // Subagents may carry a forcedRole in context (set by runSubagentPool).
   const effectiveRole = (
@@ -413,7 +553,7 @@ async function runSingleAgent(
   ) as RoleName;
 
   const systemPrompt = getRolePrompt(effectiveRole);
-  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext, isSubagent);
+  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext, deweyBrief, isSubagent);
 
   let outputText: string;
   let toolEvents: OrcaMaestroResult["toolEvents"] = [];
@@ -502,6 +642,26 @@ export interface DecomposedSubtask {
   exportName?: string;
   dependedOnBy?: string[];
   siblings?: string[];
+}
+
+export function shouldAttemptSubagentDecomposition(
+  task: OrcaTaskSpec,
+  orch: Pick<OrchestrationResult, "classification">,
+  ctx: Pick<OrcaRunCtx, "subagentDepth">,
+): boolean {
+  const depth = ctx.subagentDepth ?? 0;
+  const isReadOnly = Boolean(
+    task.permissions &&
+    !task.permissions.fileWrite &&
+    !task.permissions.shellExec,
+  );
+
+  return (
+    depth === 0 &&
+    !isReadOnly &&
+    orch.classification.multiStep &&
+    shouldDecompose(task.originalUserMessage)
+  );
 }
 
 /**
@@ -671,6 +831,8 @@ async function runSubagentPool(
       intent: agent.task,
       goals: [agent.task],
       constraints: task.constraints,
+      permissions: task.permissions,
+      outputFormat: task.outputFormat,
       context: { ...task.context, ...coordinationContext },
     };
 
@@ -941,15 +1103,17 @@ async function runAgentLoop(
       }
 
       const result = await tools.execute(call.tool, call.input);
+      const outputText = normalizeToolText(result.output);
+      const errorText = result.error === undefined ? undefined : normalizeToolText(result.error);
 
       // Miranda: after_tool_run gate
-      ctx.gate?.afterToolRun({ tool: call.tool, args: call.input }, { ok: result.ok, output: result.output });
+      ctx.gate?.afterToolRun({ tool: call.tool, args: call.input }, { ok: result.ok, output: outputText });
 
       toolEvents.push({
         tool: call.tool,
         ok: result.ok,
         summary: result.ok
-          ? `${call.tool}: ok (${result.output.length} chars)`
+          ? `${call.tool}: ok (${outputText.length} chars)`
           : `${call.tool}: failed — ${result.error ?? "unknown"}`,
         raw: call.input,
       });
@@ -964,10 +1128,10 @@ async function runAgentLoop(
       }
 
       console.error(
-        `[MaestroAdapter] tool:result ok=${result.ok}  chars=${result.output.length}`,
+        `[MaestroAdapter] tool:result ok=${result.ok}  chars=${outputText.length}`,
       );
 
-      conversation += formatToolResult(call.tool, result.ok, result.output, result.error);
+      conversation += formatToolResult(call.tool, result.ok, outputText, errorText);
 
       // Completion signal: after a successful write_file, tell the model the
       // task is done. Ask it to output the full written content so the user

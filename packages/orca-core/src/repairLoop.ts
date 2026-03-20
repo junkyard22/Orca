@@ -66,6 +66,8 @@ export async function handleRepairLoop(
         "Fix all issues identified in the quality check — produce the corrected output, not a description of fixes",
       ],
       constraints: originalTask.constraints,
+      permissions: originalTask.permissions,
+      outputFormat: originalTask.outputFormat,
       context: {
         ...originalTask.context,
         repair: {

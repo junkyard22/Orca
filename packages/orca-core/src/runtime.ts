@@ -11,7 +11,7 @@ import type {
 import type { PappyResult } from "@clawde/pappy-core";
 import type { RunRecord, ThoughtRecord, ToolEvent, FileChange } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
-import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
+import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
 import { handleRepairLoop } from "./repairLoop.js";
 
 function generateRunId(): string {
@@ -47,6 +47,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
   const emitter = new OrcaEmitter();
 
   async function executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult> {
+    const normalizedTaskSpec = normalizeTaskSpec(taskSpec);
+
     // ── Workspace snapshot (captured once, before any async work) ─────────
     const workspaceContext = deps.getWorkspaceContext?.();
 
@@ -55,7 +57,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       runId: generateRunId(),
       // Gate tools to only what permissions allow
       tools: tools && (() => {
-        const allowed = taskSpec.permissions?.toolsAllowed;
+        const allowed = normalizedTaskSpec.permissions?.toolsAllowed;
         if (!allowed) return tools; // no restrictions
         // Empty allow-list means no tools at all. Return undefined so ctx.tools
         // is falsy and the agent loop is skipped entirely — the LLM never sees
@@ -122,7 +124,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     });
     const unsubRepair = emitter.on("repair:start", () => { repairPasses++; });
 
-    emitter.emit({ type: "task:start", taskId, intent: taskSpec.intent });
+    emitter.emit({ type: "task:start", taskId, intent: normalizedTaskSpec.intent });
 
     // Default: always has a value after try/catch
     let result: OrcaExecutionResult = { status: "FAIL", summary: "Unknown error" };
@@ -133,7 +135,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       // ── 1. Maestro runs the task (attempt 0, not a repair) ──────────────
       //    Maestro uses ctx.llm (Miranda-backed) for all model calls.
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
-      const maestroResult = normalizeMaestroResult(await maestro.run(taskSpec, ctx));
+      const maestroResult = normalizeMaestroResult(await maestro.run(normalizedTaskSpec, ctx));
       persistedMaestroResult = maestroResult;
       const initialSpendUsd = maestroResult.metadata?.costUsd ?? 0;
       emitter.emit({ type: "maestro:done", taskId, attempt: 0, isRepair: false, hasOutput: !!maestroResult.outputText });
@@ -148,7 +150,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         };
       } else {
         // ── 2. Pappy evaluates ───────────────────────────────────────────────
-        const qcInput = buildPappyInput(taskSpec, maestroResult);
+        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult);
 
         const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
         if (beforeQcGate) {
@@ -203,7 +205,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           // so the fresh repair output replaces the initial (failed) attempt.
           emitter.emit({ type: "stream:reset", taskId });
           result = await handleRepairLoop(
-            taskSpec,
+            normalizedTaskSpec,
             qcResult,
             ctx,
             maestro,
@@ -217,7 +219,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           );
           if (result.artifacts) {
             persistedMaestroResult = normalizeMaestroResult(result.artifacts as OrcaMaestroResult);
-            persistedQcResult = pappy!.evaluate(buildPappyInput(taskSpec, persistedMaestroResult));
+            persistedQcResult = pappy!.evaluate(buildPappyInput(normalizedTaskSpec, persistedMaestroResult));
           }
         }
       }
@@ -271,7 +273,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         {
           id: taskId,
           createdAt: new Date(startTime).toISOString(),
-          intent: taskSpec.intent,
+          intent: normalizedTaskSpec.intent,
           role: persistedMaestroResult?.metadata?.role,
           status: result.status,
           stoppedBecause: persistedMaestroResult?.metadata?.stoppedBecause,

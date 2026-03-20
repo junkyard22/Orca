@@ -230,6 +230,26 @@ describe("evaluateWithPappy — receipt ledger", () => {
     );
     expect(entry?.status).toBe("PROVED");
   });
+
+  it("does not misread 'test script exists' as a unit-test requirement", () => {
+    const result = evaluateWithPappy({
+      task: "Read package.json and answer with 3 bullets.",
+      goals: [
+        "Read the repository root package.json and answer with exactly 3 bullets: the project name, whether a top-level test script exists, and how many workspaces are declared.",
+      ],
+      outputText: [
+        "- Project name: orca",
+        "- Top-level test script exists: Yes",
+        "- Number of workspaces declared: 2",
+      ].join("\n"),
+      toolEvents: [
+        { tool: "read_file", ok: true, summary: "read_file: ok (536 chars)" },
+      ],
+    });
+
+    expect(result.receipt_ledger.find((e) => e.ref === "AC1")?.status).toBe("PROVED");
+    expect(result.issues.some((issue) => issue.code === "CORE_GOAL_MISSING")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

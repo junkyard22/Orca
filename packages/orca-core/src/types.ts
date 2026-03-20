@@ -17,7 +17,7 @@ import type { RoleName } from "maestro-core";
 // in the app shell without an explicit import.
 // ---------------------------------------------------------------------------
 
-export type OutputFormat = "code" | "diff" | "json" | "prose";
+export type OutputFormat = "bullets" | "table" | "code" | "diff" | "file_diff" | "json" | "prose";
 
 export interface TaskPermissions {
   fileRead:     boolean;

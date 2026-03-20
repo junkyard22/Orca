@@ -8,6 +8,9 @@ const DEFAULT_CONTEXT_PATH = join(homedir(), '.orca', 'userContext.json');
 
 type TaskType = 'scheduling' | 'food' | 'communication' | 'work' | 'general';
 
+const COMMUNICATION_SIGNAL_PATTERN =
+  /\b(brief|short|detailed|formal|casual|bullet|bullets|json|table|tabular|prose)\b/;
+
 function detectTaskType(task: string): TaskType {
   const t = task.toLowerCase();
   if (/scheduling|calendar|planning/.test(t)) return 'scheduling';
@@ -20,11 +23,25 @@ function detectTaskType(task: string): TaskType {
 function detectTone(
   communicationPrefs: string[],
 ): UserBrief['suggestedTone'] {
-  const joined = communicationPrefs.join(' ').toLowerCase();
+  const joined = communicationPrefs
+    .map((signal) => signal.toLowerCase().replace(/[_-]+/g, ' '))
+    .join(' ');
   if (/\bbrief\b|\bshort\b/.test(joined)) return 'brief';
   if (/\bdetailed\b/.test(joined)) return 'detailed';
   if (/\bformal\b/.test(joined)) return 'formal';
   return 'casual';
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function detectSignalCategory(signal: string, taskType: string): TaskType {
+  const normalized = signal.toLowerCase().replace(/[_-]+/g, ' ');
+  if (COMMUNICATION_SIGNAL_PATTERN.test(normalized)) {
+    return 'communication';
+  }
+  return detectTaskType(taskType);
 }
 
 export class Dewey {
@@ -41,14 +58,18 @@ export class Dewey {
     const taskType = detectTaskType(task);
 
     const { preferences, notes, availableApps } = this.store.getRelevantContext(taskType);
-    const tone = detectTone(context.warm.preferences.communication);
+    const relevantPreferences = uniqueStrings([
+      ...preferences,
+      ...context.warm.learnedPreferences.communication,
+    ]);
+    const tone = detectTone(context.warm.learnedPreferences.communication);
 
     console.log(`[Dewey] Briefing for task type "${taskType}", tone "${tone}"`);
 
     return {
       userName: context.hot.name,
       timezone: context.hot.timezone,
-      relevantPreferences: preferences,
+      relevantPreferences,
       relevantContext: notes,
       availableApps,
       suggestedTone: tone,
@@ -70,9 +91,8 @@ export class Dewey {
 
     // 2. Add new signals to warm context
     if (run.newSignals.length > 0) {
-      const taskType = detectTaskType(run.taskType);
       for (const signal of run.newSignals) {
-        await this.store.addSignal(signal, taskType);
+        await this.store.addSignal(signal, detectSignalCategory(signal, run.taskType));
       }
     }
   }

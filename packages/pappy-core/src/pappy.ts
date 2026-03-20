@@ -152,7 +152,15 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
   }
   
   // Check for unit test requirement
-  if (containsTerm("test") || containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha") || containsTerm("spec")) {
+  const mentionsTestingFramework =
+    containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha") || containsTerm("spec");
+  const explicitlyRequestsTests =
+    /\b(unit|integration|e2e|end-to-end)\s+tests?\b/i.test(ac.text) ||
+    /\b(test file|spec file|test suite|coverage)\b/i.test(ac.text) ||
+    /\b(add|create|write|include|implement|generate)\b[\w\s]{0,20}\btests?\b/i.test(ac.text) ||
+    /\btests?\s+(for|covering|cover|coverage|suite)\b/i.test(ac.text);
+
+  if (mentionsTestingFramework || explicitlyRequestsTests) {
     const hasTestFramework = containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha");
     const hasTestFunctions = containsTerm("describe") || containsTerm("it") || containsTerm("expect") || searchText.includes("test(");
     const hasTestFile = (input.filesChanged ?? []).some(f => f.path.includes(".test.") || f.path.includes(".spec."));
