@@ -1476,12 +1476,12 @@ document.getElementById("sidebar-btn-history").addEventListener("click",  () => 
 
 // ── Theme toggle ──────────────────────────────────────────────────────────
 
-// Titlebar: tight-cropped _only_ variants (small, clean)
+// Titlebar / compact brand variants
 const BRAND_DARK  = "orca-logo-dark.png";
 const BRAND_LIGHT = "orca-logo-light.png";
 // Welcome screen: padded variants (more canvas, no clipping)
-const WELCOME_DARK  = "orca-welcome-dark.png";
-const WELCOME_LIGHT = "orca-welcome-light.png";
+const WELCOME_DARK  = "orca-welcome-dark-r.png";
+const WELCOME_LIGHT = "orca-welcome-light-r.png";
 
 function setThemeLogos(isLight) {
   const brand   = document.getElementById("logo-brand");

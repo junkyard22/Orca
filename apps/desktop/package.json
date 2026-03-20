@@ -37,12 +37,19 @@
     "directories": {
       "output": "release"
     },
+    "extraResources": [
+      {
+        "from": "orca.ico",
+        "to": "orca.ico"
+      }
+    ],
     "files": [
       "dist-main/**",
       "renderer/**",
       "!**/*.map"
     ],
     "win": {
+      "icon": "orca.ico",
       "target": [
         {
           "target": "nsis",
@@ -62,7 +69,9 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "orca.ico",
+      "uninstallerIcon": "orca.ico"
     }
   }
 }

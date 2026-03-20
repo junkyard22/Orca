@@ -501,6 +501,12 @@ function initOrca(s: OrcaSettings): string | null {
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
+function getWindowIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "orca.ico")
+    : join(__dirname, "..", "orca.ico");
+}
+
 function createTray(): void {
   // Use the light-mark PNG explicitly (white mark on transparent bg) rather
   // than inheriting from the window ICO. Crop to square then resize to 16×16
@@ -565,7 +571,7 @@ function createWindow(): void {
     hasShadow:       true,
     show:            false,
     center:          true,
-    icon:            join(__dirname, "..", "orca.ico"),
+    icon:            getWindowIconPath(),
     webPreferences: {
       preload:          join(__dirname, "preload.js"),
       nodeIntegration:  false,

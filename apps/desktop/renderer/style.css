@@ -179,12 +179,10 @@ body {
 }
 
 .welcome-logo {
-  width: 96px;
-  height: 96px;
+  width: 110px;
+  height: 110px;
   object-fit: contain;
-  overflow: visible;
   animation: logo-float 4s ease-in-out infinite;
-  position: relative;
 }
 
 @keyframes logo-float {
