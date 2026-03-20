@@ -40,6 +40,15 @@ import type {
   RoleName,
   DecomposeDecision,
 } from "maestro-core";
+import {
+  getAuthView,
+  saveAuthConfig,
+  verifyAppPassword,
+} from "./auth";
+import type {
+  LocalAuthView,
+  SaveLocalAuthInput,
+} from "./auth";
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
@@ -49,6 +58,10 @@ type AgentTool = {
   name: string;
   description: string;
   execute: (input: Record<string, unknown>, context: { workspaceRoot?: string; runId?: string }) => Promise<{ ok: boolean; output: string; error?: string }>;
+};
+
+type AppAuthStatus = LocalAuthView & {
+  locked: boolean;
 };
 
 function normalizeConversationHistory(rawHistory: unknown): Message[] {
@@ -311,6 +324,12 @@ let benson: BensonHandle | null = null;
 let store: SqliteStore | null = null;
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 let dewey: InstanceType<typeof Dewey> | null = null;
+let activeAbortResolve: ((error?: string) => void) | null = null;
+let appAuthStatus: AppAuthStatus = {
+  enabled: false,
+  hasPassword: false,
+  locked: false,
+};
 
 function buildAdapterForProvider(
   provider: ProviderEntry,
@@ -501,6 +520,36 @@ function initOrca(s: OrcaSettings): string | null {
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
+function emitAuthStatus(): void {
+  win?.webContents.send("auth-status", appAuthStatus);
+}
+
+function deriveAuthStatus(locked = appAuthStatus.locked): AppAuthStatus {
+  const view = getAuthView();
+  return {
+    ...view,
+    locked: view.enabled && view.hasPassword ? locked : false,
+  };
+}
+
+function setAppAuthStatus(next: AppAuthStatus): AppAuthStatus {
+  appAuthStatus = next;
+  emitAuthStatus();
+  return appAuthStatus;
+}
+
+function refreshAuthStatus(locked = appAuthStatus.locked): AppAuthStatus {
+  return setAppAuthStatus(deriveAuthStatus(locked));
+}
+
+function isAppLocked(): boolean {
+  return appAuthStatus.locked;
+}
+
+function lockedError(message = "Orca is locked. Unlock the app to continue."): string {
+  return message;
+}
+
 function getWindowIconPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, "orca.ico")
@@ -588,6 +637,7 @@ function createWindow(): void {
     const settings = loadSettings();
     const err = initOrca(settings);
     win!.webContents.send("init-status", { ok: err === null, error: err });
+    emitAuthStatus();
   });
 
   // Intercept close → hide to tray instead of destroying the window.
@@ -617,6 +667,34 @@ ipcMain.on("win:close",    () => {
 // "tool:request" event to the renderer and blocks until the user responds.
 const pendingApprovals = new Map<string, (approved: boolean) => void>();
 
+function resolvePendingApprovals(approved: boolean): void {
+  for (const resolve of pendingApprovals.values()) {
+    resolve(approved);
+  }
+  pendingApprovals.clear();
+}
+
+function lockApp(): AppAuthStatus {
+  resolvePendingApprovals(false);
+  if (activeAbortResolve) {
+    activeAbortResolve("Locked.");
+    activeAbortResolve = null;
+  }
+  return refreshAuthStatus(true);
+}
+
+function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: false; error: string } {
+  if (!appAuthStatus.enabled || !appAuthStatus.hasPassword) {
+    return { ok: false, error: "App lock is not enabled." };
+  }
+
+  if (!verifyAppPassword(password)) {
+    return { ok: false, error: "Incorrect password." };
+  }
+
+  return { ok: true, auth: refreshAuthStatus(false) };
+}
+
 ipcMain.on("tool:approve", (_ev, { id, approved }: { id: string; approved: boolean }) => {
   pendingApprovals.get(id)?.(approved);
   pendingApprovals.delete(id);
@@ -630,6 +708,10 @@ export function requestToolApproval(
   tool: string,
   args: Record<string, unknown>,
 ): Promise<boolean> {
+  if (isAppLocked()) {
+    return Promise.resolve(false);
+  }
+
   return new Promise((resolve) => {
     const id = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     pendingApprovals.set(id, resolve);
@@ -644,11 +726,38 @@ export function requestToolApproval(
   });
 }
 
-ipcMain.handle("settings:get", () => loadSettings());
+ipcMain.handle("auth:status", () => appAuthStatus);
+
+ipcMain.handle("auth:unlock", (_ev, password: string) => unlockApp(String(password ?? "")));
+
+ipcMain.handle("auth:lock", () => lockApp());
+
+ipcMain.handle("auth:save", (_ev, input: SaveLocalAuthInput) => {
+  if (isAppLocked()) {
+    return { ok: false, error: lockedError("Unlock Orca before changing the app lock.") };
+  }
+
+  const result = saveAuthConfig(input);
+  if (!result.ok) {
+    return result;
+  }
+
+  setAppAuthStatus({
+    ...result.auth,
+    locked: false,
+  });
+  return result;
+});
+
+ipcMain.handle("settings:get", () => {
+  if (isAppLocked()) return null;
+  return loadSettings();
+});
 
 // ── Workspace folder picker ────────────────────────────────────────────────
 
 ipcMain.handle("workspace:select", async () => {
+  if (isAppLocked()) return "";
   if (!win) return "";
   const result = await dialog.showOpenDialog(win, {
     title:      "Select workspace folder",
@@ -708,6 +817,10 @@ async function fetchModelsFromProvider(
 }
 
 ipcMain.handle("models:fetch", async (_ev, p: { type: string; baseUrl: string; apiKey: string }) => {
+  if (isAppLocked()) {
+    return { ok: false, error: lockedError() };
+  }
+
   try {
     const models = await fetchModelsFromProvider(p);
     return { ok: true, models };
@@ -717,6 +830,10 @@ ipcMain.handle("models:fetch", async (_ev, p: { type: string; baseUrl: string; a
 });
 
 ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
+  if (isAppLocked()) {
+    return { ok: false, error: lockedError("Unlock Orca before saving settings.") };
+  }
+
   try {
     saveSettings(s);
     const err = initOrca(s);
@@ -730,16 +847,22 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
 // ── Session history ────────────────────────────────────────────────────────
 
 ipcMain.handle("sessions:list", async () => {
+  if (isAppLocked()) return [];
   if (!store) return [];
   return store.getRecentRuns(30);
 });
 
 ipcMain.handle("session:load", async (_ev, id: string) => {
+  if (isAppLocked()) return null;
   if (!store) return null;
   return store.getRun(id);
 });
 
 ipcMain.handle("session:delete", async (_ev, id: string) => {
+  if (isAppLocked()) {
+    return { ok: false, error: lockedError() };
+  }
+
   if (!store) return { ok: false, error: "Store not initialized" };
   try {
     await store.deleteRun(id);
@@ -750,8 +873,6 @@ ipcMain.handle("session:delete", async (_ev, id: string) => {
 });
 
 // ── Abort control for the active task ──────────────────────────────────────
-let activeAbortResolve: (() => void) | null = null;
-
 ipcMain.on("task:abort", () => {
   if (activeAbortResolve) {
     console.log("[Orca] ✖ task:abort requested by user");
@@ -761,6 +882,9 @@ ipcMain.on("task:abort", () => {
 });
 
 ipcMain.handle("send-message", async (_ev, text: string) => {
+  if (isAppLocked()) {
+    return { ok: false, error: lockedError() };
+  }
   if (!benson || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
@@ -771,7 +895,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
 
   // Build a promise that resolves when the user hits Stop.
   const abortPromise = new Promise<{ ok: false; error: string }>((resolve) => {
-    activeAbortResolve = () => resolve({ ok: false, error: "Stopped." });
+    activeAbortResolve = (error = "Stopped.") => resolve({ ok: false, error });
   });
 
   const EVENT_TYPES: OrcaEventType[] = [
@@ -843,6 +967,7 @@ if (!gotLock) {
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
   app.whenReady().then(() => {
+    refreshAuthStatus(true);
     createTray();
     createWindow();
     app.on("activate", () => {

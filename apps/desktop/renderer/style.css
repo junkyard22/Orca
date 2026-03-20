@@ -70,6 +70,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  position: relative;
 }
 
 /* ── Title bar ──────────────────────────────────────────────────────────── */
@@ -802,6 +803,11 @@ body {
   flex: 1;
   min-width: 0;
 }
+.auth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
 .btn-pick-workspace {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1144,6 +1150,92 @@ body {
 }
 .settings-status.err {
   color: #fca5a5;
+}
+
+#auth-overlay {
+  position: absolute;
+  inset: 44px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top, rgba(59,130,246,0.12), transparent 32%),
+    rgba(15,15,15,0.88);
+  backdrop-filter: blur(10px);
+  z-index: 20;
+}
+
+.auth-card {
+  width: min(100%, 420px);
+  background: rgba(23,23,23,0.96);
+  border: 1px solid rgba(59,130,246,0.18);
+  border-radius: 18px;
+  padding: 28px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.42);
+}
+
+.auth-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.auth-title {
+  font-size: 28px;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  margin-bottom: 10px;
+}
+
+.auth-copy {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin-bottom: 18px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-error {
+  font-size: 12px;
+  color: #fca5a5;
+  min-height: 16px;
+}
+
+.auth-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+body.light #auth-overlay {
+  background:
+    radial-gradient(circle at top, rgba(37,99,235,0.08), transparent 32%),
+    rgba(245,245,245,0.88);
+}
+
+body.light .auth-card {
+  background: rgba(255,255,255,0.96);
+  border-color: rgba(37,99,235,0.16);
+  box-shadow: 0 24px 60px rgba(15,23,42,0.12);
+}
+
+@media (max-width: 720px) {
+  .auth-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-card {
+    padding: 22px;
+  }
 }
 
 /* ── Role item / fallback rows ───────────────────────────────────────────── */

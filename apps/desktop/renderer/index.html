@@ -51,6 +51,12 @@
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
           </button>
+          <button class="win-btn hidden" id="btn-lock" title="Lock app">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="11" width="14" height="10" rx="2"/>
+              <path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+            </svg>
+          </button>
           <button class="win-btn" id="btn-minimize" title="Minimize">
             <svg width="11" height="2" viewBox="0 0 11 2" fill="none">
               <path
@@ -235,6 +241,57 @@
               </div>
             </div>
 
+            <div class="settings-section">
+              <div class="settings-section-header">
+                <span class="settings-section-title">Privacy &amp; App Lock</span>
+              </div>
+              <div class="setting-group setting-group--row">
+                <div>
+                  <label class="setting-label">Local app lock</label>
+                  <p class="setting-hint">
+                    Keeps saved settings and chat history behind a local password.
+                    The password stays on this device and is never sent to providers.
+                  </p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="set-auth-enabled" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <div class="setting-group mt-14">
+                <label class="setting-label" for="set-auth-current">Current password</label>
+                <p class="setting-hint">
+                  Required to change or disable an existing app lock.
+                </p>
+                <input
+                  type="password"
+                  id="set-auth-current"
+                  class="setting-input"
+                  autocomplete="current-password"
+                />
+              </div>
+              <div class="auth-grid mt-14">
+                <div class="setting-group">
+                  <label class="setting-label" for="set-auth-new">New password</label>
+                  <input
+                    type="password"
+                    id="set-auth-new"
+                    class="setting-input"
+                    autocomplete="new-password"
+                  />
+                </div>
+                <div class="setting-group">
+                  <label class="setting-label" for="set-auth-confirm">Confirm password</label>
+                  <input
+                    type="password"
+                    id="set-auth-confirm"
+                    class="setting-input"
+                    autocomplete="new-password"
+                  />
+                </div>
+              </div>
+            </div>
+
             <button class="save-btn" id="btn-save-settings" type="button">
               Save &amp; Apply
             </button>
@@ -253,6 +310,27 @@
       </div>
 
       <!-- ── Input area ─────────────────────────────────────────────────── -->
+      <div id="auth-overlay" class="hidden">
+        <div class="auth-card">
+          <div class="auth-kicker">Local app lock</div>
+          <h1 class="auth-title">Unlock Orca</h1>
+          <p class="auth-copy">
+            Saved settings and history stay local. Your unlock password never leaves this device.
+          </p>
+          <form id="auth-form" class="auth-form">
+            <label class="setting-label" for="auth-password">Password</label>
+            <input
+              id="auth-password"
+              class="setting-input"
+              type="password"
+              autocomplete="current-password"
+            />
+            <p class="auth-error hidden" id="auth-error"></p>
+            <button class="save-btn auth-submit" id="btn-auth-unlock" type="submit">Unlock</button>
+          </form>
+        </div>
+      </div>
+
       <div id="input-wrap">
         <!-- Attachment preview bar — hidden until files are attached -->
         <div id="attachments-bar"></div>

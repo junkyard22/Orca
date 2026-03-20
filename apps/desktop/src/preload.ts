@@ -1,10 +1,15 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { LocalAuthView, SaveLocalAuthInput, SaveLocalAuthResult } from "./auth";
 
 export type OrcaEventData = Record<string, unknown>;
 export type BensonReply  = { kind: "CLARIFY" | "RESULT"; text: string; options?: string[] };
 export type SendResult   = { ok: boolean; reply?: BensonReply; error?: string };
 export type InitStatus   = { ok: boolean; error?: string | null };
 export type SaveResult   = { ok: boolean; error?: string };
+export type AppAuthStatus = LocalAuthView & { locked: boolean };
+export type UnlockResult =
+  | { ok: true; auth: AppAuthStatus }
+  | { ok: false; error: string };
 
 export type ProviderEntry = {
   id:      string;
@@ -56,11 +61,29 @@ contextBridge.exposeInMainWorld("orca", {
     ipcRenderer.on("init-status", (_, s: InitStatus) => cb(s));
   },
 
-  getSettings: (): Promise<OrcaSettings> =>
+  getSettings: (): Promise<OrcaSettings | null> =>
     ipcRenderer.invoke("settings:get"),
 
   saveSettings: (s: OrcaSettings): Promise<SaveResult> =>
     ipcRenderer.invoke("settings:save", s),
+
+  getAuthStatus: (): Promise<AppAuthStatus> =>
+    ipcRenderer.invoke("auth:status"),
+
+  onAuthStatus: (cb: (s: AppAuthStatus) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, s: AppAuthStatus) => cb(s);
+    ipcRenderer.on("auth-status", handler);
+    return () => ipcRenderer.removeListener("auth-status", handler);
+  },
+
+  unlock: (password: string): Promise<UnlockResult> =>
+    ipcRenderer.invoke("auth:unlock", password),
+
+  lock: (): Promise<AppAuthStatus> =>
+    ipcRenderer.invoke("auth:lock"),
+
+  saveAuthConfig: (input: SaveLocalAuthInput): Promise<SaveLocalAuthResult> =>
+    ipcRenderer.invoke("auth:save", input),
 
   minimize: (): void => ipcRenderer.send("win:minimize"),
   close:    (): void => ipcRenderer.send("win:close"),

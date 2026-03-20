@@ -8,11 +8,16 @@
 if (!window.orca) {
   window.orca = {
     onInitStatus:    () => {},
+    onAuthStatus:    () => () => {},
     onOrcaEvent:     () => () => {},
     onToolRequest:   () => () => {},
     sendMessage:     async () => ({ ok: false, error: "No Electron context" }),
     getSettings:     async () => ({ providers: [], roles: {}, budgetUsd: 0.10, maxRepairPasses: 2, verbose: false, workspaceRoot: "" }),
     saveSettings:    async () => ({ ok: false, error: "No Electron context" }),
+    getAuthStatus:   async () => ({ enabled: false, hasPassword: false, locked: false }),
+    unlock:          async () => ({ ok: false, error: "No Electron context" }),
+    lock:            async () => ({ enabled: false, hasPassword: false, locked: false }),
+    saveAuthConfig:  async () => ({ ok: false, error: "No Electron context" }),
     minimize:        () => {},
     close:           () => {},
     approveToolCall: () => {},
@@ -42,10 +47,19 @@ const attachBar     = document.getElementById("attachments-bar");
 const sidebar       = document.getElementById("sidebar");
 const sessionList   = document.getElementById("session-list");
 const topbarTitle   = document.getElementById("topbar-title");
+const lockBtn       = document.getElementById("btn-lock");
+const authOverlay   = document.getElementById("auth-overlay");
+const authForm      = document.getElementById("auth-form");
+const authPassword  = document.getElementById("auth-password");
+const authError     = document.getElementById("auth-error");
 
 // ── State ─────────────────────────────────────────────────────────────────
 
 let busy = false;
+let initKnown = false;
+let initState = { ok: false, error: null };
+let authKnown = false;
+let authState = { enabled: false, hasPassword: false, locked: false };
 
 // ── Pending file attachments ───────────────────────────────────────────────
 // Each entry: { name, type, content, dataUrl?, isImage }
@@ -69,7 +83,145 @@ const toolCallCards = new Map();
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
-orca.onInitStatus((s) => {
+function clearAuthError() {
+  authError.textContent = "";
+  authError.classList.add("hidden");
+}
+
+function showAuthError(message) {
+  authError.textContent = message;
+  authError.classList.remove("hidden");
+}
+
+function canUseApp() {
+  return initKnown && initState.ok && authKnown && !authState.locked;
+}
+
+function syncIdleStatus() {
+  if (busy) return;
+  if (authKnown && authState.locked) {
+    setStatus("locked", false);
+    return;
+  }
+  if (!authKnown) {
+    setStatus("checking lock…", false);
+    return;
+  }
+  if (initKnown && initState.ok) {
+    setStatus("ready", false);
+    return;
+  }
+  if (initKnown) {
+    setStatus("setup required", false);
+    return;
+  }
+  setStatus("starting…", false);
+}
+
+function syncComposerState() {
+  setInputEnabled(!busy && canUseApp());
+  if (lockBtn) {
+    lockBtn.classList.toggle("hidden", !authKnown || !authState.enabled || authState.locked);
+  }
+}
+
+function focusUnlock() {
+  setTimeout(() => authPassword.focus(), 0);
+}
+
+function applyAuthStatus(status) {
+  authKnown = true;
+  authState = {
+    enabled: !!status?.enabled,
+    hasPassword: !!status?.hasPassword,
+    locked: !!status?.locked,
+  };
+
+  authOverlay.classList.toggle("hidden", !authState.locked);
+
+  if (authState.locked) {
+    settingsView.style.display = "none";
+    chatView.style.display = "flex";
+    pendingAttachments.splice(0);
+    renderAttachmentBar();
+    authPassword.value = "";
+    clearAuthError();
+    focusUnlock();
+  }
+
+  syncComposerState();
+  syncIdleStatus();
+  if (!authState.locked && !busy && settingsView.style.display !== "flex") {
+    inputEl.focus();
+  }
+}
+
+function applyInitStatus(s) {
+  return handleInitStatus(s);
+  initKnown = true;
+  initState = { ok: !!s.ok, error: s.error ?? null };
+
+  if (s.ok) {
+    const sysMsgs = Array.from(messages.querySelectorAll(".sys-msg"));
+    const hasRealMsgs = Array.from(messages.children).some(el => !el.classList.contains("sys-msg"));
+    if (!hasRealMsgs && sysMsgs.length) {
+      sysMsgs.forEach(el => el.remove());
+    }
+    if (!messages.hasChildNodes()) {
+      welcome.style.display  = "";
+      messages.style.display = "none";
+    }
+  } else {
+    setStatus2.textContent = authResult.auth.enabled
+      ? `App lock saved, but settings failed: ${result.error ?? "Save failed."}`
+      : result.error ?? "Save failed.";
+    setStatus2.className   = "settings-status err";
+    return;
+    const existing = messages.querySelector(".sys-msg.warn");
+    const msg = s.error ?? "Initialization failed. Click âš™ Settings to configure.";
+    if (existing) {
+      existing.textContent = msg;
+    } else {
+      appendSys(msg, "warn");
+    }
+  }
+
+  syncComposerState();
+  syncIdleStatus();
+}
+
+function handleInitStatus(s) {
+  initKnown = true;
+  initState = { ok: !!s.ok, error: s.error ?? null };
+
+  if (s.ok) {
+    const sysMsgs = Array.from(messages.querySelectorAll(".sys-msg"));
+    const hasRealMsgs = Array.from(messages.children).some((el) => !el.classList.contains("sys-msg"));
+    if (!hasRealMsgs && sysMsgs.length) {
+      sysMsgs.forEach((el) => el.remove());
+    }
+    if (!messages.hasChildNodes()) {
+      welcome.style.display = "";
+      messages.style.display = "none";
+    }
+  } else {
+    const existing = messages.querySelector(".sys-msg.warn");
+    const msg = s.error ?? "Initialization failed. Click Settings to configure.";
+    if (existing) {
+      existing.textContent = msg;
+    } else {
+      appendSys(msg, "warn");
+    }
+  }
+
+  syncComposerState();
+  syncIdleStatus();
+}
+
+orca.onInitStatus(handleInitStatus);
+if (false) orca.onInitStatus((s) => {
+  applyInitStatus(s);
+  return;
   if (s.ok) {
     setInputEnabled(true);
     setStatus("ready", false);
@@ -96,6 +248,15 @@ orca.onInitStatus((s) => {
     }
   }
 });
+
+orca.onAuthStatus(applyAuthStatus);
+orca.getAuthStatus().then(applyAuthStatus).catch(() => {
+  authKnown = true;
+  syncComposerState();
+  syncIdleStatus();
+});
+syncComposerState();
+syncIdleStatus();
 
 orca.onOrcaEvent((e) => {
   // Role selection — cache it and annotate the thinking indicator.
@@ -185,6 +346,28 @@ function setStatus(text, active = false) {
 }
 
 function setInputEnabled(enabled) {
+  inputEl.disabled   = !enabled;
+  attachBtn.disabled = !enabled;
+
+  if (busy) {
+    sendBtn.disabled = false;
+    sendBtn.classList.add("is-running");
+    sendBtn.title = "Stop";
+  } else {
+    sendBtn.classList.remove("is-running");
+    sendBtn.disabled = !enabled;
+    if (authKnown && authState.locked) {
+      sendBtn.title = "Unlock Orca";
+      inputEl.placeholder = "Unlock Orca to continue…";
+    } else if (initKnown && !initState.ok) {
+      sendBtn.title = "Complete setup first";
+      inputEl.placeholder = "Open Settings to finish setup…";
+    } else {
+      sendBtn.title = "Send  (Enter)";
+      inputEl.placeholder = "Ask Orca anything…";
+    }
+  }
+  return;
   inputEl.disabled   = !enabled;
   attachBtn.disabled = !enabled;
   // While running, morph send→stop; while idle, revert.
@@ -581,6 +764,14 @@ async function sendMessage() {
   const hasAttachments = pendingAttachments.length > 0;
   if (!text && !hasAttachments) return;
   if (busy) return;
+  if (!canUseApp()) {
+    if (authKnown && authState.locked) {
+      showAuthError("Unlock Orca before sending a message.");
+      authOverlay.classList.remove("hidden");
+      focusUnlock();
+    }
+    return;
+  }
 
   busy = true;
   pipelineEventLog = [];
@@ -626,7 +817,7 @@ async function sendMessage() {
       const replyText = result.reply?.text ?? result.reply?.outputText ?? JSON.stringify(result.reply);
       const msgDiv = appendMsg("orca", cleanPipelineOutput(replyText));
       if (currentRole) attachRoleBadge(msgDiv, currentRole);
-    } else if (result.error === "Stopped.") {
+    } else if (result.error === "Stopped." || result.error === "Locked.") {
       appendSys("Stopped.", "info");
     } else {
       appendSys(result.error ?? "Unknown error.", "error");
@@ -651,9 +842,9 @@ async function sendMessage() {
     currentRole  = null;
     pendingPipelineSummary = null;   // discard if not yet rendered (abort / error path)
     busy = false;          // clear busy FIRST so late events won't override status
-    setStatus(finalStatus, false);
-    setInputEnabled(true);
-    inputEl.focus();
+    syncIdleStatus();
+    syncComposerState();
+    if (!authState.locked) inputEl.focus();
   }
 }
 
@@ -837,7 +1028,11 @@ const setRepairs = document.getElementById("set-repairs");
 const setVerbose      = document.getElementById("set-verbose");
 const setWorkspace    = document.getElementById("set-workspace");
 const setSaveBtn      = document.getElementById("btn-save-settings");
-const setStatus2 = document.getElementById("settings-status");
+const setStatus2      = document.getElementById("settings-status");
+const setAuthEnabled  = document.getElementById("set-auth-enabled");
+const setAuthCurrent  = document.getElementById("set-auth-current");
+const setAuthNew      = document.getElementById("set-auth-new");
+const setAuthConfirm  = document.getElementById("set-auth-confirm");
 
 // ── Provider & role metadata ───────────────────────────────────────────────
 
@@ -1146,16 +1341,35 @@ function updateModelDataLists() {
 
 // ── Open / close settings ──────────────────────────────────────────────────
 
+function resetAuthSettingsInputs() {
+  setAuthCurrent.value = "";
+  setAuthNew.value = "";
+  setAuthConfirm.value = "";
+}
+
 function openSettings() {
+  if (authKnown && authState.locked) {
+    showAuthError("Unlock Orca to open settings.");
+    authOverlay.classList.remove("hidden");
+    focusUnlock();
+    return;
+  }
+
   chatView.style.display     = "none";
   settingsView.style.display = "flex";
 
   orca.getSettings().then((s) => {
+    if (!s) {
+      closeSettings();
+      return;
+    }
     editingSettings        = JSON.parse(JSON.stringify(s)); // deep clone
     setBudget.value        = String(s.budgetUsd       ?? 0.10);
     setRepairs.value       = String(s.maxRepairPasses ?? 2);
     setVerbose.checked     = !!s.verbose;
     setWorkspace.value     = s.workspaceRoot ?? "";
+    setAuthEnabled.checked = !!authState.enabled;
+    resetAuthSettingsInputs();
     setStatus2.textContent = "";
     setStatus2.className   = "settings-status";
     // Prune stale model cache for providers that no longer exist in saved settings
@@ -1172,7 +1386,8 @@ function closeSettings() {
   settingsView.style.display = "none";
   chatView.style.display     = "flex";
   editingSettings = null;
-  inputEl.focus();
+  resetAuthSettingsInputs();
+  if (!authState.locked) inputEl.focus();
 }
 
 document.getElementById("btn-add-provider").addEventListener("click", () => {
@@ -1189,7 +1404,7 @@ document.getElementById("btn-add-provider").addEventListener("click", () => {
 });
 
 setSaveBtn.addEventListener("click", async () => {
-  if (!editingSettings) return;
+  if (!editingSettings || (authKnown && authState.locked)) return;
 
   const s = {
     ...editingSettings,
@@ -1203,10 +1418,38 @@ setSaveBtn.addEventListener("click", async () => {
   setStatus2.textContent = "Saving…";
   setStatus2.className   = "settings-status";
 
+  const authResult = await orca.saveAuthConfig({
+    enabled: setAuthEnabled.checked,
+    currentPassword: setAuthCurrent.value,
+    newPassword: setAuthNew.value,
+    confirmPassword: setAuthConfirm.value,
+  });
+
+  if (!authResult.ok) {
+    setSaveBtn.disabled = false;
+    setStatus2.textContent = authResult.error ?? "Could not save the app lock.";
+    setStatus2.className = "settings-status err";
+    return;
+  }
+
   const result = await orca.saveSettings(s);
   setSaveBtn.disabled = false;
+  resetAuthSettingsInputs();
+
+  if (!result.ok) {
+    setStatus2.textContent = authResult.auth.enabled
+      ? `App lock saved, but settings failed: ${result.error ?? "Save failed."}`
+      : result.error ?? "Save failed.";
+    setStatus2.className   = "settings-status err";
+    return;
+  }
 
   if (result.ok) {
+    setStatus2.textContent = authResult.auth.enabled
+      ? "Saved â€” settings updated and the local app lock is ready."
+      : "Saved â€” Orca re-initialized.";
+    setStatus2.className   = "settings-status";
+    return;
     setStatus2.textContent = "Saved — Orca re-initialized.";
     setStatus2.className   = "settings-status";
   } else {
@@ -1231,6 +1474,28 @@ sendBtn.addEventListener("click", () => {
   } else {
     sendMessage();
   }
+});
+authForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const password = authPassword.value;
+  if (!password.trim()) {
+    showAuthError("Enter your password.");
+    authPassword.focus();
+    return;
+  }
+
+  clearAuthError();
+  const result = await orca.unlock(password);
+  if (!result.ok) {
+    showAuthError(result.error ?? "Could not unlock Orca.");
+    authPassword.select();
+    return;
+  }
+
+  authPassword.value = "";
+});
+lockBtn.addEventListener("click", async () => {
+  await orca.lock();
 });
 document.getElementById("btn-settings").addEventListener("click",      openSettings);
 document.getElementById("btn-settings-back").addEventListener("click", closeSettings);
@@ -1338,6 +1603,10 @@ function toggleSidebar() {
 }
 
 async function refreshSessionList() {
+  if (authKnown && authState.locked) {
+    sessionList.innerHTML = '<p class="sidebar-empty">Unlock Orca to view history.</p>';
+    return;
+  }
   sessionList.innerHTML = '<p class="sidebar-empty">Loading\u2026</p>';
   let sessions;
   try {
@@ -1396,6 +1665,7 @@ async function refreshSessionList() {
 }
 
 async function loadSession(id) {
+  if (authKnown && authState.locked) return;
   let session;
   try {
     session = await orca.loadSession(id);
@@ -1421,6 +1691,7 @@ async function loadSession(id) {
 }
 
 async function deleteSession(id) {
+  if (authKnown && authState.locked) return;
   try {
     await orca.deleteSession(id);
   } catch {
