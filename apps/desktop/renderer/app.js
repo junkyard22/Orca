@@ -190,6 +190,23 @@ function applyInitStatus(s) {
   syncIdleStatus();
 }
 
+function updateWelcomeWorkspace() {
+  const el = document.getElementById("welcome-workspace");
+  if (!el) return;
+  orca.getSettings().then((s) => {
+    const root = s?.workspaceRoot?.trim();
+    if (root) {
+      // Show just the last path segment to keep the hint short.
+      const name = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || root;
+      el.textContent = `Workspace: ${name}`;
+      el.title = root;
+    } else {
+      el.textContent = "No workspace set \u2014 configure one in \u2699\uFE0F Settings";
+      el.title = "";
+    }
+  }).catch(() => {});
+}
+
 function handleInitStatus(s) {
   initKnown = true;
   initState = { ok: !!s.ok, error: s.error ?? null };
@@ -203,6 +220,7 @@ function handleInitStatus(s) {
     if (!messages.hasChildNodes()) {
       welcome.style.display = "";
       messages.style.display = "none";
+      updateWelcomeWorkspace();
     }
   } else {
     const existing = messages.querySelector(".sys-msg.warn");

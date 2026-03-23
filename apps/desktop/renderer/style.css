@@ -208,6 +208,18 @@ body {
   line-height: 1.6;
 }
 
+.welcome-workspace {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  max-width: 320px;
+  position: relative;
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Message feed */
 #messages {
   flex: 1;
