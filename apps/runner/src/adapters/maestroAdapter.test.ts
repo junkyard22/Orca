@@ -5,6 +5,8 @@ import {
   normalizeConversationHistory,
   normalizeToolText,
   shouldAttemptSubagentDecomposition,
+  parseToolCalls,
+  formatToolResult,
 } from "./maestroAdapter.js";
 
 describe("shouldAttemptSubagentDecomposition", () => {
@@ -140,5 +142,96 @@ describe("deriveDeweySignals", () => {
         goals: ["Read package.json"],
       }),
     ).toEqual([]);
+  });
+});
+
+// ─── parseToolCalls ───────────────────────────────────────────────────────────
+
+describe("parseToolCalls", () => {
+  it("parses a single valid tool call", () => {
+    const text = `<tool_call>{"tool": "read_file", "path": "src/index.ts"}</tool_call>`;
+    const calls = parseToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.tool).toBe("read_file");
+    expect(calls[0]!.input).toEqual({ path: "src/index.ts" });
+  });
+
+  it("parses multiple tool calls in one response", () => {
+    const text = [
+      `<tool_call>{"tool": "read_file", "path": "a.ts"}</tool_call>`,
+      `<tool_call>{"tool": "write_file", "path": "b.ts", "content": "hello"}</tool_call>`,
+    ].join("\n");
+    const calls = parseToolCalls(text);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.tool).toBe("read_file");
+    expect(calls[1]!.tool).toBe("write_file");
+  });
+
+  it("returns an empty array when there are no tool calls", () => {
+    expect(parseToolCalls("Here is my answer: 42")).toHaveLength(0);
+    expect(parseToolCalls("")).toHaveLength(0);
+  });
+
+  it("silently skips malformed JSON inside a tool_call block", () => {
+    const text = `<tool_call>NOT_JSON</tool_call>`;
+    expect(parseToolCalls(text)).toHaveLength(0);
+  });
+
+  it("silently skips a block that has no 'tool' key", () => {
+    const text = `<tool_call>{"path": "index.ts"}</tool_call>`;
+    expect(parseToolCalls(text)).toHaveLength(0);
+  });
+
+  it("silently skips a block where 'tool' is not a string", () => {
+    const text = `<tool_call>{"tool": 42, "path": "x"}</tool_call>`;
+    expect(parseToolCalls(text)).toHaveLength(0);
+  });
+
+  it("handles whitespace around the JSON payload", () => {
+    const text = `<tool_call>  {"tool": "list_directory", "path": "."}  </tool_call>`;
+    const calls = parseToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.tool).toBe("list_directory");
+  });
+
+  it("separates 'tool' from the remaining input args", () => {
+    const text = `<tool_call>{"tool": "run_command", "command": "echo hi", "timeout": 5000}</tool_call>`;
+    const calls = parseToolCalls(text);
+    expect(calls[0]!.input).not.toHaveProperty("tool");
+    expect(calls[0]!.input).toEqual({ command: "echo hi", timeout: 5000 });
+  });
+
+  it("can be called multiple times without regex state leaking (global flag safety)", () => {
+    const text = `<tool_call>{"tool": "read_file", "path": "x"}</tool_call>`;
+    expect(parseToolCalls(text)).toHaveLength(1);
+    expect(parseToolCalls(text)).toHaveLength(1);
+  });
+});
+
+// ─── formatToolResult ─────────────────────────────────────────────────────────
+
+describe("formatToolResult", () => {
+  it("formats a successful result with ok=true", () => {
+    const formatted = formatToolResult("read_file", true, "file contents here");
+    expect(formatted).toContain('tool="read_file"');
+    expect(formatted).toContain('ok="true"');
+    expect(formatted).toContain("file contents here");
+  });
+
+  it("formats a failed result with ok=false and uses the error message as body", () => {
+    const formatted = formatToolResult("run_command", false, "", "Exit code 1");
+    expect(formatted).toContain('ok="false"');
+    expect(formatted).toContain("Exit code 1");
+  });
+
+  it("falls back to output text when error is undefined but ok=false", () => {
+    const formatted = formatToolResult("write_file", false, "some output");
+    expect(formatted).toContain("some output");
+  });
+
+  it("wraps output in tool_result tags", () => {
+    const formatted = formatToolResult("list_directory", true, "f  main.ts");
+    expect(formatted).toMatch(/<tool_result[^>]*>/);
+    expect(formatted).toContain("</tool_result>");
   });
 });

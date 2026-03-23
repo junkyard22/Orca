@@ -983,12 +983,12 @@ async function synthesizeResults(
 
 const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
 
-interface ParsedCall {
+export interface ParsedCall {
   tool: string;
   input: Record<string, unknown>;
 }
 
-function parseToolCalls(text: string): ParsedCall[] {
+export function parseToolCalls(text: string): ParsedCall[] {
   const calls: ParsedCall[] = [];
   // Reset lastIndex before each use since the regex has the /g flag.
   TOOL_CALL_RE.lastIndex = 0;
@@ -1007,7 +1007,7 @@ function parseToolCalls(text: string): ParsedCall[] {
   return calls;
 }
 
-function formatToolResult(tool: string, ok: boolean, output: string, error?: string): string {
+export function formatToolResult(tool: string, ok: boolean, output: string, error?: string): string {
   const status = ok ? 'ok="true"' : 'ok="false"';
   const body = ok ? output : (error ?? output ?? "unknown error");
   return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;

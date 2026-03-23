@@ -20,11 +20,14 @@ Build validation already completed in this repo:
 
 ## Pre-publish
 
-- [ ] Decide whether to ship unsigned binaries or sign both `.exe` files
-- [ ] Confirm the version is still `0.1.0` in `apps/desktop/package.json`
-- [ ] Commit the packaging fix in `apps/desktop/build-main.mjs`
-- [ ] Commit the ignore cleanup in `.gitignore`
-- [ ] Update or ignore the stale `secretary-core` reference in `ROADMAP.md`
+- [x] Decide whether to ship unsigned binaries or sign both `.exe` files
+      → Decision: ship unsigned for 0.1.0. RELEASE-NOTES-0.1.0.md already
+        includes the SmartScreen disclaimer. Code signing revisit deferred to 0.2.0.
+- [x] Confirm the version is still `0.1.0` in `apps/desktop/package.json`
+- [x] Commit the packaging fix in `apps/desktop/build-main.mjs`
+- [x] Commit the ignore cleanup in `.gitignore`
+- [x] Update or ignore the stale `secretary-core` reference in `ROADMAP.md`
+      → Fixed in commit 79fec1d: replaced with dewey-core, updated desktop status.
 
 ## Installer Smoke Test
 
