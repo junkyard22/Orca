@@ -40,6 +40,7 @@ import {
   BRAIN_DECOMPOSE_SYSTEM,
   parseBrainDecision,
   buildSynthesisPrompt,
+  BrainDecisionValidationError,
 } from "maestro-core";
 import type {
   RoleName,
@@ -640,20 +641,40 @@ function createTracingMaestro(
 
       // ── Step 1: Brain routing call ────────────────────────────────────────
       trace("Maestro", C.cyan, `  Step 1: Brain routing call (max 512 tok, temp 0.1)...`);
-      let dec: DecomposeDecision;
+      let dec: DecomposeDecision = { routing: 'direct', role: 'brain' };
+      let brainDecisionJson: string | undefined;
       const brainPrompt = `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`;
-      try {
-        printMsg("→ Brain [decompose]", C.cyan, brainPrompt);
-        const { text: decisionJson } = await brainLLM.complete(
-          brainPrompt,
-          { maxTokens: 512, temperature: 0 },
-        );
-        printMsg("← Brain [decompose response]", C.green, decisionJson);
-        trace("Maestro", C.dim, `  Raw routing JSON: ${decisionJson.slice(0, 200)}`);
-        dec = parseBrainDecision(decisionJson);
-      } catch (err) {
-        trace("Maestro", C.yellow, `  ⚠ Brain routing failed (${err}) — falling back to direct:brain`);
-        dec = { routing: 'direct', role: 'brain' };
+      {
+        let repairReason: string | null = null;
+        for (let attempt = 0; attempt <= 1; attempt++) {
+          const prompt = repairReason !== null
+            ? `${brainPrompt}\n\n---REPAIR---\nYour previous response was rejected. Reason: ${repairReason}\n\nFix the error and output ONLY a bare JSON object with no surrounding text.`
+            : brainPrompt;
+          try {
+            printMsg("→ Brain [decompose]", C.cyan, prompt);
+            const { text: decisionJson } = await brainLLM.complete(
+              prompt,
+              { maxTokens: 512, temperature: 0 },
+            );
+            printMsg("← Brain [decompose response]", C.green, decisionJson);
+            trace("Maestro", C.dim, `  Raw routing JSON: ${decisionJson.slice(0, 200)}`);
+            dec = parseBrainDecision(decisionJson);
+            brainDecisionJson = decisionJson.trim();
+            break;
+          } catch (err) {
+            if (err instanceof BrainDecisionValidationError) {
+              repairReason = err.reason;
+              trace("Maestro", C.yellow,
+                `  ⚠ Brain validation failed (attempt ${attempt + 1}): ${err.reason} — ${
+                  attempt < 1 ? 'triggering repair pass' : 'falling back to direct:brain'
+                }`,
+              );
+            } else {
+              trace("Maestro", C.yellow, `  ⚠ Brain routing error: ${err} — falling back to direct:brain`);
+              break;
+            }
+          }
+        }
       }
 
       decision(
@@ -978,6 +999,7 @@ function createTracingMaestro(
           summary: `routing=direct role=${role} type=${type} risk=${riskScore.toFixed(2)} iterations=${iterationCount} stopped=${stoppedBecause}`,
           metadata: {
             role,
+            brainDecision: brainDecisionJson,
             thoughts,
             iterationCount,
             stoppedBecause,
@@ -1067,6 +1089,7 @@ function createTracingMaestro(
           doneCriteria: dec.done_criteria,
           summary:      `routing=decompose depts=1`,
           metadata: {
+            brainDecision: brainDecisionJson,
             iterationCount: 1,
             stoppedBecause: deptResults[0]!.ok ? 'done' : 'error',
             filesChanged: combinedFilesChanged,
@@ -1125,6 +1148,7 @@ function createTracingMaestro(
         summary:      `routing=decompose depts=${departments.length}`,
         metadata: {
           role: 'brain',
+          brainDecision: brainDecisionJson,
           iterationCount: 1,
           stoppedBecause: 'done',
           filesChanged: combinedFilesChanged,

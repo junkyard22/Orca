@@ -37,6 +37,8 @@ export interface TrainingRecord {
   response: string;
   /** Model/role that produced it. */
   teacher: string;
+  /** Role tag for Moonshiner filtering (e.g. 'coder_strong', 'brain'). */
+  role: string;
   /** Quality score: 10 for PASS, 7 for WARN. */
   score: number;
   metadata: {
@@ -122,14 +124,16 @@ export async function exportTrainingData(
     }
 
     const score = SCORE_BY_VERDICT[run.verdict] ?? 7;
+    const teacherRole = run.role ?? 'unknown';
 
     records.push({
       prompt: run.intent,
       response: outputText,
-      teacher: run.role ?? 'unknown',
+      teacher: teacherRole,
+      role: teacherRole,
       score,
       metadata: {
-        taskType: run.role ?? 'unknown',
+        taskType: teacherRole,
         verdict: run.verdict,
         iterations,
         repairPasses,
@@ -137,6 +141,33 @@ export async function exportTrainingData(
         timestamp: run.createdAt,
       },
     });
+
+    // ── Moonshiner brain signal ──────────────────────────────────────────────
+    // When Brain routed successfully (brainDecision is populated) and the task
+    // earned a full PASS, emit a second record tagged role:"brain".  This lets
+    // Moonshiner distil Brain's routing prompt separately from the worker roles.
+    // We only do this for PASS (not WARN) to keep the brain training set clean.
+    if (
+      run.brainDecision &&
+      run.brainDecision.trim().length >= 20 &&
+      targetVerdict === 'PASS'
+    ) {
+      records.push({
+        prompt: run.intent,
+        response: run.brainDecision.trim(),
+        teacher: 'brain',
+        role: 'brain',
+        score: 10,
+        metadata: {
+          taskType: 'brain',
+          verdict: 'PASS',
+          iterations: 1,
+          repairPasses: 0,
+          taskId: run.id,
+          timestamp: run.createdAt,
+        },
+      });
+    }
 
     // Apply limit after building the record
     if (opts.limit !== undefined && records.length >= opts.limit) {

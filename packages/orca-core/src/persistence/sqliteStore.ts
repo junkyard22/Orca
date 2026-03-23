@@ -92,8 +92,9 @@ export class SqliteStore implements OrcaStore {
           `INSERT INTO runs (
             id, created_at, intent, role, status, stopped_because,
             iteration_count, output_text, summary, verdict, confidence,
-            issue_count, input_tokens, output_tokens, cost_usd, repair_passes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
+            brain_decision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             run.id,
             run.createdAt,
@@ -111,6 +112,7 @@ export class SqliteStore implements OrcaStore {
             run.outputTokens ?? null,
             run.costUsd ?? null,
             run.repairPasses ?? null,
+            run.brainDecision ?? null,
           ]
         );
 
@@ -180,7 +182,8 @@ export class SqliteStore implements OrcaStore {
       `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd, repair_passes
+        issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
+        brain_decision
       FROM runs
       ORDER BY created_at DESC
       LIMIT ?`
@@ -204,6 +207,7 @@ export class SqliteStore implements OrcaStore {
       output_tokens: number | null;
       cost_usd: number | null;
       repair_passes: number | null;
+      brain_decision: string | null;
     }> = [];
 
     while (stmt.step()) {
@@ -229,6 +233,7 @@ export class SqliteStore implements OrcaStore {
       outputTokens: row.output_tokens ?? undefined,
       costUsd: row.cost_usd ?? undefined,
       repairPasses: row.repair_passes ?? undefined,
+      brainDecision: row.brain_decision ?? undefined,
     }));
   }
 
@@ -243,7 +248,8 @@ export class SqliteStore implements OrcaStore {
       `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd, repair_passes
+        issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
+        brain_decision
       FROM runs
       WHERE id = ?`
     );
@@ -274,6 +280,7 @@ export class SqliteStore implements OrcaStore {
       outputTokens: row.output_tokens ?? undefined,
       costUsd: row.cost_usd ?? undefined,
       repairPasses: row.repair_passes ?? undefined,
+      brainDecision: row.brain_decision ?? undefined,
     };
   }
 

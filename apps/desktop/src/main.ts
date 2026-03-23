@@ -32,6 +32,7 @@ import {
   BRAIN_DECOMPOSE_SYSTEM,
   parseBrainDecision,
   buildSynthesisPrompt,
+  BrainDecisionValidationError,
   ModelFallbackPoolManager,
   createSimpleFallbackPool,
   type PoolModelEntry,
@@ -97,29 +98,42 @@ async function brainRoute(
   task: OrcaTaskSpec,
   ctx: OrcaRunCtx,
   roleAdapters: Partial<Record<RoleName, OrcaLLMService>>,
-): Promise<{ role: RoleName; doneCriteria: string[] }> {
+): Promise<{ role: RoleName; doneCriteria: string[]; brainDecision?: string }> {
   const maestro = createMaestroCore();
   const brainLLM = roleAdapters['brain'] ?? ctx.llm;
 
-  // Small, fast JSON call to decide routing & department assignment.
-  let decision: DecomposeDecision;
-  try {
-    const { text: decisionJson } = await brainLLM.complete(
-      `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`,
-      { maxTokens: 512, temperature: 0 },
-    );
-    decision = parseBrainDecision(decisionJson);
-  } catch {
-    // If Brain's JSON is malformed, fall back to direct brain.
-    decision = { routing: 'direct', role: 'brain' };
+  // Small, fast JSON call to decide routing. One repair pass on schema validation failure.
+  const basePrompt = `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`;
+  let decision: DecomposeDecision | null = null;
+  let repairReason: string | null = null;
+  let brainDecision: string | undefined;
+
+  for (let attempt = 0; attempt <= 1; attempt++) {
+    const prompt = repairReason !== null
+      ? `${basePrompt}\n\n---REPAIR---\nYour previous response was rejected. Reason: ${repairReason}\n\nFix the error and output ONLY a bare JSON object with no surrounding text.`
+      : basePrompt;
+    try {
+      const { text } = await brainLLM.complete(prompt, { maxTokens: 512, temperature: 0 });
+      decision = parseBrainDecision(text);
+      brainDecision = text.trim();
+      break;
+    } catch (err) {
+      if (err instanceof BrainDecisionValidationError) {
+        repairReason = err.reason;
+        // Loop continues for one repair attempt.
+      } else {
+        break; // Unexpected error — stop retrying.
+      }
+    }
   }
 
   // For now, we only handle direct routing in the new architecture
   // Decompose routing would need to be handled differently in the future
-  const role = decision.routing === 'direct' ? decision.role : 'brain';
-  const doneCriteria = decision.done_criteria || [];
-  
-  return { role: role as RoleName, doneCriteria };
+  const resolved = decision ?? { routing: 'direct' as const, role: 'brain' as const };
+  const role = resolved.routing === 'direct' ? resolved.role : 'brain';
+  const doneCriteria = resolved.done_criteria ?? [];
+
+  return { role: role as RoleName, doneCriteria, brainDecision };
 }
 
 
@@ -255,6 +269,7 @@ function buildMaestroAdapter(
         doneCriteria: routing.doneCriteria,
         metadata: {
           role: routing.role,
+          brainDecision: routing.brainDecision,
           thoughts: result.thoughts,
           iterationCount: result.iterationCount,
           stoppedBecause: result.stoppedBecause,

@@ -23,6 +23,7 @@ import { runToolResultChecks }   from "./checks/toolResults.js";
 import { runCompletenessChecks, runSatisfactionChecks } from "./checks/completeness.js";
 import { runStructureChecks }    from "./checks/structure.js";
 import { runClaimProofChecks } from "./checks/claimProof.js";
+import { runBrainChecks }      from "./checks/brain.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
 
 // ---------------------------------------------------------------------------
@@ -271,6 +272,10 @@ function buildCriteriaLedger(
 const HARD_FAIL_CODES = new Set([
   "AGENT_LOOP_DETECTED",
   "SAFETY_VIOLATION",
+  "BRAIN_OUTPUT_MALFORMED",
+  "BRAIN_INVALID_ROLE",
+  "BRAIN_HALLUCINATED_FIELD",
+  "BRAIN_NARRATIVE_BLEED",
   // TOOL_INSTRUMENTATION_MISSING is intentionally excluded: it is a heuristic
   // with known false positives (e.g. "test file" triggering the "test" keyword).
   // It fires as MEDIUM and triggers a WARN verdict, not a hard repair pass.
@@ -360,6 +365,7 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
   // Step 3: run all remaining checks
   const rawIssues: Omit<Issue, "issueId">[] = [
     ...claimIssues,
+    ...runBrainChecks(input),
     ...runSafetyChecks(input),
     ...runToolResultChecks(input),
     ...runCompletenessChecks(input),

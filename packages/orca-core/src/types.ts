@@ -69,6 +69,10 @@ export interface OrcaMaestroResult {
   toolEvents?: OrcaToolEvent[];
   metadata?: {
     role?: string;
+    /** Raw Brain routing JSON (e.g. '{"routing":"direct","role":"coder_strong"}').
+     * Populated only when Brain made a successful LLM routing call.
+     * Used by exportTrainingData to emit Moonshiner examples tagged role:"brain". */
+    brainDecision?: string;
     thoughts?: ThoughtRecord[];
     iterationCount?: number;
     stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "error";

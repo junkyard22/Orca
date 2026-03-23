@@ -275,6 +275,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           createdAt: new Date(startTime).toISOString(),
           intent: normalizedTaskSpec.intent,
           role: persistedMaestroResult?.metadata?.role,
+          brainDecision: persistedMaestroResult?.metadata?.brainDecision,
           status: result.status,
           stoppedBecause: persistedMaestroResult?.metadata?.stoppedBecause,
           iterationCount: persistedMaestroResult?.metadata?.iterationCount,

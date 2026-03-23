@@ -50,14 +50,16 @@ export type DecomposeDecision = DirectRouting | DecomposeRouting;
  * Kept short so a fast/cheap model handles it in < 3 seconds.
  */
 export const BRAIN_DECOMPOSE_SYSTEM = `\
-You are Maestro's task router. Read the user request and decide how to handle it.
+You are a task router. You receive a task specification and return a routing decision.
 
-Reply with ONLY valid JSON — no markdown fences, no explanation.
+Your entire response MUST be a single bare JSON object. No markdown fences. No text before the JSON. No text after the JSON. No explanation. No confirmation. No questions. No preamble. No post-amble. Any output that is not bare JSON is incorrect.
 
-## Option A — one specialist handles it:
+## Output schemas:
+
+Option A — single specialist handles the task:
 { "routing": "direct", "role": "<role>", "done_criteria": ["<criterion 1>", "<criterion 2>"] }
 
-## Option B — multiple specialists work in parallel:
+Option B — multiple specialists work in parallel:
 {
   "routing": "decompose",
   "departments": [
@@ -67,16 +69,7 @@ Reply with ONLY valid JSON — no markdown fences, no explanation.
   "done_criteria": ["<criterion 1>", "<criterion 2>"]
 }
 
-## done_criteria rules:
-- List 1-4 short, objective, verifiable statements about what the final output must contain or achieve.
-- Each criterion must be independently checkable (e.g. "Output contains a TypeScript function", "All exported functions have JSDoc comments").
-- Do NOT include process steps or explanations — only outcome facts.
-- CRITICAL: Criteria must describe what a CORRECT answer to THIS specific request looks like. Ground every criterion in the actual task wording.
-- NEVER invent capability limitations (e.g. "unable to access", "explains inability", "no filesystem access") unless the user's request explicitly states a constraint. If a tool can do it, assume it will.
-- NEVER introduce concepts not present in the user's request. If the user asks to "count R's in filenames", the criterion must mention "count", "R", and "filenames" — not "limitations" or "alternatives".
-- For counting/listing/status tasks: criteria must name what is being counted, listed, or shown. Bad: "Output summarises result". Good: "Output states the count of filenames containing the letter R".
-
-## Role menu:
+## Valid role values:
 brain         — reasoning, analysis, open-ended questions
 coder_strong  — full feature implementation, complex code, multi-file changes
 coder_cheap   — tiny edits, renames, formatting, single-line fixes
@@ -87,14 +80,36 @@ debugger      — root cause analysis of errors and failures
 reader        — summarising long documents, logs, or large text
 utility       — general tasks that don't fit other categories
 
-## Rules:
+## done_criteria rules:
+- List 1-4 short, objective, verifiable statements about what the final output must contain or achieve.
+- Each criterion must be independently checkable (e.g. "Output contains a TypeScript function", "All exported functions have JSDoc comments").
+- Do NOT include process steps or explanations — only outcome facts.
+- CRITICAL: Criteria must describe what a CORRECT answer to THIS specific request looks like. Ground every criterion in the actual task wording.
+- NEVER invent capability limitations (e.g. "unable to access", "explains inability", "no filesystem access") unless the user's request explicitly states a constraint. If a tool can do it, assume it will.
+- NEVER introduce concepts not present in the user's request. If the user asks to "count R's in filenames", the criterion must mention "count", "R", and "filenames" — not "limitations" or "alternatives".
+- For counting/listing/status tasks: criteria must name what is being counted, listed, or shown. Bad: "Output summarises result". Good: "Output states the count of filenames containing the letter R".
+
+## Routing rules:
 - Use "direct" for the VAST MAJORITY of requests.
 - Use "decompose" ONLY when the request explicitly combines two or more distinct types of work that require DIFFERENT specialist roles.
 - A strong signal: the request uses "AND" (or "ALSO", "AS WELL AS", "PLUS") to join two clearly different work categories (code vs docs, code vs review, plan vs implement).
 - Maximum 3 departments.
 - Each subtask must be complete and actionable on its own — departments don't talk to each other.
 
-## Examples — DIRECT (one specialist):
+## Anti-patterns — DO NOT route to utility unless task is ONLY lint/format/cleanup:
+- status queries → brain, NOT utility
+- deployment queries → brain, NOT utility
+- investigation / fact-finding → brain or debugger, NOT utility
+- "show me" / "tell me" / "what is" → brain, NOT utility
+
+## Example:
+
+Input: "implement a debounce utility function in TypeScript"
+
+Expected output:
+{"routing":"direct","role":"coder_strong","done_criteria":["Output contains a TypeScript function named debounce","Function accepts a callback and a delay in milliseconds","Function returns a debounced wrapper that delays invocation"]}
+
+## More routing examples — DIRECT:
 - "write a function that gets the time" → { "routing": "direct", "role": "coder_strong" }
 - "explain how async/await works" → { "routing": "direct", "role": "brain" }
 - "fix the bug in line 42" → { "routing": "direct", "role": "debugger" }
@@ -104,74 +119,201 @@ utility       — general tasks that don't fit other categories
 - "investigate why the service is down" → { "routing": "direct", "role": "debugger" }
 - "give me a repo overview" → { "routing": "direct", "role": "brain" }
 - "what files changed recently" → { "routing": "direct", "role": "brain" }
-- "count how many filenames contain R" → { "routing": "direct", "role": "brain", "done_criteria": ["Output states the count of top-level filenames containing the letter R", "Output states the count of top-level filenames containing the letter D"] }
+- "count how many filenames contain R" → { "routing": "direct", "role": "brain", "done_criteria": ["Output states the count of top-level filenames containing the letter R"] }
   BAD done_criteria for that task: ["Output explains inability to access filesystem"] ← NEVER invent limitations
 
-## Anti-patterns — DO NOT route to utility unless task is ONLY lint/format/cleanup:
-- status queries → brain, NOT utility
-- deployment queries → brain, NOT utility
-- investigation / fact-finding → brain or debugger, NOT utility
-- "show me" / "tell me" / "what is" → brain, NOT utility
-
-## Examples — DECOMPOSE (multiple specialists):
+## More routing examples — DECOMPOSE:
 - "implement a login form AND write the JSDoc for it" → decompose: [coder_strong, narrator]
 - "review this code AND fix all the bugs you find" → decompose: [reviewer, coder_strong]
 - "write a detailed plan AND then implement it" → decompose: [planner_deep, coder_strong]
 - "build the API endpoint AND write the README for it" → decompose: [coder_strong, narrator]`;
 
 // ---------------------------------------------------------------------------
-// Parse
+// Schema Validation
+// ---------------------------------------------------------------------------
+
+/** All valid values for HeadName (every RoleName except 'vision'). */
+export const VALID_HEAD_NAMES = new Set<string>([
+  'brain', 'coder_strong', 'coder_cheap', 'utility', 'reviewer', 'narrator',
+  'planner_deep', 'debugger', 'reader',
+]);
+
+// Allowed top-level keys per routing type — rejects hallucinated fields like "confidence".
+const DIRECT_VALID_KEYS   = new Set(['routing', 'role', 'done_criteria']);
+const DECOMPOSE_VALID_KEYS = new Set(['routing', 'departments', 'synthesis_hint', 'done_criteria']);
+const DEPT_VALID_KEYS      = new Set(['head', 'subtask', 'context']);
+
+/**
+ * Thrown when Brain's output fails schema validation.
+ * The `reason` field describes the exact violation — safe to feed back into a repair prompt.
+ */
+export class BrainDecisionValidationError extends Error {
+  public readonly reason: string;
+  public readonly raw: string;
+
+  constructor(reason: string, raw: string) {
+    super(`Brain decision validation failed: ${reason}`);
+    this.name = 'BrainDecisionValidationError';
+    this.reason = reason;
+    this.raw = raw;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parse + Validate
 // ---------------------------------------------------------------------------
 
 /**
- * Parse Brain's JSON decision. Throws on malformed JSON.
- * Callers should catch and fall back to { routing: 'direct', role: 'brain' }.
+ * Strictly parse and validate Brain's JSON output.
+ * Throws BrainDecisionValidationError for any schema violation so callers
+ * can catch it and trigger a repair pass rather than silently propagating
+ * invalid routing decisions downstream.
  */
 export function parseBrainDecision(raw: string): DecomposeDecision {
-  // Strip accidental markdown code fences
-  const cleaned = raw
+  // Step 1: Strip accidental markdown code fences (one layer only).
+  const stripped = raw
     .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```\s*$/, '')
-    .trim();
+    .replace(/\s*```\s*$/, '');
+  const cleaned = stripped.trim();
 
-  const parsed = JSON.parse(cleaned) as Record<string, unknown>;
-
-  if (parsed['routing'] === 'direct') {
-    return {
-      routing: 'direct',
-      role: (parsed['role'] as HeadName) ?? 'brain',
-      done_criteria: Array.isArray(parsed['done_criteria'])
-        ? (parsed['done_criteria'] as string[]).filter((s) => typeof s === 'string')
-        : undefined,
-    };
+  // Step 2: Reject free text before the JSON object.
+  if (!cleaned.startsWith('{')) {
+    throw new BrainDecisionValidationError(
+      `Response must begin with '{'. Got: ${JSON.stringify(cleaned.slice(0, 60))}`,
+      raw,
+    );
   }
 
-  if (parsed['routing'] === 'decompose') {
-    const rawDepts = parsed['departments'];
-    const departments: DepartmentTask[] = Array.isArray(rawDepts)
-      ? rawDepts.map((d) => ({
-          head:     (d as Record<string, unknown>)['head']    as HeadName ?? 'brain',
-          subtask:  String((d as Record<string, unknown>)['subtask'] ?? ''),
-          context:  (d as Record<string, unknown>)['context'] as string | undefined,
-        }))
-      : [];
+  // Step 3: Reject free text after the JSON object.
+  if (!cleaned.endsWith('}')) {
+    throw new BrainDecisionValidationError(
+      `Response must end with '}'. Got: ...${JSON.stringify(cleaned.slice(-60))}`,
+      raw,
+    );
+  }
 
-    if (departments.length === 0) {
-      // Decompose with no departments makes no sense — fall back to direct
-      return { routing: 'direct', role: 'brain' };
+  // Step 4: Parse JSON — wrap SyntaxError as a validation error.
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(cleaned) as Record<string, unknown>;
+  } catch (err) {
+    throw new BrainDecisionValidationError(
+      `Invalid JSON: ${(err as SyntaxError).message}`,
+      raw,
+    );
+  }
+
+  // Step 5: Validate 'routing'.
+  const routing = parsed['routing'];
+  if (routing !== 'direct' && routing !== 'decompose') {
+    throw new BrainDecisionValidationError(
+      `'routing' must be "direct" or "decompose", got: ${JSON.stringify(routing)}`,
+      raw,
+    );
+  }
+
+  if (routing === 'direct') {
+    // Step 6: Reject hallucinated top-level keys (e.g. "confidence", "explanation").
+    const extra = Object.keys(parsed).filter((k) => !DIRECT_VALID_KEYS.has(k));
+    if (extra.length > 0) {
+      throw new BrainDecisionValidationError(
+        `Unexpected field(s) in direct routing response: ${extra.join(', ')}`,
+        raw,
+      );
+    }
+
+    // Step 7: Validate 'role' is present and within the enum.
+    const role = parsed['role'];
+    if (typeof role !== 'string' || role === '') {
+      throw new BrainDecisionValidationError(
+        `'role' must be a non-empty string, got: ${JSON.stringify(role)}`,
+        raw,
+      );
+    }
+    if (!VALID_HEAD_NAMES.has(role)) {
+      throw new BrainDecisionValidationError(
+        `'role' "${role}" is not valid. Valid values: ${[...VALID_HEAD_NAMES].join(', ')}`,
+        raw,
+      );
     }
 
     return {
-      routing:          'decompose',
-      departments,
-      synthesis_hint:   parsed['synthesis_hint'] as string | undefined,
-      done_criteria:    Array.isArray(parsed['done_criteria'])
-        ? (parsed['done_criteria'] as string[]).filter((s) => typeof s === 'string')
+      routing: 'direct',
+      role: role as HeadName,
+      done_criteria: Array.isArray(parsed['done_criteria'])
+        ? (parsed['done_criteria'] as unknown[]).filter((s): s is string => typeof s === 'string')
         : undefined,
     };
   }
 
-  throw new Error(`Unknown routing value: ${JSON.stringify(parsed['routing'])}`);
+  // routing === 'decompose'
+  // Step 6: Reject hallucinated top-level keys.
+  const extra = Object.keys(parsed).filter((k) => !DECOMPOSE_VALID_KEYS.has(k));
+  if (extra.length > 0) {
+    throw new BrainDecisionValidationError(
+      `Unexpected field(s) in decompose routing response: ${extra.join(', ')}`,
+      raw,
+    );
+  }
+
+  // Step 7: Validate 'departments' is a non-empty array.
+  const rawDepts = parsed['departments'];
+  if (!Array.isArray(rawDepts) || rawDepts.length === 0) {
+    throw new BrainDecisionValidationError(
+      `'departments' must be a non-empty array for decompose routing`,
+      raw,
+    );
+  }
+
+  const departments: DepartmentTask[] = [];
+  for (let i = 0; i < rawDepts.length; i++) {
+    const d = rawDepts[i] as Record<string, unknown>;
+
+    const deptExtra = Object.keys(d).filter((k) => !DEPT_VALID_KEYS.has(k));
+    if (deptExtra.length > 0) {
+      throw new BrainDecisionValidationError(
+        `Department[${i}] has unexpected field(s): ${deptExtra.join(', ')}`,
+        raw,
+      );
+    }
+
+    const head = d['head'];
+    if (typeof head !== 'string' || head === '') {
+      throw new BrainDecisionValidationError(
+        `Department[${i}]: 'head' must be a non-empty string`,
+        raw,
+      );
+    }
+    if (!VALID_HEAD_NAMES.has(head)) {
+      throw new BrainDecisionValidationError(
+        `Department[${i}]: 'head' "${head}" is not a valid role`,
+        raw,
+      );
+    }
+
+    const subtask = d['subtask'];
+    if (typeof subtask !== 'string' || subtask.trim() === '') {
+      throw new BrainDecisionValidationError(
+        `Department[${i}]: 'subtask' must be a non-empty string`,
+        raw,
+      );
+    }
+
+    departments.push({
+      head: head as HeadName,
+      subtask,
+      context: typeof d['context'] === 'string' ? d['context'] : undefined,
+    });
+  }
+
+  return {
+    routing:        'decompose',
+    departments,
+    synthesis_hint: typeof parsed['synthesis_hint'] === 'string' ? parsed['synthesis_hint'] : undefined,
+    done_criteria:  Array.isArray(parsed['done_criteria'])
+      ? (parsed['done_criteria'] as unknown[]).filter((s): s is string => typeof s === 'string')
+      : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------

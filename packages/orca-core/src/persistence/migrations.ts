@@ -75,6 +75,13 @@ export function runMigrations(db: Database): void {
     // Column already exists — safe to ignore.
   }
 
+  // Add brain_decision column for Moonshiner training-data export (idempotent migration)
+  try {
+    db.run(`ALTER TABLE runs ADD COLUMN brain_decision TEXT;`);
+  } catch {
+    // Column already exists — safe to ignore.
+  }
+
   // Create indexes for common queries
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
