@@ -5,14 +5,14 @@
 | Package | Role | Status |
 |---|---|---|
 | benson-core | User-facing speaker — parses intent, formats replies | ✅ `parseIntent` fully implemented — ambiguity detection, goal/constraint extraction, CLARIFY/TASK routing. |
-| secretary-core | Intent parsing — full TaskSpec creation | ✅ `processRequest()` extracts intent, goals, constraints, permissions, output format. |
+| dewey-core | User context — workspace capture, git metadata, pre-flight context injection | ✅ `getWorkspaceContext()` captures git branch, commit, recent files; threaded into every task run. |
 | orca-core | Runtime wiring — routes tasks through Maestro → Pappy → repair loop | ✅ Solid architecture. Carries `OrcaToolService` in `OrcaRunCtx` for agent-loop mode. |
 | maestro-core | Orchestration — classifies tasks, scores risk, plan-gates, manages cancellation | ✅ `orchestrate()` solid. MaestroAdapter runs full agent loop with tools. |
 | miranda-core | LLM behavior enforcement — wraps prompts, validates outputs, repair loops, circuit breaker | ✅ Most complete package. Production-quality. 27 tests passing. |
 | pappy-core | QC evaluator — PASS/WARN/FAIL verdicts on Maestro output | ✅ **Phase 4 COMPLETE.** 84 tests passing. SATISFACTION_EXPLANATION_THIN, PROOF_NO_TRACE, and all claim-proof checks working. |
 | workbench-core | Tool execution (Runner + tools) | ✅ ShellRunner done. **Phase 3 complete:** `ToolRegistry`, `readFileTool`, `writeFileTool`, `runCommandTool`, `listDirectoryTool`, `searchFilesTool` all implemented. |
 | apps/runner | CLI harness that wires everything together | ✅ **SHIPPABLE.** Works end-to-end with full agent-loop tool calling. Tool registry + `OrcaToolService` wired. |
-| apps/desktop | Electron shell | ⚠️ **Phase 6 pending.** Bare skeleton — renderer needs React UI. |
+| apps/desktop | Electron shell | ✅ **Phase 6 COMPLETE.** Full renderer with streaming output, tool approval, session history, settings, auth lock, theme toggle, file attachments. Windows `.exe` artifacts produced. |
 
 The architecture is genuinely well-designed. The dependency graph is correct. The interfaces are clean. What's missing is the meat inside several of those interfaces.
 
