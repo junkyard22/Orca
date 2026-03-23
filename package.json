@@ -19,7 +19,11 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "electron"
-    ]
+    ],
+    "overrides": {
+      "esbuild": ">=0.25.0",
+      "vite": ">=6.2.0"
+    }
   },
   "devDependencies": {
     "node-gyp": "^12.2.0",
