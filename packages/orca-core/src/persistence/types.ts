@@ -15,6 +15,8 @@ export interface RunRecord {
   brainDecision?: string;
   status: 'SUCCESS' | 'FAIL';
   stoppedBecause?: 'done' | 'max_iterations' | 'loop_detected' | 'error';
+  /** Exception message captured when stoppedBecause === 'error'. */
+  errorMessage?: string;
   iterationCount?: number;
   outputText?: string;
   summary?: string;

@@ -844,9 +844,10 @@ async function sendMessage() {
     // Post-reply metadata
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
-    if (pendingPipelineSummary) {
-      pendingPipelineSummary._eventLog = pipelineEventLog.slice();
-      appendPipelineBadge(pendingPipelineSummary);
+    const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary;
+    if (summaryToRender) {
+      summaryToRender._eventLog = pipelineEventLog.slice();
+      appendPipelineBadge(summaryToRender);
       pendingPipelineSummary = null;
     }
 

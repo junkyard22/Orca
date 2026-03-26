@@ -93,8 +93,8 @@ export class SqliteStore implements OrcaStore {
             id, created_at, intent, role, status, stopped_because,
             iteration_count, output_text, summary, verdict, confidence,
             issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
-            brain_decision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            brain_decision, error_message
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             run.id,
             run.createdAt,
@@ -113,6 +113,7 @@ export class SqliteStore implements OrcaStore {
             run.costUsd ?? null,
             run.repairPasses ?? null,
             run.brainDecision ?? null,
+            run.errorMessage ?? null,
           ]
         );
 
@@ -183,7 +184,7 @@ export class SqliteStore implements OrcaStore {
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
         issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
-        brain_decision
+        brain_decision, error_message
       FROM runs
       ORDER BY created_at DESC
       LIMIT ?`
@@ -208,6 +209,7 @@ export class SqliteStore implements OrcaStore {
       cost_usd: number | null;
       repair_passes: number | null;
       brain_decision: string | null;
+      error_message: string | null;
     }> = [];
 
     while (stmt.step()) {
@@ -223,6 +225,7 @@ export class SqliteStore implements OrcaStore {
       role: row.role ?? undefined,
       status: row.status as 'SUCCESS' | 'FAIL',
       stoppedBecause: row.stopped_because as 'done' | 'max_iterations' | 'loop_detected' | 'error' | undefined,
+      errorMessage: row.error_message ?? undefined,
       iterationCount: row.iteration_count ?? undefined,
       outputText: row.output_text ?? undefined,
       summary: row.summary ?? undefined,
@@ -249,7 +252,7 @@ export class SqliteStore implements OrcaStore {
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
         issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
-        brain_decision
+        brain_decision, error_message
       FROM runs
       WHERE id = ?`
     );
@@ -270,6 +273,7 @@ export class SqliteStore implements OrcaStore {
       role: row.role ?? undefined,
       status: row.status as 'SUCCESS' | 'FAIL',
       stoppedBecause: row.stopped_because as 'done' | 'max_iterations' | 'loop_detected' | 'error' | undefined,
+      errorMessage: row.error_message ?? undefined,
       iterationCount: row.iteration_count ?? undefined,
       outputText: row.output_text ?? undefined,
       summary: row.summary ?? undefined,
@@ -398,7 +402,8 @@ export class SqliteStore implements OrcaStore {
       `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd, repair_passes
+        issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
+        error_message
       FROM runs
       WHERE intent LIKE ? OR output_text LIKE ?
       ORDER BY created_at DESC
@@ -423,6 +428,7 @@ export class SqliteStore implements OrcaStore {
       output_tokens: number | null;
       cost_usd: number | null;
       repair_passes: number | null;
+      error_message: string | null;
     }> = [];
 
     while (stmt.step()) {
@@ -438,6 +444,7 @@ export class SqliteStore implements OrcaStore {
       role: row.role ?? undefined,
       status: row.status as 'SUCCESS' | 'FAIL',
       stoppedBecause: row.stopped_because as 'done' | 'max_iterations' | 'loop_detected' | 'error' | undefined,
+      errorMessage: row.error_message ?? undefined,
       iterationCount: row.iteration_count ?? undefined,
       outputText: row.output_text ?? undefined,
       summary: row.summary ?? undefined,

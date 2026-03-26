@@ -82,6 +82,13 @@ export function runMigrations(db: Database): void {
     // Column already exists — safe to ignore.
   }
 
+  // Add error_message column to capture agent worker exceptions (idempotent migration)
+  try {
+    db.run(`ALTER TABLE runs ADD COLUMN error_message TEXT;`);
+  } catch {
+    // Column already exists — safe to ignore.
+  }
+
   // Create indexes for common queries
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);

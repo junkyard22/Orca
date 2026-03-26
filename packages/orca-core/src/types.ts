@@ -100,6 +100,8 @@ export interface OrcaMaestroResult {
     thoughts?: ThoughtRecord[];
     iterationCount?: number;
     stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "error";
+    /** Exception message captured when stoppedBecause === 'error'. */
+    errorMessage?: string;
     inputTokens?: number;
     outputTokens?: number;
     costUsd?: number;
@@ -362,6 +364,8 @@ export type OrcaEvent =
       acceptanceCriteria: Array<{ id: string; text: string; required: boolean; met: boolean }>;
       durationMs: number;
       repairPasses: number;
+      /** Exception message from the agent worker, present when stoppedBecause === 'error'. */
+      errorMessage?: string;
       deweyBrief?: { userName: string; suggestedTone: string; relevantPreferences: string[]; relevantContext: string[] };
       mirandaCheckpoints?: Array<{ gate: string; allowed: boolean; reason: string }>;
     };

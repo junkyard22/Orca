@@ -4,7 +4,7 @@ import type { OrcaPipelineTrace } from "@clawde/orca-core";
 
 export type OrcaEventData = Record<string, unknown>;
 export type BensonReply  = { kind: "CLARIFY" | "RESULT"; text: string; options?: string[] };
-export type SendResult   = { ok: boolean; reply?: BensonReply; error?: string };
+export type SendResult   = { ok: boolean; reply?: BensonReply; error?: string; pipelineSummary?: Record<string, unknown> };
 export type InitStatus   = { ok: boolean; error?: string | null };
 export type SaveResult   = { ok: boolean; error?: string };
 export type AppAuthStatus = LocalAuthView & { locked: boolean };

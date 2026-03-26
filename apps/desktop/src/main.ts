@@ -376,6 +376,7 @@ function buildMaestroAdapter(
           thoughts: result.thoughts,
           iterationCount: result.iterationCount,
           stoppedBecause: result.stoppedBecause,
+          errorMessage: result.error,
           filesChanged,
         },
       };
@@ -1067,9 +1068,14 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     "pipeline:summary",
     "dewey:brief", "miranda:checkpoint",
   ];
+  // Capture pipeline:summary so it can be embedded in the IPC reply — the
+  // renderer may receive the invoke response before the orca-event message
+  // if they arrive on different IPC channels (race condition on long tasks).
+  let capturedPipelineSummary: OrcaEvent | undefined;
   const unsubs = EVENT_TYPES.map((type) =>
     runtime!.on(type, (e: OrcaEvent) => {
       win?.webContents.send("orca-event", e);
+      if (e.type === "pipeline:summary") capturedPipelineSummary = e;
       // ── Console trace ──────────────────────────────────────────────────
       switch (e.type) {
         case "task:start":
@@ -1116,7 +1122,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
       taskPromise,
       abortPromise,
     ]);
-    return result;
+    return { ...result, pipelineSummary: capturedPipelineSummary };
   } finally {
     activeAbortResolve = null;   // clean up if task finished naturally
     if (activeAbortController === abortController) {

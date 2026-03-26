@@ -199,6 +199,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     let persistedMaestroResult: OrcaMaestroResult | undefined;
     let persistedQcResult: PappyResult | undefined;
     let abortError: Error | undefined;
+    let gateBlockReason: string | undefined;
 
     try {
       throwIfAborted(options?.abortSignal);
@@ -244,6 +245,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             allowed: beforeQcGate.allowed,
             reason: beforeQcGate.reason,
           });
+          if (!beforeQcGate.allowed) {
+            gateBlockReason = beforeQcGate.reason;
+          }
         }
 
         const qcResult = pappy.evaluate(qcInput);
@@ -329,6 +333,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             originalRole,
             budgetUsd,
             initialSpendUsd,
+            maestroResult.metadata?.errorMessage,
+            gateBlockReason,
           );
           if (result.artifacts) {
             persistedMaestroResult = normalizeMaestroResult(result.artifacts as OrcaMaestroResult);
@@ -424,6 +430,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         }),
         durationMs,
         repairPasses,
+        errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
         deweyBrief: bufferedDeweyBrief,
         mirandaCheckpoints: bufferedMirandaCheckpoints.length > 0 ? bufferedMirandaCheckpoints : undefined,
       });
@@ -439,6 +446,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           brainDecision: persistedMaestroResult?.metadata?.brainDecision,
           status: result.status,
           stoppedBecause: persistedMaestroResult?.metadata?.stoppedBecause,
+          errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
           iterationCount: persistedMaestroResult?.metadata?.iterationCount,
           outputText: result.userFacingText,
           summary: result.summary,

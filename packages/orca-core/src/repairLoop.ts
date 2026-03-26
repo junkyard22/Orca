@@ -35,6 +35,8 @@ export async function handleRepairLoop(
   originalRole?: string,
   budgetUsd?: number,
   spentSoFarUsd?: number,
+  initialErrorMessage?: string,
+  initialGateBlockReason?: string,
 ): Promise<OrcaExecutionResult> {
   let currentQC = initialQCResult;
   // Seed with the initial output so we always have something to show
@@ -175,9 +177,14 @@ export async function handleRepairLoop(
     maxPasses,
     lastOutputText,
   });
+  const failureSuffix = initialErrorMessage
+    ? ` Agent error: ${initialErrorMessage}`
+    : initialGateBlockReason
+      ? ` ${initialGateBlockReason}`
+      : '';
   return {
     status: "FAIL",
     userFacingText: lastOutputText,
-    summary: `Still failing after ${maxPasses} repair pass(es).`,
+    summary: `Still failing after ${maxPasses} repair pass(es).${failureSuffix}`,
   };
 }

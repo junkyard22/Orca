@@ -170,8 +170,11 @@ export class BrainDecisionValidationError extends Error {
  * invalid routing decisions downstream.
  */
 export function parseBrainDecision(raw: string): DecomposeDecision {
-  // Step 1: Strip accidental markdown code fences (one layer only).
-  const stripped = raw
+  // Step 1: Strip <think>...</think> blocks emitted by reasoning models (e.g. qwen3-max).
+  const withoutThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, '');
+
+  // Step 2: Strip accidental markdown code fences (one layer only).
+  const stripped = withoutThink
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```\s*$/, '');
   const cleaned = stripped.trim();
