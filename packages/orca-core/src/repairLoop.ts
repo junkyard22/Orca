@@ -45,6 +45,13 @@ export async function handleRepairLoop(
     throwIfAborted(ctx.abortSignal);
     // ── Budget guard — abort before spending more ──────────────────────────
     if (budgetUsd && budgetUsd > 0 && spentUsd >= budgetUsd) {
+      ctx.recordTrace?.("repair.budget_stop", {
+        pass,
+        maxPasses,
+        budgetUsd,
+        spentUsd,
+        lastOutputText,
+      });
       return {
         status: "WARN",
         userFacingText: lastOutputText,
@@ -90,11 +97,22 @@ export async function handleRepairLoop(
         },
       },
     };
+    ctx.recordTrace?.("repair.pass.spec", {
+      pass,
+      maxPasses,
+      originalRole,
+      repairSpec,
+    });
 
     emitter.emit({ type: "maestro:start", taskId: ctx.runId, attempt: pass, isRepair: true });
     const maestroResult = normalizeMaestroResult(await maestro.run(repairSpec, ctx));
     lastOutputText = maestroResult.outputText ?? lastOutputText;
     spentUsd += maestroResult.metadata?.costUsd ?? 0;
+    ctx.recordTrace?.("repair.pass.maestro_result", {
+      pass,
+      spentUsd,
+      maestroResult,
+    });
     emitter.emit({ type: "maestro:done", taskId: ctx.runId, attempt: pass, isRepair: true, hasOutput: !!maestroResult.outputText });
 
     // Evaluate THIS pass's maestroResult (latest artifacts) against the
@@ -108,6 +126,14 @@ export async function handleRepairLoop(
     ctx.gate?.beforeQC({ taskId: ctx.runId, outputText: maestroResult.outputText ?? "" });
 
     const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
+    ctx.recordTrace?.("repair.pass.qc_result", {
+      pass,
+      verdict: nextQC.verdict,
+      confidence: nextQC.confidence,
+      issues: nextQC.issues,
+      repairTask: nextQC.repairTask,
+      internalSummary: nextQC.internalSummary,
+    });
 
     // Miranda: after_qc gate
     ctx.gate?.afterQC(
@@ -126,6 +152,10 @@ export async function handleRepairLoop(
     });
 
     if (nextQC.verdict !== "FAIL") {
+      ctx.recordTrace?.("repair.pass.success", {
+        pass,
+        summary: nextQC.internalSummary,
+      });
       return {
         status: "SUCCESS",
         userFacingText: maestroResult.outputText,
@@ -134,10 +164,17 @@ export async function handleRepairLoop(
       };
     }
 
-    if (!nextQC.repairTask) break; // Pappy can't produce further guidance
+    if (!nextQC.repairTask) {
+      ctx.recordTrace?.("repair.pass.stopped_no_repair_task", { pass });
+      break;
+    }
     currentQC = nextQC;
   }
 
+  ctx.recordTrace?.("repair.exhausted", {
+    maxPasses,
+    lastOutputText,
+  });
   return {
     status: "FAIL",
     userFacingText: lastOutputText,

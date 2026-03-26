@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { LocalAuthView, SaveLocalAuthInput, SaveLocalAuthResult } from "./auth";
+import type { OrcaPipelineTrace } from "@clawde/orca-core";
 
 export type OrcaEventData = Record<string, unknown>;
 export type BensonReply  = { kind: "CLARIFY" | "RESULT"; text: string; options?: string[] };
@@ -126,6 +127,10 @@ contextBridge.exposeInMainWorld("orca", {
   // Load a single run by ID for display in the chat view.
   loadSession: (id: string): Promise<SessionSummary | null> =>
     ipcRenderer.invoke("session:load", id),
+
+  // Load the structured per-run pipeline trace written by the desktop runtime.
+  loadSessionTrace: (id: string): Promise<OrcaPipelineTrace | null> =>
+    ipcRenderer.invoke("session:trace", id),
 
   // Delete a run and all its related data from SQLite.
   deleteSession: (id: string): Promise<{ ok: boolean; error?: string }> =>

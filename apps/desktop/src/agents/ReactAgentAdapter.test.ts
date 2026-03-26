@@ -379,6 +379,43 @@ Next: Continue
     expect(result.loopEvidence).toBeUndefined();
   });
 
+  it("records a structured agent trace for model calls and tool execution", async () => {
+    const responses = [
+      `Thought: I should read the file\nObservation: I need the file contents\nNext: Call the tool\n\n<tool_call>{"tool": "read_file", "path": "test.txt"}</tool_call>`,
+      `Thought: I have the file contents\nObservation: The task is complete\nNext: Task is complete\n\nFINAL ANSWER:\nRead complete.`,
+    ];
+    const traceEntries: Array<{ stage: string; detail?: unknown }> = [];
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "reader" as RoleName,
+      4,
+    );
+
+    const result = await adapter.run(
+      createTask(),
+      [createMockTool("read_file", "file content") as any],
+      {
+        ...createCtx(),
+        recordTrace: (stage, detail) => traceEntries.push({ stage, detail }),
+      },
+    );
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(traceEntries.map((entry) => entry.stage)).toEqual(
+      expect.arrayContaining([
+        "agent.run.start",
+        "agent.iteration.request",
+        "agent.iteration.response",
+        "agent.tool.call",
+        "agent.tool.result",
+        "agent.final_answer",
+        "agent.run.completed",
+      ]),
+    );
+  });
+
   it("uses only the text after the FINAL ANSWER marker", async () => {
     const responses = [
       `Thought: I inspected the file\nObservation: I have what I need\nNext: Task is complete\n\nFINAL ANSWER:\n- apps/runner is the CLI entrypoint\n- It wires the Orca runtime\n- It prints Benson's response`

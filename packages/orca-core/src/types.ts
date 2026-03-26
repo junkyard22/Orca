@@ -57,6 +57,30 @@ export interface OrcaToolEvent {
   raw?: unknown;
 }
 
+export interface OrcaPipelineTraceEntry {
+  at: string;
+  stage: string;
+  detail?: unknown;
+}
+
+export interface OrcaPipelineTrace {
+  version: 1;
+  taskId: string;
+  createdAt: string;
+  task: OrcaTaskSpec;
+  entries: OrcaPipelineTraceEntry[];
+  finalResult?: {
+    status: OrcaExecutionResult["status"] | "ABORTED";
+    summary?: string;
+    userFacingText?: string;
+    role?: string;
+    qcVerdict?: PappyResult["verdict"];
+    issueCount?: number;
+    repairPasses: number;
+    durationMs: number;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // What Maestro returns to orca-core after running a task.
 // Richer than Maestro's own PodMember.Result so Pappy can evaluate it fully.
@@ -154,6 +178,12 @@ export interface OrcaRunCtx {
   llm: OrcaLLMService;
   runId: string;
   abortSignal?: AbortSignal;
+  /**
+   * Append a structured entry to the per-run pipeline trace.
+   * Adapters should use this instead of ad hoc logging when recording
+   * prompts, routing decisions, tool calls, and repair-loop details.
+   */
+  recordTrace?: (stage: string, detail?: unknown) => void;
   /** Optional — when present, Maestro runs in agent-loop mode with tool calling. */
   tools?: OrcaToolService;
   /**
@@ -239,6 +269,11 @@ export interface OrcaRuntimeDeps {
    * Inject SqliteStore from @clawde/orca-core/persistence for production use.
    */
   store?: OrcaStore;
+  /**
+   * Persist the structured per-run pipeline trace.
+   * Called after each task completes or aborts.
+   */
+  writeTrace?: (trace: OrcaPipelineTrace) => void | Promise<void>;
   /**
    * Called once at the start of each task to capture workspace state.
    * Inject getWorkspaceContext from orca-core for automatic git + file info.

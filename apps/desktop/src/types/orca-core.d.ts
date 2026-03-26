@@ -29,7 +29,7 @@ declare module '@clawde/orca-core' {
   }
 
   export interface OrcaExecutionResult {
-    status: "SUCCESS" | "FAIL";
+    status: "SUCCESS" | "WARN" | "FAIL";
     userFacingText?: string;
     summary?: string;
     artifacts?: unknown;
@@ -47,6 +47,30 @@ declare module '@clawde/orca-core' {
     ok: boolean;
     summary: string;
     raw?: unknown;
+  }
+
+  export interface OrcaPipelineTraceEntry {
+    at: string;
+    stage: string;
+    detail?: unknown;
+  }
+
+  export interface OrcaPipelineTrace {
+    version: 1;
+    taskId: string;
+    createdAt: string;
+    task: OrcaTaskSpec;
+    entries: OrcaPipelineTraceEntry[];
+    finalResult?: {
+      status: OrcaExecutionResult["status"] | "ABORTED";
+      summary?: string;
+      userFacingText?: string;
+      role?: string;
+      qcVerdict?: "PASS" | "WARN" | "FAIL";
+      issueCount?: number;
+      repairPasses: number;
+      durationMs: number;
+    };
   }
 
   export interface OrcaMaestroResult {
@@ -102,6 +126,7 @@ declare module '@clawde/orca-core' {
     llm: OrcaLLMService;
     runId: string;
     abortSignal?: AbortSignal;
+    recordTrace?: (stage: string, detail?: unknown) => void;
     tools?: OrcaToolService;
     toolNamesAllowed?: string[];
     emit?: (event: OrcaEvent) => void;
@@ -138,6 +163,7 @@ declare module '@clawde/orca-core' {
     llm: OrcaLLMService;
     tools?: OrcaToolService;
     store?: unknown;
+    writeTrace?: (trace: OrcaPipelineTrace) => void | Promise<void>;
     getWorkspaceContext?: () => unknown;
     maxRepairPasses?: number;
     gate?: MirandaGate;

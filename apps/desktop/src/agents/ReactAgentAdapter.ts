@@ -299,6 +299,20 @@ export class ReactAgentAdapter implements AgentAdapter {
       ...conversationHistory,
       { role: "user", content: taskContext }
     ];
+    ctx.recordTrace?.("agent.run.start", {
+      role: this.role,
+      maxIterations: this.maxIterations,
+      maxTokens: this.maxTokens,
+      temperature: this.temperature,
+      tools: availableTools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        schema: tool.schema,
+      })),
+      task,
+      systemPrompt: fullSystemPrompt,
+      taskContext,
+    });
     
     try {
       for (let iteration = 0; iteration < this.maxIterations; iteration++) {
@@ -315,6 +329,12 @@ export class ReactAgentAdapter implements AgentAdapter {
         // Call the model - use streaming if available and callback provided
         let response;
         const useStreaming = ctx.onStreamToken && this.llmAdapter.stream;
+        ctx.recordTrace?.("agent.iteration.request", {
+          role: this.role,
+          iteration: iterationCount,
+          useStreaming: !!useStreaming,
+          messages,
+        });
         
         if (useStreaming) {
           // Streaming call - tokens are emitted as they arrive
@@ -343,6 +363,11 @@ export class ReactAgentAdapter implements AgentAdapter {
         throwIfAborted(ctx.abortSignal);
         lastModelOutput = modelOutput;
         messages.push({ role: "assistant", content: modelOutput });
+        ctx.recordTrace?.("agent.iteration.response", {
+          role: this.role,
+          iteration: iterationCount,
+          output: modelOutput,
+        });
         
         // Extract Thought/Observation/Next blocks with proper multiline matching
         // Using [\s\S]*? with s flag (dotAll) to match across newlines
@@ -363,6 +388,11 @@ export class ReactAgentAdapter implements AgentAdapter {
             next
           };
           thoughts.push(thoughtRecord);
+          ctx.recordTrace?.("agent.iteration.thought", {
+            role: this.role,
+            iteration: iterationCount,
+            thoughtRecord,
+          });
           
           if (ctx.emit) {
             ctx.emit({
@@ -382,6 +412,12 @@ export class ReactAgentAdapter implements AgentAdapter {
         
         // Parse tool calls
         const { calls: toolCalls, malformedCount } = parseToolCalls(modelOutput);
+        ctx.recordTrace?.("agent.iteration.tool_parse", {
+          role: this.role,
+          iteration: iterationCount,
+          malformedCount,
+          toolCalls,
+        });
 
         // ── Parse-failure loop guard ──────────────────────────────────────────
         // If the model emitted <tool_call> blocks but none could be parsed,
@@ -390,6 +426,13 @@ export class ReactAgentAdapter implements AgentAdapter {
         const hasRawToolCallTag = modelOutput.includes('<tool_call>');
         if (hasRawToolCallTag && malformedCount > 0 && toolCalls.length === 0) {
           consecutiveParseFailures++;
+          ctx.recordTrace?.("agent.iteration.parse_failure", {
+            role: this.role,
+            iteration: iterationCount,
+            malformedCount,
+            consecutiveParseFailures,
+            output: modelOutput,
+          });
           console.warn(
             `[ReactAgent] Parse-failure #${consecutiveParseFailures} at iteration ${iterationCount}: ` +
             `${malformedCount} malformed block(s), 0 valid calls. ` +
@@ -414,6 +457,12 @@ export class ReactAgentAdapter implements AgentAdapter {
               repeatedCall: 'malformed <tool_call> block',
               occurrences: consecutiveParseFailures
             };
+            ctx.recordTrace?.("agent.loop_detected", {
+              role: this.role,
+              iteration: iterationCount,
+              stoppedBecause,
+              loopEvidence,
+            });
             break;
           }
           continue; // give model a chance to correct its format
@@ -442,6 +491,11 @@ export class ReactAgentAdapter implements AgentAdapter {
           // This is the iteration after warning injection - extract whatever we have as final answer
           currentOutputText = stripThoughtBlocks(cleanedOutput);
           stoppedBecause = 'done';
+          ctx.recordTrace?.("agent.final_answer.fallback", {
+            role: this.role,
+            iteration: iterationCount,
+            outputText: currentOutputText,
+          });
           break;
         }
         
@@ -449,6 +503,11 @@ export class ReactAgentAdapter implements AgentAdapter {
           if (finalAnswer) {
             currentOutputText = finalAnswer;
             stoppedBecause = 'done';
+            ctx.recordTrace?.("agent.final_answer", {
+              role: this.role,
+              iteration: iterationCount,
+              outputText: currentOutputText,
+            });
             break;
           }
 
@@ -478,6 +537,12 @@ export class ReactAgentAdapter implements AgentAdapter {
               summary: `Unknown tool: ${call.tool}`,
               raw: call.input
             });
+            ctx.recordTrace?.("agent.tool.unknown", {
+              role: this.role,
+              iteration: iterationCount,
+              tool: call.tool,
+              input: call.input,
+            });
             continue;
           }
 
@@ -491,6 +556,13 @@ export class ReactAgentAdapter implements AgentAdapter {
             const gateError = beforeToolGate.reason || `Tool "${call.tool}" blocked by Miranda`;
             const gateResult = formatToolResult(call.tool, false, "", gateError);
             messages.push({ role: "user", content: gateResult });
+            ctx.recordTrace?.("agent.tool.blocked", {
+              role: this.role,
+              iteration: iterationCount,
+              tool: call.tool,
+              input: call.input,
+              reason: gateError,
+            });
             toolsUsed.push({
               tool: call.tool,
               ok: false,
@@ -505,6 +577,13 @@ export class ReactAgentAdapter implements AgentAdapter {
             console.log(`[ReactAgent] BLOCKED: write_file requires "content" string parameter`);
             const errorResult = formatToolResult(call.tool, false, '', 'write_file requires a "content" string parameter');
             messages.push({ role: "user", content: errorResult });
+            ctx.recordTrace?.("agent.tool.invalid_input", {
+              role: this.role,
+              iteration: iterationCount,
+              tool: call.tool,
+              input: call.input,
+              error: 'write_file requires a "content" string parameter',
+            });
             toolsUsed.push({
               tool: call.tool,
               ok: false,
@@ -524,9 +603,22 @@ export class ReactAgentAdapter implements AgentAdapter {
                   ctx.requestToolApproval!(toolName, args)
               : undefined,
           };
+          ctx.recordTrace?.("agent.tool.call", {
+            role: this.role,
+            iteration: iterationCount,
+            tool: call.tool,
+            input: call.input,
+          });
           const result = await tool.execute(call.input, toolContext);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
+          ctx.recordTrace?.("agent.tool.result", {
+            role: this.role,
+            iteration: iterationCount,
+            tool: call.tool,
+            input: call.input,
+            result,
+          });
           
           // Tool Use Discipline: Increment cumulative counter
           cumulativeToolCallCount++;
@@ -576,6 +668,12 @@ export class ReactAgentAdapter implements AgentAdapter {
                 repeatedCall: `${call.tool} returning empty/error`,
                 occurrences: consecutiveEmptyResults
               };
+              ctx.recordTrace?.("agent.loop_detected", {
+                role: this.role,
+                iteration: iterationCount,
+                stoppedBecause,
+                loopEvidence,
+              });
               break;
             }
           } else {
@@ -593,6 +691,12 @@ export class ReactAgentAdapter implements AgentAdapter {
                 repeatedCall: window[0],
                 occurrences: this.LOOP_WINDOW
               };
+              ctx.recordTrace?.("agent.loop_detected", {
+                role: this.role,
+                iteration: iterationCount,
+                stoppedBecause,
+                loopEvidence,
+              });
               break;
             }
           }
@@ -655,6 +759,16 @@ export class ReactAgentAdapter implements AgentAdapter {
           `with ${toolsUsed.length} tool event(s) but produced no FINAL ANSWER.`
         );
       }
+      ctx.recordTrace?.("agent.run.completed", {
+        role: this.role,
+        iterationCount,
+        stoppedBecause,
+        finalAnswerFound,
+        outputText: finalOutput,
+        toolsUsed,
+        filesChanged,
+        loopEvidence,
+      });
       
       return {
         outputText: finalOutput,
@@ -669,10 +783,20 @@ export class ReactAgentAdapter implements AgentAdapter {
       
     } catch (err) {
       if (isAbortError(err)) {
+        ctx.recordTrace?.("agent.run.aborted", {
+          role: this.role,
+          iterationCount,
+          message: err instanceof Error ? err.message : String(err),
+        });
         throw err;
       }
       stoppedBecause = 'error';
       error = err instanceof Error ? err.message : String(err);
+      ctx.recordTrace?.("agent.run.error", {
+        role: this.role,
+        iterationCount,
+        error,
+      });
       
       return {
         outputText: '',

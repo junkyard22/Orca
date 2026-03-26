@@ -291,12 +291,40 @@ describe("createOrcaRuntime", () => {
     });
   });
 
+  describe("Pipeline trace", () => {
+    it("writes a structured trace for a completed run", async () => {
+      const maestro = createMockMaestro("Task completed successfully");
+      const pappy = {
+        evaluate: vi.fn(() => createMockPappyResult("PASS")),
+      } satisfies PappyPort;
+      const writeTrace = vi.fn();
+      const runtime = createOrcaRuntime({
+        maestro,
+        pappy,
+        llm: createMockLLM(),
+        writeTrace,
+      });
+
+      await runtime.executeTask(createTaskSpec());
+
+      expect(writeTrace).toHaveBeenCalledTimes(1);
+      const trace = writeTrace.mock.calls[0]?.[0] as any;
+      expect(trace.task.intent).toBe("test");
+      expect(trace.entries.map((entry: any) => entry.stage)).toEqual(
+        expect.arrayContaining(["task.received", "maestro.run.result", "qc.run.result", "task.completed"]),
+      );
+      expect(trace.finalResult?.status).toBe("SUCCESS");
+      expect(trace.finalResult?.qcVerdict).toBe("PASS");
+    });
+  });
+
   describe("Abort handling", () => {
     it("propagates abort errors and skips persistence", async () => {
       const store = {
         saveRun: vi.fn(),
         close: vi.fn(),
       };
+      const writeTrace = vi.fn();
 
       const maestro: MaestroPort = {
         run: async (_task, ctx) => {
@@ -315,6 +343,7 @@ describe("createOrcaRuntime", () => {
         pappy: createMockPappy("PASS"),
         llm: createMockLLM(),
         store: store as any,
+        writeTrace,
       });
 
       const controller = new AbortController();
@@ -323,6 +352,8 @@ describe("createOrcaRuntime", () => {
 
       await expect(task).rejects.toMatchObject({ name: "AbortError" });
       expect(store.saveRun).not.toHaveBeenCalled();
+      expect(writeTrace).toHaveBeenCalledTimes(1);
+      expect(writeTrace.mock.calls[0]?.[0]?.finalResult?.status).toBe("ABORTED");
     });
   });
 

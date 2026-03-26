@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { Dewey } from "@clawde/dewey-core";
@@ -22,6 +23,7 @@ import type {
   OrcaRunCtx,
   OrcaTaskSpec,
   OrcaLLMService,
+  OrcaPipelineTrace,
   OrcaToolService,
 } from "@clawde/orca-core";
 import { createCoreToolRegistry } from "@yakstacks/workbench-core";
@@ -67,7 +69,8 @@ type AgentTool = {
     context: {
       workspaceRoot?: string;
       runId?: string;
-      requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+      abortSignal?: AbortSignal;
+      requestApproval?: (tool: string, args: Record<string, unknown>, reason: string) => Promise<boolean>;
     },
   ) => Promise<{ ok: boolean; output: string; error?: string }>;
 };
@@ -75,6 +78,28 @@ type AgentTool = {
 type AppAuthStatus = LocalAuthView & {
   locked: boolean;
 };
+
+function getPipelineTraceDir(): string {
+  return join(app.getPath("userData"), "pipeline-traces");
+}
+
+function getPipelineTracePath(taskId: string): string {
+  return join(getPipelineTraceDir(), `${taskId}.json`);
+}
+
+function writePipelineTrace(trace: OrcaPipelineTrace): void {
+  const dir = getPipelineTraceDir();
+  mkdirSync(dir, { recursive: true });
+  const filePath = getPipelineTracePath(trace.taskId);
+  writeFileSync(filePath, JSON.stringify(trace, null, 2), "utf8");
+  console.log(`[Orca]   pipeline:trace    ${filePath}`);
+}
+
+function readPipelineTrace(taskId: string): OrcaPipelineTrace | null {
+  const filePath = getPipelineTracePath(taskId);
+  if (!existsSync(filePath)) return null;
+  return JSON.parse(readFileSync(filePath, "utf8")) as OrcaPipelineTrace;
+}
 
 function normalizeConversationHistory(rawHistory: unknown): Message[] {
   if (!Array.isArray(rawHistory)) return [];
@@ -110,7 +135,6 @@ async function brainRoute(
   ctx: OrcaRunCtx,
   roleAdapters: Partial<Record<RoleName, OrcaLLMService>>,
 ): Promise<{ role: RoleName; doneCriteria: string[]; brainDecision?: string }> {
-  const maestro = createMaestroCore();
   const brainLLM = roleAdapters['brain'] ?? ctx.llm;
 
   // Small, fast JSON call to decide routing. One repair pass on schema validation failure.
@@ -123,20 +147,33 @@ async function brainRoute(
     const prompt = repairReason !== null
       ? `${basePrompt}\n\n---REPAIR---\nYour previous response was rejected. Reason: ${repairReason}\n\nFix the error and output ONLY a bare JSON object with no surrounding text.`
       : basePrompt;
+    ctx.recordTrace?.("brain.route.prompt", { attempt, prompt });
+    let responseText = "";
     try {
       const { text } = await brainLLM.complete(prompt, {
         maxTokens: 512,
         temperature: 0,
         abortSignal: ctx.abortSignal,
       });
-      decision = parseBrainDecision(text);
-      brainDecision = text.trim();
+      responseText = text;
+      ctx.recordTrace?.("brain.route.response", { attempt, text: responseText });
+      decision = parseBrainDecision(responseText);
+      brainDecision = responseText.trim();
       break;
     } catch (err) {
       if (err instanceof BrainDecisionValidationError) {
         repairReason = err.reason;
+        ctx.recordTrace?.("brain.route.validation_error", {
+          attempt,
+          reason: err.reason,
+          text: responseText,
+        });
         // Loop continues for one repair attempt.
       } else {
+        ctx.recordTrace?.("brain.route.error", {
+          attempt,
+          error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
+        });
         break; // Unexpected error — stop retrying.
       }
     }
@@ -145,8 +182,25 @@ async function brainRoute(
   // For now, we only handle direct routing in the new architecture
   // Decompose routing would need to be handled differently in the future
   const resolved = decision ?? { routing: 'direct' as const, role: 'brain' as const };
+  if (!decision) {
+    ctx.recordTrace?.("brain.route.fallback", {
+      reason: "brain routing did not yield a valid decision; defaulting to direct brain",
+    });
+  }
+  if (resolved.routing !== 'direct') {
+    ctx.recordTrace?.("brain.route.decompose_not_implemented", {
+      decision: resolved,
+      actualRoleUsed: 'brain',
+    });
+  }
   const role = resolved.routing === 'direct' ? resolved.role : 'brain';
   const doneCriteria = resolved.done_criteria ?? [];
+  ctx.recordTrace?.("brain.route.final", {
+    decision: resolved,
+    role,
+    doneCriteria,
+    brainDecision,
+  });
 
   return { role: role as RoleName, doneCriteria, brainDecision };
 }
@@ -181,22 +235,23 @@ function buildMaestroAdapter(
     roleAgents.set(role, new RoleAgentAdapter(role, llmAdapter, undefined, rs?.maxTokens, rs?.temperature));
   }
 
+  const selectToolsForTask = (ctx: OrcaRunCtx): AgentTool[] => {
+    if (!Array.isArray(ctx.toolNamesAllowed)) return availableTools;
+    const allowed = new Set(ctx.toolNamesAllowed);
+    return availableTools.filter((tool) => allowed.has(tool.name));
+  };
+
   return {
     async run(task: OrcaTaskSpec, ctx: OrcaRunCtx): Promise<OrcaMaestroResult> {
       // 1. Classify and score risk (unchanged)
       const { classification, risk } = maestroCore.orchestrate(task.intent);
+      ctx.recordTrace?.("maestro.orchestrate", { classification, risk });
       
       // 2. Brain routing call to pick role and done criteria
       // Convert Map<RoleName, LLMAdapter> to Partial<Record<RoleName, OrcaLLMService>>
       // for compatibility with brainRoute function
       const roleAdapters: Partial<Record<RoleName, OrcaLLMService>> = {};
       for (const [role, adapter] of configuredAdapters) {
-  function selectToolsForTask(ctx: OrcaRunCtx): AgentTool[] {
-    if (!Array.isArray(ctx.toolNamesAllowed)) return availableTools;
-    const allowed = new Set(ctx.toolNamesAllowed);
-    return availableTools.filter((tool) => allowed.has(tool.name));
-  }
-
         roleAdapters[role] = createDirectLLMService(adapter, '', { maxTokens: 8192, temperature: 0.7 });
       }
       
@@ -217,7 +272,11 @@ function buildMaestroAdapter(
             relevantPreferences: brief.relevantPreferences,
             relevantContext:     brief.relevantContext,
           });
-        } catch { /* non-critical */ }
+        } catch (err) {
+          ctx.recordTrace?.("dewey.error", {
+            error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
+          });
+        }
       }
 
       // 3. Select model from fallback pool if available
@@ -225,6 +284,13 @@ function buildMaestroAdapter(
         const selectedModel = poolManager.selectModel(routing.role);
         if (selectedModel) {
           const entry = modelEntries.get(selectedModel.id);
+          ctx.recordTrace?.("maestro.model_selection", {
+            role: routing.role,
+            selectedModelId: selectedModel.id,
+            selectedModel,
+            configuredEntry: entry,
+            applied: false,
+          });
           if (entry) {
             logger.info(`[Maestro] Selected model ${selectedModel.id} for role ${routing.role}`);
           }
@@ -233,16 +299,33 @@ function buildMaestroAdapter(
       
       // 4. Get the agent for the selected role
       const agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
+      const taskTools = selectToolsForTask(ctx);
 
-      if (!taskTools || taskTools.length === 0) {
+      if (taskTools.length === 0) {
         logger.warn(`[Maestro] WARNING: No tools passed to ${routing.role} agent — tool calls will not be available`);
       }
       logger.info(`[Maestro] Passing ${taskTools.length} tools to ${routing.role} agent: ${taskTools.map((tool) => tool.name).join(', ')}`);
+      const agentTask = {
+        intent: task.intent,
+        goals: task.goals ?? [],
+        doneCriteria: routing.doneCriteria,
+        conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
+      };
+      ctx.recordTrace?.("maestro.agent_dispatch", {
+        role: routing.role,
+        doneCriteria: routing.doneCriteria,
+        agentTask,
+        tools: taskTools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          schema: tool.schema,
+        })),
+      });
       
       // 5. Build agent context with streaming support
       const agentCtx: AgentRunContext = {
         ...ctx,
-        workspaceRoot: workspaceRoot,   // ensure configured folder flows into tool execution
+        workspaceRoot: ctx.workspaceRoot ?? workspaceRoot,
         onStreamToken: (chunk: string) => {
           // Emit stream:token event to renderer
           ctx.emit?.({
@@ -262,16 +345,7 @@ function buildMaestroAdapter(
       
       // 6. Hand off to the agent — it runs autonomously until done
       throwIfAborted(ctx.abortSignal);
-      const result = await agent.run(
-        {
-          intent: task.intent,
-          goals: task.goals ?? [],
-          doneCriteria: routing.doneCriteria,
-          conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
-        },
-        taskTools,
-        agentCtx
-      );
+      const result = await agent.run(agentTask, taskTools, agentCtx);
 
       // 7. Record success/failure to fallback pool manager
       if (poolManager) {
@@ -283,6 +357,11 @@ function buildMaestroAdapter(
       }
 
       const filesChanged = deriveFilesChangedFromToolEvents(result.toolsUsed, result.filesChanged);
+      ctx.recordTrace?.("maestro.agent_result", {
+        role: routing.role,
+        result,
+        filesChanged,
+      });
       
       // 8. Map AgentResult → OrcaMaestroResult
       return {
@@ -332,8 +411,6 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
 
   if (task.context != null && Object.keys(task.context).length > 0) {
     const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, conversationHistory: _ch, ...userCtx } = task.context as Record<string, unknown>;
-
-      const taskTools = selectToolsForTask(ctx);
     const history = normalizeConversationHistory(task.context["conversationHistory"]);
     if (history?.length) {
       lines.push(
@@ -528,10 +605,13 @@ function initOrca(s: OrcaSettings): string | null {
     const availableTools: AgentTool[] = toolRegistry.list().map((tool) => ({
       name: tool.name,
       description: tool.description,
+      schema: tool.schema,
       execute(input, context) {
         return tool.execute(input, {
           workspaceRoot: context.workspaceRoot ?? workspaceRoot,
           runId: context.runId ?? '',
+          abortSignal: context.abortSignal,
+          requestApproval: context.requestApproval,
         });
       },
     }));
@@ -572,6 +652,7 @@ function initOrca(s: OrcaSettings): string | null {
       maxRepairPasses: s.maxRepairPasses,
       tools: toolService,
       store,
+      writeTrace: writePipelineTrace,
       requestToolApproval,
       budgetUsd: s.budgetUsd,
       gate,
@@ -637,14 +718,10 @@ function createTray(): void {
   tray.setToolTip("Orca");
 
   const menu = Menu.buildFromTemplate([
-      schema: tool.schema,
     {
       label: "Show Orca",
       click: () => {
         if (win) {
-          requestApproval: context.requestToolApproval
-            ? (toolName, args, _reason) => context.requestToolApproval!(toolName, args)
-            : undefined,
           win.show();
           win.focus();
         } else {
@@ -928,6 +1005,11 @@ ipcMain.handle("session:load", async (_ev, id: string) => {
   if (isAppLocked()) return null;
   if (!store) return null;
   return store.getRun(id);
+});
+
+ipcMain.handle("session:trace", async (_ev, id: string) => {
+  if (isAppLocked()) return null;
+  return readPipelineTrace(id);
 });
 
 ipcMain.handle("session:delete", async (_ev, id: string) => {

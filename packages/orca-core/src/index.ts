@@ -33,6 +33,8 @@ export type {
   OrcaLLMService,
   OrcaToolService,
   OrcaToolEvent,
+  OrcaPipelineTrace,
+  OrcaPipelineTraceEntry,
   OrcaRunCtx,
   OrcaMaestroResult,
   MaestroPort,
