@@ -4,5 +4,7 @@ export type {
   TaskSpec,
   ExecutionResult,
   BensonDependencies,
+  ExecuteTaskOptions,
+  BensonMessageOptions,
   ConversationTurn,
 } from "./types.js";

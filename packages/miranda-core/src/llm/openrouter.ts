@@ -5,6 +5,7 @@
 
 import type { LLMAdapter } from "./adapter.js";
 import type { LLMRequest, LLMResponse, TokenUsage } from "../pipeline/types.js";
+import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -49,6 +50,7 @@ export class OpenRouterAdapter implements LLMAdapter {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    throwIfAborted(request.signal);
     const startMs = Date.now();
 
     const body = {
@@ -61,47 +63,55 @@ export class OpenRouterAdapter implements LLMAdapter {
       max_tokens: request.maxTokens,
     };
 
-    const response = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": this.siteUrl,
-        "X-Title": this.appName,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(request.maxTokens > 4096 ? 120_000 : 60_000),
-    });
+    const { signal, cleanup } = createRequestSignal(
+      request,
+      request.maxTokens > 4096 ? 120_000 : 60_000,
+    );
+    try {
+      const response = await fetch(OPENROUTER_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": this.siteUrl,
+          "X-Title": this.appName,
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "unknown error");
-      throw new Error(
-        `OpenRouter API error ${response.status}: ${errorText}`
-      );
-    }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "unknown error");
+        throw new Error(
+          `OpenRouter API error ${response.status}: ${errorText}`
+        );
+      }
 
-    const data = (await response.json()) as OpenRouterChatResponse;
-    const durationMs = Date.now() - startMs;
+      const data = (await response.json()) as OpenRouterChatResponse;
+      const durationMs = Date.now() - startMs;
 
-    const firstChoice = data.choices[0];
-    if (!firstChoice) {
-      throw new Error("OpenRouter returned no choices");
-    }
+      const firstChoice = data.choices[0];
+      if (!firstChoice) {
+        throw new Error("OpenRouter returned no choices");
+      }
 
-    let usage: TokenUsage | null = null;
-    if (data.usage) {
-      usage = {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
+      let usage: TokenUsage | null = null;
+      if (data.usage) {
+        usage = {
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        };
+      }
+
+      return {
+        content: firstChoice.message.content,
+        model: data.model ?? request.model,
+        usage,
+        durationMs,
       };
+    } finally {
+      cleanup();
     }
-
-    return {
-      content: firstChoice.message.content,
-      model: data.model ?? request.model,
-      usage,
-      durationMs,
-    };
   }
 }

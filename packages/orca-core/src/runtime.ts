@@ -13,6 +13,7 @@ import type { RunRecord, ThoughtRecord, ToolEvent, FileChange } from "./persiste
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
 import { handleRepairLoop } from "./repairLoop.js";
+import { isAbortError, throwIfAborted } from "./abort.js";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -46,7 +47,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
   const qcEnabled = pappy != null;
   const emitter = new OrcaEmitter();
 
-  async function executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult> {
+  async function executeTask(
+    taskSpec: OrcaTaskSpec,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<OrcaExecutionResult> {
+    throwIfAborted(options?.abortSignal);
     const normalizedTaskSpec = normalizeTaskSpec(taskSpec);
 
     // ── Workspace snapshot (captured once, before any async work) ─────────
@@ -55,6 +60,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     const ctx: OrcaRunCtx = {
       llm,
       runId: generateRunId(),
+      abortSignal: options?.abortSignal,
       toolNamesAllowed: normalizedTaskSpec.permissions?.toolsAllowed,
       // Gate tools to only what permissions allow
       tools: tools && (() => {
@@ -131,8 +137,10 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     let result: OrcaExecutionResult = { status: "FAIL", summary: "Unknown error" };
     let persistedMaestroResult: OrcaMaestroResult | undefined;
     let persistedQcResult: PappyResult | undefined;
+    let abortError: Error | undefined;
 
     try {
+      throwIfAborted(options?.abortSignal);
       // ── 1. Maestro runs the task (attempt 0, not a repair) ──────────────
       //    Maestro uses ctx.llm (Miranda-backed) for all model calls.
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
@@ -151,6 +159,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         };
       } else {
         // ── 2. Pappy evaluates ───────────────────────────────────────────────
+        throwIfAborted(options?.abortSignal);
         const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult);
 
         const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
@@ -201,6 +210,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${initialSpendUsd.toFixed(4)} spent on initial pass). Repair skipped.`,
           };
         } else {
+          throwIfAborted(options?.abortSignal);
           const originalRole = maestroResult.metadata?.role;
           // Reset the streaming bubble in the UI before the repair pass starts
           // so the fresh repair output replaces the initial (failed) attempt.
@@ -225,8 +235,12 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      result = { status: "FAIL", summary: `Runtime error: ${message}` };
+      if (isAbortError(err)) {
+        abortError = err instanceof Error ? err : new Error(String(err));
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        result = { status: "FAIL", summary: `Runtime error: ${message}` };
+      }
     }
 
     // ── Always runs — emit completion, persist, clean up ──────────────────
@@ -234,6 +248,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     unsubRepair();
     unsubDewey();
     unsubMiranda();
+    if (abortError) {
+      throw abortError;
+    }
     emitter.emit({ type: "task:done", taskId, status: result.status });
 
     // Emit pipeline summary so the UI can render the badge without

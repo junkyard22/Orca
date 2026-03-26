@@ -16,6 +16,7 @@
 
 import type { LLMAdapter } from "./adapter.js";
 import type { LLMRequest, LLMResponse, TokenUsage } from "../pipeline/types.js";
+import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
 
 export interface OpenAICompatConfig {
   /**
@@ -75,6 +76,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    throwIfAborted(request.signal);
     const startMs = Date.now();
     const model = request.model || this.defaultModel;
 
@@ -103,12 +105,17 @@ export class OpenAICompatAdapter implements LLMAdapter {
       headers["Authorization"] = `Bearer ${this.apiKey}`;
     }
 
-    const response = await fetch(this.url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(request.maxTokens > 4096 ? 120_000 : 60_000),
-    });
+    const { signal, cleanup } = createRequestSignal(
+      request,
+      request.maxTokens > 4096 ? 120_000 : 60_000,
+    );
+    try {
+      const response = await fetch(this.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal,
+      });
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown error");
@@ -147,18 +154,22 @@ export class OpenAICompatAdapter implements LLMAdapter {
       };
     }
 
-    return {
-      content: firstChoice.message.content ?? "",
-      model: data.model ?? model,
-      usage,
-      durationMs,
-    };
+      return {
+        content: firstChoice.message.content ?? "",
+        model: data.model ?? model,
+        usage,
+        durationMs,
+      };
+    } finally {
+      cleanup();
+    }
   }
 
   async stream(
     request: LLMRequest,
     onToken: (chunk: string) => void,
   ): Promise<LLMResponse> {
+    throwIfAborted(request.signal);
     const startMs = Date.now();
     const model = request.model || this.defaultModel;
 
@@ -182,12 +193,17 @@ export class OpenAICompatAdapter implements LLMAdapter {
     };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
 
-    const response = await fetch(this.url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(request.maxTokens > 4096 ? 120_000 : 60_000),
-    });
+    const { signal, cleanup } = createRequestSignal(
+      request,
+      request.maxTokens > 4096 ? 120_000 : 60_000,
+    );
+    try {
+      const response = await fetch(this.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal,
+      });
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown error");
@@ -244,11 +260,14 @@ export class OpenAICompatAdapter implements LLMAdapter {
       reader.releaseLock();
     }
 
-    return {
-      content: fullContent,
-      model: finalModel,
-      usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
-      durationMs: Date.now() - startMs,
-    };
+      return {
+        content: fullContent,
+        model: finalModel,
+        usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
+        durationMs: Date.now() - startMs,
+      };
+    } finally {
+      cleanup();
+    }
   }
 }

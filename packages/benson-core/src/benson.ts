@@ -1,9 +1,37 @@
-import type { BensonDependencies, BensonReply, ConversationTurn, Message, TaskSpec } from "./types.js";
+import type {
+  BensonDependencies,
+  BensonReply,
+  ConversationTurn,
+  Message,
+  TaskSpec,
+  BensonMessageOptions,
+} from "./types.js";
 import { parseIntent, isRetryMessage } from "./intent.js";
 import { presentResult } from "./presenter.js";
 
+function createAbortError(reason?: unknown): Error {
+  if (reason instanceof Error && reason.name === "AbortError") {
+    return reason;
+  }
+  const error = new Error(
+    reason instanceof Error
+      ? reason.message
+      : typeof reason === "string" && reason.length > 0
+        ? reason
+        : "The operation was aborted.",
+  );
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw createAbortError(signal.reason);
+  }
+}
+
 export function createBenson(deps: BensonDependencies): {
-  handleUserMessage(message: string): Promise<BensonReply>;
+  handleUserMessage(message: string, options?: BensonMessageOptions): Promise<BensonReply>;
   getHistory(): ConversationTurn[];
   clearHistory(): void;
 } {
@@ -31,7 +59,8 @@ export function createBenson(deps: BensonDependencies): {
   }
 
   return {
-    async handleUserMessage(message: string): Promise<BensonReply> {
+    async handleUserMessage(message: string, options?: BensonMessageOptions): Promise<BensonReply> {
+      throwIfAborted(options?.abortSignal);
       const normalizedMessage = normalizeUserMessage(message);
 
       // ── Retry detection ───────────────────────────────────────────────────
@@ -46,7 +75,7 @@ export function createBenson(deps: BensonDependencies): {
             isRetry: true,
           },
         };
-        const result = await deps.executeTask(retrySpec);
+        const result = await deps.executeTask(retrySpec, { abortSignal: options?.abortSignal });
         const text = presentResult(result, retrySpec);
         history.push({ user: normalizedMessage, assistant: text });
         if (history.length > maxTurns) history.shift();
@@ -70,7 +99,8 @@ export function createBenson(deps: BensonDependencies): {
       const spec = parsed.spec;
       lastSpec = spec;  // remember for potential retry
 
-      const result = await deps.executeTask(spec);
+      throwIfAborted(options?.abortSignal);
+      const result = await deps.executeTask(spec, { abortSignal: options?.abortSignal });
       const text = presentResult(result, spec);
 
       // Append to rolling buffer (drop oldest if at cap)

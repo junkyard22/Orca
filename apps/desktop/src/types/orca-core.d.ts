@@ -83,7 +83,9 @@ declare module '@clawde/orca-core' {
         temperature?: number;
         onToken?: (chunk: string) => void;
         onStreamReset?: () => void;
-        simple?: boolean
+        simple?: boolean;
+        enableThinking?: boolean;
+        abortSignal?: AbortSignal;
       },
     ): Promise<{ text: string }>;
   }
@@ -99,12 +101,15 @@ declare module '@clawde/orca-core' {
   export interface OrcaRunCtx {
     llm: OrcaLLMService;
     runId: string;
+    abortSignal?: AbortSignal;
     tools?: OrcaToolService;
+    toolNamesAllowed?: string[];
     emit?: (event: OrcaEvent) => void;
     subagentDepth?: number;
     workspaceContext?: unknown;
     gate?: MirandaGate;
     requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+    workspaceRoot?: string;
   }
 
   export interface MaestroPort {
@@ -140,7 +145,7 @@ declare module '@clawde/orca-core' {
   }
 
   export interface OrcaRuntime {
-    executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult>;
+    executeTask(taskSpec: OrcaTaskSpec, options?: { abortSignal?: AbortSignal }): Promise<OrcaExecutionResult>;
     on(eventType: OrcaEventType, handler: (e: OrcaEvent) => void): () => void;
   }
 

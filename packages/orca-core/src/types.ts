@@ -114,7 +114,15 @@ export interface OrcaLLMService {
    */
   complete(
     prompt: string,
-    opts?: { maxTokens?: number; temperature?: number; onToken?: (chunk: string) => void; onStreamReset?: () => void; simple?: boolean; enableThinking?: boolean },
+    opts?: {
+      maxTokens?: number;
+      temperature?: number;
+      onToken?: (chunk: string) => void;
+      onStreamReset?: () => void;
+      simple?: boolean;
+      enableThinking?: boolean;
+      abortSignal?: AbortSignal;
+    },
   ): Promise<{ text: string }>;
 }
 
@@ -145,6 +153,7 @@ export interface OrcaToolService {
 export interface OrcaRunCtx {
   llm: OrcaLLMService;
   runId: string;
+  abortSignal?: AbortSignal;
   /** Optional — when present, Maestro runs in agent-loop mode with tool calling. */
   tools?: OrcaToolService;
   /**
@@ -259,7 +268,10 @@ export interface OrcaRuntimeDeps {
 }
 
 export interface OrcaRuntime {
-  executeTask(taskSpec: OrcaTaskSpec): Promise<OrcaExecutionResult>;
+  executeTask(
+    taskSpec: OrcaTaskSpec,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<OrcaExecutionResult>;
   /** Subscribe to internal progress events. Returns an unsubscribe fn. */
   on(eventType: OrcaEventType, handler: (e: OrcaEvent) => void): () => void;
 }

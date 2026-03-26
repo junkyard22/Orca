@@ -8,6 +8,7 @@ import type {
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
+import { throwIfAborted } from "./abort.js";
 
 /**
  * Called when Pappy returns FAIL on the initial generation pass.
@@ -41,6 +42,7 @@ export async function handleRepairLoop(
   let spentUsd = spentSoFarUsd ?? 0;
 
   for (let pass = 1; pass <= maxPasses; pass++) {
+    throwIfAborted(ctx.abortSignal);
     // ── Budget guard — abort before spending more ──────────────────────────
     if (budgetUsd && budgetUsd > 0 && spentUsd >= budgetUsd) {
       return {
@@ -99,6 +101,8 @@ export async function handleRepairLoop(
     // ORIGINAL task constraints — the benchmark is always the user's goal,
     // never the repair spec.  "attempt: pass" lets Doctor correlate which
     // repair run produced which verdict.
+
+    throwIfAborted(ctx.abortSignal);
 
     // Miranda: before_qc gate
     ctx.gate?.beforeQC({ taskId: ctx.runId, outputText: maestroResult.outputText ?? "" });

@@ -35,8 +35,16 @@ export interface ExecutionResult {
   followUpQuestion?: string;
 }
 
+export interface ExecuteTaskOptions {
+  abortSignal?: AbortSignal;
+}
+
+export interface BensonMessageOptions {
+  abortSignal?: AbortSignal;
+}
+
 export interface BensonDependencies {
-  executeTask: (task: TaskSpec) => Promise<ExecutionResult>;
+  executeTask: (task: TaskSpec, options?: ExecuteTaskOptions) => Promise<ExecutionResult>;
   /**
    * How many past exchanges to carry forward.
    * Defaults to 8.  Set to 0 to disable history entirely.

@@ -41,6 +41,7 @@ export interface LLMRequest {
   messages: LLMMessage[];
   temperature: number;
   maxTokens: number;
+  signal?: AbortSignal;
   /**
    * When set, injects `enable_thinking` into the request body.
    * Use `false` to suppress chain-of-thought on models that default to deep

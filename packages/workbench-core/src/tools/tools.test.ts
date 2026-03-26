@@ -333,4 +333,16 @@ describe("runCommandTool", () => {
     expect(result.ok).toBe(true);
     expect(result.output).toContain("approved");
   });
+
+  it("aborts a running command when the abort signal fires", async () => {
+    const controller = new AbortController();
+    const task = runCommandTool.execute(
+      { command: "node -e \"setTimeout(() => {}, 5000)\"", cwd: process.cwd() },
+      makeCtx(tmp, { abortSignal: controller.signal }),
+    );
+
+    setTimeout(() => controller.abort(new Error("Stopped.")), 100);
+
+    await expect(task).rejects.toMatchObject({ name: "AbortError" });
+  });
 });

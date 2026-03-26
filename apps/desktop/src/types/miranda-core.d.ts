@@ -7,6 +7,8 @@ declare module '@clawde/miranda-core' {
     messages: LLMMessage[];
     temperature?: number;
     maxTokens?: number;
+    enableThinking?: boolean;
+    signal?: AbortSignal;
   }
 
   export interface LLMResponse {

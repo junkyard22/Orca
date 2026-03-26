@@ -124,7 +124,11 @@ async function brainRoute(
       ? `${basePrompt}\n\n---REPAIR---\nYour previous response was rejected. Reason: ${repairReason}\n\nFix the error and output ONLY a bare JSON object with no surrounding text.`
       : basePrompt;
     try {
-      const { text } = await brainLLM.complete(prompt, { maxTokens: 512, temperature: 0 });
+      const { text } = await brainLLM.complete(prompt, {
+        maxTokens: 512,
+        temperature: 0,
+        abortSignal: ctx.abortSignal,
+      });
       decision = parseBrainDecision(text);
       brainDecision = text.trim();
       break;
@@ -196,10 +200,12 @@ function buildMaestroAdapter(
         roleAdapters[role] = createDirectLLMService(adapter, '', { maxTokens: 8192, temperature: 0.7 });
       }
       
+      throwIfAborted(ctx.abortSignal);
       const routing = await brainRoute(task, ctx, roleAdapters);
 
       // Dewey brief — inject user context into the pipeline event stream.
       // Non-critical: a Dewey failure must never abort the task.
+      throwIfAborted(ctx.abortSignal);
       if (dewey) {
         try {
           const brief = await dewey.brief(task.intent);
@@ -255,6 +261,7 @@ function buildMaestroAdapter(
       };
       
       // 6. Hand off to the agent — it runs autonomously until done
+      throwIfAborted(ctx.abortSignal);
       const result = await agent.run(
         {
           intent: task.intent,
@@ -358,11 +365,29 @@ let store: SqliteStore | null = null;
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 let dewey: InstanceType<typeof Dewey> | null = null;
 let activeAbortResolve: ((error?: string) => void) | null = null;
+let activeAbortController: AbortController | null = null;
 let appAuthStatus: AppAuthStatus = {
   enabled: false,
   hasPassword: false,
   locked: false,
 };
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error(
+    signal.reason instanceof Error
+      ? signal.reason.message
+      : typeof signal.reason === "string" && signal.reason.length > 0
+        ? signal.reason
+        : "The operation was aborted.",
+  );
+  error.name = "AbortError";
+  throw error;
+}
 
 function buildAdapterForProvider(
   provider: ProviderEntry,
@@ -923,6 +948,7 @@ ipcMain.handle("session:delete", async (_ev, id: string) => {
 ipcMain.on("task:abort", () => {
   if (activeAbortResolve) {
     console.log("[Orca] ✖ task:abort requested by user");
+    resolvePendingApprovals(false);
     activeAbortResolve();
     activeAbortResolve = null;
   }
@@ -940,9 +966,17 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     return { ok: false, error: "Message is empty." };
   }
 
+  const abortController = new AbortController();
+  activeAbortController = abortController;
+
   // Build a promise that resolves when the user hits Stop.
   const abortPromise = new Promise<{ ok: false; error: string }>((resolve) => {
-    activeAbortResolve = (error = "Stopped.") => resolve({ ok: false, error });
+    activeAbortResolve = (error = "Stopped.") => {
+      if (!abortController.signal.aborted) {
+        abortController.abort(new Error(error));
+      }
+      resolve({ ok: false, error });
+    };
   });
 
   const EVENT_TYPES: OrcaEventType[] = [
@@ -982,15 +1016,30 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   );
 
   try {
+    const taskPromise = benson.handleUserMessage(normalizedText, {
+      abortSignal: abortController.signal,
+    })
+      .then((reply) => ({ ok: true as const, reply }))
+      .catch((err) => {
+        if (isAbortError(err)) {
+          return { ok: false as const, error: err.message || "Stopped." };
+        }
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      });
+
     const result = await Promise.race([
-      benson.handleUserMessage(normalizedText).then((reply) => ({ ok: true as const, reply })),
+      taskPromise,
       abortPromise,
     ]);
     return result;
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
     activeAbortResolve = null;   // clean up if task finished naturally
+    if (activeAbortController === abortController) {
+      activeAbortController = null;
+    }
     unsubs.forEach((u) => u());
   }
 });

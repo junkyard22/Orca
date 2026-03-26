@@ -14,6 +14,8 @@ export interface ToolRunCtx {
   workspaceRoot: string;
   /** Correlation ID for logging — matches the orca-core runId. */
   runId: string;
+  /** Optional cancellation signal for long-running tools. */
+  abortSignal?: AbortSignal;
   /** Optional sandbox policy for command execution. */
   sandbox?: SandboxPolicy;
   /** Optional approval callback — return true to approve, false to deny. */

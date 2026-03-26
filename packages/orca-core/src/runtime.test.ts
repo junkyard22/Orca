@@ -104,6 +104,12 @@ function createTaskSpec(overrides: Partial<OrcaTaskSpec> = {}): OrcaTaskSpec {
   };
 }
 
+function createAbortError(message = "Stopped."): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
 // Event recorder helper
 function createEventRecorder() {
   const events: OrcaEvent[] = [];
@@ -282,6 +288,41 @@ describe("createOrcaRuntime", () => {
 
       expect(result.status).toBe("FAIL");
       expect(result.summary).toContain("Runtime error");
+    });
+  });
+
+  describe("Abort handling", () => {
+    it("propagates abort errors and skips persistence", async () => {
+      const store = {
+        saveRun: vi.fn(),
+        close: vi.fn(),
+      };
+
+      const maestro: MaestroPort = {
+        run: async (_task, ctx) => {
+          if (ctx.abortSignal?.aborted) {
+            throw createAbortError();
+          }
+          await new Promise((_, reject) => {
+            ctx.abortSignal?.addEventListener("abort", () => reject(createAbortError()), { once: true });
+          });
+          return { outputText: "unreachable" };
+        },
+      };
+
+      const runtime = createOrcaRuntime({
+        maestro,
+        pappy: createMockPappy("PASS"),
+        llm: createMockLLM(),
+        store: store as any,
+      });
+
+      const controller = new AbortController();
+      const task = runtime.executeTask(createTaskSpec(), { abortSignal: controller.signal });
+      controller.abort(new Error("Stopped."));
+
+      await expect(task).rejects.toMatchObject({ name: "AbortError" });
+      expect(store.saveRun).not.toHaveBeenCalled();
     });
   });
 

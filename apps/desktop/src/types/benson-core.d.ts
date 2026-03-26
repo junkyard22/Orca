@@ -43,7 +43,7 @@ declare module '@clawde/benson-core' {
   }
 
   export interface ExecuteTaskFn {
-    (task: TaskSpec): Promise<ExecutionResult>;
+    (task: TaskSpec, options?: { abortSignal?: AbortSignal }): Promise<ExecutionResult>;
   }
 
   export interface BensonOptions {
@@ -53,6 +53,6 @@ declare module '@clawde/benson-core' {
   export function createBenson(options: BensonOptions): BensonHandle;
 
   export interface BensonHandle {
-    handleUserMessage(message: string): Promise<string>;
+    handleUserMessage(message: string, options?: { abortSignal?: AbortSignal }): Promise<string>;
   }
 }

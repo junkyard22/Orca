@@ -19,6 +19,23 @@ type FileChange = { path: string; changeType: "A" | "M" | "D"; diff?: string };
 const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
 const OPEN_TOOL_CALL_TAG = '<tool_call>';
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error(
+    signal.reason instanceof Error
+      ? signal.reason.message
+      : typeof signal.reason === "string" && signal.reason.length > 0
+        ? signal.reason
+        : "The operation was aborted.",
+  );
+  error.name = "AbortError";
+  throw error;
+}
+
 /**
  * Parse tool calls from model output.
  *
@@ -285,6 +302,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     
     try {
       for (let iteration = 0; iteration < this.maxIterations; iteration++) {
+        throwIfAborted(ctx.abortSignal);
         iterationCount = iteration + 1;
         
         // On iterations after the first, reset the stream bubble so users
@@ -306,6 +324,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               messages,
               maxTokens: this.maxTokens,
               temperature: this.temperature,
+              signal: ctx.abortSignal,
             },
             ctx.onStreamToken!
           );
@@ -316,10 +335,12 @@ export class ReactAgentAdapter implements AgentAdapter {
             messages,
             maxTokens: this.maxTokens,
             temperature: this.temperature,
+            signal: ctx.abortSignal,
           });
         }
-        
+
         const modelOutput = response.content;
+        throwIfAborted(ctx.abortSignal);
         lastModelOutput = modelOutput;
         messages.push({ role: "assistant", content: modelOutput });
         
@@ -444,6 +465,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         
         // Execute tool calls
         for (const call of toolCalls) {
+          throwIfAborted(ctx.abortSignal);
           // Find the tool in the provided tools array
           const tool = availableTools.find(t => t.name === call.tool);
           if (!tool) {
@@ -496,12 +518,14 @@ export class ReactAgentAdapter implements AgentAdapter {
           const toolContext = {
             workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
             runId: ctx.runId,
+            abortSignal: ctx.abortSignal,
             requestApproval: ctx.requestToolApproval
               ? (toolName: string, args: Record<string, unknown>, _reason: string) =>
                   ctx.requestToolApproval!(toolName, args)
               : undefined,
           };
           const result = await tool.execute(call.input, toolContext);
+          throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
           
           // Tool Use Discipline: Increment cumulative counter
@@ -644,6 +668,9 @@ export class ReactAgentAdapter implements AgentAdapter {
       };
       
     } catch (err) {
+      if (isAbortError(err)) {
+        throw err;
+      }
       stoppedBecause = 'error';
       error = err instanceof Error ? err.message : String(err);
       

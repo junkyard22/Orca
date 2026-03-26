@@ -31,13 +31,14 @@ export function createDirectLLMService(
           ]
         : [{ role: "user", content: prompt }];
 
-      const request: LLMRequest = {
+      const request = {
         model:          modelId,
         messages,
         temperature:    opts?.temperature ?? defaults?.temperature ?? 0.7,
         maxTokens:      opts?.maxTokens   ?? defaults?.maxTokens   ?? 4096,
+        signal:         opts?.abortSignal,
         ...(opts?.enableThinking !== undefined && { enableThinking: opts.enableThinking }),
-      };
+      } as LLMRequest;
 
       if (opts?.onToken && adapter.stream) {
         const response = await adapter.stream(request, opts.onToken);

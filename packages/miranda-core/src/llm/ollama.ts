@@ -11,6 +11,7 @@
 
 import type { LLMAdapter } from "./adapter.js";
 import type { LLMRequest, LLMResponse, TokenUsage } from "../pipeline/types.js";
+import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
 
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
 
@@ -61,6 +62,7 @@ export class OllamaAdapter implements LLMAdapter {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    throwIfAborted(request.signal);
     const startMs = Date.now();
     const model = request.model || this.defaultModel;
     const url = `${this.baseUrl}/v1/chat/completions`;
@@ -83,47 +85,56 @@ export class OllamaAdapter implements LLMAdapter {
       headers["Authorization"] = `Bearer ${this.apiKey}`;
     }
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(request.maxTokens > 4096 ? 180_000 : 90_000),
-    });
+    const { signal, cleanup } = createRequestSignal(
+      request,
+      request.maxTokens > 4096 ? 180_000 : 90_000,
+    );
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal,
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "unknown error");
-      throw new Error(`Ollama API error ${response.status}: ${errorText}`);
-    }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "unknown error");
+        throw new Error(`Ollama API error ${response.status}: ${errorText}`);
+      }
 
-    const data = (await response.json()) as OllamaChatResponse;
-    const durationMs = Date.now() - startMs;
+      const data = (await response.json()) as OllamaChatResponse;
+      const durationMs = Date.now() - startMs;
 
-    const firstChoice = data.choices[0];
-    if (!firstChoice) {
-      throw new Error("Ollama returned no choices");
-    }
+      const firstChoice = data.choices[0];
+      if (!firstChoice) {
+        throw new Error("Ollama returned no choices");
+      }
 
-    let usage: TokenUsage | null = null;
-    if (data.usage) {
-      usage = {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
+      let usage: TokenUsage | null = null;
+      if (data.usage) {
+        usage = {
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        };
+      }
+
+      return {
+        content: firstChoice.message.content,
+        model: data.model ?? model,
+        usage,
+        durationMs,
       };
+    } finally {
+      cleanup();
     }
-
-    return {
-      content: firstChoice.message.content,
-      model: data.model ?? model,
-      usage,
-      durationMs,
-    };
   }
 
   async stream(
     request: LLMRequest,
     onToken: (chunk: string) => void,
   ): Promise<LLMResponse> {
+    throwIfAborted(request.signal);
     const startMs = Date.now();
     const model = request.model || this.defaultModel;
     const url = `${this.baseUrl}/v1/chat/completions`;
@@ -139,28 +150,32 @@ export class OllamaAdapter implements LLMAdapter {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(request.maxTokens > 4096 ? 180_000 : 90_000),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "unknown error");
-      throw new Error(`Ollama API error ${response.status}: ${errorText}`);
-    }
-    if (!response.body) throw new Error("Response body is null");
-
-    let fullContent = "";
-    let finalModel = model;
-    let completionTokens = 0;
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
+    const { signal, cleanup } = createRequestSignal(
+      request,
+      request.maxTokens > 4096 ? 180_000 : 90_000,
+    );
     try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "unknown error");
+        throw new Error(`Ollama API error ${response.status}: ${errorText}`);
+      }
+      if (!response.body) throw new Error("Response body is null");
+
+      let fullContent = "";
+      let finalModel = model;
+      let completionTokens = 0;
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -183,15 +198,14 @@ export class OllamaAdapter implements LLMAdapter {
           } catch { /* skip malformed chunks */ }
         }
       }
+      return {
+        content: fullContent,
+        model: finalModel,
+        usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
+        durationMs: Date.now() - startMs,
+      };
     } finally {
-      reader.releaseLock();
+      cleanup();
     }
-
-    return {
-      content: fullContent,
-      model: finalModel,
-      usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
-      durationMs: Date.now() - startMs,
-    };
   }
 }

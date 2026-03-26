@@ -1,8 +1,10 @@
 import { spawn } from "child_process";
+import type { ChildProcess } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
 import { evaluateCommandPolicy, createSandboxPolicy } from "./sandbox.js";
+import { createAbortError, throwIfAborted } from "./abort.js";
 
 /**
  * Parse a shell command to detect file redirections (e.g., > file.py, >> file.py).
@@ -47,6 +49,26 @@ function detectFileChanges(command: string, cwd: string): Array<{ path: string; 
   return changes;
 }
 
+function terminateChildProcess(child: ChildProcess): void {
+  if (process.platform === "win32") {
+    const pid = child.pid;
+    if (pid != null) {
+      const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      killer.on("error", () => {
+        child.kill();
+      });
+      return;
+    }
+    child.kill();
+    return;
+  }
+
+  child.kill("SIGKILL");
+}
+
 export const runCommandTool: Tool = {
   name: "run_command",
   description: "Execute a shell command and capture its stdout and stderr.",
@@ -70,6 +92,7 @@ export const runCommandTool: Tool = {
   },
 
   async execute(input: Record<string, unknown>, ctx: ToolRunCtx): Promise<ToolResult> {
+    throwIfAborted(ctx.abortSignal);
     const command = input["command"];
     if (typeof command !== "string" || !command) {
       return {
@@ -94,6 +117,7 @@ export const runCommandTool: Tool = {
     // Request approval if required
     if (policyResult.requiresApproval && ctx.requestApproval) {
       const approved = await ctx.requestApproval("run_command", input, policyResult.reason);
+      throwIfAborted(ctx.abortSignal);
       if (!approved) {
         return {
           ok: false,
@@ -121,10 +145,15 @@ export const runCommandTool: Tool = {
     // Detect file changes before executing the command
     const fileChanges = detectFileChanges(command, cwd);
 
-    return new Promise<ToolResult>((resolve) => {
+    return new Promise<ToolResult>((resolve, reject) => {
+      let settled = false;
+      let aborted = false;
+      let abortError: Error | undefined;
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       let timedOut = false;
+      let timer: NodeJS.Timeout | undefined;
+      let abortFailTimer: NodeJS.Timeout | undefined;
 
       const child = spawn(command, [], {
         cwd,
@@ -133,35 +162,79 @@ export const runCommandTool: Tool = {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
+      const finish = (result: ToolResult): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (abortFailTimer) clearTimeout(abortFailTimer);
+        if (ctx.abortSignal) {
+          ctx.abortSignal.removeEventListener("abort", onAbort);
+        }
+        resolve(result);
+      };
+
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (abortFailTimer) clearTimeout(abortFailTimer);
+        if (ctx.abortSignal) {
+          ctx.abortSignal.removeEventListener("abort", onAbort);
+        }
+        reject(error);
+      };
+
+      const onAbort = (): void => {
+        aborted = true;
+        abortError = createAbortError(ctx.abortSignal?.reason);
+        terminateChildProcess(child);
+        abortFailTimer = setTimeout(() => {
+          fail(abortError ?? createAbortError(ctx.abortSignal?.reason));
+        }, 750);
+      };
+
+      if (ctx.abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
+
+      ctx.abortSignal?.addEventListener("abort", onAbort, { once: true });
+
       child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         timedOut = true;
-        child.kill("SIGKILL");
+        terminateChildProcess(child);
       }, timeout);
 
       child.on("error", (err) => {
-        clearTimeout(timer);
-        resolve({ ok: false, output: "", error: err.message });
+        if (aborted) {
+          fail(abortError ?? createAbortError(ctx.abortSignal?.reason));
+          return;
+        }
+        finish({ ok: false, output: "", error: err.message });
       });
 
       child.on("close", (code) => {
-        clearTimeout(timer);
+        if (aborted) {
+          fail(abortError ?? createAbortError(ctx.abortSignal?.reason));
+          return;
+        }
         const stdout = Buffer.concat(stdoutChunks).toString("utf8");
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
         const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
 
         if (timedOut) {
-          resolve({ ok: false, output: combined, error: `Timed out after ${timeout}ms` });
+          finish({ ok: false, output: combined, error: `Timed out after ${timeout}ms` });
         } else if ((code ?? -1) !== 0) {
-          resolve({ ok: false, output: combined, error: `Exit code ${code ?? -1}` });
+          finish({ ok: false, output: combined, error: `Exit code ${code ?? -1}` });
         } else {
           // Include file changes in the output for the caller to parse
           const outputWithChanges = fileChanges.length > 0
             ? `${combined}\n\n<!-- Files changed: ${JSON.stringify(fileChanges)} -->`
             : combined;
-          resolve({ ok: true, output: outputWithChanges });
+          finish({ ok: true, output: outputWithChanges });
         }
       });
     });
