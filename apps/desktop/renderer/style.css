@@ -1178,6 +1178,10 @@ body {
   z-index: 20;
 }
 
+#auth-overlay.hidden {
+  display: none;
+}
+
 .auth-card {
   width: min(100%, 420px);
   background: rgba(23,23,23,0.96);
