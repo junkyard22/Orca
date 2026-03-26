@@ -17,6 +17,13 @@ describe("pickCoreRole", () => {
     expect(pickCoreRole("Explain how this module works")).toBe("narrator");
   });
 
+  it("routes conversational knowledge tasks to narrator", () => {
+    expect(pickCoreRole("Give me a recipe for tomato soup")).toBe("narrator");
+    expect(pickCoreRole("What is a service mesh?")).toBe("narrator");
+    expect(pickCoreRole("How do I bake salmon?")).toBe("narrator");
+    expect(pickCoreRole("Can you suggest a meal prep idea?")).toBe("narrator");
+  });
+
   it("routes planning/status tasks to brain", () => {
     expect(pickCoreRole("Plan the migration steps")).toBe("brain");
     expect(pickCoreRole("Break down this task into steps")).toBe("brain");

@@ -162,23 +162,6 @@ export function selectRole(
 export function pickCoreRole(task: string): CoreRoleName {
   const lowerTask = task.toLowerCase();
   
-  // NARRATOR — writing, creative, documentation, explanations, general questions
-  const narratorPatterns = [
-    /\bwrite\s+(a\s+)?(song|poem|story|essay|letter|email|article|post|message)\b/i,
-    /\b(compose|draft|create)\b.*\b(writing|content|copy|message|document)\b/i,
-    /\b(describe|explain|summarize)\b/i,
-    /\b(documentation|readme|doc|guide|tutorial)\b/i,
-    /\b(creative|writing|narrative|prose)\b/i,
-    /\b(translat[e|ing])\b/i,
-    /\b(edit|proofread|revise)\b.*\b(text|writing|content|document)\b/i,
-  ];
-  
-  for (const pattern of narratorPatterns) {
-    if (pattern.test(task)) {
-      return 'narrator';
-    }
-  }
-  
   // BRAIN — planning, decomposition, orchestration, and task-investigaton
   // Also covers status / deployment / investigation queries that require
   // fact-finding and analysis rather than code writing or formatting.
@@ -201,6 +184,28 @@ export function pickCoreRole(task: string): CoreRoleName {
   for (const pattern of brainPatterns) {
     if (pattern.test(task)) {
       return 'brain';
+    }
+  }
+
+  // NARRATOR — writing, creative, documentation, explanations, general questions
+  const narratorPatterns = [
+    /\bwrite\s+(a\s+)?(song|poem|story|essay|letter|email|article|post|message)\b/i,
+    /\b(compose|draft|create)\b.*\b(writing|content|copy|message|document)\b/i,
+    /\b(describe|explain|summarize)\b/i,
+    /\b(documentation|readme|doc|guide|tutorial)\b/i,
+    /\b(creative|writing|narrative|prose)\b/i,
+    /\b(translat[e|ing])\b/i,
+    /\b(edit|proofread|revise)\b.*\b(text|writing|content|document)\b/i,
+    // Food, recipes, cooking — conversational general-knowledge queries
+    /\b(recipe|recipes|ingredient|ingredients|cook|cooking|bake|baking|meal|meals|food|dish|cuisine)\b/i,
+    // General knowledge / conversational questions
+    /\b(give me|tell me|what('?s|\s+is)(\s+a|\s+the|\s+an)?|how\s+(do\s+I|to|does|can)|can\s+you)\b/i,
+    /\b(recommend|suggestion|suggestions|advice|tips?|ideas?|examples?)\b/i,
+  ];
+  
+  for (const pattern of narratorPatterns) {
+    if (pattern.test(task)) {
+      return 'narrator';
     }
   }
   
