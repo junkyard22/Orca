@@ -119,6 +119,26 @@ export { ROLE_PROMPTS, getRolePrompt } from './prompts/rolePrompts';
 // ── Brain Decompose ───────────────────────────────────────────────────────────
 export { BRAIN_DECOMPOSE_SYSTEM, parseBrainDecision, buildSynthesisPrompt, BrainDecisionValidationError, VALID_HEAD_NAMES } from './decompose';
 export type { HeadName, DirectRouting, DepartmentTask, DecomposeRouting, DecomposeDecision } from './decompose';
+
+// ── Task Graph (Brain deep decomposition) ────────────────────────────────────
+export {
+  buildTaskGraphPrompt,
+  parseTaskGraph,
+  topologicalSort,
+  TaskGraphValidator,
+  TaskGraphParseError,
+  TASK_GRAPH_VALID_ROLES,
+  TASK_GRAPH_ACTION_VERBS,
+  TASK_GRAPH_COMPLEXITY_KEYWORDS,
+  TASK_GRAPH_BLOCKER_BAIT,
+  TASK_GRAPH_INVENTED_PATH_PATTERNS,
+} from './taskGraph';
+export type {
+  TaskNode,
+  TaskGraphResponse,
+  TaskGraphIssue,
+  TaskGraphValidationResult,
+} from './taskGraph';
 export type {
   NormalizedModelId,
   RoleEffectiveConfig,

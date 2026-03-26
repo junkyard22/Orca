@@ -2,6 +2,10 @@ import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { join } from "node:path";
 
+// Override userData to "Orca" regardless of the npm package name (@clawde/desktop).
+// Must be called before app.whenReady() so all getPath("userData") calls are consistent.
+app.setPath("userData", join(app.getPath("appData"), "Orca"));
+
 import { Dewey } from "@clawde/dewey-core";
 import { createMirandaGate } from "@clawde/miranda-core";
 import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
@@ -40,6 +44,7 @@ import {
 import type {
   RoleName,
   DecomposeDecision,
+  DepartmentTask,
 } from "maestro-core";
 import {
   getAuthView,
@@ -109,7 +114,7 @@ async function brainRoute(
   task: OrcaTaskSpec,
   ctx: OrcaRunCtx,
   roleAdapters: Partial<Record<RoleName, OrcaLLMService>>,
-): Promise<{ role: RoleName; doneCriteria: string[]; brainDecision?: string }> {
+): Promise<{ role: RoleName; doneCriteria: string[]; brainDecision?: string; decompose?: { departments: DepartmentTask[]; synthesis_hint?: string } }> {
   const maestro = createMaestroCore();
   const brainLLM = roleAdapters['brain'] ?? ctx.llm;
 
@@ -127,6 +132,7 @@ async function brainRoute(
       const { text } = await brainLLM.complete(prompt, {
         maxTokens: 512,
         temperature: 0,
+        enableThinking: false,
         abortSignal: ctx.abortSignal,
       });
       decision = parseBrainDecision(text);
@@ -142,13 +148,25 @@ async function brainRoute(
     }
   }
 
-  // For now, we only handle direct routing in the new architecture
-  // Decompose routing would need to be handled differently in the future
   const resolved = decision ?? { routing: 'direct' as const, role: 'brain' as const };
-  const role = resolved.routing === 'direct' ? resolved.role : 'brain';
-  const doneCriteria = resolved.done_criteria ?? [];
 
-  return { role: role as RoleName, doneCriteria, brainDecision };
+  if (resolved.routing === 'decompose') {
+    return {
+      role: 'brain' as RoleName,
+      doneCriteria: resolved.done_criteria ?? [],
+      brainDecision,
+      decompose: {
+        departments: resolved.departments,
+        synthesis_hint: resolved.synthesis_hint,
+      },
+    };
+  }
+
+  return {
+    role: resolved.role as RoleName,
+    doneCriteria: resolved.done_criteria ?? [],
+    brainDecision,
+  };
 }
 
 
@@ -174,6 +192,12 @@ function buildMaestroAdapter(
   const maestroCore = createMaestroCore();
   const logger = console;
 
+  function selectToolsForTask(ctx: OrcaRunCtx): AgentTool[] {
+    if (!Array.isArray(ctx.toolNamesAllowed)) return availableTools;
+    const allowed = new Set(ctx.toolNamesAllowed);
+    return availableTools.filter((tool) => allowed.has(tool.name));
+  }
+
   // Build one RoleAgentAdapter per configured role
   const roleAgents = new Map<RoleName, RoleAgentAdapter>();
   for (const [role, llmAdapter] of configuredAdapters) {
@@ -191,17 +215,95 @@ function buildMaestroAdapter(
       // for compatibility with brainRoute function
       const roleAdapters: Partial<Record<RoleName, OrcaLLMService>> = {};
       for (const [role, adapter] of configuredAdapters) {
-  function selectToolsForTask(ctx: OrcaRunCtx): AgentTool[] {
-    if (!Array.isArray(ctx.toolNamesAllowed)) return availableTools;
-    const allowed = new Set(ctx.toolNamesAllowed);
-    return availableTools.filter((tool) => allowed.has(tool.name));
-  }
-
         roleAdapters[role] = createDirectLLMService(adapter, '', { maxTokens: 8192, temperature: 0.7 });
       }
       
       throwIfAborted(ctx.abortSignal);
       const routing = await brainRoute(task, ctx, roleAdapters);
+
+      // ── Decompose path ────────────────────────────────────────────────────
+      // When Brain chose "decompose", run each department agent then synthesize.
+      if (routing.decompose) {
+        const { departments, synthesis_hint } = routing.decompose;
+        const taskTools = selectToolsForTask(ctx);
+        type ToolEvent = { tool: string; ok: boolean; summary: string; raw?: unknown };
+        type FileChange = { path: string; changeType: "A" | "M" | "D"; diff?: string };
+        const allToolEvents: ToolEvent[] = [];
+        const allFilesChanged: FileChange[] = [];
+        const deptOutputs: Array<{ head: string; subtask: string; output: string }> = [];
+
+        for (const dept of departments) {
+          throwIfAborted(ctx.abortSignal);
+          ctx.emit?.({ type: 'stream:reset', taskId: ctx.runId });
+          const deptAgentCtx: AgentRunContext = {
+            ...ctx,
+            workspaceRoot,
+            onStreamToken: (chunk: string) => {
+              ctx.emit?.({ type: 'stream:token', taskId: ctx.runId, chunk });
+            },
+            onStreamReset: () => {
+              ctx.emit?.({ type: 'stream:reset', taskId: ctx.runId });
+            },
+          };
+          const deptAgent = roleAgents.get(dept.head as RoleName) ?? roleAgents.get('brain')!;
+          const deptResult = await deptAgent.run(
+            {
+              intent: dept.context ? `${dept.subtask}\n\nContext: ${dept.context}` : dept.subtask,
+              goals: task.goals ?? [],
+              doneCriteria: [],
+              conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
+            },
+            taskTools,
+            deptAgentCtx,
+          );
+          deptOutputs.push({ head: dept.head, subtask: dept.subtask, output: deptResult.outputText });
+          allToolEvents.push(...deptResult.toolsUsed);
+          allFilesChanged.push(...deptResult.filesChanged);
+        }
+
+        // Synthesis — merge department outputs into one coherent reply.
+        let finalOutput: string;
+        if (deptOutputs.length === 1) {
+          finalOutput = deptOutputs[0].output;
+        } else {
+          throwIfAborted(ctx.abortSignal);
+          const synthPrompt = buildSynthesisPrompt(
+            task.originalUserMessage ?? task.intent,
+            deptOutputs,
+            synthesis_hint,
+          );
+          ctx.emit?.({ type: 'stream:reset', taskId: ctx.runId });
+          const synthAgent = roleAgents.get('narrator') ?? roleAgents.get('brain')!;
+          const synthResult = await synthAgent.run(
+            { intent: synthPrompt, goals: [], doneCriteria: routing.doneCriteria, conversationHistory: [] },
+            [],
+            {
+              ...ctx,
+              workspaceRoot,
+              onStreamToken: (chunk: string) => ctx.emit?.({ type: 'stream:token', taskId: ctx.runId, chunk }),
+              onStreamReset: () => ctx.emit?.({ type: 'stream:reset', taskId: ctx.runId }),
+            },
+          );
+          finalOutput = synthResult.outputText;
+        }
+
+        const filesChanged = deriveFilesChangedFromToolEvents(allToolEvents, allFilesChanged);
+        return {
+          outputText: finalOutput,
+          summary: `decompose — ${departments.length} department(s)`,
+          toolEvents: allToolEvents,
+          filesChanged,
+          doneCriteria: routing.doneCriteria,
+          metadata: {
+            role: 'brain' as RoleName,
+            brainDecision: routing.brainDecision,
+            thoughts: [],
+            iterationCount: departments.length,
+            stoppedBecause: 'done',
+            filesChanged,
+          },
+        };
+      }
 
       // Dewey brief — inject user context into the pipeline event stream.
       // Non-critical: a Dewey failure must never abort the task.
@@ -233,6 +335,7 @@ function buildMaestroAdapter(
       
       // 4. Get the agent for the selected role
       const agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
+      const taskTools = selectToolsForTask(ctx);
 
       if (!taskTools || taskTools.length === 0) {
         logger.warn(`[Maestro] WARNING: No tools passed to ${routing.role} agent — tool calls will not be available`);
@@ -333,7 +436,6 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
   if (task.context != null && Object.keys(task.context).length > 0) {
     const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, conversationHistory: _ch, ...userCtx } = task.context as Record<string, unknown>;
 
-      const taskTools = selectToolsForTask(ctx);
     const history = normalizeConversationHistory(task.context["conversationHistory"]);
     if (history?.length) {
       lines.push(
@@ -528,10 +630,14 @@ function initOrca(s: OrcaSettings): string | null {
     const availableTools: AgentTool[] = toolRegistry.list().map((tool) => ({
       name: tool.name,
       description: tool.description,
+      schema: tool.schema,
       execute(input, context) {
         return tool.execute(input, {
           workspaceRoot: context.workspaceRoot ?? workspaceRoot,
           runId: context.runId ?? '',
+          requestApproval: context.requestToolApproval
+            ? (toolName, args, _reason) => context.requestToolApproval!(toolName, args)
+            : undefined,
         });
       },
     }));
@@ -637,14 +743,10 @@ function createTray(): void {
   tray.setToolTip("Orca");
 
   const menu = Menu.buildFromTemplate([
-      schema: tool.schema,
     {
       label: "Show Orca",
       click: () => {
         if (win) {
-          requestApproval: context.requestToolApproval
-            ? (toolName, args, _reason) => context.requestToolApproval!(toolName, args)
-            : undefined,
           win.show();
           win.focus();
         } else {
@@ -756,11 +858,16 @@ function lockApp(): AppAuthStatus {
 }
 
 function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: false; error: string } {
-  if (!appAuthStatus.enabled || !appAuthStatus.hasPassword) {
+  // Re-read from disk so unlock is authoritative against the same source
+  // that lockApp uses — guards against stale in-memory state.
+  const config = loadAuthConfig();
+  const view   = getAuthView(config);
+
+  if (!view.enabled || !view.hasPassword) {
     return { ok: false, error: "App lock is not enabled." };
   }
 
-  if (!verifyAppPassword(password)) {
+  if (!verifyAppPassword(password, config)) {
     return { ok: false, error: "Incorrect password." };
   }
 
