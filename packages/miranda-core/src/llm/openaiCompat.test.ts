@@ -1,0 +1,96 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { OpenAICompatAdapter } from "./openaiCompat.js";
+
+const originalFetch = globalThis.fetch;
+
+function createJsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function createStreamResponse(chunks: string[]): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+});
+
+describe("OpenAICompatAdapter reasoning_content fallback", () => {
+  it("uses reasoning_content when content is empty in complete()", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      createJsonResponse({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: null,
+              reasoning_content: "Reasoned answer",
+            },
+            finish_reason: "stop",
+          },
+        ],
+        model: "test-model",
+      }),
+    ) as typeof fetch;
+
+    const adapter = new OpenAICompatAdapter({
+      baseUrl: "https://example.test/v1",
+      defaultModel: "test-model",
+    });
+
+    const result = await adapter.complete({
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 128,
+      temperature: 0,
+    });
+
+    expect(result.content).toBe("Reasoned answer");
+  });
+
+  it("uses streamed reasoning_content when content deltas are empty", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      createStreamResponse([
+        'data: {"choices":[{"delta":{"reasoning_content":"Step one"}}],"model":"test-model"}\n\n',
+        'data: {"choices":[{"delta":{"reasoning_content":" and done"}}],"model":"test-model"}\n\n',
+        "data: [DONE]\n\n",
+      ]),
+    ) as typeof fetch;
+
+    const adapter = new OpenAICompatAdapter({
+      baseUrl: "https://example.test/v1",
+      defaultModel: "test-model",
+    });
+    const onToken = vi.fn();
+
+    const result = await adapter.stream(
+      {
+        messages: [{ role: "user", content: "hello" }],
+        maxTokens: 128,
+        temperature: 0,
+      },
+      onToken,
+    );
+
+    expect(result.content).toBe("Step one and done");
+    expect(onToken).toHaveBeenCalledTimes(2);
+    expect(onToken).toHaveBeenNthCalledWith(1, "Step one");
+    expect(onToken).toHaveBeenNthCalledWith(2, " and done");
+  });
+});

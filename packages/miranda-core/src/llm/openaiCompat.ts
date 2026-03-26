@@ -154,8 +154,15 @@ export class OpenAICompatAdapter implements LLMAdapter {
       };
     }
 
+    // Some thinking models (e.g. Alibaba qwen3.5-plus on DashScope) return the
+    // actual response in `reasoning_content` while `content` is null/empty.
+    // Fall back to reasoning_content so we don't return an empty string.
+    const rawContent = firstChoice.message.content;
+    const rawReasoning = (firstChoice.message as Record<string, unknown>)["reasoning_content"] as string | undefined;
+    const content = (rawContent && rawContent.trim()) ? rawContent : (rawReasoning ?? "");
+
       return {
-        content: firstChoice.message.content ?? "",
+        content,
         model: data.model ?? model,
         usage,
         durationMs,
@@ -247,10 +254,13 @@ export class OpenAICompatAdapter implements LLMAdapter {
           if (data === "[DONE]") break;
           try {
             const chunk = JSON.parse(data) as {
-              choices: Array<{ delta?: { content?: string } }>;
+              choices: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
               model?: string;
             };
-            const token = chunk.choices[0]?.delta?.content ?? "";
+            // Some thinking models (e.g. Alibaba qwen3.5-plus) stream actual
+            // output via `reasoning_content` while `content` is empty/null.
+            const delta = chunk.choices[0]?.delta;
+            const token = delta?.content || delta?.reasoning_content || "";
             if (token) { fullContent += token; completionTokens++; onToken(token); }
             if (chunk.model) finalModel = chunk.model;
           } catch { /* skip malformed chunks */ }

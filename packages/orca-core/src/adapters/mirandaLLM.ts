@@ -66,9 +66,19 @@ function stripPipelineScaffolding(raw: string): string {
 }
 
 function extractText(record: RunRecord): string | undefined {
+  // First pass: prefer stages that passed validation.
   for (const stageName of STAGE_PREFERENCE) {
     const stage = record.stages.find((s: StageResult) => s.stage === stageName && s.success);
     if (stage?.finalOutput) return stripPipelineScaffolding(stage.finalOutput as string);
+  }
+  // Fallback: if all stages failed validation but the model still produced output,
+  // use the last non-empty finalOutput rather than silently returning empty string.
+  // This prevents COMPLETENESS_NO_OUTPUT on tasks where the model answered correctly
+  // but didn't follow the expected heading structure (e.g. conversational/recipe queries).
+  for (const stageName of STAGE_PREFERENCE) {
+    const stage = record.stages.find((s: StageResult) => s.stage === stageName);
+    const raw = stage?.finalOutput;
+    if (raw && raw.trim()) return stripPipelineScaffolding(raw);
   }
   return undefined;
 }
