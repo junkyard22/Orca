@@ -148,6 +148,11 @@ export interface OrcaRunCtx {
   /** Optional — when present, Maestro runs in agent-loop mode with tool calling. */
   tools?: OrcaToolService;
   /**
+   * Tool names permitted for this task after Benson permissions are normalized.
+   * Undefined means no explicit restriction; [] means no tools are permitted.
+   */
+  toolNamesAllowed?: string[];
+  /**
    * Emit an OrcaEvent directly from inside an adapter.
    * Populated by createOrcaRuntime so adapters can fire subagent events
    * without depending on the OrcaEmitter internals.

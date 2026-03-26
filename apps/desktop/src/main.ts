@@ -58,7 +58,18 @@ import type { AgentRunContext } from "./agents/AgentAdapter";
 type AgentTool = {
   name: string;
   description: string;
-  execute: (input: Record<string, unknown>, context: { workspaceRoot?: string; runId?: string }) => Promise<{ ok: boolean; output: string; error?: string }>;
+  schema?: {
+    required?: string[];
+    properties?: Record<string, { type: string }>;
+  };
+  execute: (
+    input: Record<string, unknown>,
+    context: {
+      workspaceRoot?: string;
+      runId?: string;
+      requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+    },
+  ) => Promise<{ ok: boolean; output: string; error?: string }>;
 };
 
 type AppAuthStatus = LocalAuthView & {
@@ -176,6 +187,12 @@ function buildMaestroAdapter(
       // for compatibility with brainRoute function
       const roleAdapters: Partial<Record<RoleName, OrcaLLMService>> = {};
       for (const [role, adapter] of configuredAdapters) {
+  function selectToolsForTask(ctx: OrcaRunCtx): AgentTool[] {
+    if (!Array.isArray(ctx.toolNamesAllowed)) return availableTools;
+    const allowed = new Set(ctx.toolNamesAllowed);
+    return availableTools.filter((tool) => allowed.has(tool.name));
+  }
+
         roleAdapters[role] = createDirectLLMService(adapter, '', { maxTokens: 8192, temperature: 0.7 });
       }
       
@@ -211,10 +228,10 @@ function buildMaestroAdapter(
       // 4. Get the agent for the selected role
       const agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
 
-      if (!availableTools || availableTools.length === 0) {
+      if (!taskTools || taskTools.length === 0) {
         logger.warn(`[Maestro] WARNING: No tools passed to ${routing.role} agent — tool calls will not be available`);
       }
-      logger.info(`[Maestro] Passing ${availableTools.length} tools to ${routing.role} agent: ${availableTools.map((tool) => tool.name).join(', ')}`);
+      logger.info(`[Maestro] Passing ${taskTools.length} tools to ${routing.role} agent: ${taskTools.map((tool) => tool.name).join(', ')}`);
       
       // 5. Build agent context with streaming support
       const agentCtx: AgentRunContext = {
@@ -245,7 +262,7 @@ function buildMaestroAdapter(
           doneCriteria: routing.doneCriteria,
           conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
         },
-        availableTools,
+        taskTools,
         agentCtx
       );
 
@@ -309,6 +326,7 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
   if (task.context != null && Object.keys(task.context).length > 0) {
     const { hasImages: _hi, errorOutput: _eo, fileCount: _fc, deepPlan: _dp, filePath: _fp, conversationHistory: _ch, ...userCtx } = task.context as Record<string, unknown>;
 
+      const taskTools = selectToolsForTask(ctx);
     const history = normalizeConversationHistory(task.context["conversationHistory"]);
     if (history?.length) {
       lines.push(
@@ -521,8 +539,18 @@ function initOrca(s: OrcaSettings): string | null {
     const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager, roleGenSettings, workspaceRoot);
     const pappy   = createPappyPort();
 
-    const gate = createMirandaGate({ verbose: false });
-    runtime = createOrcaRuntime({ maestro, pappy, llm, maxRepairPasses: 2, tools: toolService, store, requestToolApproval, budgetUsd: s.budgetUsd, gate });
+    const gate = createMirandaGate({ verbose: s.verbose === true });
+    runtime = createOrcaRuntime({
+      maestro,
+      pappy,
+      llm,
+      maxRepairPasses: s.maxRepairPasses,
+      tools: toolService,
+      store,
+      requestToolApproval,
+      budgetUsd: s.budgetUsd,
+      gate,
+    });
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {
@@ -584,10 +612,14 @@ function createTray(): void {
   tray.setToolTip("Orca");
 
   const menu = Menu.buildFromTemplate([
+      schema: tool.schema,
     {
       label: "Show Orca",
       click: () => {
         if (win) {
+          requestApproval: context.requestToolApproval
+            ? (toolName, args, _reason) => context.requestToolApproval!(toolName, args)
+            : undefined,
           win.show();
           win.focus();
         } else {

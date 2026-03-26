@@ -55,6 +55,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     const ctx: OrcaRunCtx = {
       llm,
       runId: generateRunId(),
+      toolNamesAllowed: normalizedTaskSpec.permissions?.toolsAllowed,
       // Gate tools to only what permissions allow
       tools: tools && (() => {
         const allowed = normalizedTaskSpec.permissions?.toolsAllowed;

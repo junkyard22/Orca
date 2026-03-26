@@ -30,9 +30,9 @@ const BRAIN_VALID_HEAD_NAMES = new Set([
   "reader",
 ]);
 
-const DIRECT_VALID_KEYS    = new Set(["routing", "role"]);
-const DECOMPOSE_VALID_KEYS = new Set(["routing", "departments"]);
-const DEPT_VALID_KEYS      = new Set(["head", "task"]);
+const DIRECT_VALID_KEYS    = new Set(["routing", "role", "done_criteria"]);
+const DECOMPOSE_VALID_KEYS = new Set(["routing", "departments", "synthesis_hint", "done_criteria"]);
+const DEPT_VALID_KEYS      = new Set(["head", "task", "subtask", "context"]);
 
 // ---------------------------------------------------------------------------
 // Activation guard
@@ -210,11 +210,11 @@ export function runBrainChecks(input: PappyInput): Omit<Issue, "issueId">[] {
         code: "BRAIN_OUTPUT_MALFORMED",
         category: "Consistency",
         description: 'Decompose routing output must have a non-empty "departments" array.',
-        expected_receipt: '"departments" must be an array of {head, task} objects with at least one entry.',
+        expected_receipt: '"departments" must be an array of {head, subtask} objects with at least one entry.',
         evidence: `departments = ${JSON.stringify(departments)}`,
-        fix_hint: 'Add at least one {"head": "<role>", "task": "<task>"} entry to "departments".',
+        fix_hint: 'Add at least one {"head": "<role>", "subtask": "<task>"} entry to "departments".',
         message: 'Brain decompose output has empty or missing "departments".',
-        suggestedFix: 'Add "departments": [{"head": "<role>", "task": "<task>"}].',
+        suggestedFix: 'Add "departments": [{"head": "<role>", "subtask": "<task>"}].',
       });
     } else {
       for (let i = 0; i < departments.length; i++) {
@@ -225,11 +225,11 @@ export function runBrainChecks(input: PappyInput): Omit<Issue, "issueId">[] {
             code: "BRAIN_OUTPUT_MALFORMED",
             category: "Consistency",
             description: `departments[${i}] is not an object.`,
-            expected_receipt: "Each department entry must be a {head, task} object.",
+            expected_receipt: "Each department entry must be a {head, subtask} object.",
             evidence: `departments[${i}] = ${JSON.stringify(dept)}`,
-            fix_hint: `Replace departments[${i}] with {"head": "<role>", "task": "<task>"}.`,
+            fix_hint: `Replace departments[${i}] with {"head": "<role>", "subtask": "<task>"}.`,
             message: `departments[${i}] is not a valid object.`,
-            suggestedFix: `departments[${i}] must be {"head": "<role>", "task": "<task>"}.`,
+            suggestedFix: `departments[${i}] must be {"head": "<role>", "subtask": "<task>"}.`,
           });
           continue;
         }
@@ -243,7 +243,7 @@ export function runBrainChecks(input: PappyInput): Omit<Issue, "issueId">[] {
             code: "BRAIN_HALLUCINATED_FIELD",
             category: "Consistency",
             description: `departments[${i}] contains extra fields: ${unknownDeptKeys.join(", ")}.`,
-            expected_receipt: "Department entries must only have: head, task.",
+            expected_receipt: "Department entries must only have: head, subtask, and optional context.",
             evidence: `Unknown keys in departments[${i}]: ${unknownDeptKeys.join(", ")}`,
             fix_hint: `Remove ${unknownDeptKeys.join(", ")} from departments[${i}].`,
             message: `departments[${i}] has extra fields.`,
@@ -279,19 +279,19 @@ export function runBrainChecks(input: PappyInput): Omit<Issue, "issueId">[] {
           });
         }
 
-        // task — required, non-empty string
-        const task = deptObj.task;
-        if (task === undefined || task === null || typeof task !== "string" || task.trim() === "") {
+        // subtask — required, non-empty string. Accept legacy "task" for backward compatibility.
+        const subtask = typeof deptObj.subtask === "string" ? deptObj.subtask : deptObj.task;
+        if (subtask === undefined || subtask === null || typeof subtask !== "string" || subtask.trim() === "") {
           issues.push({
             severity: "HIGH",
             code: "BRAIN_OUTPUT_MALFORMED",
             category: "Consistency",
-            description: `departments[${i}] is missing a non-empty "task" string.`,
-            expected_receipt: `Each department must have a non-empty "task" string.`,
-            evidence: `departments[${i}].task = ${JSON.stringify(task)}`,
-            fix_hint: `Add "task": "<description>" to departments[${i}].`,
-            message: `departments[${i}] missing or empty "task".`,
-            suggestedFix: `Add "task": "<description>" to departments[${i}].`,
+            description: `departments[${i}] is missing a non-empty "subtask" string.`,
+            expected_receipt: `Each department must have a non-empty "subtask" string.`,
+            evidence: `departments[${i}].subtask = ${JSON.stringify(subtask)}`,
+            fix_hint: `Add "subtask": "<description>" to departments[${i}].`,
+            message: `departments[${i}] missing or empty "subtask".`,
+            suggestedFix: `Add "subtask": "<description>" to departments[${i}].`,
           });
         }
       }

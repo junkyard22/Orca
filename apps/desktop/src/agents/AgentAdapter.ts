@@ -53,6 +53,14 @@ export interface AgentAdapter {
 }
 
 // Type definitions for tools and events
-type Tool = { name: string; description: string; execute: (input: Record<string, unknown>, context: any) => Promise<{ ok: boolean; output: string; error?: string }> };
+type Tool = {
+  name: string;
+  description: string;
+  schema?: {
+    required?: string[];
+    properties?: Record<string, { type: string }>;
+  };
+  execute: (input: Record<string, unknown>, context: any) => Promise<{ ok: boolean; output: string; error?: string }>;
+};
 type ToolEvent = { tool: string; ok: boolean; summary: string; raw?: unknown };
 type FileChange = { path: string; changeType: "A" | "M" | "D"; diff?: string };

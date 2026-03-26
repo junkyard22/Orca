@@ -4,7 +4,15 @@ import { ReactAgentAdapter } from "./ReactAgentAdapter";
 import { getRolePrompt, RoleName } from "maestro-core";
 
 // Type definitions
-type Tool = { name: string; description: string; execute: (input: Record<string, unknown>, context: any) => Promise<{ ok: boolean; output: string; error?: string }> };
+type Tool = {
+  name: string;
+  description: string;
+  schema?: {
+    required?: string[];
+    properties?: Record<string, { type: string }>;
+  };
+  execute: (input: Record<string, unknown>, context: any) => Promise<{ ok: boolean; output: string; error?: string }>;
+};
 
 export class RoleAgentAdapter implements AgentAdapter {
   readonly role: RoleName;

@@ -4,7 +4,15 @@ import type { AgentAdapter, AgentTask, AgentResult, ThoughtRecord, AgentRunConte
 import type { RoleName } from "maestro-core";
 
 // Type definitions that should be imported from existing files
-type Tool = { name: string; description: string; execute: (input: Record<string, unknown>, context: any) => Promise<{ ok: boolean; output: string; error?: string }> };
+type Tool = {
+  name: string;
+  description: string;
+  schema?: {
+    required?: string[];
+    properties?: Record<string, { type: string }>;
+  };
+  execute: (input: Record<string, unknown>, context: any) => Promise<{ ok: boolean; output: string; error?: string }>;
+};
 type ToolEvent = { tool: string; ok: boolean; summary: string; raw?: unknown };
 type FileChange = { path: string; changeType: "A" | "M" | "D"; diff?: string };
 
@@ -234,6 +242,12 @@ export class ReactAgentAdapter implements AgentAdapter {
     let finalAnswerFound = false;
     
     const availableTools = tools;
+    const toolPrompt = availableTools.length > 0
+      ? [
+          "## Available Tools",
+          ...availableTools.map((tool) => `- ${tool.name}: ${tool.description}`),
+        ].join("\n")
+      : "## Available Tools\nNo tools are available for this task. Work from the provided context only.";
     
     // Build initial conversation history
     let conversationHistory = task.conversationHistory || [];
@@ -254,7 +268,9 @@ export class ReactAgentAdapter implements AgentAdapter {
       ...task.goals.map(g => `- ${g}`),
       "",
       `## Done Criteria`,
-      ...task.doneCriteria.map(c => `- ${c}`)
+      ...task.doneCriteria.map(c => `- ${c}`),
+      "",
+      toolPrompt,
     ].join("\n");
     
     // Append ReAct system prompt block
@@ -442,6 +458,25 @@ export class ReactAgentAdapter implements AgentAdapter {
             });
             continue;
           }
+
+          const gateCtx = {
+            tool: call.tool,
+            args: call.input,
+            schema: tool.schema,
+          };
+          const beforeToolGate = ctx.gate?.beforeToolRun(gateCtx);
+          if (beforeToolGate && !beforeToolGate.allowed) {
+            const gateError = beforeToolGate.reason || `Tool "${call.tool}" blocked by Miranda`;
+            const gateResult = formatToolResult(call.tool, false, "", gateError);
+            messages.push({ role: "user", content: gateResult });
+            toolsUsed.push({
+              tool: call.tool,
+              ok: false,
+              summary: `${call.tool}: blocked — ${gateError}`,
+              raw: call.input,
+            });
+            continue;
+          }
           
           // Fix 2: write_file content validation guard
           if (call.tool === 'write_file' && typeof call.input.content !== 'string') {
@@ -458,8 +493,16 @@ export class ReactAgentAdapter implements AgentAdapter {
           }
           
           // Execute the tool
-          const toolContext = { workspaceRoot: ctx.workspaceRoot ?? process.cwd(), runId: ctx.runId };
+          const toolContext = {
+            workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
+            runId: ctx.runId,
+            requestApproval: ctx.requestToolApproval
+              ? (toolName: string, args: Record<string, unknown>, _reason: string) =>
+                  ctx.requestToolApproval!(toolName, args)
+              : undefined,
+          };
           const result = await tool.execute(call.input, toolContext);
+          ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
           
           // Tool Use Discipline: Increment cumulative counter
           cumulativeToolCallCount++;
