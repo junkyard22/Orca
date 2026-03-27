@@ -28,6 +28,7 @@ import {
   getWorkspaceContext,
   SqliteStore,
   exportTrainingData,
+  createRunAnalysisWriter,
 } from "@clawde/orca-core";
 import type { OrcaRuntime, OrcaEvent, OrcaEventType, ExportOptions, OrcaTaskSpec, OrcaExecutionResult } from "@clawde/orca-core";
 import { createBenson } from "@clawde/benson-core";
@@ -153,6 +154,11 @@ async function main(): Promise<void> {
   const store = new SqliteStore(dbPath);
   _store = store;
 
+  // Run analysis artifacts — written to ORCA_RUNS_DIR (default ~/.orca/runs/)
+  const runsDir = process.env["ORCA_RUNS_DIR"]?.trim() ??
+    path.join(os.homedir(), ".orca", "runs");
+  const analysisWriter = createRunAnalysisWriter(runsDir);
+
   const runtime = createOrcaRuntime({
     maestro,
     pappy,
@@ -161,7 +167,11 @@ async function main(): Promise<void> {
     store,
     gate,
     getWorkspaceContext: () => getWorkspaceContext(workspaceRoot),
+    writeTrace: (trace) => analysisWriter.writeTrace(trace),
   });
+
+  // Must be called after createOrcaRuntime and before executeTask
+  analysisWriter.attachRuntime(runtime);
 
   // Benson receives executeTask via injection — orca-core never depends on Benson.
   // Wrap to adapt OrcaTaskSpec/OrcaExecutionResult to benson-core's TaskSpec/ExecutionResult

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { Dewey } from "@clawde/dewey-core";
@@ -11,6 +12,7 @@ import {
   createOrcaRuntime,
   createDirectLLMService,
   createPappyPort,
+  createRunAnalysisWriter,
   deriveFilesChangedFromToolEvents,
   SqliteStore,
 } from "@clawde/orca-core";
@@ -87,12 +89,18 @@ function getPipelineTracePath(taskId: string): string {
   return join(getPipelineTraceDir(), `${taskId}.json`);
 }
 
-function writePipelineTrace(trace: OrcaPipelineTrace): void {
+// Run analysis artifacts — written to ORCA_RUNS_DIR (default ~/.orca/runs/)
+const runsDir = process.env["ORCA_RUNS_DIR"]?.trim() ??
+  join(homedir(), ".orca", "runs");
+const analysisWriter = createRunAnalysisWriter(runsDir);
+
+function writePipelineTrace(trace: OrcaPipelineTrace): Promise<void> {
   const dir = getPipelineTraceDir();
   mkdirSync(dir, { recursive: true });
   const filePath = getPipelineTracePath(trace.taskId);
   writeFileSync(filePath, JSON.stringify(trace, null, 2), "utf8");
   console.log(`[Orca]   pipeline:trace    ${filePath}`);
+  return analysisWriter.writeTrace(trace);
 }
 
 function readPipelineTrace(taskId: string): OrcaPipelineTrace | null {
@@ -658,6 +666,7 @@ function initOrca(s: OrcaSettings): string | null {
       budgetUsd: s.budgetUsd,
       gate,
     });
+    analysisWriter.attachRuntime(runtime);
     benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
     return null;
   } catch (err) {

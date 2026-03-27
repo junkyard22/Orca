@@ -19,6 +19,7 @@ release/
 .env
 .env.local
 .env.*.local
+.env.tracer
 
 # Logs
 *.log

@@ -32,6 +32,7 @@ import {
   createPappyPort,
   getWorkspaceContext,
   SqliteStore,
+  createRunAnalysisWriter,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -309,13 +310,26 @@ async function main(): Promise<void> {
   const dbPath = process.env["ORCA_DB_PATH"]?.trim() ?? path.join(os.homedir(), ".orca", "runs.db");
   const store = new SqliteStore(dbPath);
 
+  // Run analysis artifacts — written to ORCA_RUNS_DIR (default ~/.orca/runs/)
+  const runsDir = process.env["ORCA_RUNS_DIR"]?.trim() ??
+    path.join(os.homedir(), ".orca", "runs");
+  const analysisWriter = createRunAnalysisWriter(runsDir);
+
   const runtime = createOrcaRuntime({
     maestro, pappy, llm, tools, store, gate,
     getWorkspaceContext: () => getWorkspaceContext(workspaceRoot),
+    writeTrace: (trace) => analysisWriter.writeTrace(trace),
   });
+
+  // Must be called after createOrcaRuntime and before executeTask
+  analysisWriter.attachRuntime(runtime);
+
+  // Track the real taskId so we can print the exact artifact path at the end.
+  let currentTaskId = "";
 
   // ── Orca event hooks ───────────────────────────────────────────────────────
   listenFor(runtime, "task:start", (e) => {
+    currentTaskId = e.taskId;
     box(`[orca]  task:start  ${e.taskId}`, C.blue);
     line("intent", e.intent, C.white);
   });
@@ -398,6 +412,9 @@ async function main(): Promise<void> {
 
   const totalSec = ((Date.now() - T0) / 1000).toFixed(2);
   box(`TRACE COMPLETE  total=${totalSec}s`, C.magenta);
+
+  const artifactDir = path.join(runsDir, currentTaskId);
+  line("artifacts", `${artifactDir}\\run-analysis.md`, C.gray);
 
   store.close();
 }

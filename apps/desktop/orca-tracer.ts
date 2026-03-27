@@ -12,6 +12,46 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import path from "node:path";
+
+// ── Load .env.tracer for plaintext key overrides ────────────────────────────
+// Electron encrypts API keys with safeStorage, which can't be decrypted
+// outside the Electron process. .env.tracer lets you provide plaintext keys
+// for CLI tracer runs without touching the app's encrypted settings.
+//
+// Format (one per line):   DASHSCOPE_API_KEY=sk-xxx
+//                          OPENROUTER_API_KEY=sk-xxx
+//
+// The mapping from provider type → env var name:
+//   alibaba    → DASHSCOPE_API_KEY
+//   openrouter → OPENROUTER_API_KEY
+//   openai     → OPENAI_API_KEY
+//   deepseek   → DEEPSEEK_API_KEY
+//   anthropic  → ANTHROPIC_API_KEY
+//   siliconflow→ SILICONFLOW_API_KEY
+//   zai        → ZAI_API_KEY
+(function loadTracerEnv() {
+  const envPath = join(import.meta.dirname, ".env.tracer");
+  if (!existsSync(envPath)) return;
+  for (const line of readFileSync(envPath, "utf-8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq < 1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const val = trimmed.slice(eq + 1).trim();
+    if (key && val && !process.env[key]) process.env[key] = val;
+  }
+})();
+
+const PROVIDER_ENV_KEYS: Record<string, string> = {
+  alibaba:     "DASHSCOPE_API_KEY",
+  openrouter:  "OPENROUTER_API_KEY",
+  openai:      "OPENAI_API_KEY",
+  deepseek:    "DEEPSEEK_API_KEY",
+  anthropic:   "ANTHROPIC_API_KEY",
+  siliconflow: "SILICONFLOW_API_KEY",
+  zai:         "ZAI_API_KEY",
+};
 import { createBenson } from "@clawde/benson-core";
 import {
   createOrcaRuntime,
@@ -61,7 +101,7 @@ import type {
 
 const SETTINGS_PATH = join(
   process.env["APPDATA"] ?? process.env["HOME"] ?? "",
-  "@clawde", "desktop", "orca-settings.json",
+  "Orca", "orca-settings.json",
 );
 
 interface SettingsProvider { type: string; baseUrl: string; apiKey: string; }
@@ -82,13 +122,25 @@ function loadSettings(): Settings {
   return {};
 }
 
+function resolveApiKey(provider: SettingsProvider & { id: string; name?: string }): string | undefined {
+  const stored = provider.apiKey;
+  // If the key is plaintext, use it directly.
+  if (stored && !stored.startsWith("enc:") && !stored.startsWith("b64:")) return stored;
+  // Key is Electron-encrypted — look for a plaintext env var override.
+  const envVar = PROVIDER_ENV_KEYS[provider.type];
+  const envVal = envVar ? process.env[envVar]?.trim() : undefined;
+  if (envVal) return envVal;
+  // No usable key — return undefined so the adapter reports a clear auth error.
+  return undefined;
+}
+
 function buildRawAdapter(
   provider: SettingsProvider & { id: string; name?: string },
   model: string,
 ): LLMAdapter {
   return provider.type === "ollama"
     ? new OllamaAdapter({ baseUrl: provider.baseUrl || "http://localhost:11434", defaultModel: model })
-    : new OpenAICompatAdapter({ baseUrl: provider.baseUrl, apiKey: provider.apiKey || undefined, defaultModel: model });
+    : new OpenAICompatAdapter({ baseUrl: provider.baseUrl, apiKey: resolveApiKey(provider), defaultModel: model });
 }
 
 // ── Pretty logging ─────────────────────────────────────────────────────────

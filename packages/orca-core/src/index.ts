@@ -53,3 +53,7 @@ export { SqliteStore } from "./persistence/sqliteStore.js";
 export { exportTrainingData } from "./export/exportTrainingData.js";
 export type { ExportOptions, TrainingRecord, ExportSummary } from "./export/exportTrainingData.js";
 
+// Run analysis artifacts (run-analysis.md + run-events.json)
+export { createRunAnalysisWriter } from "./analysis/runAnalysis.js";
+export type { RunAnalysisWriter } from "./analysis/runAnalysis.js";
+

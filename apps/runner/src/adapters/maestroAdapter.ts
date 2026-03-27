@@ -66,28 +66,75 @@ export interface OrcaSettings {
 }
 
 /**
- * Load available roles from orca-settings.json at runtime.
- * Falls back to default core roles if file is not found.
+ * Returns the path where the Orca desktop app stores its settings.
+ * Mirrors Electron's app.getPath("userData") + "orca-settings.json".
+ */
+function getDesktopSettingsPath(): string {
+  const appName = "Orca";
+  if (process.platform === "win32") {
+    return path.join(process.env["APPDATA"] ?? "", appName, "orca-settings.json");
+  } else if (process.platform === "darwin") {
+    return path.join(process.env["HOME"] ?? "", "Library", "Application Support", appName, "orca-settings.json");
+  }
+  return path.join(
+    process.env["XDG_CONFIG_HOME"] ?? path.join(process.env["HOME"] ?? "", ".config"),
+    appName, "orca-settings.json",
+  );
+}
+
+/**
+ * Load available roles from settings. Preference order:
+ *   1. Desktop app settings (AppData/Orca/orca-settings.json) — new provider/role format
+ *   2. Root orca-settings.json — legacy runner format
+ *   3. Built-in defaults
+ *
+ * Only role names matter here (for routing decisions). API keys are not read
+ * because the desktop app encrypts them with Electron's safeStorage.
  */
 function loadRoleSettings(): OrcaSettings {
-  const settingsPath = path.join(process.cwd(), "orca-settings.json");
-  
+  // 1. Try desktop app settings (new format: { providers: [...], roles: { name: { providerId, model } } })
+  const desktopPath = getDesktopSettingsPath();
+  if (fs.existsSync(desktopPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(desktopPath, "utf-8")) as Record<string, unknown>;
+      if (Array.isArray(raw["providers"]) && raw["roles"] && typeof raw["roles"] === "object") {
+        const providers = raw["providers"] as Array<{ id: string; type?: string }>;
+        const rawRoles = raw["roles"] as Record<string, { providerId?: string; model?: string }>;
+        const roles: Record<string, RoleSettings> = {};
+        for (const [roleName, roleEntry] of Object.entries(rawRoles)) {
+          if (roleEntry.providerId && roleEntry.model) {
+            const prov = providers.find((p) => p.id === roleEntry.providerId);
+            roles[roleName] = { provider: prov?.type ?? "custom", model: roleEntry.model, label: roleName };
+          }
+        }
+        if (Object.keys(roles).length > 0) {
+          return { roles };
+        }
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // 2. Fall back to root orca-settings.json (legacy runner format: { roles: { name: { provider, model } } })
   try {
-    const content = fs.readFileSync(settingsPath, "utf-8");
+    const content = fs.readFileSync(path.join(process.cwd(), "orca-settings.json"), "utf-8");
     return JSON.parse(content) as OrcaSettings;
   } catch {
-    // Fall back to default roles if file not found
-    return {
-      roles: {
-        brain: { provider: "openrouter", model: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
-        coder_strong: { provider: "openrouter", model: "qwen/qwen3-coder-next", label: "Qwen3 Coder Next" },
-        coder_cheap: { provider: "openrouter", model: "qwen/qwen3-coder-next", label: "Qwen3 Coder Next" },
-        utility: { provider: "openrouter", model: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
-        reviewer: { provider: "openrouter", model: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
-        narrator: { provider: "openrouter", model: "qwen/qwen2.5-7b-instruct", label: "Qwen2.5 7B Instruct" },
-      },
-    };
+    // fall through
   }
+
+  // 3. Built-in defaults
+  return {
+    roles: {
+      brain:        { provider: "openrouter", model: "openai/gpt-4o-mini",        label: "GPT-4o Mini" },
+      coder_strong: { provider: "openrouter", model: "qwen/qwen3-coder-next",      label: "Qwen3 Coder Next" },
+      coder_cheap:  { provider: "openrouter", model: "qwen/qwen3-coder-next",      label: "Qwen3 Coder Next" },
+      utility:      { provider: "openrouter", model: "openai/gpt-4o-mini",         label: "GPT-4o Mini" },
+      reviewer:     { provider: "openrouter", model: "deepseek/deepseek-chat",     label: "DeepSeek Chat" },
+      narrator:     { provider: "openrouter", model: "qwen/qwen2.5-7b-instruct",   label: "Qwen2.5 7B Instruct" },
+    },
+  };
 }
 
 /**
@@ -555,6 +602,14 @@ async function runSingleAgent(
   const systemPrompt = getRolePrompt(effectiveRole);
   const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext, deweyBrief, isSubagent);
 
+  ctx.recordTrace?.("maestro.role.call", {
+    role: effectiveRole,
+    systemPrompt,
+    taskPrompt,
+    isRepair: task.intent === "repair",
+    isSubagent,
+  });
+
   let outputText: string;
   let toolEvents: OrcaMaestroResult["toolEvents"] = [];
   let filesChanged: OrcaFileChange[] = [];
@@ -571,6 +626,12 @@ async function runSingleAgent(
     );
     outputText = text;
   }
+
+  ctx.recordTrace?.("maestro.role.response", {
+    role: effectiveRole,
+    outputText,
+    toolCount: toolEvents?.length ?? 0,
+  });
 
   return {
     outputText,
@@ -1102,9 +1163,11 @@ async function runAgentLoop(
         }
       }
 
+      ctx.recordTrace?.("tool.call", { tool: call.tool, input: call.input });
       const result = await tools.execute(call.tool, call.input);
       const outputText = normalizeToolText(result.output);
       const errorText = result.error === undefined ? undefined : normalizeToolText(result.error);
+      ctx.recordTrace?.("tool.result", { tool: call.tool, ok: result.ok, output: outputText, error: errorText });
 
       // Miranda: after_tool_run gate
       ctx.gate?.afterToolRun({ tool: call.tool, args: call.input }, { ok: result.ok, output: outputText });
