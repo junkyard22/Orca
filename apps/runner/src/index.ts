@@ -20,7 +20,7 @@ import "dotenv/config";
 
 import * as os from "os";
 import * as path from "path";
-import { OpenRouterAdapter, OllamaAdapter, createMirandaGate } from "@clawde/miranda-core";
+import { OpenRouterAdapter, OllamaAdapter, OpenAICompatAdapter, createMirandaGate } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createDirectLLMService,
@@ -70,7 +70,8 @@ async function main(): Promise<void> {
   // 1. Read user prompt from argv or stdin
   const userText = await readPrompt();
 
-  // 2. Build LLM adapter — set LLM_PROVIDER=ollama in .env to use Ollama locally
+  // 2. Build LLM adapter — set LLM_PROVIDER in .env to choose a provider:
+  //      openrouter (default), ollama, alibaba
   const provider = process.env["LLM_PROVIDER"]?.trim().toLowerCase();
 
   let adapter;
@@ -79,6 +80,26 @@ async function main(): Promise<void> {
       baseUrl:      process.env["OLLAMA_BASE_URL"]  ?? "http://localhost:11434",
       defaultModel: process.env["OLLAMA_MODEL"]     ?? "llama3.2",
     });
+  } else if (provider === "alibaba") {
+    const apiKey = process.env["ALIBABA_CLOUD_API_KEY"]?.trim();
+    if (!apiKey) {
+      console.error(
+        "Error: ALIBABA_CLOUD_API_KEY is not set.\n" +
+          "  → Get your key at https://dashscope.console.aliyun.com/apiKey\n" +
+          "  → Or set LLM_PROVIDER=openrouter and use OPENROUTER_API_KEY instead.",
+      );
+      process.exit(1);
+    }
+    adapter = new OpenAICompatAdapter({
+      baseUrl:      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey,
+      defaultModel: process.env["LLM_MODEL"]?.trim() ?? "qwen-max",
+      // Qwen3 models on DashScope default to deep thinking; suppress it unless
+      // the caller explicitly sets ALIBABA_ENABLE_THINKING=true.
+      enableThinking: process.env["ALIBABA_ENABLE_THINKING"] === "true" ? true
+        : process.env["ALIBABA_ENABLE_THINKING"] === "false" ? false
+        : false,
+    });
   } else {
     const apiKey = process.env["OPENROUTER_API_KEY"]?.trim();
     if (!apiKey) {
@@ -86,7 +107,8 @@ async function main(): Promise<void> {
         "Error: OPENROUTER_API_KEY is not set.\n" +
           "  → Copy apps/runner/.env.example → apps/runner/.env and add your key.\n" +
           "  → Get a free key at https://openrouter.ai/keys\n" +
-          "  → Or set LLM_PROVIDER=ollama to use a local Ollama model instead.",
+          "  → Or set LLM_PROVIDER=ollama to use a local Ollama model instead.\n" +
+          "  → Or set LLM_PROVIDER=alibaba and ALIBABA_CLOUD_API_KEY to use Qwen via DashScope.",
       );
       process.exit(1);
     }
