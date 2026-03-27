@@ -151,6 +151,8 @@ export const DEFAULT_PRICING: Record<string, ModelPricing> = {
   "deepseek/deepseek-chat": { inputPer1M: 0.14, outputPer1M: 0.28 },
   "deepseek/deepseek-reasoner": { inputPer1M: 0.55, outputPer1M: 2.19 },
   "qwen/qwen-2.5-72b-instruct": { inputPer1M: 0.36, outputPer1M: 0.36 },
+  "qwen/qwen3-coder-next": { inputPer1M: 0.12, outputPer1M: 0.12 },
+  "qwen/qwen2.5-7b-instruct": { inputPer1M: 0.04, outputPer1M: 0.04 },
   "anthropic/claude-3.5-haiku": { inputPer1M: 0.80, outputPer1M: 4.00 },
   "anthropic/claude-3.5-sonnet": { inputPer1M: 3.00, outputPer1M: 15.00 },
   "openai/gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.60 },
