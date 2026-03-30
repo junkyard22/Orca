@@ -27,9 +27,9 @@ interface McpParamSchema {
   type?: string;
   description?: string;
   enum?: unknown[];
-  // nested object — we flatten it to "string" with a note
-  properties?: Record<string, unknown>;
-  items?: unknown;
+  properties?: Record<string, McpParamSchema>;
+  items?: McpParamSchema;
+  required?: string[];
 }
 
 interface McpToolSchema {
@@ -76,11 +76,10 @@ function mergeEnv(extra?: Record<string, string>): Record<string, string> | unde
  * Convert an MCP tool's inputSchema into Orca's internal ExtTool.schema shape.
  *
  * Mapping rules:
- *  - "integer" → "number"
- *  - "boolean" → "boolean"
- *  - "object"  → "string"  (nested objects are represented as a JSON string;
- *                            the model is told this in the description)
- *  - "array"   → "string"  (serialised as JSON)
+ *  - "integer"  → "number"
+ *  - "boolean"  → "boolean"
+ *  - "object"   → "object"  (LLM passes as JSON string; description shows nested shape)
+ *  - "array"    → "array"   (LLM passes as JSON string; description shows item type)
  *  - anything else / missing → "string"
  *  - enum values are coerced to strings and preserved
  *  - required[] is preserved as-is; missing → []
@@ -93,7 +92,7 @@ function convertSchema(mcp: McpToolSchema | undefined): ExtTool["schema"] {
   for (const [key, val] of Object.entries(schema.properties ?? {})) {
     const rawType = (val.type ?? "string").toLowerCase();
 
-    let paramType: "string" | "number" | "boolean";
+    let paramType: "string" | "number" | "boolean" | "object" | "array";
     let description = val.description ?? key;
 
     if (rawType === "number" || rawType === "integer") {
@@ -101,11 +100,19 @@ function convertSchema(mcp: McpToolSchema | undefined): ExtTool["schema"] {
     } else if (rawType === "boolean") {
       paramType = "boolean";
     } else if (rawType === "object") {
-      paramType = "string";
-      description = `${description} (pass as a JSON object string)`;
+      paramType = "object";
+      if (val.properties && Object.keys(val.properties).length > 0) {
+        const shape = Object.entries(val.properties)
+          .map(([k, v]) => `${k}: ${v.type ?? "string"}`)
+          .join(", ");
+        description = `${description} — pass as JSON: {${shape}}`;
+      } else {
+        description = `${description} — pass as JSON object`;
+      }
     } else if (rawType === "array") {
-      paramType = "string";
-      description = `${description} (pass as a JSON array string)`;
+      paramType = "array";
+      const itemType = val.items?.type ?? "any";
+      description = `${description} — pass as JSON array of ${itemType}`;
     } else {
       paramType = "string";
     }
@@ -129,6 +136,113 @@ function convertSchema(mcp: McpToolSchema | undefined): ExtTool["schema"] {
     properties: props,
     required: Array.isArray(schema.required) ? schema.required : [],
   };
+}
+
+// ── Arg coercion + validation ────────────────────────────────────────────────
+
+type CoerceResult =
+  | { ok: true; args: Record<string, unknown> }
+  | { ok: false; error: string };
+
+/**
+ * Coerce and validate LLM-supplied arguments against the original MCP inputSchema.
+ *
+ * The LLM always emits flat strings in tool calls so object/array params arrive
+ * as JSON strings. This function:
+ *   1. Checks all required params are present (non-empty).
+ *   2. For "object" params: JSON.parse strings; pass already-parsed objects through.
+ *   3. For "array"  params: JSON.parse strings; pass already-parsed arrays through.
+ *   4. For "integer"/"number" params: coerce string → number.
+ *   5. For "boolean" params: coerce "true"/"false" string → boolean.
+ *
+ * Returns { ok: true, args } on success or { ok: false, error } with a clear
+ * message describing every failure (all errors are collected before returning).
+ */
+function coerceAndValidate(
+  input: Record<string, unknown>,
+  schema: McpToolSchema,
+): CoerceResult {
+  const coerced: Record<string, unknown> = { ...input };
+  const errors: string[] = [];
+  const props = schema.properties ?? {};
+  const required = schema.required ?? [];
+
+  // 1. Required param presence check
+  for (const key of required) {
+    const v = coerced[key];
+    if (v === undefined || v === null || v === "") {
+      errors.push(`missing required parameter "${key}"`);
+    }
+  }
+  if (errors.length > 0) {
+    return { ok: false, error: `Validation failed: ${errors.join("; ")}` };
+  }
+
+  // 2. Type coercion for each declared param
+  for (const [key, spec] of Object.entries(props)) {
+    const raw = coerced[key];
+    if (raw === undefined || raw === null) continue;
+
+    const t = (spec.type ?? "string").toLowerCase();
+
+    if (t === "object") {
+      if (typeof raw === "string") {
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          if (typeof parsed !== "object" || Array.isArray(parsed) || parsed === null) {
+            errors.push(
+              `"${key}" must be a JSON object, got ${Array.isArray(parsed) ? "array" : typeof parsed}`,
+            );
+          } else {
+            coerced[key] = parsed;
+          }
+        } catch {
+          errors.push(
+            `"${key}" is not valid JSON (expected object): ${String(raw).slice(0, 80)}`,
+          );
+        }
+      }
+      // already an object → pass through unchanged
+    } else if (t === "array") {
+      if (typeof raw === "string") {
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          if (!Array.isArray(parsed)) {
+            errors.push(`"${key}" must be a JSON array, got ${typeof parsed}`);
+          } else {
+            coerced[key] = parsed;
+          }
+        } catch {
+          errors.push(
+            `"${key}" is not valid JSON (expected array): ${String(raw).slice(0, 80)}`,
+          );
+        }
+      } else if (!Array.isArray(raw)) {
+        errors.push(`"${key}" must be an array`);
+      }
+      // already an array → pass through unchanged
+    } else if (t === "integer" || t === "number") {
+      if (typeof raw === "string") {
+        const n = Number(raw);
+        if (isNaN(n)) {
+          errors.push(`"${key}" must be a number, got "${raw}"`);
+        } else {
+          coerced[key] = n;
+        }
+      }
+    } else if (t === "boolean") {
+      if (typeof raw === "string") {
+        if (raw === "true") coerced[key] = true;
+        else if (raw === "false") coerced[key] = false;
+        else errors.push(`"${key}" must be "true" or "false", got "${raw}"`);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, error: `Validation failed: ${errors.join("; ")}` };
+  }
+  return { ok: true, args: coerced };
 }
 
 /**
@@ -229,6 +343,8 @@ export async function connectMcpServer(
       description: mcpTool.description ?? mcpTool.name,
       // Guard: inputSchema may be missing on some servers
       schema: convertSchema(mcpTool.inputSchema),
+      // Preserve original MCP inputSchema for validation and documentation consumers.
+      rawSchema: mcpTool.inputSchema as unknown as Record<string, unknown> | undefined,
 
       async execute(
         input: Record<string, unknown>,
@@ -238,10 +354,18 @@ export async function connectMcpServer(
         try {
           log(`[MCP] → ${toolName} (runId=${ctx.runId})`);
 
+          // Coerce JSON strings → structured types and validate required params
+          // before sending to the server.
+          const coercion = coerceAndValidate(input, mcpTool.inputSchema ?? {});
+          if (!coercion.ok) {
+            log(`[MCP] ← ${toolName} validation error: ${coercion.error}`);
+            return { ok: false, output: "", error: coercion.error };
+          }
+
           // Call the tool using its ORIGINAL (non-prefixed) name
           const result = await client.callTool({
             name: mcpTool.name,
-            arguments: input,
+            arguments: coercion.args,
           });
 
           const content = (result.content ?? []) as McpContent[];

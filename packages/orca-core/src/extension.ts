@@ -30,7 +30,8 @@ export interface ExtToolResult {
 }
 
 export interface ExtToolParamSchema {
-  type: "string" | "number" | "boolean";
+  /** "object" and "array" represent structured MCP parameters that the LLM passes as JSON strings. */
+  type: "string" | "number" | "boolean" | "object" | "array";
   description: string;
   enum?: string[];
 }
@@ -43,6 +44,12 @@ export interface ExtTool {
     properties: Record<string, ExtToolParamSchema>;
     required: string[];
   };
+  /**
+   * The original JSON schema from the tool's source (e.g. MCP inputSchema).
+   * Present when the tool was created from an external schema definition.
+   * Consumers can use this for richer validation or documentation.
+   */
+  rawSchema?: Record<string, unknown>;
   execute(
     input: Record<string, unknown>,
     ctx: ExtToolRunCtx,

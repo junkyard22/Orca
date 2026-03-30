@@ -107,20 +107,82 @@ try {
   fail("Test 2 describe_color", err.message);
 }
 
-// --- Test 3: nested object + array ---
+// --- Test 3: nested object + array (JSON strings — tests string→object coercion) ---
 try {
   const cfgTool = toolMap["summarise_config"];
   if (!cfgTool) throw new Error("summarise_config tool not found");
-  // config arrives as JSON string (object→string schema conversion)
+  // Pass config + tags as JSON strings — coercion should parse them before callTool.
   const result = await cfgTool.execute({
     config: JSON.stringify({ name: "myapp", debug: true }),
     tags:   JSON.stringify(["dev", "production"]),
   }, { runId: "t3" });
   const text = result.output ?? JSON.stringify(result);
   ok("Test 3 summarise_config: reports 2 keys", text, "2 key");
+  ok("Test 3 summarise_config: server received coerced object", text, "[obj✓]");
+  ok("Test 3 summarise_config: server received coerced array", text, "[arr✓]");
   ok("Test 3 summarise_config: tags appear", text, /dev.*production|production.*dev/);
 } catch (err) {
   fail("Test 3 summarise_config", err.message);
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: Coercion — verify structured args are parsed client-side
+// ---------------------------------------------------------------------------
+
+// Test 5a: pre-parsed object (no JSON.parse needed — verify pass-through)
+try {
+  const cfgTool = toolMap["summarise_config"];
+  if (!cfgTool) throw new Error("summarise_config tool not found");
+  // Pass config as an already-parsed object (not a JSON string).
+  // coerceAndValidate must pass it through unchanged.
+  const result = await cfgTool.execute({
+    config: { name: "passthrough", debug: false, extra: true },
+  }, { runId: "t5a" });
+  ok("Test 5a nested-object: pre-parsed object passes through", result.ok, true);
+  ok("Test 5a nested-object: server received object (not string)", result.output, "[obj✓]");
+  ok("Test 5a nested-object: correct key count (3)", result.output, "3 key");
+} catch (err) {
+  fail("Test 5a nested-object passthrough", err.message);
+}
+
+// Test 5b: pre-parsed array (no JSON.parse needed — verify pass-through)
+try {
+  const cfgTool = toolMap["summarise_config"];
+  if (!cfgTool) throw new Error("summarise_config tool not found");
+  // Pass tags as an already-parsed array.
+  const result = await cfgTool.execute({
+    config: { name: "app" },
+    tags: ["alpha", "beta", "gamma"],
+  }, { runId: "t5b" });
+  ok("Test 5b array: pre-parsed array passes through", result.ok, true);
+  ok("Test 5b array: server received array (not string)", result.output, "[arr✓]");
+  ok("Test 5b array: all 3 tags appear", result.output, /alpha.*beta.*gamma|gamma.*beta.*alpha/);
+} catch (err) {
+  fail("Test 5b array passthrough", err.message);
+}
+
+// Test 5c: validation error — invalid JSON string for required object param
+try {
+  const cfgTool = toolMap["summarise_config"];
+  if (!cfgTool) throw new Error("summarise_config tool not found");
+  const result = await cfgTool.execute({
+    config: "this is not json { at all }",
+  }, { runId: "t5c" });
+  ok("Test 5c validation: ok=false for invalid JSON", result.ok, false);
+  ok("Test 5c validation: error mentions param name", result.error ?? "", '"config"');
+} catch (err) {
+  fail("Test 5c validation error", err.message);
+}
+
+// Test 5d: validation error — missing required param
+try {
+  const cfgTool = toolMap["summarise_config"];
+  if (!cfgTool) throw new Error("summarise_config tool not found");
+  const result = await cfgTool.execute({}, { runId: "t5d" });
+  ok("Test 5d validation: ok=false for missing required param", result.ok, false);
+  ok("Test 5d validation: error mentions 'config'", result.error ?? "", '"config"');
+} catch (err) {
+  fail("Test 5d missing required param", err.message);
 }
 
 // Teardown working server

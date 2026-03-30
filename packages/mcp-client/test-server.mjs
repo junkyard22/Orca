@@ -98,18 +98,23 @@ server.setRequestHandler(CallToolRequestSchema, (req) => {
   }
 
   if (name === "summarise_config") {
-    // config arrives as a JSON string (object→string schema conversion in mcp-client).
+    // After client-side coercion, config should arrive as an object and tags as an array.
+    // Keep the string fallback for any direct callers that don't go through coerceAndValidate.
     let cfg = args?.config ?? {};
+    const receivedObjDirectly = typeof cfg === "object" && !Array.isArray(cfg);
     if (typeof cfg === "string") { try { cfg = JSON.parse(cfg); } catch {} }
 
     let tags = args?.tags ?? [];
+    const receivedArrDirectly = Array.isArray(tags);
     if (typeof tags === "string") { try { tags = JSON.parse(tags); } catch { tags = [tags]; } }
 
     const keys = Object.keys(cfg);
     const tagList = Array.isArray(tags) ? tags : [String(tags)];
+    const note = receivedObjDirectly ? " [obj✓]" : " [obj-str]";
+    const tagNote = receivedArrDirectly ? " [arr✓]" : " [arr-str]";
     return { content: [{ type: "text", text:
-      `Config has ${keys.length} key(s): ${keys.join(", ") || "(none)"}\n` +
-      (tagList.length > 0 ? `Tags: ${tagList.join(", ")}` : "No tags."),
+      `Config has ${keys.length} key(s): ${keys.join(", ") || "(none)"}${note}\n` +
+      (tagList.length > 0 ? `Tags: ${tagList.join(", ")}${tagNote}` : "No tags."),
     }] };
   }
 
