@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeTaskSpec } from "./helpers.js";
 
 describe("normalizeTaskSpec", () => {
-  it("converts Benson's legacy read-only permission array into a concrete tool allowlist", () => {
+  it("converts Benson's legacy read-only permission array into boolean flags without a tool whitelist", () => {
     const task = normalizeTaskSpec({
       originalUserMessage: "Explain package.json",
       intent: "explain package.json",
@@ -14,17 +14,12 @@ describe("normalizeTaskSpec", () => {
       fileRead: true,
       fileWrite: false,
       shellExec: false,
-      toolsAllowed: [
-        "read_file",
-        "list_directory",
-        "search_files",
-        "docs_read",
-        "docs_list",
-      ],
     });
+    // No toolsAllowed — dynamic MCP tools must not be blocked
+    expect(task.permissions?.toolsAllowed).toBeUndefined();
   });
 
-  it("includes write, shell, and network tools when the legacy permission array requests them", () => {
+  it("sets fileWrite and shellExec true for write+shell permissions without a tool whitelist", () => {
     const task = normalizeTaskSpec({
       originalUserMessage: "Run tests and update the report",
       intent: "run tests",
@@ -32,9 +27,9 @@ describe("normalizeTaskSpec", () => {
       permissions: ["read", "write", "shell", "network"] as any,
     });
 
-    expect(task.permissions?.toolsAllowed).toContain("write_file");
-    expect(task.permissions?.toolsAllowed).toContain("run_command");
-    expect(task.permissions?.toolsAllowed).toContain("web_search");
-    expect(task.permissions?.toolsAllowed).toContain("github_get_pr");
+    expect(task.permissions?.fileWrite).toBe(true);
+    expect(task.permissions?.shellExec).toBe(true);
+    // No whitelist — all registered tools (including MCP) are available
+    expect(task.permissions?.toolsAllowed).toBeUndefined();
   });
 });

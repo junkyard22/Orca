@@ -1,26 +1,6 @@
 import type { PappyInput } from "@clawde/pappy-core";
 import type { OrcaTaskSpec, OrcaMaestroResult, OrcaFileChange, OrcaToolEvent, TaskPermissions } from "./types.js";
 
-const READ_ONLY_TOOLS = [
-  "read_file",
-  "list_directory",
-  "search_files",
-  "docs_read",
-  "docs_list",
-];
-
-const WRITE_TOOLS = ["write_file"];
-
-const SHELL_TOOLS = ["run_command"];
-
-const NETWORK_TOOLS = [
-  "web_fetch",
-  "web_search",
-  "github_list_prs",
-  "github_get_pr",
-  "github_list_issues",
-];
-
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
 }
@@ -33,7 +13,7 @@ function looksLikeTaskPermissions(value: unknown): value is TaskPermissions {
     typeof record["fileRead"] === "boolean" &&
     typeof record["fileWrite"] === "boolean" &&
     typeof record["shellExec"] === "boolean" &&
-    Array.isArray(record["toolsAllowed"])
+    (record["toolsAllowed"] === undefined || Array.isArray(record["toolsAllowed"]))
   );
 }
 
@@ -45,7 +25,7 @@ export function normalizeTaskPermissions(input: unknown): TaskPermissions | unde
       fileRead: input.fileRead,
       fileWrite: input.fileWrite,
       shellExec: input.shellExec,
-      toolsAllowed: uniqueStrings(input.toolsAllowed),
+      ...(input.toolsAllowed !== undefined && { toolsAllowed: uniqueStrings(input.toolsAllowed) }),
     };
   }
 
@@ -59,18 +39,14 @@ export function normalizeTaskPermissions(input: unknown): TaskPermissions | unde
 
   const fileWrite = permissions.has("write");
   const shellExec = permissions.has("shell");
-  const networkAccess = permissions.has("network");
 
+  // Intentionally no toolsAllowed whitelist here — the boolean flags
+  // (fileWrite, shellExec) already drive the LLM execution-limit text.
+  // Setting a static whitelist would silently block dynamic MCP tools.
   return {
     fileRead: true,
     fileWrite,
     shellExec,
-    toolsAllowed: uniqueStrings([
-      ...READ_ONLY_TOOLS,
-      ...(fileWrite ? WRITE_TOOLS : []),
-      ...(shellExec ? SHELL_TOOLS : []),
-      ...(networkAccess ? NETWORK_TOOLS : []),
-    ]),
   };
 }
 

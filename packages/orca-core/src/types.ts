@@ -23,7 +23,7 @@ export interface TaskPermissions {
   fileRead:     boolean;
   fileWrite:    boolean;
   shellExec:    boolean;
-  toolsAllowed: string[];
+  toolsAllowed?: string[];
 }
 
 export interface OrcaTaskSpec {

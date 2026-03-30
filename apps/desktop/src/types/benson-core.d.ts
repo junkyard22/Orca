@@ -14,7 +14,7 @@ declare module '@clawde/benson-core' {
     fileRead: boolean;
     fileWrite: boolean;
     shellExec: boolean;
-    toolsAllowed: string[];
+    toolsAllowed?: string[];
   }
 
   export interface TaskSpec {
