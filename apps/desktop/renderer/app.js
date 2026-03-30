@@ -1366,6 +1366,135 @@ function resetAuthSettingsInputs() {
   setAuthConfirm.value = "";
 }
 
+// ── MCP Servers ───────────────────────────────────────────────────────────────
+
+/** Well-known MCP server templates keyed by their stable IDs. */
+const MCP_TEMPLATES = {
+  "desktop-commander": {
+    id:        "desktop-commander",
+    name:      "Desktop Commander",
+    transport: "stdio",
+    command:   "npx",
+    args:      ["-y", "@wonderwhy-er/desktop-commander"],
+  },
+  "github-mcp": {
+    id:        "github-mcp",
+    name:      "GitHub MCP",
+    transport: "stdio",
+    command:   "docker",
+    args:      ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+                "ghcr.io/github/github-mcp-server"],
+  },
+};
+
+/**
+ * Populate the MCP section controls from the current editingSettings.
+ * Finds Desktop Commander and GitHub MCP entries by ID; defaults to disabled
+ * when they are not yet present in the saved settings.
+ */
+function renderMcpServers() {
+  const servers = editingSettings?.mcpServers ?? [];
+
+  const dcEntry = servers.find((s) => s.id === "desktop-commander");
+  const ghEntry = servers.find((s) => s.id === "github-mcp");
+
+  const dcEnabled = document.getElementById("mcp-dc-enabled");
+  const ghEnabled = document.getElementById("mcp-gh-enabled");
+  const ghPatRow  = document.getElementById("mcp-gh-pat-row");
+  const ghPat     = document.getElementById("mcp-gh-pat");
+
+  if (dcEnabled) dcEnabled.checked = dcEntry?.enabled !== false && !!dcEntry;
+  if (ghEnabled) {
+    ghEnabled.checked = ghEntry?.enabled !== false && !!ghEntry;
+    // Show PAT row whenever GitHub MCP is checked OR already has a saved token
+    const showPat = (ghEntry?.enabled !== false && !!ghEntry) || !!(ghEntry?.env?.GITHUB_PERSONAL_ACCESS_TOKEN);
+    if (ghPatRow) ghPatRow.style.display = showPat ? "flex" : "none";
+    if (ghPat)    ghPat.value = ghEntry?.env?.GITHUB_PERSONAL_ACCESS_TOKEN ?? "";
+  }
+}
+
+/**
+ * Wire up MCP server toggle / PAT input change handlers.
+ * Called once after DOM is ready (at the bottom of the file).
+ */
+function initMcpControls() {
+  const dcEnabled = document.getElementById("mcp-dc-enabled");
+  const ghEnabled = document.getElementById("mcp-gh-enabled");
+  const ghPatRow  = document.getElementById("mcp-gh-pat-row");
+  const ghPat     = document.getElementById("mcp-gh-pat");
+  const ghShowPat = document.getElementById("mcp-gh-show-pat");
+
+  if (dcEnabled) {
+    dcEnabled.addEventListener("change", function () {
+      if (!editingSettings) return;
+      editingSettings.mcpServers = upsertMcpServer(
+        editingSettings.mcpServers ?? [],
+        "desktop-commander",
+        { enabled: this.checked },
+      );
+    });
+  }
+
+  if (ghEnabled) {
+    ghEnabled.addEventListener("change", function () {
+      if (!editingSettings) return;
+      const checked = this.checked;
+      editingSettings.mcpServers = upsertMcpServer(
+        editingSettings.mcpServers ?? [],
+        "github-mcp",
+        { enabled: checked },
+      );
+      if (ghPatRow) ghPatRow.style.display = checked ? "flex" : "none";
+    });
+  }
+
+  if (ghPat) {
+    ghPat.addEventListener("input", function () {
+      if (!editingSettings) return;
+      editingSettings.mcpServers = upsertMcpServer(
+        editingSettings.mcpServers ?? [],
+        "github-mcp",
+        { env: { GITHUB_PERSONAL_ACCESS_TOKEN: this.value } },
+      );
+    });
+  }
+
+  if (ghShowPat) {
+    ghShowPat.addEventListener("click", function () {
+      if (!ghPat) return;
+      const showing = ghPat.type === "text";
+      ghPat.type = showing ? "password" : "text";
+      this.textContent = showing ? "Show" : "Hide";
+    });
+  }
+}
+
+/**
+ * Upsert a well-known MCP server entry in the mcpServers array.
+ * Merges the supplied patch over the existing entry (or the template if new).
+ * env is merged shallowly — keys in patch.env overwrite individual env vars.
+ */
+function upsertMcpServer(servers, id, patch) {
+  const template = MCP_TEMPLATES[id];
+  if (!template) return servers;
+
+  const idx = servers.findIndex((s) => s.id === id);
+  if (idx === -1) {
+    // New entry — start from template + patch
+    const entry = { ...template, enabled: false, ...patch };
+    if (patch.env) entry.env = { ...(template.env ?? {}), ...patch.env };
+    return [...servers, entry];
+  }
+
+  // Existing entry — merge patch
+  const existing = servers[idx];
+  const updated = { ...existing, ...patch };
+  if (patch.env) updated.env = { ...(existing.env ?? {}), ...patch.env };
+  const next = [...servers];
+  next[idx] = updated;
+  return next;
+}
+
 function openSettings() {
   if (authKnown && authState.locked) {
     showAuthError("Unlock Orca to open settings.");
@@ -1398,6 +1527,7 @@ function openSettings() {
     }
     renderProviders();
     renderRoles();
+    renderMcpServers();
   });
 }
 
@@ -1791,6 +1921,10 @@ document.getElementById("btn-theme").addEventListener("click", () => {
   localStorage.setItem("orca-theme", isLight ? "light" : "dark");
   setThemeLogos(isLight);
 });
+
+// ── MCP controls wiring ───────────────────────────────────────────────────
+
+initMcpControls();
 
 // ── Focus input on load ───────────────────────────────────────────────────
 

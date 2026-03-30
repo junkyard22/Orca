@@ -29,6 +29,17 @@ export type RoleEntry = {
   temperature?:    number;
 };
 
+export type McpServerConfig = {
+  id:              string;
+  name:            string;
+  transport:       "stdio";
+  command:         string;
+  args?:           string[];
+  env?:            Record<string, string>;
+  namespaceTools?: boolean;
+  enabled?:        boolean;
+};
+
 export type OrcaSettings = {
   providers:       ProviderEntry[];
   roles:           Partial<Record<string, RoleEntry>>;
@@ -36,6 +47,7 @@ export type OrcaSettings = {
   maxRepairPasses: number;
   verbose:         boolean;
   workspaceRoot:   string;
+  mcpServers?:     McpServerConfig[];
 };
 
 export type SessionSummary = {

@@ -169,6 +169,7 @@ function decryptApiKey(stored: string): string {
 
 /**
  * Encrypt all API keys in the settings before saving to disk.
+ * Covers both provider API keys and MCP server env secrets (e.g. GITHUB_PERSONAL_ACCESS_TOKEN).
  */
 function encryptSettings(settings: OrcaSettings): OrcaSettings {
   return {
@@ -177,11 +178,18 @@ function encryptSettings(settings: OrcaSettings): OrcaSettings {
       ...p,
       apiKey: encryptApiKey(p.apiKey),
     })),
+    mcpServers: settings.mcpServers?.map((srv) => ({
+      ...srv,
+      env: srv.env
+        ? Object.fromEntries(Object.entries(srv.env).map(([k, v]) => [k, encryptApiKey(v)]))
+        : undefined,
+    })),
   };
 }
 
 /**
  * Decrypt all API keys in the settings after loading from disk.
+ * Covers both provider API keys and MCP server env secrets.
  */
 function decryptSettings(settings: OrcaSettings): OrcaSettings {
   return {
@@ -189,6 +197,12 @@ function decryptSettings(settings: OrcaSettings): OrcaSettings {
     providers: settings.providers.map((p) => ({
       ...p,
       apiKey: decryptApiKey(p.apiKey),
+    })),
+    mcpServers: settings.mcpServers?.map((srv) => ({
+      ...srv,
+      env: srv.env
+        ? Object.fromEntries(Object.entries(srv.env).map(([k, v]) => [k, decryptApiKey(v)]))
+        : undefined,
     })),
   };
 }

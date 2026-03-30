@@ -173,6 +173,45 @@
               <div id="roles-optional-list" class="roles-list"></div>
             </div>
 
+            <!-- MCP Servers ─────────────────────────────────────────────── -->
+            <div class="settings-section">
+              <div class="settings-section-header">
+                <span class="settings-section-title">MCP Servers</span>
+              </div>
+              <p class="setting-hint">
+                Model Context Protocol servers extend Orca with additional tools.
+                Changes take effect after Save &amp; re-init.
+              </p>
+
+              <!-- Desktop Commander -->
+              <div class="setting-group setting-group--row">
+                <div>
+                  <label class="setting-label">Desktop Commander</label>
+                  <p class="setting-hint">Local file read/write, terminal execution, and codebase search.</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="mcp-dc-enabled" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+
+              <!-- GitHub MCP -->
+              <div class="setting-group setting-group--row mt-14">
+                <div>
+                  <label class="setting-label">GitHub MCP</label>
+                  <p class="setting-hint">Clone, push, PRs, issues, and repo file access via GitHub API (requires Docker).</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="mcp-gh-enabled" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <div class="provider-key-row" id="mcp-gh-pat-row" style="display:none">
+                <input type="password" id="mcp-gh-pat" class="setting-input" placeholder="GitHub Personal Access Token" autocomplete="off" />
+                <button class="setting-show-btn" id="mcp-gh-show-pat" type="button">Show</button>
+              </div>
+            </div>
+
             <!-- General ─────────────────────────────────────────────────── -->
             <div class="settings-section">
               <div class="settings-section-header">

@@ -437,6 +437,84 @@ describe("tool permission filtering", () => {
 
     expect(ctxToolsDefined).toBe(true);
   });
+
+  it("blocks Desktop Commander MCP tools (desktop-commander_*) when not in toolsAllowed", async () => {
+    // Simulate a tool service that includes a Desktop Commander MCP tool
+    const tools = makeToolService(["read_file", "desktop-commander_execute_command"]);
+    const capturedResults: Array<{ ok: boolean; error?: string }> = [];
+
+    const maestro: MaestroPort = {
+      run: async (_task, ctx) => {
+        // Attempt to use the Desktop Commander tool that is NOT in the allowlist
+        const result = await ctx.tools!.execute("desktop-commander_execute_command", { command: "ls" });
+        capturedResults.push({ ok: result.ok, error: result.error });
+        return { outputText: result.error ?? result.output };
+      },
+    };
+
+    const pappy: PappyPort = { evaluate: vi.fn(() => makePappyResult("PASS")) };
+
+    await createOrcaRuntime({
+      maestro,
+      pappy,
+      llm: makeLLM(),
+      tools: tools as any,
+    }).executeTask(
+      makeTaskSpec({
+        permissions: {
+          fileRead: true,
+          fileWrite: false,
+          shellExec: false,
+          toolsAllowed: ["read_file"], // desktop-commander_execute_command NOT in list
+        },
+      }),
+    );
+
+    // Tool must have been blocked — underlying service never called
+    expect(tools.execute).not.toHaveBeenCalled();
+    expect(capturedResults).toHaveLength(1);
+    expect(capturedResults[0]!.ok).toBe(false);
+    expect(capturedResults[0]!.error).toMatch(/desktop-commander_execute_command/);
+  });
+
+  it("blocks GitHub MCP tools (github-mcp_*) when not in toolsAllowed", async () => {
+    // Simulate a tool service that includes a GitHub MCP tool
+    const tools = makeToolService(["read_file", "github-mcp_create_pull_request"]);
+    const capturedResults: Array<{ ok: boolean; error?: string }> = [];
+
+    const maestro: MaestroPort = {
+      run: async (_task, ctx) => {
+        // Attempt to use the GitHub MCP tool that is NOT in the allowlist
+        const result = await ctx.tools!.execute("github-mcp_create_pull_request", { title: "fix" });
+        capturedResults.push({ ok: result.ok, error: result.error });
+        return { outputText: result.error ?? result.output };
+      },
+    };
+
+    const pappy: PappyPort = { evaluate: vi.fn(() => makePappyResult("PASS")) };
+
+    await createOrcaRuntime({
+      maestro,
+      pappy,
+      llm: makeLLM(),
+      tools: tools as any,
+    }).executeTask(
+      makeTaskSpec({
+        permissions: {
+          fileRead: true,
+          fileWrite: false,
+          shellExec: false,
+          toolsAllowed: ["read_file"], // github-mcp_create_pull_request NOT in list
+        },
+      }),
+    );
+
+    // Tool must have been blocked — underlying service never called
+    expect(tools.execute).not.toHaveBeenCalled();
+    expect(capturedResults).toHaveLength(1);
+    expect(capturedResults[0]!.ok).toBe(false);
+    expect(capturedResults[0]!.error).toMatch(/github-mcp_create_pull_request/);
+  });
 });
 
 // ===========================================================================
