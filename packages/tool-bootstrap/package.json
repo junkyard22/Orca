@@ -1,0 +1,30 @@
+{
+  "name": "@clawde/tool-bootstrap",
+  "version": "0.1.0",
+  "description": "Shared tool-loading bootstrap for Orca — assembles core workbench tools, static extensions, and MCP tools into a single OrcaToolService",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clawde/ext-docs": "workspace:*",
+    "@clawde/ext-github": "workspace:*",
+    "@clawde/ext-web": "workspace:*",
+    "@clawde/mcp-client": "workspace:*",
+    "@clawde/orca-core": "workspace:*",
+    "@yakstacks/workbench-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "typescript": "^5.7.3"
+  }
+}

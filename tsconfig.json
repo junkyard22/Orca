@@ -8,6 +8,11 @@
     { "path": "packages/pappy-core" },
     { "path": "packages/benson-core" },
     { "path": "packages/orca-core" },
+    { "path": "packages/ext-github" },
+    { "path": "packages/ext-docs" },
+    { "path": "packages/ext-web" },
+    { "path": "packages/mcp-client" },
+    { "path": "packages/tool-bootstrap" },
     { "path": "apps/runner" }
   ]
 }

@@ -1,6 +1,9 @@
 import { app, safeStorage } from "electron";
 import { join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import type { McpServerConfig } from "@clawde/tool-bootstrap";
+
+export type { McpServerConfig };
 
 // ── Provider Types ──────────────────────────────────────────────────────────
 
@@ -67,6 +70,11 @@ export interface RoleEntry {
   maxTokens?: number;
   /** Sampling temperature for this role (0–2). Default: 0.7. */
   temperature?: number;
+  /**
+   * Whitelist of tool names available to this role.
+   * Omit to allow all tools. Applies on top of any per-task toolNamesAllowed.
+   */
+  toolsAllowed?: string[];
 }
 
 // ── Settings ────────────────────────────────────────────────────────────────
@@ -81,6 +89,11 @@ export interface OrcaSettings {
   verbose:         boolean;
   /** Absolute path to the workspace root used for tool execution */
   workspaceRoot:   string;
+  /**
+   * MCP server definitions. Each entry spawns one child process via stdio.
+   * Disabled or missing entries are skipped automatically.
+   */
+  mcpServers?:     McpServerConfig[];
 }
 
 const DEFAULTS: OrcaSettings = {

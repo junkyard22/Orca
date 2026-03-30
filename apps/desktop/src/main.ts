@@ -28,7 +28,8 @@ import type {
   OrcaPipelineTrace,
   OrcaToolService,
 } from "@clawde/orca-core";
-import { createCoreToolRegistry } from "@yakstacks/workbench-core";
+import { buildToolBootstrap } from "@clawde/tool-bootstrap";
+import type { BootstrappedTool } from "@clawde/tool-bootstrap";
 import { createBenson } from "@clawde/benson-core";
 import {
   createMaestroCore,
@@ -55,7 +56,7 @@ import type {
   SaveLocalAuthInput,
 } from "./auth";
 import { loadSettings, saveSettings } from "./settings";
-import type { OrcaSettings, ProviderEntry, RoleEntry } from "./settings";
+import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext } from "./agents/AgentAdapter";
 
@@ -232,6 +233,12 @@ function buildMaestroAdapter(
   roleSettings?: Map<RoleName, { maxTokens?: number; temperature?: number }>,
   /** Workspace folder — flows into tool execution so write_file uses the right root */
   workspaceRoot?: string,
+  /**
+   * Optional per-role static tool allowlists sourced from settings.roles[role].toolsAllowed.
+   * Applied on top of the per-task dynamic filter from Benson (ctx.toolNamesAllowed).
+   * Omit to allow all tools for all roles.
+   */
+  roleStaticAllowLists?: Map<RoleName, Set<string>>,
 ): MaestroPort {
   const maestroCore = createMaestroCore();
   const logger = console;
@@ -243,10 +250,37 @@ function buildMaestroAdapter(
     roleAgents.set(role, new RoleAgentAdapter(role, llmAdapter, undefined, rs?.maxTokens, rs?.temperature));
   }
 
-  const selectToolsForTask = (ctx: OrcaRunCtx): AgentTool[] => {
-    if (!Array.isArray(ctx.toolNamesAllowed)) return availableTools;
-    const allowed = new Set(ctx.toolNamesAllowed);
-    return availableTools.filter((tool) => allowed.has(tool.name));
+  /**
+   * Tool filtering is applied in four layers (outermost → innermost):
+   *
+   *  Layer 1 — server.enabled   (bootstrap time, loadMcpExtensions)
+   *    MCP servers whose config has `enabled: false` are never connected.
+   *
+   *  Layer 2 — load success     (bootstrap time, buildToolBootstrap)
+   *    Extensions whose onLoad() throws and MCP servers that fail to connect
+   *    are silently skipped; their tools never appear in availableTools.
+   *
+   *  Layer 3 — role allowlist   (call time, settings.roles[role].toolsAllowed)
+   *    Permanent per-role restriction. Omitting toolsAllowed means "all tools".
+   *    Applied FIRST at call time so the task filter works within the role budget.
+   *
+   *  Layer 4 — task allowlist   (call time, Benson → ctx.toolNamesAllowed)
+   *    Per-task dynamic restriction from intent parsing. Must be a subset of
+   *    whatever Layer 3 passes through.
+   */
+  const selectToolsForRole = (ctx: OrcaRunCtx, role: RoleName): AgentTool[] => {
+    // Layer 3: static per-role filter (coarser — permanent role budget)
+    let tools = availableTools;
+    const staticAllowed = roleStaticAllowLists?.get(role);
+    if (staticAllowed) {
+      tools = tools.filter((t) => staticAllowed.has(t.name));
+    }
+    // Layer 4: dynamic per-task filter (finer — Benson intent)
+    if (Array.isArray(ctx.toolNamesAllowed)) {
+      const taskAllowed = new Set(ctx.toolNamesAllowed);
+      tools = tools.filter((t) => taskAllowed.has(t.name));
+    }
+    return tools;
   };
 
   return {
@@ -307,7 +341,7 @@ function buildMaestroAdapter(
       
       // 4. Get the agent for the selected role
       const agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
-      const taskTools = selectToolsForTask(ctx);
+      const taskTools = selectToolsForRole(ctx, routing.role);
 
       if (taskTools.length === 0) {
         logger.warn(`[Maestro] WARNING: No tools passed to ${routing.role} agent — tool calls will not be available`);
@@ -450,6 +484,7 @@ let benson: BensonHandle | null = null;
 let store: SqliteStore | null = null;
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 let dewey: InstanceType<typeof Dewey> | null = null;
+let mcpDispose: (() => Promise<void>) | null = null;
 let activeAbortResolve: ((error?: string) => void) | null = null;
 let activeAbortController: AbortController | null = null;
 let appAuthStatus: AppAuthStatus = {
@@ -457,6 +492,8 @@ let appAuthStatus: AppAuthStatus = {
   hasPassword: false,
   locked: false,
 };
+/** Tool names loaded by the most recent successful bootstrap — included in init-status. */
+let _bootstrapTools: { all: string[]; mcp: string[] } = { all: [], mcp: [] };
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -548,10 +585,28 @@ function buildFallbackPoolConfig(s: OrcaSettings): {
   return { poolManager, modelEntries };
 }
 
-function initOrca(s: OrcaSettings): string | null {
+/**
+ * Serialises concurrent initOrca calls so that saving settings while the
+ * initial MCP bootstrap is still running queues the new call rather than
+ * running two bootstraps simultaneously (which would race on mcpDispose).
+ */
+let _initOrcaChain: Promise<string | null> = Promise.resolve(null);
+
+function initOrca(s: OrcaSettings): Promise<string | null> {
+  _initOrcaChain = _initOrcaChain.then(() => _initOrcaImpl(s));
+  return _initOrcaChain;
+}
+
+async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
   runtime = null;
   benson  = null;
   fallbackPoolManager = null;
+
+  // Dispose any previous MCP connections before re-initialising
+  if (mcpDispose) {
+    try { await mcpDispose(); } catch { /* best-effort */ }
+    mcpDispose = null;
+  }
 
   if (!dewey) {
     dewey = new Dewey();
@@ -609,9 +664,19 @@ function initOrca(s: OrcaSettings): string | null {
       adapterMap.set(roleName, buildAdapterForProvider(roleProv, roleEntry.model, roleEntry.enableThinking));
     }
     
-    const toolRegistry = createCoreToolRegistry();
     const workspaceRoot = s.workspaceRoot || process.cwd();
-    const availableTools: AgentTool[] = toolRegistry.list().map((tool) => ({
+
+    // Build unified tool stack: core workbench + ext-* + MCP servers
+    const bootstrap = await buildToolBootstrap({
+      workspaceRoot,
+      mcpServers: s.mcpServers ?? [],
+      log: (msg) => console.log(msg),
+    });
+    mcpDispose = bootstrap.dispose;
+    _bootstrapTools = { all: bootstrap.allToolNames, mcp: bootstrap.mcpToolNames };
+
+    // Map BootstrappedTool[] → AgentTool[], threading abort + approval through
+    const availableTools: AgentTool[] = bootstrap.allTools.map((tool: BootstrappedTool) => ({
       name: tool.name,
       description: tool.description,
       schema: tool.schema,
@@ -624,19 +689,15 @@ function initOrca(s: OrcaSettings): string | null {
         });
       },
     }));
-    const toolService: OrcaToolService = {
-      execute(name, input) {
-        const tool = toolRegistry.get(name);
-        if (!tool) return Promise.resolve({
-          ok: false, output: '',
-          error: `Unknown tool: "${name}". Available: ${toolRegistry.list().map(t => t.name).join(', ')}`,
-        });
-        return tool.execute(input, { workspaceRoot, runId: '' });
-      },
-      formatForPrompt() {
-        return `Workspace root: ${workspaceRoot}\n\n${toolRegistry.formatForPrompt()}`;
-      },
-    };
+    const toolService = bootstrap.toolService;
+
+    // Build per-role static tool allowlists from config
+    const roleStaticAllowLists = new Map<RoleName, Set<string>>();
+    for (const [roleName, roleEntry] of Object.entries(s.roles ?? {})) {
+      if (roleEntry?.toolsAllowed && roleEntry.toolsAllowed.length > 0) {
+        roleStaticAllowLists.set(roleName as RoleName, new Set(roleEntry.toolsAllowed));
+      }
+    }
 
     // Build per-role generation settings map (maxTokens, temperature) from config
     const roleGenSettings = new Map<RoleName, { maxTokens?: number; temperature?: number }>();
@@ -650,7 +711,10 @@ function initOrca(s: OrcaSettings): string | null {
     }
 
     // Pass model entries to maestro adapter for fallback support
-    const maestro = buildMaestroAdapter(adapterMap, availableTools, modelEntries, poolManager, roleGenSettings, workspaceRoot);
+    const maestro = buildMaestroAdapter(
+      adapterMap, availableTools, modelEntries, poolManager, roleGenSettings, workspaceRoot,
+      roleStaticAllowLists.size > 0 ? roleStaticAllowLists : undefined,
+    );
     const pappy   = createPappyPort();
 
     const gate = createMirandaGate({ verbose: s.verbose === true });
@@ -790,12 +854,12 @@ function createWindow(): void {
 
   win.loadFile(join(__dirname, "..", "renderer", "index.html"));
 
-  win.once("ready-to-show", () => {
+  win.once("ready-to-show", async () => {
     win!.show();
     win!.focus();
     const settings = loadSettings();
-    const err = initOrca(settings);
-    win!.webContents.send("init-status", { ok: err === null, error: err });
+    const err = await initOrca(settings);
+    win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools });
     emitAuthStatus();
   });
 
@@ -995,8 +1059,8 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
 
   try {
     saveSettings(s);
-    const err = initOrca(s);
-    win?.webContents.send("init-status", { ok: err === null, error: err });
+    const err = await initOrca(s);
+    win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1050,6 +1114,11 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   if (isAppLocked()) {
     return { ok: false, error: lockedError() };
   }
+
+  // If init is still running (MCP servers connecting), wait for it.
+  const stillInitializing = _initOrcaChain.then(() => null).catch(() => null);
+  await stillInitializing;
+
   if (!benson || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
@@ -1178,4 +1247,9 @@ if (!gotLock) {
 // Close SQLite store on quit
 app.on("before-quit", () => {
   store?.close();
+});
+
+// Close MCP server connections on quit
+app.on("will-quit", () => {
+  mcpDispose?.().catch(console.error);
 });

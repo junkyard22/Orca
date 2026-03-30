@@ -36,12 +36,48 @@ import type { TaskSpec, ExecutionResult } from "@clawde/benson-core";
 import { createCoreToolRegistry } from "@yakstacks/workbench-core";
 import type { Tool } from "@yakstacks/workbench-core";
 import { createExtensionRegistry } from "@clawde/orca-core";
-import { githubExtension } from "@clawde/ext-github";
-import { docsExtension } from "@clawde/ext-docs";
-import { webExtension } from "@clawde/ext-web";
+import { buildToolBootstrap } from "@clawde/tool-bootstrap";
+import type { McpServerConfig } from "@clawde/tool-bootstrap";
 
 import { createMaestroAdapter } from "./adapters/maestroAdapter.js";
 import { createToolService } from "./adapters/toolService.js";
+
+// ---------------------------------------------------------------------------
+// MCP config loader
+//
+// Two ways to supply MCP server definitions to the runner:
+//   1. ORCA_MCP_CONFIG env var — JSON array of McpServerConfig objects
+//   2. ORCA_SETTINGS_PATH env var — path to an orca-settings.json file
+//      (the runner reads only the mcpServers field from it)
+// ---------------------------------------------------------------------------
+
+import { existsSync, readFileSync } from "node:fs";
+
+function loadMcpConfig(): McpServerConfig[] {
+  // Option 1: inline JSON in env var
+  const rawJson = process.env["ORCA_MCP_CONFIG"]?.trim();
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (Array.isArray(parsed)) return parsed as McpServerConfig[];
+    } catch (err) {
+      console.error(`[runner] ORCA_MCP_CONFIG is not valid JSON: ${err}`);
+    }
+  }
+
+  // Option 2: settings file
+  const settingsPath = process.env["ORCA_SETTINGS_PATH"]?.trim();
+  if (settingsPath && existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as { mcpServers?: unknown };
+      if (Array.isArray(settings.mcpServers)) return settings.mcpServers as McpServerConfig[];
+    } catch (err) {
+      console.error(`[runner] Failed to load settings from ${settingsPath}: ${err}`);
+    }
+  }
+
+  return [];
+}
 
 // ---------------------------------------------------------------------------
 // Type-narrowing helper
@@ -132,20 +168,17 @@ async function main(): Promise<void> {
   const pappy = createPappyPort();
   const maestro = createMaestroAdapter();
 
-  // Tool registry — workspace root defaults to CWD but can be overridden
-  // via the WORKSPACE_ROOT env var (useful when the agent should operate on
-  // a specific project rather than wherever the runner process starts).
   const workspaceRoot = process.env["WORKSPACE_ROOT"]?.trim() ?? process.cwd();
-  const toolRegistry = createCoreToolRegistry();
 
-  // Load extensions and register their tools into the core registry.
-  // Extensions are structurally compatible with workbench-core's Tool interface.
-  const extRegistry = await createExtensionRegistry([githubExtension, docsExtension, webExtension]);
-  for (const extTool of extRegistry.allTools()) {
-    toolRegistry.register(extTool as unknown as Tool);
-  }
+  // Unified tool bootstrap: core workbench + ext-* + any configured MCP servers
+  const mcpServers = loadMcpConfig();
+  const bootstrap = await buildToolBootstrap({
+    workspaceRoot,
+    mcpServers,
+    log: (msg) => console.error(msg),
+  });
 
-  const tools = createToolService(toolRegistry, workspaceRoot);
+  const tools = bootstrap.toolService;
 
   // Persistent run store — saves every task to ~/.orca/runs.db
   // Override the path with ORCA_DB_PATH if needed.
