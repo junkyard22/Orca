@@ -10,8 +10,8 @@ User
        └── Orca Runtime (orchestration + repair loop)
              ├── Maestro (role router + subagent pool)
              │     ├── brain          → decomposes + routes
-             │     ├── coder_strong   → full implementation
-             │     ├── coder_cheap    → quick edits
+             │     ├── strong_model   → full implementation
+             │     ├── cheap_model    → quick edits
              │     ├── reviewer       → critique + suggestions
              │     ├── narrator       → writing + docs
              │     ├── planner_deep   → structured planning
@@ -177,7 +177,7 @@ Export run history for fine-tuning:
 pnpm dev export-training-data \
   --verdict PASS \
   --output training_data.jsonl \
-  --task-type coder_strong \
+  --task-type strong_model \
   --limit 500
 ```
 

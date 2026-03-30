@@ -89,6 +89,14 @@ export function runMigrations(db: Database): void {
     // Column already exists — safe to ignore.
   }
 
+  // Rename legacy role identifiers in existing rows (idempotent — no-op when already renamed)
+  try {
+    db.run(`UPDATE runs SET role = 'strong_model' WHERE role = 'coder_strong';`);
+    db.run(`UPDATE runs SET role = 'cheap_model'  WHERE role = 'coder_cheap';`);
+  } catch {
+    // Safe to ignore — runs table may not yet have rows or columns.
+  }
+
   // Create indexes for common queries
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);

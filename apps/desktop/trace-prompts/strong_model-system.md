@@ -43,7 +43,7 @@ Code quality expectations:
 - Never ask the user clarifying questions — pick the most reasonable interpretation, note your assumption briefly, and write the code
 
 What this role does NOT do:
-- Formatting-only changes (use coder_cheap)
+- Formatting-only changes (use cheap_model)
 - Documentation or READMEs (use narrator)
 
 

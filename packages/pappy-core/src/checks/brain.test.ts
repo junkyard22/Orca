@@ -35,7 +35,7 @@ describe("runBrainChecks — BRAIN_NARRATIVE_BLEED", () => {
   it("fires when prose precedes the JSON object", () => {
     const issues = runBrainChecks({
       task: "t",
-      outputText: `Sure! ${direct("coder_strong")}`,
+      outputText: `Sure! ${direct("strong_model")}`,
     });
     const bleed = issues.filter(i => i.code === "BRAIN_NARRATIVE_BLEED");
     expect(bleed).toHaveLength(1);
@@ -45,7 +45,7 @@ describe("runBrainChecks — BRAIN_NARRATIVE_BLEED", () => {
   it("fires when prose follows the JSON object", () => {
     const issues = runBrainChecks({
       task: "t",
-      outputText: `${direct("coder_strong")} Hope that helps!`,
+      outputText: `${direct("strong_model")} Hope that helps!`,
     });
     expect(issues.some(i => i.code === "BRAIN_NARRATIVE_BLEED")).toBe(true);
   });
@@ -60,14 +60,14 @@ describe("runBrainChecks — BRAIN_OUTPUT_MALFORMED", () => {
   });
 
   it("fires when routing field value is null (not a valid enum)", () => {
-    const issues = runBrainChecks({ task: "t", outputText: `{"routing":null,"role":"coder_strong"}` });
+    const issues = runBrainChecks({ task: "t", outputText: `{"routing":null,"role":"strong_model"}` });
     expect(issues.some(i => i.code === "BRAIN_OUTPUT_MALFORMED")).toBe(true);
   });
 
   it("fires when routing value is not a valid enum member", () => {
     const issues = runBrainChecks({
       task: "t",
-      outputText: `{"routing":"turbo","role":"coder_strong"}`,
+      outputText: `{"routing":"turbo","role":"strong_model"}`,
     });
     expect(issues.some(i => i.code === "BRAIN_OUTPUT_MALFORMED")).toBe(true);
   });
@@ -114,7 +114,7 @@ describe("runBrainChecks — BRAIN_HALLUCINATED_FIELD", () => {
   it("fires when an extra top-level key is present", () => {
     const issues = runBrainChecks({
       task: "t",
-      outputText: direct("coder_strong", { confidence: 0.9 }),
+      outputText: direct("strong_model", { confidence: 0.9 }),
     });
     expect(issues.some(i => i.code === "BRAIN_HALLUCINATED_FIELD")).toBe(true);
   });
@@ -124,12 +124,12 @@ describe("runBrainChecks — BRAIN_HALLUCINATED_FIELD", () => {
 
 describe("runBrainChecks — valid inputs (expect no issues)", () => {
   it("passes a clean direct routing response", () => {
-    expect(runBrainChecks({ task: "t", outputText: direct("coder_strong") })).toHaveLength(0);
+    expect(runBrainChecks({ task: "t", outputText: direct("strong_model") })).toHaveLength(0);
   });
 
   it("passes all recognised roles for direct routing", () => {
     const roles = [
-      "brain", "coder_strong", "coder_cheap", "utility",
+      "brain", "strong_model", "cheap_model", "utility",
       "reviewer", "narrator", "planner_deep", "debugger", "reader",
     ];
     for (const role of roles) {
@@ -142,7 +142,7 @@ describe("runBrainChecks — valid inputs (expect no issues)", () => {
     const issues = runBrainChecks({
       task: "t",
       outputText: decompose([
-        { head: "coder_strong", task: "implement the feature" },
+        { head: "strong_model", task: "implement the feature" },
         { head: "reviewer", task: "review the implementation" },
       ]),
     });

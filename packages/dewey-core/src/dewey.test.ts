@@ -239,7 +239,7 @@ describe("Dewey", () => {
       const brief = await dewey.brief("any task");
       // Should not throw; just verifies the method accepts an existing brief
       const review = await dewey.reviewPlan(
-        { steps: ["write code"], toolsRequired: [], role: "coder_strong" },
+        { steps: ["write code"], toolsRequired: [], role: "strong_model" },
         "write a function",
         brief,
       );

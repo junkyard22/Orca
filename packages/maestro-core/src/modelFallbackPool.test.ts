@@ -22,7 +22,7 @@ describe('ModelFallbackPoolManager', () => {
         { id: 'fallback_1', model: 'claude-3.5-haiku', providerId: 'prov_2' },
         { id: 'fallback_2', model: 'deepseek-chat', providerId: 'prov_3' },
       ]),
-      coder_strong: createSimpleFallbackPool('coder_strong', [
+      strong_model: createSimpleFallbackPool('strong_model', [
         { id: 'primary', model: 'claude-3.5-sonnet', providerId: 'prov_2' },
         { id: 'fallback_1', model: 'gpt-4o', providerId: 'prov_1' },
       ]),
@@ -53,7 +53,7 @@ describe('ModelFallbackPoolManager', () => {
 
     it('should select from different roles independently', () => {
       const brainModel = manager.selectModel('brain');
-      const coderModel = manager.selectModel('coder_strong');
+      const coderModel = manager.selectModel('strong_model');
 
       expect(brainModel?.model).toBe('gpt-4o-mini');
       expect(coderModel?.model).toBe('claude-3.5-sonnet');
@@ -142,12 +142,12 @@ describe('ModelFallbackPoolManager', () => {
   describe('resetAll', () => {
     it('should reset all roles', () => {
       manager.recordFailure('brain', 'primary', 'error');
-      manager.recordFailure('coder_strong', 'primary', 'error');
+      manager.recordFailure('strong_model', 'primary', 'error');
       
       manager.resetAll();
 
       const brainStats = manager.getStats('brain');
-      const coderStats = manager.getStats('coder_strong');
+      const coderStats = manager.getStats('strong_model');
       
       expect(brainStats?.models[0]?.inCooldown).toBe(false);
       expect(coderStats?.models[0]?.inCooldown).toBe(false);
@@ -175,15 +175,15 @@ describe('createFallbackPoolFromRoleConfigs', () => {
   it('should create pools from simple role configs', () => {
     const config = createFallbackPoolFromRoleConfigs({
       brain: { providerId: 'prov-1', model: 'gpt-4o-mini' },
-      coder_strong: { providerId: 'prov-2', model: 'claude-3.5-sonnet' },
+      strong_model: { providerId: 'prov-2', model: 'claude-3.5-sonnet' },
     });
 
     expect(config.pools.brain).toBeDefined();
     expect(config.pools.brain?.models).toHaveLength(1);
     expect(config.pools.brain?.models[0].model).toBe('gpt-4o-mini');
     
-    expect(config.pools.coder_strong).toBeDefined();
-    expect(config.pools.coder_strong?.models[0].model).toBe('claude-3.5-sonnet');
+    expect(config.pools.strong_model).toBeDefined();
+    expect(config.pools.strong_model?.models[0].model).toBe('claude-3.5-sonnet');
   });
 });
 
@@ -209,13 +209,13 @@ describe('mergeFallbackModels', () => {
     });
 
     const merged = mergeFallbackModels(baseConfig, {
-      coder_strong: [
+      strong_model: [
         { id: 'primary', model: 'model-2', providerId: 'prov-2' },
       ],
     });
 
-    expect(merged.pools.coder_strong).toBeDefined();
-    expect(merged.pools.coder_strong?.models).toHaveLength(1);
+    expect(merged.pools.strong_model).toBeDefined();
+    expect(merged.pools.strong_model?.models).toHaveLength(1);
   });
 });
 

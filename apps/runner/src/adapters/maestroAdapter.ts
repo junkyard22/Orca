@@ -128,8 +128,8 @@ function loadRoleSettings(): OrcaSettings {
   return {
     roles: {
       brain:        { provider: "openrouter", model: "openai/gpt-4o-mini",        label: "GPT-4o Mini" },
-      coder_strong: { provider: "openrouter", model: "qwen/qwen3-coder-next",      label: "Qwen3 Coder Next" },
-      coder_cheap:  { provider: "openrouter", model: "qwen/qwen3-coder-next",      label: "Qwen3 Coder Next" },
+      strong_model: { provider: "openrouter", model: "qwen/qwen3-coder-next",      label: "Qwen3 Coder Next" },
+      cheap_model:  { provider: "openrouter", model: "qwen/qwen3-coder-next",      label: "Qwen3 Coder Next" },
       utility:      { provider: "openrouter", model: "openai/gpt-4o-mini",         label: "GPT-4o Mini" },
       reviewer:     { provider: "openrouter", model: "deepseek/deepseek-chat",     label: "DeepSeek Chat" },
       narrator:     { provider: "openrouter", model: "qwen/qwen2.5-7b-instruct",   label: "Qwen2.5 7B Instruct" },
@@ -300,10 +300,10 @@ function buildRoleSelectorContext(task: OrcaTaskSpec): RoleSelectorContext {
  * Priority order (first match wins):
  *   writing/creative   → narrator (song, poem, story, essay, letter, email, etc.)
  *   planning           → brain (decompose and route only, never execute)
- *   code/implement     → coder_strong
+ *   code/implement     → strong_model
  *   review/audit       → reviewer
  *   utility tasks      → utility
- *   quick edit hints   → coder_cheap
+ *   quick edit hints   → cheap_model
  *   default/fallback   → narrator (NOT brain — brain is only for planning)
  */
 function pickCoreRole(
@@ -312,9 +312,9 @@ function pickCoreRole(
 ): CoreRoleName {
   const availableRoles = new Set(getAvailableCoreRoles(settings));
   
-  // Handle repair tasks first — always route to coder_strong
+  // Handle repair tasks first — always route to strong_model
   if (task.intent === "repair") {
-    if (availableRoles.has("coder_strong")) return "coder_strong";
+    if (availableRoles.has("strong_model")) return "strong_model";
   }
 
   // Use the maestro-core pickCoreRole function for pattern-based routing

@@ -20,7 +20,7 @@ Output contract:
 
 What this role does NOT do:
 - Generate new content (use narrator)
-- Write code based on what was read (use coder_strong after handoff)
+- Write code based on what was read (use strong_model after handoff)
 
 
 You have access to tools (read_file, write_file, run_command, list_directory, search_files).

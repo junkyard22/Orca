@@ -507,7 +507,7 @@ function buildFallbackPoolConfig(s: OrcaSettings): {
   const pools: Partial<Record<RoleName, ReturnType<typeof createSimpleFallbackPool>>> = {};
 
   const ALL_ROLES: RoleName[] = [
-    'brain', 'coder_strong', 'coder_cheap', 'utility',
+    'brain', 'strong_model', 'cheap_model', 'utility',
     'reviewer', 'narrator', 'planner_deep', 'debugger', 'reader', 'vision',
   ];
 
@@ -596,7 +596,7 @@ function initOrca(s: OrcaSettings): string | null {
 
     // Build a per-role LLM adapter for every role that has a configured provider + model.
     const ALL_ROLES: RoleName[] = [
-      'brain', 'coder_strong', 'coder_cheap', 'utility',
+      'brain', 'strong_model', 'cheap_model', 'utility',
       'reviewer', 'narrator', 'planner_deep', 'debugger', 'reader', 'vision',
     ];
     const adapterMap = new Map<RoleName, LLMAdapter>();

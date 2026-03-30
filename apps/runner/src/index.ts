@@ -289,7 +289,7 @@ async function readPrompt(): Promise<string> {
 //     --verdict PASS \
 //     --max-repair-passes 0 \
 //     --output moonshiner/data/orca_coding_prompts.jsonl \
-//     --task-type coder_strong \
+//     --task-type strong_model \
 //     --limit 500
 // ---------------------------------------------------------------------------
 

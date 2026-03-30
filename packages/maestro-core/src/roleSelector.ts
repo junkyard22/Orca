@@ -11,7 +11,7 @@ import { Logger } from './interfaces';
 // Role Type Definitions
 // ============================================================================
 
-export type CoreRoleName = 'brain' | 'coder_strong' | 'coder_cheap' | 'utility' | 'reviewer' | 'narrator';
+export type CoreRoleName = 'brain' | 'strong_model' | 'cheap_model' | 'utility' | 'reviewer' | 'narrator';
 export type OptionalRoleName = 'planner_deep' | 'debugger' | 'reader' | 'vision';
 export type RoleName = CoreRoleName | OptionalRoleName;
 
@@ -34,7 +34,7 @@ export const OPTIONAL_ROLE_METADATA: Record<OptionalRoleName, RoleMetadata> = {
   debugger: {
     purpose: 'Diagnose build, test, lint, or runtime failures with detailed analysis',
     trigger: 'TypeScript/test/lint/command failure output detected',
-    fallback: 'coder_strong'
+    fallback: 'strong_model'
   },
   reader: {
     purpose: 'Summarize long documents, logs, or files into actionable tasks',
@@ -152,7 +152,7 @@ export function selectRole(
  * Rules:
  * - Writing/creative tasks → narrator
  * - Planning/decomposition tasks → brain (for routing only, not execution)
- * - Coding tasks → coder_strong or coder_cheap
+ * - Coding tasks → strong_model or cheap_model
  * - Review/audit tasks → reviewer
  * - Cleanup/formatting tasks → utility
  *
@@ -223,7 +223,7 @@ export function pickCoreRole(task: string): CoreRoleName {
     }
   }
   
-  // CODER_STRONG — complex coding, implementation, multi-file
+  // STRONG_MODEL — complex coding, implementation, multi-file
   const coderStrongPatterns = [
     /\b(implement|build|create|develop)\b.*\b(feature|module|component|system|service|api|endpoint)\b/i,
     /\b(complex|multi-file|full-stack|end-to-end)\b/i,
@@ -240,11 +240,11 @@ export function pickCoreRole(task: string): CoreRoleName {
   
   for (const pattern of coderStrongPatterns) {
     if (pattern.test(task)) {
-      return 'coder_strong';
+      return 'strong_model';
     }
   }
-  
-  // CODER_CHEAP — simple edits, formatting, small fixes
+
+  // CHEAP_MODEL — simple edits, formatting, small fixes
   const coderCheapPatterns = [
     /\bfix\s+(typo|bug|error|issue)\b/i,
     /\b(add|remove)\s+(import|comment|log|field|property)\b/i,
@@ -254,10 +254,10 @@ export function pickCoreRole(task: string): CoreRoleName {
   
   for (const pattern of coderCheapPatterns) {
     if (pattern.test(task)) {
-      return 'coder_cheap';
+      return 'cheap_model';
     }
   }
-  
+
   // UTILITY — lint, format, convert, transform, cleanup
   const utilityPatterns = [
     /\b(lint|eslint|prettier|format)\b/i,
@@ -272,10 +272,10 @@ export function pickCoreRole(task: string): CoreRoleName {
     }
   }
   
-  // FALLBACK: coder_strong for unclassified tasks (most unclassified tasks are coding)
+  // FALLBACK: strong_model for unclassified tasks (most unclassified tasks are coding)
   // Narrator is NOT the default — it is only for explicit writing/doc requests above.
   // Brain is NOT the default — brain is only for explicit planning requests.
-  return 'coder_strong';
+  return 'strong_model';
 }
 
 /**
@@ -302,7 +302,7 @@ export function isOptionalRole(role: RoleName): role is OptionalRoleName {
 }
 
 export function getCoreRoles(): CoreRoleName[] {
-  return ['brain', 'coder_strong', 'coder_cheap', 'utility', 'reviewer', 'narrator'];
+  return ['brain', 'strong_model', 'cheap_model', 'utility', 'reviewer', 'narrator'];
 }
 
 export function getOptionalRoles(): OptionalRoleName[] {

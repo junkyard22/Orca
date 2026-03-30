@@ -20,8 +20,8 @@ import type { PappyInput, Issue } from "../types.js";
 // ---------------------------------------------------------------------------
 const BRAIN_VALID_HEAD_NAMES = new Set([
   "brain",
-  "coder_strong",
-  "coder_cheap",
+  "strong_model",
+  "cheap_model",
   "utility",
   "reviewer",
   "narrator",
@@ -187,7 +187,7 @@ export function runBrainChecks(input: PappyInput): Omit<Issue, "issueId">[] {
         evidence: `Keys present: ${Object.keys(obj).join(", ")}`,
         fix_hint: `Add "role": "<head_name>". Valid values: ${[...BRAIN_VALID_HEAD_NAMES].join(", ")}.`,
         message: 'Brain direct-routing output missing "role".',
-        suggestedFix: 'Add "role": "coder_strong" (or the appropriate role).',
+        suggestedFix: 'Add "role": "strong_model" (or the appropriate role).',
       });
     } else if (!BRAIN_VALID_HEAD_NAMES.has(String(role))) {
       issues.push({
@@ -263,7 +263,7 @@ export function runBrainChecks(input: PappyInput): Omit<Issue, "issueId">[] {
             evidence: `departments[${i}] keys: ${Object.keys(deptObj).join(", ")}`,
             fix_hint: `Add "head": "<role>" to departments[${i}]. Valid values: ${[...BRAIN_VALID_HEAD_NAMES].join(", ")}.`,
             message: `departments[${i}] missing "head".`,
-            suggestedFix: `Add "head": "coder_strong" to departments[${i}].`,
+            suggestedFix: `Add "head": "strong_model" to departments[${i}].`,
           });
         } else if (!BRAIN_VALID_HEAD_NAMES.has(String(head))) {
           issues.push({

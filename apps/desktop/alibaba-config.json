@@ -13,11 +13,11 @@
       "providerId": "alibaba_cloud",
       "model": "qwen3.5-plus"
     },
-    "coder_strong": {
+    "strong_model": {
       "providerId": "alibaba_cloud",
       "model": "qwen3-coder-plus"
     },
-    "coder_cheap": {
+    "cheap_model": {
       "providerId": "alibaba_cloud",
       "model": "qwen3-coder-next"
     },

@@ -71,8 +71,8 @@ Option B — multiple specialists work in parallel:
 
 ## Valid role values:
 brain         — reasoning, analysis, open-ended questions
-coder_strong  — full feature implementation, complex code, multi-file changes
-coder_cheap   — tiny edits, renames, formatting, single-line fixes
+strong_model  — full feature implementation, complex code, multi-file changes
+cheap_model   — tiny edits, renames, formatting, single-line fixes
 reviewer      — code review, bug finding, security audit
 narrator      — documentation, READMEs, JSDoc, user-facing writing
 planner_deep  — step-by-step plans for large/risky work
@@ -107,13 +107,13 @@ utility       — general tasks that don't fit other categories
 Input: "implement a debounce utility function in TypeScript"
 
 Expected output:
-{"routing":"direct","role":"coder_strong","done_criteria":["Output contains a TypeScript function named debounce","Function accepts a callback and a delay in milliseconds","Function returns a debounced wrapper that delays invocation"]}
+{"routing":"direct","role":"strong_model","done_criteria":["Output contains a TypeScript function named debounce","Function accepts a callback and a delay in milliseconds","Function returns a debounced wrapper that delays invocation"]}
 
 ## More routing examples — DIRECT:
-- "write a function that gets the time" → { "routing": "direct", "role": "coder_strong" }
+- "write a function that gets the time" → { "routing": "direct", "role": "strong_model" }
 - "explain how async/await works" → { "routing": "direct", "role": "brain" }
 - "fix the bug in line 42" → { "routing": "direct", "role": "debugger" }
-- "implement a login form" → { "routing": "direct", "role": "coder_strong" }
+- "implement a login form" → { "routing": "direct", "role": "strong_model" }
 - "show me the current deployment status" → { "routing": "direct", "role": "brain" }
 - "what is currently deployed in production" → { "routing": "direct", "role": "brain" }
 - "investigate why the service is down" → { "routing": "direct", "role": "debugger" }
@@ -123,10 +123,10 @@ Expected output:
   BAD done_criteria for that task: ["Output explains inability to access filesystem"] ← NEVER invent limitations
 
 ## More routing examples — DECOMPOSE:
-- "implement a login form AND write the JSDoc for it" → decompose: [coder_strong, narrator]
-- "review this code AND fix all the bugs you find" → decompose: [reviewer, coder_strong]
-- "write a detailed plan AND then implement it" → decompose: [planner_deep, coder_strong]
-- "build the API endpoint AND write the README for it" → decompose: [coder_strong, narrator]`;
+- "implement a login form AND write the JSDoc for it" → decompose: [strong_model, narrator]
+- "review this code AND fix all the bugs you find" → decompose: [reviewer, strong_model]
+- "write a detailed plan AND then implement it" → decompose: [planner_deep, strong_model]
+- "build the API endpoint AND write the README for it" → decompose: [strong_model, narrator]`;
 
 // ---------------------------------------------------------------------------
 // Schema Validation
@@ -134,7 +134,7 @@ Expected output:
 
 /** All valid values for HeadName (every RoleName except 'vision'). */
 export const VALID_HEAD_NAMES = new Set<string>([
-  'brain', 'coder_strong', 'coder_cheap', 'utility', 'reviewer', 'narrator',
+  'brain', 'strong_model', 'cheap_model', 'utility', 'reviewer', 'narrator',
   'planner_deep', 'debugger', 'reader',
 ]);
 

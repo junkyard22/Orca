@@ -18,7 +18,7 @@ import type { OrcaStore } from "../persistence/types.js";
 export interface ExportOptions {
   /** Filter by Pappy verdict. Default: 'PASS'. */
   verdict?: 'PASS' | 'WARN' | 'FAIL';
-  /** Filter by Brain's routing role (e.g. 'coder_strong'). */
+  /** Filter by Brain's routing role (e.g. 'strong_model'). */
   taskType?: string;
   /** Exclude runs that needed fewer iterations than this. */
   minIterations?: number;
@@ -37,7 +37,7 @@ export interface TrainingRecord {
   response: string;
   /** Model/role that produced it. */
   teacher: string;
-  /** Role tag for Moonshiner filtering (e.g. 'coder_strong', 'brain'). */
+  /** Role tag for Moonshiner filtering (e.g. 'strong_model', 'brain'). */
   role: string;
   /** Quality score: 10 for PASS, 7 for WARN. */
   score: number;

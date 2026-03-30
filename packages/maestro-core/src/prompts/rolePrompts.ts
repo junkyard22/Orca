@@ -57,8 +57,8 @@ Output contract:
 - For counting tasks: state the exact count and the list of matching items.
 
 What this role does NOT do:
-- Full feature implementation (use coder_strong)
-- Trivial single-line edits (use coder_cheap)
+- Full feature implementation (use strong_model)
+- Trivial single-line edits (use cheap_model)
 - Writing documentation or READMEs (use narrator)
 - Root cause analysis of build failures (use debugger)`;
 
@@ -108,7 +108,7 @@ Code quality expectations:
 - Never ask the user clarifying questions — pick the most reasonable interpretation and write the code immediately
 
 What this role does NOT do:
-- Formatting-only changes (use coder_cheap)
+- Formatting-only changes (use cheap_model)
 - Documentation or READMEs (use narrator)`;
 
 const CODER_CHEAP = `\
@@ -131,8 +131,8 @@ Output contract:
 - No explanations unless something non-obvious was changed
 
 What this role does NOT do:
-- Feature implementation (use coder_strong)
-- Architectural decisions (use brain or coder_strong)`;
+- Feature implementation (use strong_model)
+- Architectural decisions (use brain or strong_model)`;
 
 const REVIEWER = `\
 You are the Code Reviewer — critical analysis of code, architecture, and plans.
@@ -151,7 +151,7 @@ Output contract:
 - End with a brief overall verdict: APPROVE / APPROVE WITH CHANGES / REJECT
 
 What this role does NOT do:
-- Implement the fixes (that's coder_strong or coder_cheap)
+- Implement the fixes (that's strong_model or cheap_model)
 - Rewrite from scratch — review what exists`;
 
 const NARRATOR = `\
@@ -171,7 +171,7 @@ Output contract:
 - Prefer concrete examples over abstract descriptions
 
 What this role does NOT do:
-- Code generation of any kind — if asked to write a function, class, or script, output only: "WRONG ROLE: this task requires coder_strong."
+- Code generation of any kind — if asked to write a function, class, or script, output only: "WRONG ROLE: this task requires strong_model."
 - Technical analysis (use brain or reviewer)`;
 
 const UTILITY = `\
@@ -192,7 +192,7 @@ Output contract:
 - Be precise and minimal — only change what's necessary
 
 What this role does NOT do:
-- Feature implementation (use coder_strong)
+- Feature implementation (use strong_model)
 - Planning or orchestration (use brain)
 - Documentation or creative writing (use narrator)`;
 
@@ -277,7 +277,7 @@ Output contract:
 
 What this role does NOT do:
 - Generate new content (use narrator)
-- Write code based on what was read (use coder_strong after handoff)`;
+- Write code based on what was read (use strong_model after handoff)`;
 
 const VISION = `\
 You are the Vision specialist — interpreting visual content: screenshots, diagrams, mockups, and images.
@@ -304,8 +304,8 @@ What this role does NOT do:
 
 export const ROLE_PROMPTS: Record<RoleName, string> = {
   brain:        BRAIN,
-  coder_strong: CODER_STRONG,
-  coder_cheap:  CODER_CHEAP,
+  strong_model: CODER_STRONG,
+  cheap_model:  CODER_CHEAP,
   utility:      UTILITY,
   reviewer:     REVIEWER,
   narrator:     NARRATOR,

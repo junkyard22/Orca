@@ -26,8 +26,8 @@ User
         └── Orca Runtime (Operations Manager)
               ├── Maestro (Department Router + Project Manager)
               │     ├── brain role        → general reasoning
-              │     ├── coder_strong role → heavy implementation
-              │     ├── coder_cheap role  → fast/cheap edits
+              │     ├── strong_model role → heavy implementation
+              │     ├── cheap_model role  → fast/cheap edits
               │     ├── reviewer role     → critique/review
               │     ├── narrator role     → writing/docs
               │     ├── planner_deep role → complex planning

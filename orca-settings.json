@@ -5,12 +5,12 @@
       "model": "openai/gpt-4o-mini",
       "label": "OpenAI: GPT-4o-mini (2024-07-18) $0.150/M"
     },
-    "coder_strong": {
+    "strong_model": {
       "provider": "openrouter",
       "model": "qwen/qwen3-coder-next",
       "label": "Qwen: Qwen3 Coder Next $0.120/M"
     },
-    "coder_cheap": {
+    "cheap_model": {
       "provider": "openrouter",
       "model": "qwen/qwen3-coder-next",
       "label": "Qwen: Qwen3 Coder Next $0.120/M"

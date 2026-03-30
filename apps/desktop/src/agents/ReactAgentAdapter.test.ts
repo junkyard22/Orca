@@ -111,7 +111,7 @@ Next: Read the file
     const adapter = new ReactAgentAdapter(
       mockAdapter,
       "You are a helpful assistant.",
-      "coder_strong" as RoleName,
+      "strong_model" as RoleName,
       10 // maxIterations
     );
 
@@ -180,7 +180,7 @@ Next: Write
     const adapter = new ReactAgentAdapter(
       mockAdapter,
       "You are a helpful assistant.",
-      "coder_strong" as RoleName,
+      "strong_model" as RoleName,
       10
     );
 
@@ -224,7 +224,7 @@ Next: Call tool
     const adapter = new ReactAgentAdapter(
       mockAdapter,
       "You are a helpful assistant.",
-      "coder_strong" as RoleName,
+      "strong_model" as RoleName,
       10
     );
 
@@ -288,7 +288,7 @@ Next: Read
     const adapter = new ReactAgentAdapter(
       mockAdapter,
       "You are a helpful assistant.",
-      "coder_strong" as RoleName,
+      "strong_model" as RoleName,
       10
     );
 
@@ -338,7 +338,7 @@ Next: Task is complete
     const adapter = new ReactAgentAdapter(
       mockAdapter,
       "You are a helpful assistant.",
-      "coder_strong" as RoleName,
+      "strong_model" as RoleName,
       10
     );
 
@@ -366,7 +366,7 @@ Next: Continue
     const adapter = new ReactAgentAdapter(
       mockAdapter,
       "You are a helpful assistant.",
-      "coder_strong" as RoleName,
+      "strong_model" as RoleName,
       10
     );
 

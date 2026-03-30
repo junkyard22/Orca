@@ -1081,8 +1081,8 @@ const MODEL_HINTS = {
 
 const CORE_ROLES = [
   { id: "brain",        label: "Brain",          hint: "Primary intelligence — drives all LLM calls" },
-  { id: "coder_strong", label: "Coder (Strong)",  hint: "High-quality code generation" },
-  { id: "coder_cheap",  label: "Coder (Cheap)",   hint: "Fast / cheap code for simple tasks" },
+  { id: "strong_model", label: "Coder (Strong)",  hint: "High-quality code generation" },
+  { id: "cheap_model",  label: "Coder (Cheap)",   hint: "Fast / cheap code for simple tasks" },
   { id: "utility",      label: "Utility",         hint: "General purpose helper" },
   { id: "reviewer",     label: "Reviewer",        hint: "Code review and critique" },
   { id: "narrator",     label: "Narrator",        hint: "Explanations and documentation" },
@@ -1090,7 +1090,7 @@ const CORE_ROLES = [
 
 const OPTIONAL_ROLES = [
   { id: "planner_deep", label: "Planner (Deep)",  hint: "Multi-file refactors — fallback: brain" },
-  { id: "debugger",     label: "Debugger",         hint: "Error diagnosis — fallback: coder_strong" },
+  { id: "debugger",     label: "Debugger",         hint: "Error diagnosis — fallback: strong_model" },
   { id: "reader",       label: "Reader",           hint: "Summarize long text / logs — fallback: narrator" },
   { id: "vision",       label: "Vision",           hint: "Image interpretation — fallback: brain" },
 ];

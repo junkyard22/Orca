@@ -8,7 +8,7 @@ declare module 'maestro-core' {
     fallback: CoreRoleName;
   }
 
-  export type CoreRoleName = 'brain' | 'coder_strong' | 'coder_cheap' | 'utility' | 'reviewer' | 'narrator';
+  export type CoreRoleName = 'brain' | 'strong_model' | 'cheap_model' | 'utility' | 'reviewer' | 'narrator';
   export type OptionalRoleName = 'planner_deep' | 'debugger' | 'reader' | 'vision';
   export type RoleName = CoreRoleName | OptionalRoleName;
 

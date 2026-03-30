@@ -38,19 +38,19 @@ describe("pickCoreRole", () => {
     expect(pickCoreRole("Find bugs in this implementation")).toBe("reviewer");
   });
 
-  it("routes complex implementation tasks to coder_strong", () => {
-    expect(pickCoreRole("Implement a REST API endpoint")).toBe("coder_strong");
-    expect(pickCoreRole("Build the user authentication module")).toBe("coder_strong");
-    expect(pickCoreRole("Write a function that parses JSON")).toBe("coder_strong");
-    expect(pickCoreRole("Write unit tests for the service")).toBe("coder_strong");
-    expect(pickCoreRole("Create a React component")).toBe("coder_strong");
+  it("routes complex implementation tasks to strong_model", () => {
+    expect(pickCoreRole("Implement a REST API endpoint")).toBe("strong_model");
+    expect(pickCoreRole("Build the user authentication module")).toBe("strong_model");
+    expect(pickCoreRole("Write a function that parses JSON")).toBe("strong_model");
+    expect(pickCoreRole("Write unit tests for the service")).toBe("strong_model");
+    expect(pickCoreRole("Create a React component")).toBe("strong_model");
   });
 
-  it("routes small edits to coder_cheap", () => {
-    expect(pickCoreRole("Fix typo in error message")).toBe("coder_cheap");
-    expect(pickCoreRole("Add import for React")).toBe("coder_cheap");
-    expect(pickCoreRole("Rename variable to camelCase")).toBe("coder_cheap");
-    expect(pickCoreRole("Quick fix for the validation bug")).toBe("coder_cheap");
+  it("routes small edits to cheap_model", () => {
+    expect(pickCoreRole("Fix typo in error message")).toBe("cheap_model");
+    expect(pickCoreRole("Add import for React")).toBe("cheap_model");
+    expect(pickCoreRole("Rename variable to camelCase")).toBe("cheap_model");
+    expect(pickCoreRole("Quick fix for the validation bug")).toBe("cheap_model");
   });
 
   it("routes formatting/lint tasks to utility", () => {
@@ -60,9 +60,9 @@ describe("pickCoreRole", () => {
     expect(pickCoreRole("Remove unused console.log calls")).toBe("utility");
   });
 
-  it("falls back to coder_strong for unrecognised tasks", () => {
-    expect(pickCoreRole("Do the thing with the stuff")).toBe("coder_strong");
-    expect(pickCoreRole("frobnicate the wibble")).toBe("coder_strong");
+  it("falls back to strong_model for unrecognised tasks", () => {
+    expect(pickCoreRole("Do the thing with the stuff")).toBe("strong_model");
+    expect(pickCoreRole("frobnicate the wibble")).toBe("strong_model");
   });
 });
 
@@ -111,9 +111,9 @@ describe("selectRole — debugger", () => {
     expect(isFallback).toBe(false);
   });
 
-  it("falls back to coder_strong when debugger is not configured", () => {
+  it("falls back to strong_model when debugger is not configured", () => {
     const { role, isFallback } = selectRole(ctx, EMPTY_OPTIONAL);
-    expect(role).toBe("coder_strong");
+    expect(role).toBe("strong_model");
     expect(isFallback).toBe(true);
   });
 });
@@ -175,16 +175,16 @@ describe("selectRole — core role fallthrough", () => {
   it("reaches core-role routing when no optional conditions match", () => {
     const ctx: TaskContext = { task: "Write a helper function that reverses a string" };
     const { role, isFallback } = selectRole(ctx, ALL_OPTIONAL);
-    expect(role).toBe("coder_strong");
+    expect(role).toBe("strong_model");
     expect(isFallback).toBe(false);
   });
 
   it("respects custom defaultRole for unclassified tasks", () => {
     const ctx: TaskContext = { task: "Do something vague" };
     const { role } = selectRole(ctx, EMPTY_OPTIONAL, "narrator");
-    // pickCoreRole returns coder_strong for this, ignoring defaultRole
+    // pickCoreRole returns strong_model for this, ignoring defaultRole
     // defaultRole is only used as the base for selectRole's initial call;
-    // pickCoreRole falls back internally to coder_strong, so narrator won't be
+    // pickCoreRole falls back internally to strong_model, so narrator won't be
     // returned here — verify the role is deterministic regardless.
     expect(typeof role).toBe("string");
   });

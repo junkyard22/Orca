@@ -26,8 +26,8 @@ Reply with ONLY valid JSON — no markdown fences, no explanation.
 
 ## Role menu:
 brain         — reasoning, analysis, open-ended questions
-coder_strong  — full feature implementation, complex code, multi-file changes
-coder_cheap   — tiny edits, renames, formatting, single-line fixes
+strong_model  — full feature implementation, complex code, multi-file changes
+cheap_model   — tiny edits, renames, formatting, single-line fixes
 reviewer      — code review, bug finding, security audit
 narrator      — documentation, READMEs, JSDoc, user-facing writing
 planner_deep  — step-by-step plans for large/risky work
@@ -43,10 +43,10 @@ utility       — general tasks that don't fit other categories
 - Each subtask must be complete and actionable on its own — departments don't talk to each other.
 
 ## Examples — DIRECT (one specialist):
-- "write a function that gets the time" → { "routing": "direct", "role": "coder_strong" }
+- "write a function that gets the time" → { "routing": "direct", "role": "strong_model" }
 - "explain how async/await works" → { "routing": "direct", "role": "brain" }
 - "fix the bug in line 42" → { "routing": "direct", "role": "debugger" }
-- "implement a login form" → { "routing": "direct", "role": "coder_strong" }
+- "implement a login form" → { "routing": "direct", "role": "strong_model" }
 - "show me the current deployment status" → { "routing": "direct", "role": "brain" }
 - "what is currently deployed in production" → { "routing": "direct", "role": "brain" }
 - "investigate why the service is down" → { "routing": "direct", "role": "debugger" }
@@ -62,7 +62,7 @@ utility       — general tasks that don't fit other categories
 - "show me" / "tell me" / "what is" → brain, NOT utility
 
 ## Examples — DECOMPOSE (multiple specialists):
-- "implement a login form AND write the JSDoc for it" → decompose: [coder_strong, narrator]
-- "review this code AND fix all the bugs you find" → decompose: [reviewer, coder_strong]
-- "write a detailed plan AND then implement it" → decompose: [planner_deep, coder_strong]
-- "build the API endpoint AND write the README for it" → decompose: [coder_strong, narrator]
+- "implement a login form AND write the JSDoc for it" → decompose: [strong_model, narrator]
+- "review this code AND fix all the bugs you find" → decompose: [reviewer, strong_model]
+- "write a detailed plan AND then implement it" → decompose: [planner_deep, strong_model]
+- "build the API endpoint AND write the README for it" → decompose: [strong_model, narrator]

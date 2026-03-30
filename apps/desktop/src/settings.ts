@@ -73,7 +73,7 @@ export interface RoleEntry {
 
 export interface OrcaSettings {
   providers:       ProviderEntry[];
-  /** Keyed by role name: brain, coder_strong, coder_cheap, utility, reviewer,
+  /** Keyed by role name: brain, strong_model, cheap_model, utility, reviewer,
    *  narrator, planner_deep, debugger, reader, vision */
   roles:           Partial<Record<string, RoleEntry>>;
   budgetUsd:       number;
