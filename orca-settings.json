@@ -30,5 +30,25 @@
       "model": "qwen/qwen2.5-7b-instruct",
       "label": "Qwen: Qwen2.5 7B Instruct $0.040/M"
     }
-  }
+  },
+  "mcpServers": [
+    {
+      "id": "desktop-commander",
+      "name": "Desktop Commander",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@wonderwhy-er/desktop-commander"],
+      "enabled": false
+    },
+    {
+      "id": "github-mcp",
+      "name": "GitHub MCP",
+      "transport": "stdio",
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+               "ghcr.io/github/github-mcp-server"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "" },
+      "enabled": false
+    }
+  ]
 }
