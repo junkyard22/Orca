@@ -140,20 +140,37 @@ export class ExtensionRegistry {
       formatForPrompt() {
         if (tools.length === 0) return "";
         const defs = tools.map((t) => {
-          const params = Object.entries(t.schema.properties)
+          const { properties, required } = t.schema;
+          const params = Object.entries(properties)
             .map(([k, v]) => {
-              const req = t.schema.required.includes(k) ? " (required)" : " (optional)";
+              const req = required.includes(k) ? " (required)" : " (optional)";
               const en = v.enum ? `  options: ${v.enum.join(", ")}` : "";
               return `  ${k} [${v.type}${req}]: ${v.description}${en}`;
             })
             .join("\n");
-          return `### ${t.name}\n${t.description}\nParameters:\n${params}`;
+
+          // Build per-tool call example using native JSON shapes for object/array params.
+          const callShape: Record<string, unknown> = { tool: t.name };
+          for (const param of required) {
+            const spec = properties[param];
+            if (!spec) continue;
+            if (spec.type === "object") callShape[param] = {};
+            else if (spec.type === "array") callShape[param] = [];
+            else callShape[param] = `<${param}>`;
+          }
+          const example =
+            `<tool_call>\n${JSON.stringify(callShape)}\n</tool_call>`;
+
+          return (
+            `### ${t.name}\n${t.description}\nParameters:\n${params}\n` +
+            `Example:\n${example}`
+          );
         });
         return [
           "## Extension Tools",
           "",
           "Use the following tools by outputting a <tool_call> block.",
-          "SYNTAX: <tool_call>{\"tool\": \"NAME\", ...params}</tool_call>",
+          "Object params: pass as native JSON objects {}. Array params: pass as native JSON arrays [].",
           "",
           ...defs,
         ].join("\n");

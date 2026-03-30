@@ -31,7 +31,8 @@ export interface ToolResult {
 }
 
 export interface ToolParameterSchema {
-  type: "string" | "number" | "boolean";
+  /** "object" and "array" are used by MCP-sourced tools; internal tools use the scalar types. */
+  type: "string" | "number" | "boolean" | "object" | "array";
   description: string;
   /** Restrict to a fixed set of values. */
   enum?: string[];

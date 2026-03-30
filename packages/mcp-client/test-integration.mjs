@@ -5,15 +5,17 @@
  * Verifies:
  *   1. Scalar args:    echo_message (message + repeat)
  *   2. Enum args:      describe_color (enum)
- *   3. Nested object:  summarise_config (object + array → string conversion)
+ *   3. Nested object:  summarise_config (object + array → coercion)
  *   4. Broken server:  startup survives when one server fails
  *   5. No orphaned processes after the broken server attempt
+ *   6. Prompt formatter emits native {} / [] for object / array params
  *
  * Run from repo root:
  *   node packages/mcp-client/test-integration.mjs
  */
 
 import { loadMcpExtensions } from "./src/index.ts";
+import { ExtensionRegistry } from "../orca-core/src/extension.ts";
 
 // Allow importing TypeScript directly with the experimental strip-types flag
 // (Node ≥ 22.6) — the mjs loader transparently strips types.
@@ -184,6 +186,29 @@ try {
 } catch (err) {
   fail("Test 5d missing required param", err.message);
 }
+
+// ---------------------------------------------------------------------------
+// Test 6: Schema types and prompt formatter — native JSON shapes
+// ---------------------------------------------------------------------------
+
+console.log("\n── Test 6: Schema types + prompt formatter ───────────────────────");
+
+// T6a: config param schema.type is "object" (not "string")
+const cfgProp = toolMap["summarise_config"]?.schema.properties["config"];
+ok("T6a: config param schema.type is 'object'", cfgProp?.type ?? "(missing)", "object");
+
+// T6b: tags param schema.type is "array" (not "string")
+const tagsProp = toolMap["summarise_config"]?.schema.properties["tags"];
+ok("T6b: tags param schema.type is 'array'", tagsProp?.type ?? "(missing)", "array");
+
+// T6c/T6d: formatForPrompt emits {} for object params and [] for array params.
+// Load the extension into an ExtensionRegistry and call asToolService().formatForPrompt().
+const promptReg = new ExtensionRegistry();
+await promptReg.load(extensions[0]);
+const promptText = promptReg.asToolService().formatForPrompt();
+
+ok("T6c: object param shown as {} in formatted prompt", promptText, "{}");
+ok("T6d: array param shown as [] in formatted prompt", promptText, "[]");
 
 // Teardown working server
 for (const ext of extensions) {

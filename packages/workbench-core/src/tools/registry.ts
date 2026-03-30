@@ -48,12 +48,16 @@ export class ToolRegistry {
   formatForPrompt(): string {
     if (this.tools.size === 0) return "";
 
-    // Build a concrete example from the first tool's required params
+    // Build a concrete example from the first tool's required params,
+    // using native JSON shapes ({} / []) for object and array params.
     const [firstTool] = this.tools.values();
-    const exampleArgs: Record<string, string> = { tool: firstTool!.name };
+    const exampleArgs: Record<string, unknown> = { tool: firstTool!.name };
     for (const param of firstTool!.schema.required) {
       const spec = firstTool!.schema.properties[param];
-      exampleArgs[param] = spec?.description ? `<${param}>` : "value";
+      const t = spec?.type ?? "string";
+      if (t === "object") exampleArgs[param] = {};
+      else if (t === "array") exampleArgs[param] = [];
+      else exampleArgs[param] = spec?.description ? `<${param}>` : "value";
     }
     const exampleJson = JSON.stringify(exampleArgs);
 
@@ -74,6 +78,8 @@ export class ToolRegistry {
       "- Other keys are the specific parameters for that tool",
       "- Always close with </tool_call>",
       "- Do NOT use XML-style <arg_key>/<arg_value> tags",
+      "- Object params must be native JSON objects — not serialised strings",
+      "- Array params must be native JSON arrays — not serialised strings",
       "",
       `EXAMPLE (${firstTool!.name}):`,
       "<tool_call>",
@@ -90,6 +96,25 @@ export class ToolRegistry {
       for (const [param, spec] of Object.entries(properties)) {
         const req = required.includes(param) ? "" : ", optional";
         lines.push(`  - ${param} (${spec.type}${req}): ${spec.description}`);
+      }
+      // For tools with structured (object/array) params, add a per-tool call example
+      // so the model sees the exact native JSON shape it must emit.
+      const hasStructured = Object.values(properties).some(
+        (s) => s.type === "object" || s.type === "array",
+      );
+      if (hasStructured) {
+        const callShape: Record<string, unknown> = { tool: tool.name };
+        for (const param of required) {
+          const spec = properties[param];
+          if (!spec) continue;
+          if (spec.type === "object") callShape[param] = {};
+          else if (spec.type === "array") callShape[param] = [];
+          else callShape[param] = `<${param}>`;
+        }
+        lines.push("  Call example:");
+        lines.push("  <tool_call>");
+        lines.push(`  ${JSON.stringify(callShape)}`);
+        lines.push("  </tool_call>");
       }
       lines.push("");
     }

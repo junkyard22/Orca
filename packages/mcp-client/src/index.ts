@@ -78,8 +78,8 @@ function mergeEnv(extra?: Record<string, string>): Record<string, string> | unde
  * Mapping rules:
  *  - "integer"  → "number"
  *  - "boolean"  → "boolean"
- *  - "object"   → "object"  (LLM passes as JSON string; description shows nested shape)
- *  - "array"    → "array"   (LLM passes as JSON string; description shows item type)
+ *  - "object"   → "object"  (LLM must pass a native JSON object; coercion also accepts JSON strings)
+ *  - "array"    → "array"   (LLM must pass a native JSON array; coercion also accepts JSON strings)
  *  - anything else / missing → "string"
  *  - enum values are coerced to strings and preserved
  *  - required[] is preserved as-is; missing → []
@@ -105,14 +105,12 @@ function convertSchema(mcp: McpToolSchema | undefined): ExtTool["schema"] {
         const shape = Object.entries(val.properties)
           .map(([k, v]) => `${k}: ${v.type ?? "string"}`)
           .join(", ");
-        description = `${description} — pass as JSON: {${shape}}`;
-      } else {
-        description = `${description} — pass as JSON object`;
+        description = `${description} — shape: {${shape}}`;
       }
     } else if (rawType === "array") {
       paramType = "array";
       const itemType = val.items?.type ?? "any";
-      description = `${description} — pass as JSON array of ${itemType}`;
+      description = `${description} — array of ${itemType}`;
     } else {
       paramType = "string";
     }
