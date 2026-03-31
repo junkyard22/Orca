@@ -1103,8 +1103,8 @@ const MODEL_HINTS = {
 
 const CORE_ROLES = [
   { id: "brain",        label: "Brain",          hint: "Primary intelligence — drives all LLM calls" },
-  { id: "strong_model", label: "Coder (Strong)",  hint: "High-quality code generation" },
-  { id: "cheap_model",  label: "Coder (Cheap)",   hint: "Fast / cheap code for simple tasks" },
+  { id: "strong_model", label: "Strong Model",  hint: "High-quality code generation" },
+  { id: "cheap_model",  label: "Cheap Model",   hint: "Fast / cheap code for simple tasks" },
   { id: "utility",      label: "Utility",         hint: "General purpose helper" },
   { id: "reviewer",     label: "Reviewer",        hint: "Code review and critique" },
   { id: "narrator",     label: "Narrator",        hint: "Explanations and documentation" },
