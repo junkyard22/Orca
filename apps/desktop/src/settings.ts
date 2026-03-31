@@ -94,6 +94,11 @@ export interface OrcaSettings {
    * Disabled or missing entries are skipped automatically.
    */
   mcpServers?:     McpServerConfig[];
+  /**
+   * When false, pipeline quality-check badges are hidden in the chat view.
+   * Defaults to true (shown).
+   */
+  showPipeline?:   boolean;
 }
 
 const DEFAULTS: OrcaSettings = {

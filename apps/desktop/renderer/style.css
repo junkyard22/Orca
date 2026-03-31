@@ -1812,6 +1812,8 @@ body.light .auth-card {
 /* ── Pipeline summary badge ───────────────────────────────────────────────── */
 /* Rendered once per task below the assistant bubble. Collapsed by default.   */
 
+body.hide-pipeline .pipeline-badge { display: none; }
+
 .pipeline-badge {
   margin: 2px 0 10px;
   border: 1px solid var(--border);

@@ -48,6 +48,7 @@ export type OrcaSettings = {
   verbose:         boolean;
   workspaceRoot:   string;
   mcpServers?:     McpServerConfig[];
+  showPipeline?:   boolean;
 };
 
 export type SessionSummary = {
@@ -99,7 +100,14 @@ contextBridge.exposeInMainWorld("orca", {
     ipcRenderer.invoke("auth:save", input),
 
   minimize: (): void => ipcRenderer.send("win:minimize"),
+  maximize: (): void => ipcRenderer.send("win:maximize"),
   close:    (): void => ipcRenderer.send("win:close"),
+
+  onMaximizeChange: (cb: (maximized: boolean) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, maximized: boolean) => cb(maximized);
+    ipcRenderer.on("win:maximize-change", handler);
+    return () => ipcRenderer.removeListener("win:maximize-change", handler);
+  },
 
   // ── Tool approval ────────────────────────────────────────────────────────
   // Called by the renderer to subscribe to tool-call approval requests.

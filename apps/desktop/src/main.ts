@@ -871,12 +871,18 @@ function createWindow(): void {
     }
   });
 
+  win.on("maximize",   () => win?.webContents.send("win:maximize-change", true));
+  win.on("unmaximize", () => win?.webContents.send("win:maximize-change", false));
   win.on("closed", () => { win = null; });
 }
 
 // ── IPC ────────────────────────────────────────────────────────────────────
 
 ipcMain.on("win:minimize", () => win?.minimize());
+ipcMain.on("win:maximize", () => {
+  if (win?.isMaximized()) win.unmaximize();
+  else win?.maximize();
+});
 ipcMain.on("win:close",    () => {
   if (tray) {
     win?.hide();

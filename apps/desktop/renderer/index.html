@@ -67,6 +67,17 @@
               />
             </svg>
           </button>
+          <button class="win-btn" id="btn-maximize" title="Maximize">
+            <!-- maximize icon (shown when not maximized) -->
+            <svg class="icon-maximize" width="11" height="11" viewBox="0 0 11 11" fill="none">
+              <rect x="1" y="1" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+            <!-- restore icon (shown when maximized) -->
+            <svg class="icon-restore" width="11" height="11" viewBox="0 0 11 11" fill="none" style="display:none">
+              <rect x="3" y="1" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M1 3v6a1 1 0 001 1h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
           <button class="win-btn close" id="btn-close" title="Close">
             <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
               <path
@@ -259,6 +270,18 @@
                 </div>
                 <label class="toggle">
                   <input type="checkbox" id="set-verbose" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <div class="setting-group setting-group--row mt-14">
+                <div>
+                  <label class="setting-label">Show pipeline</label>
+                  <p class="setting-hint">
+                    Display quality-check results after each response.
+                  </p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="set-show-pipeline" />
                   <span class="toggle-track"></span>
                 </label>
               </div>

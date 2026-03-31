@@ -7,26 +7,28 @@
 // no-op stub so the UI boots and can be inspected without Electron.
 if (!window.orca) {
   window.orca = {
-    onInitStatus:    () => {},
-    onAuthStatus:    () => () => {},
-    onOrcaEvent:     () => () => {},
-    onToolRequest:   () => () => {},
-    sendMessage:     async () => ({ ok: false, error: "No Electron context" }),
-    getSettings:     async () => ({ providers: [], roles: {}, budgetUsd: 0.10, maxRepairPasses: 2, verbose: false, workspaceRoot: "" }),
-    saveSettings:    async () => ({ ok: false, error: "No Electron context" }),
-    getAuthStatus:   async () => ({ enabled: false, hasPassword: false, locked: false }),
-    unlock:          async () => ({ ok: false, error: "No Electron context" }),
-    lock:            async () => ({ enabled: false, hasPassword: false, locked: false }),
-    saveAuthConfig:  async () => ({ ok: false, error: "No Electron context" }),
-    minimize:        () => {},
-    close:           () => {},
-    approveToolCall: () => {},
-    selectWorkspace: async () => "",
-    fetchModels:     async () => ({ ok: false, models: [] }),
-    listSessions:    async () => [],
-    loadSession:     async () => null,
-    deleteSession:   async () => ({ ok: false, error: "No Electron context" }),
-    abortTask:       () => {},
+    onInitStatus:      () => {},
+    onAuthStatus:      () => () => {},
+    onOrcaEvent:       () => () => {},
+    onToolRequest:     () => () => {},
+    onMaximizeChange:  () => () => {},
+    sendMessage:       async () => ({ ok: false, error: "No Electron context" }),
+    getSettings:       async () => ({ providers: [], roles: {}, budgetUsd: 0.10, maxRepairPasses: 2, verbose: false, workspaceRoot: "", showPipeline: true }),
+    saveSettings:      async () => ({ ok: false, error: "No Electron context" }),
+    getAuthStatus:     async () => ({ enabled: false, hasPassword: false, locked: false }),
+    unlock:            async () => ({ ok: false, error: "No Electron context" }),
+    lock:              async () => ({ enabled: false, hasPassword: false, locked: false }),
+    saveAuthConfig:    async () => ({ ok: false, error: "No Electron context" }),
+    minimize:          () => {},
+    maximize:          () => {},
+    close:             () => {},
+    approveToolCall:   () => {},
+    selectWorkspace:   async () => "",
+    fetchModels:       async () => ({ ok: false, models: [] }),
+    listSessions:      async () => [],
+    loadSession:       async () => null,
+    deleteSession:     async () => ({ ok: false, error: "No Electron context" }),
+    abortTask:         () => {},
   };
 }
 
@@ -47,11 +49,14 @@ const attachBar     = document.getElementById("attachments-bar");
 const sidebar       = document.getElementById("sidebar");
 const sessionList   = document.getElementById("session-list");
 const topbarTitle   = document.getElementById("topbar-title");
-const lockBtn       = document.getElementById("btn-lock");
-const authOverlay   = document.getElementById("auth-overlay");
-const authForm      = document.getElementById("auth-form");
-const authPassword  = document.getElementById("auth-password");
-const authError     = document.getElementById("auth-error");
+const lockBtn         = document.getElementById("btn-lock");
+const authOverlay     = document.getElementById("auth-overlay");
+const authForm        = document.getElementById("auth-form");
+const authPassword    = document.getElementById("auth-password");
+const authError       = document.getElementById("auth-error");
+const btnMaximize     = document.getElementById("btn-maximize");
+const iconMaximize    = btnMaximize?.querySelector(".icon-maximize");
+const iconRestore     = btnMaximize?.querySelector(".icon-restore");
 
 // ── State ─────────────────────────────────────────────────────────────────
 
@@ -60,6 +65,14 @@ let initKnown = false;
 let initState = { ok: false, error: null };
 let authKnown = false;
 let authState = { enabled: false, hasPassword: false, locked: false };
+// ID of the session currently displayed in the chat view (null = new/unsaved chat)
+let activeSessionId = null;
+
+// ── Pipeline visibility ────────────────────────────────────────────────────
+
+function applyPipelineVisibility(show) {
+  document.body.classList.toggle("hide-pipeline", !show);
+}
 
 // ── Pending file attachments ───────────────────────────────────────────────
 // Each entry: { name, type, content, dataUrl?, isImage }
@@ -222,6 +235,7 @@ function handleInitStatus(s) {
       messages.style.display = "none";
       updateWelcomeWorkspace();
     }
+    orca.getSettings().then((s) => applyPipelineVisibility(s?.showPipeline !== false)).catch(() => {});
   } else {
     const existing = messages.querySelector(".sys-msg.warn");
     const msg = s.error ?? "Initialization failed. Click Settings to configure.";
@@ -792,6 +806,7 @@ async function sendMessage() {
   }
 
   busy = true;
+  activeSessionId = null;
   pipelineEventLog = [];
   setInputEnabled(false);
   inputEl.value = "";
@@ -1042,9 +1057,10 @@ inputEl.addEventListener("keydown", (e) => {
 
 // ── Settings panel ────────────────────────────────────────────────────────
 
-const setBudget  = document.getElementById("set-budget");
-const setRepairs = document.getElementById("set-repairs");
+const setBudget       = document.getElementById("set-budget");
+const setRepairs      = document.getElementById("set-repairs");
 const setVerbose      = document.getElementById("set-verbose");
+const setShowPipeline = document.getElementById("set-show-pipeline");
 const setWorkspace    = document.getElementById("set-workspace");
 const setSaveBtn      = document.getElementById("btn-save-settings");
 const setStatus2      = document.getElementById("settings-status");
@@ -1514,8 +1530,9 @@ function openSettings() {
     editingSettings        = JSON.parse(JSON.stringify(s)); // deep clone
     setBudget.value        = String(s.budgetUsd       ?? 0.10);
     setRepairs.value       = String(s.maxRepairPasses ?? 2);
-    setVerbose.checked     = !!s.verbose;
-    setWorkspace.value     = s.workspaceRoot ?? "";
+    setVerbose.checked        = !!s.verbose;
+    setShowPipeline.checked   = s.showPipeline !== false;
+    setWorkspace.value        = s.workspaceRoot ?? "";
     setAuthEnabled.checked = !!authState.enabled;
     resetAuthSettingsInputs();
     setStatus2.textContent = "";
@@ -1560,6 +1577,7 @@ setSaveBtn.addEventListener("click", async () => {
     budgetUsd:       parseFloat(setBudget.value)   || 0.10,
     maxRepairPasses: parseInt(setRepairs.value, 10) || 0,
     verbose:         setVerbose.checked,
+    showPipeline:    setShowPipeline.checked,
     workspaceRoot:   setWorkspace.value.trim(),
   };
 
@@ -1594,10 +1612,11 @@ setSaveBtn.addEventListener("click", async () => {
   }
 
   if (result.ok) {
+    applyPipelineVisibility(setShowPipeline.checked);
     setStatus2.textContent = authResult.auth.enabled
-      ? "Saved â€” settings updated and the local app lock is ready."
-      : "Saved â€” Orca re-initialized.";
-    setStatus2.className   = "settings-status";
+      ? “Saved â€” settings updated and the local app lock is ready.”
+      : “Saved â€” Orca re-initialized.”;
+    setStatus2.className   = “settings-status”;
     return;
     setStatus2.textContent = "Saved — Orca re-initialized.";
     setStatus2.className   = "settings-status";
@@ -1649,7 +1668,13 @@ lockBtn.addEventListener("click", async () => {
 document.getElementById("btn-settings").addEventListener("click",      openSettings);
 document.getElementById("btn-settings-back").addEventListener("click", closeSettings);
 document.getElementById("btn-minimize").addEventListener("click", () => orca.minimize());
+document.getElementById("btn-maximize").addEventListener("click", () => orca.maximize());
 document.getElementById("btn-close").addEventListener("click",    () => orca.close());
+
+orca.onMaximizeChange((maximized) => {
+  if (iconMaximize) iconMaximize.style.display = maximized ? "none"  : "";
+  if (iconRestore)  iconRestore.style.display  = maximized ? ""      : "none";
+});
 
 // ── Tool approval dialog ────────────────────────────────────────────
 
@@ -1823,6 +1848,8 @@ async function loadSession(id) {
   }
   if (!session) return;
 
+  activeSessionId = id;
+
   // Switch to chat view and replace contents with this run
   settingsView.style.display = "none";
   chatView.style.display     = "flex";
@@ -1846,6 +1873,10 @@ async function deleteSession(id) {
   } catch {
     // silently ignore — still remove from UI
   }
+  // If the deleted session is currently displayed, reset to welcome state
+  if (id === activeSessionId) {
+    newChat();
+  }
   // Optimistically remove the item from the DOM without full reload
   const el = sessionList.querySelector(`.session-item[data-sid="${CSS.escape(id)}"]`);
   if (el) {
@@ -1860,6 +1891,7 @@ async function deleteSession(id) {
 }
 
 function newChat() {
+  activeSessionId            = null;
   messages.innerHTML         = "";
   welcome.style.display      = "";
   messages.style.display     = "none";
