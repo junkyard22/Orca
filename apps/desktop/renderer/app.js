@@ -431,9 +431,15 @@ function renderContent(raw) {
   html = html.replace(/^## (.+)$/gm,  "<h3>$1</h3>");
   html = html.replace(/^# (.+)$/gm,   "<h2>$1</h2>");
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  // Unordered lists
   html = html.replace(/^[ \t]*[-*] (.+)$/gm, "<li>$1</li>");
   html = html.replace(/(<li>[\s\S]+?<\/li>)/g, "<ul>$1</ul>");
   html = html.replace(/<\/ul>\s*<ul>/g, "");
+  // Ordered lists — use <oli> as a temporary marker to avoid collision with <li>
+  html = html.replace(/^[ \t]*\d+\. (.+)$/gm, "<oli>$1</oli>");
+  html = html.replace(/(<oli>[\s\S]+?<\/oli>)/g, "<ol>$1</ol>");
+  html = html.replace(/<\/ol>\s*<ol>/g, "");
+  html = html.replace(/<oli>/g, "<li>").replace(/<\/oli>/g, "</li>");
   const parts = html.split(/\n\n+/);
   html = parts.map((part) => {
     const trimmed = part.trim();
