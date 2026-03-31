@@ -186,10 +186,10 @@ Next: Write
 
     const result = await adapter.run(createTask(), tools as any, createCtx());
 
-    // The 3-tool-call cap fires at iteration 4 (before the 6-call thrash window
-    // can fully develop), so the run ends cleanly via the tool-use-discipline path.
-    expect(result.stoppedBecause).toBe("done");
-    expect(result.loopEvidence).toBeUndefined();
+    // All 6 calls execute (the tool-use-discipline cap is maxIterations*3=30),
+    // so the full THRASH_WINDOW of 6 develops and loop_detected fires.
+    expect(result.stoppedBecause).toBe("loop_detected");
+    expect(result.loopEvidence).toBeDefined();
   });
 
   // Test 3: Empty result loop — tool returns '' three times in a row
@@ -274,7 +274,15 @@ Next: Search
 Observation: Reading
 Next: Read
 
-<tool_call>{"tool": "read_file", "path": "c.txt"}</tool_call>`
+<tool_call>{"tool": "read_file", "path": "c.txt"}</tool_call>`,
+
+      // Iteration 6: all reads done, produce final answer
+      `Thought: All files have been read
+Observation: Task is complete
+Next: Provide final answer
+
+FINAL ANSWER:
+All files processed successfully.`
     ];
 
     const mockAdapter = new MockLLMAdapter(responses);
@@ -324,12 +332,13 @@ Next: Read
 
 <tool_call>{"tool": "read_file", "path": "b.txt"}</tool_call>`,
       
-      // Iteration 4: Task complete
+      // Iteration 4: Task complete with explicit FINAL ANSWER marker
       `Thought: Done
 Observation: Complete
 Next: Task is complete
 
-`
+FINAL ANSWER:
+Task completed successfully.`
     ];
 
     const mockAdapter = new MockLLMAdapter(responses);
@@ -372,10 +381,10 @@ Next: Continue
 
     const result = await adapter.run(createTask(), tools as any, createCtx());
 
-    // The 3-tool-call cap fires at iteration 4, so the run ends via the
-    // tool-use-discipline 'done' path well before the 10-iteration hard limit.
-    expect(result.stoppedBecause).toBe("done");
-    expect(result.iterationCount).toBeLessThan(10);
+    // All 10 unique tool calls execute without triggering any loop detection.
+    // No FINAL ANSWER is produced, so the run ends as no_final_output.
+    expect(result.stoppedBecause).toBe("no_final_output");
+    expect(result.iterationCount).toBe(10);
     expect(result.loopEvidence).toBeUndefined();
   });
 
