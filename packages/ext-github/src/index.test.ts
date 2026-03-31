@@ -197,14 +197,15 @@ describe("github_list_repos", () => {
 // ── Extension metadata ────────────────────────────────────────────────────────
 
 describe("githubExtension", () => {
-  it("has correct id and 4 tools", () => {
+  it("has correct id and 5 tools", () => {
     expect(githubExtension.id).toBe("@clawde/ext-github");
-    expect(githubExtension.tools).toHaveLength(4);
+    expect(githubExtension.tools).toHaveLength(5);
     expect(githubExtension.tools.map((t) => t.name)).toEqual([
       "github_list_prs",
       "github_get_pr",
       "github_list_issues",
       "github_list_repos",
+      "github_clone_repo",
     ]);
   });
 });
