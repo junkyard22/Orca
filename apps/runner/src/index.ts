@@ -53,6 +53,76 @@ import { createToolService } from "./adapters/toolService.js";
 
 import { existsSync, readFileSync } from "node:fs";
 
+// ---------------------------------------------------------------------------
+// Settings-file provider loader
+//
+// When orca-settings.json uses the dict-style providers format:
+//   { "providers": { "name": { "type": "openai-compatible", "apiKey": "...", "baseURL": "..." } },
+//     "roles": { "brain": { "provider": "name", "model": "..." } } }
+//
+// The runner constructs an OpenAICompatAdapter from the brain role's provider.
+// Triggered automatically when LLM_PROVIDER is unset or set to "settings".
+// ---------------------------------------------------------------------------
+
+interface RawDictProvider {
+  type?: string;
+  apiKey?: string;
+  baseURL?: string;
+  baseUrl?: string;
+}
+
+function loadAdapterFromSettings(): { baseUrl: string; apiKey: string; model: string } | null {
+  const settingsPath = process.env["ORCA_SETTINGS_PATH"]?.trim()
+    ?? path.join(process.cwd(), "orca-settings.json");
+  if (!existsSync(settingsPath)) return null;
+
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  // Only applies to dict-style (non-array) providers object
+  if (!raw["providers"] || Array.isArray(raw["providers"]) || typeof raw["providers"] !== "object") {
+    return null;
+  }
+
+  const providers = raw["providers"] as Record<string, RawDictProvider>;
+  const roles = raw["roles"] as Record<string, { provider?: string; model?: string }> | undefined;
+
+  // Resolve provider name from brain role, then first role
+  let providerName: string | undefined;
+  let model: string | undefined;
+  if (roles) {
+    const brainRole = roles["brain"];
+    if (brainRole?.provider) {
+      providerName = brainRole.provider;
+      model = brainRole.model;
+    } else {
+      const first = Object.values(roles)[0];
+      if (first?.provider) { providerName = first.provider; model = first.model; }
+    }
+  }
+  if (!providerName) return null;
+
+  const prov = providers[providerName];
+  if (!prov) return null;
+
+  const type = (prov.type ?? "").toLowerCase().replace(/-/g, "_");
+  if (type !== "openai_compatible") return null;
+
+  const apiKey = prov.apiKey?.trim() ?? "";
+  const baseUrl = prov.baseURL?.trim() ?? prov.baseUrl?.trim() ?? "";
+
+  if (!baseUrl) {
+    console.error(`[runner] Provider "${providerName}" in orca-settings.json has no baseURL.`);
+    return null;
+  }
+
+  return { baseUrl, apiKey, model: model ?? process.env["LLM_MODEL"]?.trim() ?? "qwen3.5-plus" };
+}
+
 function loadMcpConfig(): McpServerConfig[] {
   // Option 1: inline JSON in env var
   const rawJson = process.env["ORCA_MCP_CONFIG"]?.trim();
@@ -108,10 +178,16 @@ async function main(): Promise<void> {
   const userText = await readPrompt();
 
   // 2. Build LLM adapter — set LLM_PROVIDER in .env to choose a provider:
-  //      openrouter (default), ollama, alibaba
+  //      openrouter (default), ollama, alibaba, settings
+  //
+  //   "settings" (or unset + orca-settings.json with dict-style providers):
+  //      reads provider config from orca-settings.json, supports type: "openai-compatible"
+  //      with any baseURL and apiKey — including Alibaba Coding Plan (sk-sp-...) keys.
   const provider = process.env["LLM_PROVIDER"]?.trim().toLowerCase();
 
   let adapter;
+  let settingsModelId: string | undefined;
+
   if (provider === "ollama") {
     adapter = new OllamaAdapter({
       baseUrl:      process.env["OLLAMA_BASE_URL"]  ?? "http://localhost:11434",
@@ -137,7 +213,35 @@ async function main(): Promise<void> {
         : process.env["ALIBABA_ENABLE_THINKING"] === "false" ? false
         : false,
     });
-  } else {
+  } else if (provider === "settings" || !provider) {
+    // Try orca-settings.json dict-style providers (e.g. alibaba_coding_plan with sk-sp- key).
+    // Falls through to OpenRouter if the file is absent or uses the array/desktop format.
+    const cfg = loadAdapterFromSettings();
+    if (cfg) {
+      if (!cfg.apiKey) {
+        console.error(
+          `Error: provider in orca-settings.json has no apiKey.\n` +
+            `  → Add "apiKey": "sk-sp-..." to the provider entry in orca-settings.json.`,
+        );
+        process.exit(1);
+      }
+      settingsModelId = cfg.model;
+      adapter = new OpenAICompatAdapter({
+        baseUrl:        cfg.baseUrl,
+        apiKey:         cfg.apiKey,
+        defaultModel:   cfg.model,
+        enableThinking: false,
+      });
+    } else if (provider === "settings") {
+      console.error(
+        "Error: LLM_PROVIDER=settings but no valid dict-style provider found in orca-settings.json.\n" +
+          `  → Expected format: { "providers": { "name": { "type": "openai-compatible", "apiKey": "...", "baseURL": "..." } }, "roles": { ... } }`,
+      );
+      process.exit(1);
+    }
+  }
+
+  if (!adapter) {
     const apiKey = process.env["OPENROUTER_API_KEY"]?.trim();
     if (!apiKey) {
       console.error(
@@ -145,7 +249,8 @@ async function main(): Promise<void> {
           "  → Copy apps/runner/.env.example → apps/runner/.env and add your key.\n" +
           "  → Get a free key at https://openrouter.ai/keys\n" +
           "  → Or set LLM_PROVIDER=ollama to use a local Ollama model instead.\n" +
-          "  → Or set LLM_PROVIDER=alibaba and ALIBABA_CLOUD_API_KEY to use Qwen via DashScope.",
+          "  → Or set LLM_PROVIDER=alibaba and ALIBABA_CLOUD_API_KEY to use Qwen via DashScope.\n" +
+          "  → Or create orca-settings.json with type: openai-compatible provider config.",
       );
       process.exit(1);
     }
@@ -161,7 +266,7 @@ async function main(): Promise<void> {
   // Miranda is the compliance gate — she never calls the LLM.
   // Maestro handles all LLM calls directly using role prompts.
   // Default model matches VS Code Maestro BRAIN role setting
-  const modelId = process.env["LLM_MODEL"]?.trim() ?? "openai/gpt-4o-mini";
+  const modelId = settingsModelId ?? process.env["LLM_MODEL"]?.trim() ?? "openai/gpt-4o-mini";
   const llm = createDirectLLMService(adapter, modelId);
   const gate = createMirandaGate({ verbose: process.env["MIRANDA_VERBOSE"] === "1" });
 

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -95,19 +96,22 @@ const runsDir = process.env["ORCA_RUNS_DIR"]?.trim() ??
   join(homedir(), ".orca", "runs");
 const analysisWriter = createRunAnalysisWriter(runsDir);
 
-function writePipelineTrace(trace: OrcaPipelineTrace): Promise<void> {
+async function writePipelineTrace(trace: OrcaPipelineTrace): Promise<void> {
   const dir = getPipelineTraceDir();
   mkdirSync(dir, { recursive: true });
   const filePath = getPipelineTracePath(trace.taskId);
-  writeFileSync(filePath, JSON.stringify(trace, null, 2), "utf8");
+  await writeFile(filePath, JSON.stringify(trace, null, 2), "utf8");
   console.log(`[Orca]   pipeline:trace    ${filePath}`);
   return analysisWriter.writeTrace(trace);
 }
 
-function readPipelineTrace(taskId: string): OrcaPipelineTrace | null {
+async function readPipelineTrace(taskId: string): Promise<OrcaPipelineTrace | null> {
   const filePath = getPipelineTracePath(taskId);
-  if (!existsSync(filePath)) return null;
-  return JSON.parse(readFileSync(filePath, "utf8")) as OrcaPipelineTrace;
+  try {
+    return JSON.parse(await readFile(filePath, "utf8")) as OrcaPipelineTrace;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeConversationHistory(rawHistory: unknown): Message[] {
@@ -882,7 +886,7 @@ function createWindow(): void {
   win.once("ready-to-show", async () => {
     win!.show();
     win!.focus();
-    const settings = loadSettings();
+    const settings = await loadSettings();
     const err = await initOrca(settings);
     win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     emitAuthStatus();
@@ -1003,7 +1007,7 @@ ipcMain.handle("auth:save", (_ev, input: SaveLocalAuthInput) => {
   return result;
 });
 
-ipcMain.handle("settings:get", () => {
+ipcMain.handle("settings:get", async () => {
   if (isAppLocked()) return null;
   return loadSettings();
 });
@@ -1062,6 +1066,18 @@ async function fetchModelsFromProvider(
     ];
   }
 
+  // Alibaba Coding Plan: no /models endpoint — return known model list directly.
+  if (p.type === "alibaba_coding_plan") {
+    return [
+      "qwen3.5-plus",
+      "qwen3-coder-plus",
+      "qwen3-coder-next",
+      "qwen3-coder-flash",
+      "qwen3-235b-a22b",
+      "glm-5",
+    ];
+  }
+
   // OpenAI-compatible: GET /models
   const base = (p.baseUrl || "").replace(/\/$/, "");
   const res  = await fetch(`${base}/models`, { headers });
@@ -1089,7 +1105,7 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
   }
 
   try {
-    saveSettings(s);
+    await saveSettings(s);
     const err = await initOrca(s);
     win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     return { ok: true };
@@ -1131,6 +1147,23 @@ ipcMain.handle("session:delete", async (_ev, id: string) => {
   }
 });
 
+// ── Session resume — restore Benson's conversation history ─────────────────
+// The renderer passes the turns it already has in its chat view so that
+// subsequent messages pick up context from the previous session.
+ipcMain.handle(
+  "session:resume",
+  (_ev, turns: Array<{ user: string; assistant: string }>) => {
+    if (isAppLocked()) return { ok: false, error: lockedError() };
+    if (!benson) return { ok: false, error: "Orca is not initialized." };
+    if (!Array.isArray(turns)) return { ok: false, error: "turns must be an array." };
+    const safe = turns
+      .filter((t) => typeof t?.user === "string" && typeof t?.assistant === "string")
+      .map((t) => ({ user: t.user, assistant: t.assistant }));
+    benson.setHistory(safe);
+    return { ok: true, count: safe.length };
+  },
+);
+
 // ── Abort control for the active task ──────────────────────────────────────
 ipcMain.on("task:abort", () => {
   if (activeAbortResolve) {
@@ -1144,6 +1177,13 @@ ipcMain.on("task:abort", () => {
 ipcMain.handle("send-message", async (_ev, text: string) => {
   if (isAppLocked()) {
     return { ok: false, error: lockedError() };
+  }
+
+  // Reject concurrent requests — the agent loop is stateful and cannot safely
+  // run two tasks at the same time.  The caller should stop the active task
+  // first (task:abort) before sending a new message.
+  if (activeAbortController) {
+    return { ok: false, error: "A task is already running. Stop it before sending a new message." };
   }
 
   // If init is still running (MCP servers connecting), wait for it.
@@ -1237,6 +1277,11 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     if (activeAbortController === abortController) {
       activeAbortController = null;
     }
+    // Deny any tool approvals that the renderer never responded to.
+    // These are orphaned because the task is over and their tool calls
+    // will never execute — leaving them in the map wastes memory and
+    // would cause the next task's abort handler to resolve stale entries.
+    resolvePendingApprovals(false);
     unsubs.forEach((u) => u());
   }
 });

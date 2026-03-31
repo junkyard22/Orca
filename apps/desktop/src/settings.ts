@@ -1,6 +1,6 @@
 import { app, safeStorage } from "electron";
 import { join } from "node:path";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import type { McpServerConfig } from "@clawde/tool-bootstrap";
 
 export type { McpServerConfig };
@@ -16,6 +16,7 @@ export type ProviderType =
   | 'anthropic'
   | 'zai'
   | 'alibaba'
+  | 'alibaba_coding_plan'
   | 'custom';
 
 /**
@@ -31,7 +32,8 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   openai:      "https://api.openai.com/v1",
   anthropic:   "https://api.anthropic.com/v1",
   zai:         "https://api.z.ai/v1",
-  alibaba:     "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  alibaba:              "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  alibaba_coding_plan:  "https://coding-intl.dashscope.aliyuncs.com/v1",
   custom:      "",
 };
 
@@ -118,48 +120,39 @@ function settingsPath(): string {
 
 /**
  * Encrypt an API key using Electron's safeStorage (uses OS keychain).
- * Falls back to base64 encoding if encryption is unavailable (e.g., Linux without secret service).
+ * When encryption is unavailable (e.g. Linux without a secret service) the
+ * key is stored as plaintext with a "plain:" prefix.  This is honest about
+ * the lack of protection — base64 obfuscation would give a false sense of
+ * security without actually protecting anything.
  */
 function encryptApiKey(plaintext: string): string {
   if (!plaintext) return "";
-  
-  // safeStorage.isEncryptionAvailable() may be false on Linux without a keyring
+
   if (!safeStorage.isEncryptionAvailable()) {
-    // Fallback: base64 encode with a prefix marker
-    return "b64:" + Buffer.from(plaintext, "utf-8").toString("base64");
+    console.warn(
+      "[Settings] OS keychain unavailable — API key will be stored as plaintext. " +
+      "Install a secret service (e.g. gnome-keyring or kwallet) to enable encryption.",
+    );
+    return "plain:" + plaintext;
   }
-  
+
   const encrypted = safeStorage.encryptString(plaintext);
   return "enc:" + encrypted.toString("base64");
 }
 
 /**
- * Decrypt an API key that was encrypted with encryptApiKey.
- * Returns the plaintext key, or empty string if decryption fails.
+ * Decrypt an API key stored by encryptApiKey.
+ * Handles: "enc:" (OS keychain), "plain:" (unencrypted fallback),
+ * legacy "b64:" (old obfuscated format), and bare plaintext (pre-encryption migration).
  */
 function decryptApiKey(stored: string): string {
   if (!stored) return "";
-  
-  // Handle unencrypted legacy keys (plain text)
-  if (!stored.startsWith("enc:") && !stored.startsWith("b64:")) {
-    return stored;  // Legacy plain text
-  }
-  
-  // Handle base64 fallback
-  if (stored.startsWith("b64:")) {
-    try {
-      return Buffer.from(stored.slice(4), "base64").toString("utf-8");
-    } catch {
-      return "";
-    }
-  }
-  
-  // Handle encrypted keys
+
   if (stored.startsWith("enc:")) {
     try {
       const buffer = Buffer.from(stored.slice(4), "base64");
       if (!safeStorage.isEncryptionAvailable()) {
-        console.warn("[Settings] Cannot decrypt API key: encryption unavailable");
+        console.warn("[Settings] Cannot decrypt API key: OS keychain unavailable");
         return "";
       }
       return safeStorage.decryptString(buffer);
@@ -168,7 +161,21 @@ function decryptApiKey(stored: string): string {
       return "";
     }
   }
-  
+
+  if (stored.startsWith("plain:")) {
+    return stored.slice(6);
+  }
+
+  // Legacy: old b64 obfuscation — decode and re-save as plain: on next write
+  if (stored.startsWith("b64:")) {
+    try {
+      return Buffer.from(stored.slice(4), "base64").toString("utf-8");
+    } catch {
+      return "";
+    }
+  }
+
+  // Bare plaintext (pre-encryption migration)
   return stored;
 }
 
@@ -214,14 +221,12 @@ function decryptSettings(settings: OrcaSettings): OrcaSettings {
 
 // ── Load / Save ─────────────────────────────────────────────────────────────
 
-export function loadSettings(): OrcaSettings {
+export async function loadSettings(): Promise<OrcaSettings> {
   let stored: Partial<OrcaSettings> = {};
   const path = settingsPath();
-  if (existsSync(path)) {
-    try {
-      stored = JSON.parse(readFileSync(path, "utf-8"));
-    } catch { /* ignore corrupt file */ }
-  }
+  try {
+    stored = JSON.parse(await readFile(path, "utf-8"));
+  } catch { /* file missing or corrupt — use defaults */ }
 
   // Migration: old format had flat provider + apiKey + ollamaBaseUrl etc.
   const raw = stored as Record<string, unknown>;
@@ -232,13 +237,16 @@ export function loadSettings(): OrcaSettings {
   // Decrypt API keys after loading
   const decrypted = decryptSettings({ ...DEFAULTS, ...stored });
 
-  // Migration: if any provider had a legacy plaintext key (no "enc:" / "b64:" prefix),
-  // re-save now so the file is encrypted going forward.
+  // Migration: if any provider had a legacy key format (bare plaintext or old b64: prefix),
+  // re-save now so the file uses the current encoding going forward.
   const hasLegacyKey = (stored.providers ?? []).some(
-    (p) => p.apiKey && !p.apiKey.startsWith("enc:") && !p.apiKey.startsWith("b64:"),
+    (p) =>
+      p.apiKey &&
+      !p.apiKey.startsWith("enc:") &&
+      !p.apiKey.startsWith("plain:"),
   );
   if (hasLegacyKey) {
-    try { saveSettings(decrypted); } catch { /* best-effort */ }
+    try { await saveSettings(decrypted); } catch { /* best-effort */ }
   }
 
   return decrypted;
@@ -285,8 +293,8 @@ function migrateFromLegacy(raw: Record<string, unknown>): Partial<OrcaSettings> 
   });
 }
 
-export function saveSettings(s: OrcaSettings): void {
+export async function saveSettings(s: OrcaSettings): Promise<void> {
   // Encrypt API keys before saving to disk
   const encrypted = encryptSettings(s);
-  writeFileSync(settingsPath(), JSON.stringify(encrypted, null, 2), "utf-8");
+  await writeFile(settingsPath(), JSON.stringify(encrypted, null, 2), "utf-8");
 }

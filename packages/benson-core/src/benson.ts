@@ -33,6 +33,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 export function createBenson(deps: BensonDependencies): {
   handleUserMessage(message: string, options?: BensonMessageOptions): Promise<BensonReply>;
   getHistory(): ConversationTurn[];
+  setHistory(turns: ConversationTurn[]): void;
   clearHistory(): void;
 } {
   const maxTurns = deps.maxHistoryTurns ?? 8;
@@ -113,6 +114,12 @@ export function createBenson(deps: BensonDependencies): {
     // Expose for testing and session save/restore
     getHistory(): ConversationTurn[] {
       return [...history];
+    },
+
+    setHistory(turns: ConversationTurn[]): void {
+      history.length = 0;
+      const trimmed = turns.slice(-maxTurns);
+      for (const t of trimmed) history.push(t);
     },
 
     clearHistory(): void {

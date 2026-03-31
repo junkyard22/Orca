@@ -1061,8 +1061,9 @@ const PROVIDER_TYPES = [
   { value: "openai",      label: "OpenAI",       defaultUrl: "https://api.openai.com/v1",     needsKey: true  },
   { value: "anthropic",   label: "Anthropic",    defaultUrl: "https://api.anthropic.com/v1",  needsKey: true  },
   { value: "zai",         label: "ZAI",          defaultUrl: "https://api.z.ai/v1",                                   needsKey: true  },
-  { value: "alibaba",     label: "Alibaba",      defaultUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",     needsKey: true  },
-  { value: "custom",      label: "Custom",       defaultUrl: "",                                                      needsKey: true  },
+  { value: "alibaba",             label: "Alibaba",              defaultUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", needsKey: true  },
+  { value: "alibaba_coding_plan", label: "Alibaba Coding Plan",  defaultUrl: "https://coding-intl.dashscope.aliyuncs.com/v1",     needsKey: true  },
+  { value: "custom",              label: "Custom",               defaultUrl: "",                                                  needsKey: true  },
 ];
 
 const MODEL_HINTS = {
@@ -1073,8 +1074,9 @@ const MODEL_HINTS = {
   openai:      "e.g. gpt-4o",
   anthropic:   "e.g. claude-3-5-sonnet-20241022",
   zai:         "e.g. gpt-4o",
-  alibaba:     "e.g. qwen-max, qwen-plus",
-  custom:      "model name",
+  alibaba:             "e.g. qwen-max, qwen-plus",
+  alibaba_coding_plan: "e.g. qwen3.5-plus, qwen3-coder-plus",
+  custom:              "model name",
 };
 
 const CORE_ROLES = [
