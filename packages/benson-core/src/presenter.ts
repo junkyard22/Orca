@@ -15,47 +15,58 @@ import type { ExecutionResult, TaskSpec } from "./types.js";
  *
  * Stripping order:
  *   1. <tool_call> and <thought> blocks (closed and unclosed)
- *   2. "FINAL ANSWER:" prefix
- *   3. Planning monologue — if a code block exists, drop everything before it;
- *      otherwise strip lines that are pure agent preamble (###, Step N:, etc.)
- *   4. Collapse excess blank lines
+ *   2. FINAL ANSWER: marker — extract ONLY what follows it, discarding all
+ *      thinking that appears before it (Thought/Observation/Next blocks etc.)
+ *   3. Fallback when no FINAL ANSWER: marker — if a code block exists, keep
+ *      only that region; otherwise strip leading preamble lines.
+ *   4. Strip any Thought:/Observation:/Next: lines that slipped through.
+ *   5. Collapse excess blank lines
  */
 function cleanOutput(text: string): string {
-  // 1. Strip markup blocks (closed first, then unclosed tail)
+  // 1. Strip XML markup blocks (closed first, then unclosed tail)
   let out = text
     .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
     .replace(/<tool_call>[\s\S]*/g, "")
     .replace(/<thought>[\s\S]*?<\/thought>/g, "")
-    .replace(/<thought>[\s\S]*/g, "")
-    .replace(/^FINAL ANSWER:\s*/im, "");
+    .replace(/<thought>[\s\S]*/g, "");
 
-  // 2. If there's a code block, keep only from the first opening fence to
-  //    the last closing fence — drop the planning prefix AND any trailing prose.
-  const codeBlockIdx = out.indexOf("```");
-  if (codeBlockIdx > 0) {
-    const afterFirst = out.slice(codeBlockIdx);
-    // Find the last closing fence and drop anything after it
-    const lastFenceIdx = afterFirst.lastIndexOf("```");
-    out = lastFenceIdx > 0
-      ? afterFirst.slice(0, lastFenceIdx + 3).trimEnd()
-      : afterFirst;
+  // 2. FINAL ANSWER: is the primary thinking/deliverable boundary.
+  //    Extract everything AFTER the marker — everything before it is thinking.
+  //    Previously this only stripped the label itself, leaving all the reasoning.
+  const FA_RE = /^FINAL ANSWER:\s*/im;
+  const faIdx = out.search(FA_RE);
+  if (faIdx !== -1) {
+    const faMatch = out.match(FA_RE)!;
+    out = out.slice(faIdx + faMatch[0].length);
   } else {
-    // 3. No code block — strip pure preamble lines line-by-line.
-    const PREAMBLE = /^(#{1,3}\s|step\s+\d|let'?s\s+(proceed|start|begin|take|do)|i\s+will\s|i'll\s|let\s+me\s|first[,\s]|now[,\s])/i;
-    const lines = out.split("\n");
-    // Find the first line that is actual content (not a heading or preamble sentence)
-    let start = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i]!.trim() === "" || PREAMBLE.test(lines[i]!.trim())) {
-        start = i + 1;
-      } else {
-        break;
+    // 3. No FINAL ANSWER: marker — if a code block exists, keep only that region.
+    const codeBlockIdx = out.indexOf("```");
+    if (codeBlockIdx > 0) {
+      const afterFirst = out.slice(codeBlockIdx);
+      const lastFenceIdx = afterFirst.lastIndexOf("```");
+      out = lastFenceIdx > 0
+        ? afterFirst.slice(0, lastFenceIdx + 3).trimEnd()
+        : afterFirst;
+    } else {
+      // 4. Plain text — strip leading preamble sentences line by line.
+      const PREAMBLE = /^(#{1,3}\s|step\s+\d|let'?s\s+(proceed|start|begin|take|do)|i\s+will\s|i'll\s|let\s+me\s|first[,\s]|now[,\s])/i;
+      const lines = out.split("\n");
+      let start = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i]!.trim() === "" || PREAMBLE.test(lines[i]!.trim())) {
+          start = i + 1;
+        } else {
+          break;
+        }
       }
+      out = lines.slice(start).join("\n");
     }
-    out = lines.slice(start).join("\n");
   }
 
-  // 4. Collapse excess blank lines
+  // 5. Strip any Thought:/Observation:/Next: lines that slipped into the answer
+  out = out.replace(/^(Thought|Observation|Next|Thinking):\s.*$/gmi, "");
+
+  // 6. Collapse excess blank lines
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
