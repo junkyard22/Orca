@@ -1614,12 +1614,12 @@ setSaveBtn.addEventListener("click", async () => {
   if (result.ok) {
     applyPipelineVisibility(setShowPipeline.checked);
     setStatus2.textContent = authResult.auth.enabled
-      ? “Saved â€” settings updated and the local app lock is ready.”
-      : “Saved â€” Orca re-initialized.”;
+      ? “Saved \u2014 settings updated and the local app lock is ready.”
+      : “Saved \u2014 Orca re-initialized.”;
     setStatus2.className   = “settings-status”;
     return;
-    setStatus2.textContent = "Saved — Orca re-initialized.";
-    setStatus2.className   = "settings-status";
+    setStatus2.textContent = “Saved \u2014 Orca re-initialized.”;
+    setStatus2.className   = “settings-status”;
   } else {
     setStatus2.textContent = result.error ?? "Save failed.";
     setStatus2.className   = "settings-status err";
