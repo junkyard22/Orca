@@ -171,36 +171,6 @@ function applyAuthStatus(status) {
 
 function applyInitStatus(s) {
   return handleInitStatus(s);
-  initKnown = true;
-  initState = { ok: !!s.ok, error: s.error ?? null };
-
-  if (s.ok) {
-    const sysMsgs = Array.from(messages.querySelectorAll(".sys-msg"));
-    const hasRealMsgs = Array.from(messages.children).some(el => !el.classList.contains("sys-msg"));
-    if (!hasRealMsgs && sysMsgs.length) {
-      sysMsgs.forEach(el => el.remove());
-    }
-    if (!messages.hasChildNodes()) {
-      welcome.style.display  = "";
-      messages.style.display = "none";
-    }
-  } else {
-    setStatus2.textContent = authResult.auth.enabled
-      ? `App lock saved, but settings failed: ${result.error ?? "Save failed."}`
-      : result.error ?? "Save failed.";
-    setStatus2.className   = "settings-status err";
-    return;
-    const existing = messages.querySelector(".sys-msg.warn");
-    const msg = s.error ?? "Initialization failed. Click âš™ Settings to configure.";
-    if (existing) {
-      existing.textContent = msg;
-    } else {
-      appendSys(msg, "warn");
-    }
-  }
-
-  syncComposerState();
-  syncIdleStatus();
 }
 
 function updateWelcomeWorkspace() {
@@ -230,8 +200,12 @@ function handleInitStatus(s) {
     if (!hasRealMsgs && sysMsgs.length) {
       sysMsgs.forEach((el) => el.remove());
     }
-    if (!messages.hasChildNodes()) {
-      welcome.style.display = "";
+    if (s.warnings?.length) {
+      s.warnings.forEach((w) => appendSys(w, "warn"));
+      welcome.style.display  = "none";
+      messages.style.display = "";
+    } else if (!messages.hasChildNodes()) {
+      welcome.style.display  = "";
       messages.style.display = "none";
       updateWelcomeWorkspace();
     }
@@ -399,13 +373,6 @@ function setInputEnabled(enabled) {
       inputEl.placeholder = "Ask Orca anything…";
     }
   }
-  return;
-  inputEl.disabled   = !enabled;
-  attachBtn.disabled = !enabled;
-  // While running, morph send→stop; while idle, revert.
-  sendBtn.disabled   = false;   // always clickable (it becomes Stop while running)
-  sendBtn.classList.toggle("is-running", !enabled);
-  sendBtn.title = enabled ? "Send  (Enter)" : "Stop";
 }
 
 function scrollToBottom() {
@@ -423,10 +390,13 @@ function escapeHtml(str) {
 }
 
 function renderContent(raw) {
-  let html = raw.replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => {
-    return `<pre><code>${escapeHtml(code.trimEnd())}</code></pre>`;
+  // Escape all HTML in the raw LLM text first so no capture group can inject markup.
+  // Markdown patterns run on the escaped text; our own tags (<h2>, <pre>, etc.) are safe.
+  let html = escapeHtml(raw);
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => {
+    return `<pre><code>${code.trimEnd()}</code></pre>`;
   });
-  html = html.replace(/`([^`\n]+)`/g, (_, c) => `<code>${escapeHtml(c)}</code>`);
+  html = html.replace(/`([^`\n]+)`/g, (_, c) => `<code>${c}</code>`);
   html = html.replace(/^### (.+)$/gm, "<h4>$1</h4>");
   html = html.replace(/^## (.+)$/gm,  "<h3>$1</h3>");
   html = html.replace(/^# (.+)$/gm,   "<h2>$1</h2>");
@@ -1623,19 +1593,11 @@ setSaveBtn.addEventListener("click", async () => {
     return;
   }
 
-  if (result.ok) {
-    applyPipelineVisibility(setShowPipeline.checked);
-    setStatus2.textContent = authResult.auth.enabled
-      ? "Saved \u2014 settings updated and the local app lock is ready."
-      : "Saved \u2014 Orca re-initialized.";
-    setStatus2.className   = "settings-status";
-    return;
-    setStatus2.textContent = "Saved \u2014 Orca re-initialized.";
-    setStatus2.className   = "settings-status";
-  } else {
-    setStatus2.textContent = result.error ?? "Save failed.";
-    setStatus2.className   = "settings-status err";
-  }
+  applyPipelineVisibility(setShowPipeline.checked);
+  setStatus2.textContent = authResult.auth.enabled
+    ? "Saved \u2014 settings updated and the local app lock is ready."
+    : "Saved \u2014 Orca re-initialized.";
+  setStatus2.className   = "settings-status";
 });
 
 document.getElementById("btn-pick-workspace").addEventListener("click", async () => {

@@ -501,11 +501,11 @@ export class ReactAgentAdapter implements AgentAdapter {
           finalAnswerFound = true;
         }
         
-        // Tool Use Discipline: Check if we've hit 3 tool calls without final answer
-        if (cumulativeToolCallCount >= 3 && !toolLimitWarningInjected && !finalAnswerFound) {
+        // Tool Use Discipline: warn when approaching the tool ceiling so the model wraps up.
+        if (cumulativeToolCallCount >= this.maxIterations * 3 && !toolLimitWarningInjected && !finalAnswerFound) {
           // Inject warning message - do NOT execute any more tools this iteration
           toolLimitWarningInjected = true;
-          messages.push({ role: "user", content: "You have reached your 3-tool orientation limit. Do not call any more tools. Your next response must be your final answer." });
+          messages.push({ role: "user", content: "You have used many tools without producing a final answer. Do not call any more tools. Your next response must be your final answer." });
           continue; // Skip tool execution, wait for model's final answer next iteration
         }
         

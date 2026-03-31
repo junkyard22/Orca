@@ -199,10 +199,13 @@ async function brainRoute(
   if (resolved.routing !== 'direct') {
     ctx.recordTrace?.("brain.route.decompose_not_implemented", {
       decision: resolved,
-      actualRoleUsed: 'brain',
+      note: "Full decompose not yet implemented — running first department as single task",
     });
   }
-  const role = resolved.routing === 'direct' ? resolved.role : 'brain';
+  // Full decompose not yet implemented: run the first department or fall back to brain.
+  const role = resolved.routing === 'direct'
+    ? resolved.role
+    : (resolved.departments?.[0]?.head ?? 'brain');
   const doneCriteria = resolved.done_criteria ?? [];
   ctx.recordTrace?.("brain.route.final", {
     decision: resolved,
@@ -321,26 +324,34 @@ function buildMaestroAdapter(
         }
       }
 
-      // 3. Select model from fallback pool if available
+      // 3. Select model from fallback pool; build agent accordingly
+      let poolSelectedModelId = `${routing.role}_primary`;
+      let agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
+
       if (poolManager && modelEntries) {
         const selectedModel = poolManager.selectModel(routing.role);
         if (selectedModel) {
+          poolSelectedModelId = selectedModel.id;
           const entry = modelEntries.get(selectedModel.id);
+          const isPrimary = selectedModel.id === `${routing.role}_primary`;
+          if (entry && !isPrimary) {
+            // Pool chose a fallback — spin up an on-demand adapter for this run
+            const fallbackAdapter = buildAdapterForProvider(entry.provider, entry.model);
+            const rs = roleSettings?.get(routing.role);
+            agent = new RoleAgentAdapter(routing.role, fallbackAdapter, undefined, rs?.maxTokens, rs?.temperature);
+            logger.info(`[Maestro] Pool selected fallback model ${selectedModel.id} for role ${routing.role}`);
+          }
           ctx.recordTrace?.("maestro.model_selection", {
             role: routing.role,
             selectedModelId: selectedModel.id,
             selectedModel,
             configuredEntry: entry,
-            applied: false,
+            applied: !isPrimary && !!entry,
           });
-          if (entry) {
-            logger.info(`[Maestro] Selected model ${selectedModel.id} for role ${routing.role}`);
-          }
         }
       }
-      
+
       // 4. Get the agent for the selected role
-      const agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
       const taskTools = selectToolsForRole(ctx, routing.role);
 
       if (taskTools.length === 0) {
@@ -392,9 +403,9 @@ function buildMaestroAdapter(
       // 7. Record success/failure to fallback pool manager
       if (poolManager) {
         if (result.stoppedBecause === 'done') {
-          poolManager.recordSuccess(routing.role, `${routing.role}_primary`);
+          poolManager.recordSuccess(routing.role, poolSelectedModelId);
         } else if (result.error) {
-          poolManager.recordFailure(routing.role, `${routing.role}_primary`, result.error);
+          poolManager.recordFailure(routing.role, poolSelectedModelId, result.error);
         }
       }
 
@@ -494,6 +505,8 @@ let appAuthStatus: AppAuthStatus = {
 };
 /** Tool names loaded by the most recent successful bootstrap — included in init-status. */
 let _bootstrapTools: { all: string[]; mcp: string[] } = { all: [], mcp: [] };
+/** Non-fatal warnings from the most recent initOrca (e.g. unconfigured core roles). */
+let _initWarnings: string[] = [];
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -601,6 +614,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
   runtime = null;
   benson  = null;
   fallbackPoolManager = null;
+  _initWarnings = [];
 
   // Dispose any previous MCP connections before re-initialising
   if (mcpDispose) {
@@ -663,8 +677,19 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       if (roleProv.type !== 'ollama' && !roleProv.apiKey) continue;
       adapterMap.set(roleName, buildAdapterForProvider(roleProv, roleEntry.model, roleEntry.enableThinking));
     }
-    
-    const workspaceRoot = s.workspaceRoot || process.cwd();
+
+    // Warn if core routing roles are not configured — tasks will silently fall back to brain.
+    for (const role of ['strong_model', 'cheap_model'] as const) {
+      if (!adapterMap.has(role)) {
+        _initWarnings.push(
+          `"${role}" role is not configured — tasks will fall back to Brain. ` +
+          `Click ⚙ Settings to assign a model.`
+        );
+      }
+    }
+
+    const workspaceRoot = s.workspaceRoot || join(homedir(), "Orca");
+    mkdirSync(workspaceRoot, { recursive: true });
 
     // Build unified tool stack: core workbench + ext-* + MCP servers
     const bootstrap = await buildToolBootstrap({
@@ -859,7 +884,7 @@ function createWindow(): void {
     win!.focus();
     const settings = loadSettings();
     const err = await initOrca(settings);
-    win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools });
+    win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     emitAuthStatus();
   });
 
@@ -1066,7 +1091,7 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
   try {
     saveSettings(s);
     const err = await initOrca(s);
-    win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools });
+    win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

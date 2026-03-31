@@ -231,6 +231,16 @@ export function loadSettings(): OrcaSettings {
 
   // Decrypt API keys after loading
   const decrypted = decryptSettings({ ...DEFAULTS, ...stored });
+
+  // Migration: if any provider had a legacy plaintext key (no "enc:" / "b64:" prefix),
+  // re-save now so the file is encrypted going forward.
+  const hasLegacyKey = (stored.providers ?? []).some(
+    (p) => p.apiKey && !p.apiKey.startsWith("enc:") && !p.apiKey.startsWith("b64:"),
+  );
+  if (hasLegacyKey) {
+    try { saveSettings(decrypted); } catch { /* best-effort */ }
+  }
+
   return decrypted;
 }
 

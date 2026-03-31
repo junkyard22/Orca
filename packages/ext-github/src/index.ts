@@ -5,6 +5,8 @@
  *   github_list_prs    — list open/closed pull requests in a repository
  *   github_get_pr      — fetch PR details + unified diff
  *   github_list_issues — list open/closed issues in a repository
+ *   github_list_repos  — list repositories for a user or org
+ *   github_clone_repo  — clone a repo into the workspace (auth-aware)
  *
  * Configuration:
  *   GITHUB_TOKEN env var — required for private repos; optional for public repos
@@ -15,6 +17,9 @@
  *   const reg = await createExtensionRegistry([githubExtension]);
  */
 
+import { spawn } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
 import type { OrcaExtension, ExtTool, ExtToolRunCtx, ExtToolResult } from "@clawde/orca-core";
 
 const GITHUB_API = "https://api.github.com";
@@ -245,13 +250,117 @@ const listReposTool: ExtTool = {
   },
 };
 
+// ── Tool: github_clone_repo ───────────────────────────────────────────────
+
+const cloneRepoTool: ExtTool = {
+  name: "github_clone_repo",
+  description:
+    "Clone a GitHub repository into the workspace. " +
+    "Automatically injects GITHUB_TOKEN for authentication when set. " +
+    "Provide either a full URL or owner + repo name.",
+  schema: {
+    type: "object",
+    properties: {
+      url:   { type: "string", description: "Full GitHub repository URL (e.g. https://github.com/owner/repo.git). Provide this OR owner+repo." },
+      owner: { type: "string", description: "Repository owner (user or org). Used when url is not provided." },
+      repo:  { type: "string", description: "Repository name. Used when url is not provided." },
+      dest:  { type: "string", description: "Destination folder name inside the workspace (defaults to repo name)." },
+    },
+    required: [],
+  },
+
+  async execute(
+    input: Record<string, unknown>,
+    ctx: ExtToolRunCtx,
+  ): Promise<ExtToolResult> {
+    // Resolve URL and repo name
+    let repoUrl: string;
+    let repoName: string;
+
+    if (typeof input["url"] === "string" && input["url"]) {
+      repoUrl = input["url"];
+      const match = repoUrl.match(/\/([^/]+?)(?:\.git)?$/);
+      repoName = match?.[1] ?? "repo";
+    } else if (typeof input["owner"] === "string" && typeof input["repo"] === "string") {
+      repoName = input["repo"];
+      repoUrl = `https://github.com/${input["owner"]}/${input["repo"]}.git`;
+    } else {
+      return { ok: false, output: "", error: 'Provide either "url" or both "owner" and "repo".' };
+    }
+
+    const destName = typeof input["dest"] === "string" && input["dest"] ? input["dest"] : repoName;
+    const destPath = path.resolve(ctx.workspaceRoot, destName);
+
+    if (fs.existsSync(destPath)) {
+      return {
+        ok: false,
+        output: "",
+        error: `Destination already exists: ${destPath}. Remove it first or specify a different dest.`,
+      };
+    }
+
+    // Inject GITHUB_TOKEN into the URL for authenticated clones
+    const token = process.env["GITHUB_TOKEN"];
+    let cloneUrl = repoUrl;
+    if (token) {
+      try {
+        const parsed = new URL(repoUrl.replace(/\.git$/, ""));
+        if (parsed.hostname === "github.com") {
+          cloneUrl = `https://${token}@github.com${parsed.pathname}.git`;
+        }
+      } catch {
+        // Not parseable — use the URL as-is
+      }
+    }
+
+    return new Promise<ExtToolResult>((resolve) => {
+      const child = spawn("git", ["clone", cloneUrl, destPath], {
+        cwd: ctx.workspaceRoot,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+      const timer = setTimeout(() => {
+        child.kill();
+        resolve({ ok: false, output: "", error: "git clone timed out after 120 seconds" });
+      }, 120_000);
+
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        resolve({ ok: false, output: "", error: `Failed to run git: ${err.message}` });
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+        const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+        const combined = [stdout, stderr].filter(Boolean).join("\n");
+        // Sanitize token from any output
+        const sanitized = token ? combined.replace(new RegExp(token, "g"), "***") : combined;
+
+        if (code !== 0) {
+          resolve({ ok: false, output: "", error: `git clone failed (exit ${code}):\n${sanitized}` });
+        } else {
+          resolve({ ok: true, output: `Cloned to: ${destPath}\n${sanitized}`.trim() });
+        }
+      });
+    });
+  },
+};
+
 // ── Extension export ──────────────────────────────────────────────────────
 
 export const githubExtension: OrcaExtension = {
   id:      "@clawde/ext-github",
   name:    "GitHub",
   version: "0.1.0",
-  tools:   [listPrsTool, getPrTool, listIssuesTool, listReposTool],
+  tools:   [listPrsTool, getPrTool, listIssuesTool, listReposTool, cloneRepoTool],
 
   async onLoad() {
     if (!process.env["GITHUB_TOKEN"]) {
