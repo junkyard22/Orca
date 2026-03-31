@@ -259,10 +259,33 @@ export class ReactAgentAdapter implements AgentAdapter {
     let finalAnswerFound = false;
     
     const availableTools = tools;
+    const toolSchemaLines = availableTools.flatMap((tool) => {
+      const params = tool.schema?.properties
+        ? Object.entries(tool.schema.properties as Record<string, { type?: string; description?: string }>)
+            .map(([k, v]) => `  - ${k} (${v.type ?? "string"}): ${v.description ?? ""}`)
+            .join("\n")
+        : "";
+      return params
+        ? [`- ${tool.name}: ${tool.description}\n${params}`]
+        : [`- ${tool.name}: ${tool.description}`];
+    });
     const toolPrompt = availableTools.length > 0
       ? [
           "## Available Tools",
-          ...availableTools.map((tool) => `- ${tool.name}: ${tool.description}`),
+          ...toolSchemaLines,
+          "",
+          "### Tool Call Format",
+          "To invoke a tool you MUST use this exact XML format — never output tool names as plain text:",
+          "",
+          '<tool_call>{"tool": "TOOL_NAME", "PARAM1": "VALUE1", "PARAM2": "VALUE2"}</tool_call>',
+          "",
+          "Example — run a shell command:",
+          '<tool_call>{"tool": "run_command", "command": "ls -la"}</tool_call>',
+          "",
+          "Example — read a file:",
+          '<tool_call>{"tool": "read_file", "path": "src/index.ts"}</tool_call>',
+          "",
+          "Only ONE tool_call per response. Wait for the result before calling the next tool.",
         ].join("\n")
       : "## Available Tools\nNo tools are available for this task. Work from the provided context only.";
     
