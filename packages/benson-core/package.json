@@ -1,6 +1,6 @@
 {
   "name": "@clawde/benson-core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "User-facing speaker layer for Orca pod — the only component that produces chat text",
   "type": "module",
   "main": "dist/index.js",

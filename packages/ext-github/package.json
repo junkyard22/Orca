@@ -1,6 +1,6 @@
 {
   "name": "@clawde/ext-github",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Orca extension — GitHub tools (list PRs/issues, read PR diffs)",
   "type": "module",
   "main": "dist/index.js",

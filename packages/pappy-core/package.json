@@ -1,6 +1,6 @@
 {
   "name": "@clawde/pappy-core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Internal QC evaluator for Orca pod — deterministic, silent, never user-facing",
   "type": "module",
   "main": "dist/index.js",

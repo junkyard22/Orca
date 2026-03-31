@@ -1,6 +1,6 @@
 {
   "name": "maestro-core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Portable orchestration logic layer for Maestro — Orca pod member",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

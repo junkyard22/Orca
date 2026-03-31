@@ -1,6 +1,6 @@
 {
   "name": "@clawde/tool-bootstrap",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Shared tool-loading bootstrap for Orca — assembles core workbench tools, static extensions, and MCP tools into a single OrcaToolService",
   "type": "module",
   "main": "dist/index.js",

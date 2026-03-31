@@ -1,6 +1,6 @@
 {
   "name": "@clawde/dewey-core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Dewey — user context manager and pre-flight plan reviewer for Orca",
   "type": "module",
   "main": "dist/index.js",

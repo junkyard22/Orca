@@ -1,6 +1,6 @@
 {
   "name": "@clawde/orca-core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Orca pod runtime — orchestrates Maestro, Miranda, Pappy via port interfaces; no Benson dependency",
   "type": "module",
   "main": "dist/index.js",

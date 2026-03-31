@@ -653,6 +653,11 @@ function appendPipelineBadge(summary) {
     ? ` · ${summary.repairPasses} repair${summary.repairPasses !== 1 ? "s" : ""}`
     : "";
 
+  // ── Error message ────────────────────────────────────────────────────────
+  const errorHtml = summary.errorMessage
+    ? `<div class="pb-error-row"><span class="pb-error-label">Error</span><span class="pb-error-text">${escapeHtml(summary.errorMessage)}</span></div>`
+    : "";
+
   // ── Dewey brief ─────────────────────────────────────────────────────────
   let deweyHtml = "";
   if (summary.deweyBrief) {
@@ -751,6 +756,7 @@ function appendPipelineBadge(summary) {
       <button class="pb-details-btn">Details <span class="pb-chevron">›</span></button>
     </div>
     <div class="pipeline-badge-detail">
+      ${errorHtml}
       ${deweyHtml}
       ${mirandaHtml}
       ${criteriaHtml ? `<div><div class="pb-section-title">Acceptance criteria</div><div class="pb-criteria-list">${criteriaHtml}</div></div>` : ""}

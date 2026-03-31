@@ -2002,6 +2002,33 @@ body.hide-pipeline .pipeline-badge { display: none; }
   padding-left: 2px;
 }
 
+/* error row — agent exception / Miranda gate block reason */
+.pb-error-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.22);
+  margin-bottom: 6px;
+}
+.pb-error-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--danger);
+  white-space: nowrap;
+  padding-top: 1px;
+}
+.pb-error-text {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 /* footer row inside expanded panel */
 .pb-footer-row {
   font-size: 11px;

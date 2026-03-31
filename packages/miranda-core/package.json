@@ -1,6 +1,6 @@
 {
   "name": "@clawde/miranda-core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Behavior enforcement runtime for LLMs — invisible compliance pipeline with repair loops, model escalation, and cost controls",
   "type": "module",
   "main": "dist/index.js",
