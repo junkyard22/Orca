@@ -194,13 +194,64 @@ const listIssuesTool: ExtTool = {
   },
 };
 
+// ── Tool: github_list_repos ───────────────────────────────────────────────
+
+const listReposTool: ExtTool = {
+  name: "github_list_repos",
+  description: "List repositories for a GitHub user or organisation.",
+  schema: {
+    type: "object",
+    properties: {
+      owner: { type: "string", description: "GitHub username or organisation name." },
+      sort:  { type: "string", description: "Sort order.", enum: ["updated", "created", "pushed", "full_name"] },
+    },
+    required: ["owner"],
+  },
+
+  async execute(
+    input: Record<string, unknown>,
+    _ctx: ExtToolRunCtx,
+  ): Promise<ExtToolResult> {
+    const owner = input["owner"];
+    const sort  = typeof input["sort"] === "string" ? input["sort"] : "updated";
+    if (typeof owner !== "string") {
+      return { ok: false, output: "", error: '"owner" is a required string.' };
+    }
+
+    // Try /users/{owner}/repos first; fall back to /orgs/{owner}/repos for organisations.
+    let r = await ghFetch(`/users/${owner}/repos?sort=${sort}&per_page=30`);
+    if (!r.ok && r.body.includes("404")) {
+      r = await ghFetch(`/orgs/${owner}/repos?sort=${sort}&per_page=30`);
+    }
+    if (!r.ok) return { ok: false, output: "", error: r.body };
+
+    const repos = JSON.parse(r.body) as Array<{
+      full_name: string; description: string | null;
+      html_url: string; language: string | null;
+      stargazers_count: number; private: boolean; fork: boolean;
+    }>;
+
+    if (!repos.length) return { ok: true, output: `No repositories found for ${owner}.` };
+
+    const lines = repos.map((repo) => {
+      const lang    = repo.language   ? ` [${repo.language}]` : "";
+      const stars   = repo.stargazers_count > 0 ? ` ★${repo.stargazers_count}` : "";
+      const privacy = repo.private    ? " (private)" : "";
+      const fork    = repo.fork       ? " (fork)" : "";
+      const desc    = repo.description ? ` — ${repo.description}` : "";
+      return `${repo.full_name}${lang}${stars}${privacy}${fork}${desc} — ${repo.html_url}`;
+    });
+    return { ok: true, output: `Repositories for ${owner}:\n\n${lines.join("\n")}` };
+  },
+};
+
 // ── Extension export ──────────────────────────────────────────────────────
 
 export const githubExtension: OrcaExtension = {
   id:      "@clawde/ext-github",
   name:    "GitHub",
   version: "0.1.0",
-  tools:   [listPrsTool, getPrTool, listIssuesTool],
+  tools:   [listPrsTool, getPrTool, listIssuesTool, listReposTool],
 
   async onLoad() {
     if (!process.env["GITHUB_TOKEN"]) {

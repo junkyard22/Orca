@@ -139,16 +139,72 @@ describe("github_list_issues", () => {
   });
 });
 
+// ── github_list_repos ─────────────────────────────────────────────────────────
+
+describe("github_list_repos", () => {
+  const listRepos = () => tool("github_list_repos");
+
+  it("formats a list of repos", async () => {
+    vi.stubGlobal("fetch", mockFetch([
+      { full_name: "alice/cool-lib", description: "A cool lib", html_url: "https://github.com/alice/cool-lib", language: "TypeScript", stargazers_count: 42, private: false, fork: false },
+      { full_name: "alice/forked",   description: null,          html_url: "https://github.com/alice/forked",   language: null,         stargazers_count: 0,  private: false, fork: true  },
+    ]));
+    const result = await listRepos().execute({ owner: "alice" }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.output).toContain("alice/cool-lib");
+    expect(result.output).toContain("TypeScript");
+    expect(result.output).toContain("★42");
+    expect(result.output).toContain("(fork)");
+  });
+
+  it("falls back to /orgs endpoint on 404", async () => {
+    let callCount = 0;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ ok: false, status: 404, headers: { get: () => "" }, text: () => Promise.resolve("404 Not Found") });
+      }
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => "" }, text: () => Promise.resolve(JSON.stringify([
+        { full_name: "myorg/repo", description: "org repo", html_url: "https://github.com/myorg/repo", language: "Go", stargazers_count: 5, private: false, fork: false },
+      ])) });
+    }));
+    const result = await listRepos().execute({ owner: "myorg" }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.output).toContain("myorg/repo");
+    expect(callCount).toBe(2);
+  });
+
+  it("returns message when no repos found", async () => {
+    vi.stubGlobal("fetch", mockFetch([]));
+    const result = await listRepos().execute({ owner: "alice" }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.output).toContain("No repositories");
+  });
+
+  it("returns error when owner missing", async () => {
+    const result = await listRepos().execute({}, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/owner/);
+  });
+
+  it("propagates API errors", async () => {
+    vi.stubGlobal("fetch", mockFetch("Not Found", 404));
+    const result = await listRepos().execute({ owner: "nobody" }, ctx);
+    expect(result.ok).toBe(false);
+  });
+});
+
 // ── Extension metadata ────────────────────────────────────────────────────────
 
 describe("githubExtension", () => {
-  it("has correct id and 3 tools", () => {
+  it("has correct id and 4 tools", () => {
     expect(githubExtension.id).toBe("@clawde/ext-github");
-    expect(githubExtension.tools).toHaveLength(3);
+    expect(githubExtension.tools).toHaveLength(4);
     expect(githubExtension.tools.map((t) => t.name)).toEqual([
       "github_list_prs",
       "github_get_pr",
       "github_list_issues",
+      "github_list_repos",
     ]);
   });
 });
