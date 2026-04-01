@@ -319,6 +319,17 @@ orca.onOrcaEvent((e) => {
       streamText   = "";
     }
     streamText += e.chunk;
+    // If a <tool_call> tag has appeared, this is the agent's internal ReAct
+    // reasoning + tool invocation — not a final answer.  Wipe the buffer so
+    // the internal monologue never shows, and skip rendering until the next
+    // fresh iteration (stream:reset or a new streamBubble will start clean).
+    if (/<tool_call>/i.test(streamText)) {
+      streamText = "";
+      const bubbleEl = streamBubble.querySelector(".stream-content");
+      if (bubbleEl) bubbleEl.textContent = "";
+      scrollToBottom();
+      return;
+    }
     const bubbleEl = streamBubble.querySelector(".stream-content");
     if (bubbleEl) bubbleEl.textContent = streamText;
     scrollToBottom();
