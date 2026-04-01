@@ -213,42 +213,36 @@ export function createMaestroAdapter(): MaestroPort {
         role,
       };
 
-      let approvedPlan = candidatePlan;
-      let approved = false;
-      let attempts = 0;
-      let lastConcerns: string[] = [];
-      let lastSuggestions: string[] = [];
+      // Dewey pre-flight review: single pass.
+      //
+      // Dewey's contract is to surface compliance/preference concerns — not to
+      // own or modify the execution plan. The prior loop injected
+      // deweyReview.suggestions into approvedPlan.steps, causing Dewey to
+      // approve a plan that never matched what actually executed (Maestro always
+      // runs the original task, not the mutated approvedPlan). Removed.
+      //
+      // Hard blocks (required app not connected) still stop execution early.
+      // Soft concerns are logged and visible in trace; Maestro decides how to
+      // handle them — that is not Dewey's responsibility.
+      const deweyReview = await dewey.reviewPlan(candidatePlan, task.originalUserMessage, brief);
+      traceEvent({ type: "dewey:review", data: deweyReview });
 
-      while (!approved && attempts < 3) {
-        const deweyReview = await dewey.reviewPlan(approvedPlan, task.originalUserMessage, brief);
-        traceEvent({ type: "dewey:review", data: deweyReview });
-
-        if (deweyReview.approved) {
-          approved = true;
-        } else {
-          lastConcerns = deweyReview.concerns;
-          lastSuggestions = deweyReview.suggestions;
-          console.log("[Dewey] Pre-flight concerns:", deweyReview.concerns);
-
-          // Revise: inject concerns into goals for the next attempt.
-          approvedPlan = {
-            ...approvedPlan,
-            steps: [
-              ...approvedPlan.steps,
-              ...deweyReview.suggestions,
-            ],
+      if (!deweyReview.approved) {
+        console.log("[Dewey] Pre-flight concerns:", deweyReview.concerns);
+        // Hard block: a required integration (e.g. Gmail, Calendar) is not connected.
+        // This is a genuine capability gap — execution cannot proceed.
+        const isHardBlock = deweyReview.concerns.some(
+          (c) => /requires .+ but it is not connected/i.test(c),
+        );
+        if (isHardBlock) {
+          return {
+            outputText: `I want to make sure I do this right for you. ${deweyReview.concerns.join(" ")}`,
+            toolEvents: [],
+            filesChanged: [],
+            summary: `dewey_blocked concerns=${deweyReview.concerns.length}`,
           };
-          attempts++;
         }
-      }
-
-      if (!approved) {
-        return {
-          outputText: `I want to make sure I do this right for you. ${lastConcerns.join(" ")}`,
-          toolEvents: [],
-          filesChanged: [],
-          summary: `dewey_blocked concerns=${lastConcerns.length} suggestions=${lastSuggestions.length}`,
-        };
+        // Soft concern: proceed. Concerns are recorded in trace via traceEvent above.
       }
 
       // 7. Single-agent path.
@@ -652,45 +646,26 @@ async function runSingleAgent(
 // ---------------------------------------------------------------------------
 
 /**
- * Direct routing threshold — skip decomposition for simple tasks.
- * Returns true only if the task appears to require multiple independent deliverables.
+ * Pre-filter guard for subagent decomposition.
+ *
+ * Brain (via packages/maestro-core/src/decompose.ts — BRAIN_DECOMPOSE_SYSTEM)
+ * is the authoritative owner of routing and decomposition decisions.
+ * This function is a coarse pre-filter only: it gates whether to fire the
+ * speculative planner_deep LLM call at all.
+ *
+ * The previous heuristic fired on generic words like "also", "and", "then",
+ * hitting nearly every multi-sentence prompt and burning an unnecessary LLM
+ * pre-flight call on single-deliverable tasks. Tightened to require explicit
+ * concrete file mentions — a reliable signal that multiple distinct file
+ * artifacts are expected and parallel subagents genuinely help.
  */
 function shouldDecompose(message: string): boolean {
-  // Count distinct deliverables by looking for plural/quantity indicators
-  const deliverableKeywords = [
-    /\b(files?|functions?|modules?|components?|endpoints?|routes?|services?)\b/gi,
-    /\b(each|every|all|multiple|several|various)\b/gi,
-    /\b(first|second|third|then|also|and)\b/gi,
-  ];
-
-  let deliverableCount = 0;
-  for (const regex of deliverableKeywords) {
-    const matches = message.match(regex);
-    if (matches) {
-      deliverableCount += matches.length;
-    }
-  }
-
-  // If fewer than 3 distinct deliverables, skip decomposition
-  if (deliverableCount < 3) {
-    return false;
-  }
-
-  // Check for explicit multi-file/function mentions
-  const filePattern = /\b([A-Za-z0-9_-]+\.(ts|js|tsx|jsx|py|json|md|yaml|yml))\b/gi;
+  // Require > 2 explicitly named concrete filenames. Generic connector words
+  // ("also", "and", "then") are not sufficient — they appear in nearly all
+  // multi-sentence prompts regardless of whether decomposition is warranted.
+  const filePattern = /\b[A-Za-z0-9_-]+\.(ts|js|tsx|jsx|py|json|md|yaml|yml)\b/gi;
   const fileMatches = message.match(filePattern);
-  if (fileMatches && fileMatches.length > 2) {
-    return true;
-  }
-
-  // Check for multiple function names (camelCase or snake_case patterns)
-  const functionPattern = /\b([a-z]+[A-Z][a-zA-Z]*|[a-z]+_[a-z]+)\b/g;
-  const functionMatches = message.match(functionPattern);
-  if (functionMatches && functionMatches.length > 2) {
-    return true;
-  }
-
-  return deliverableCount >= 3;
+  return (fileMatches?.length ?? 0) > 2;
 }
 
 /**
@@ -729,6 +704,16 @@ export function shouldAttemptSubagentDecomposition(
  * Ask planner_deep to break a multi-step task into independent parallel
  * subtasks. Returns an array of subtask objects with coordination metadata,
  * or null if decomposition fails or produces a single-item list.
+ *
+ * ROUTING AUTHORITY NOTE: Brain is the canonical owner of routing and
+ * decomposition decisions. The authoritative contract lives in
+ * packages/maestro-core/src/decompose.ts (BRAIN_DECOMPOSE_SYSTEM +
+ * parseBrainDecision — strict schema, validated JSON output).
+ * This function is a parallel path that predates that contract and uses
+ * planner_deep with a bespoke prompt. It is guarded by shouldDecompose() and
+ * shouldAttemptSubagentDecomposition() to limit speculative firing.
+ * Consolidation under the Brain routing contract in decompose.ts is the
+ * intended future direction.
  */
 async function decomposeTask(
   originalMessage: string,
@@ -1099,7 +1084,15 @@ async function runAgentLoop(
   // (or any tool) in a loop with identical arguments.
   const executedCallSigs = new Set<string>();
 
+  // Terminal-condition flag: set when the runtime observes a completion it can
+  // verify directly (e.g. write_file succeeded). Stops the outer loop before
+  // burning an extra LLM turn to ask the model to confirm what we already know.
+  let loopComplete = false;
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    // Completion contract: stop immediately when the runtime has already
+    // observed a terminal condition — do not call the model again.
+    if (loopComplete) break;
     const { text } = await ctx.llm.complete(conversation, { maxTokens: 8192, simple: true });
     lastText = text;
 
@@ -1196,12 +1189,17 @@ async function runAgentLoop(
 
       conversation += formatToolResult(call.tool, result.ok, outputText, errorText);
 
-      // Completion signal: after a successful write_file, tell the model the
-      // task is done. Ask it to output the full written content so the user
-      // sees the actual result, not a summary of what was saved.
+      // Completion contract: write_file succeeded — the required artifact exists.
+      // The runtime already holds this terminal condition; do not burn an extra
+      // LLM turn asking the model to confirm or echo the written content.
+      // Return the written content directly as the final output.
       if (call.tool === "write_file" && result.ok) {
-        const writtenPath = typeof call.input["path"] === "string" ? call.input["path"] : "the file";
-        conversation += `\n\nUser: "${writtenPath}" has been written successfully. The task is complete. Output the full content you just wrote so the user can see it. Do not call any more tools.`;
+        const writtenContent = typeof call.input["content"] === "string" ? call.input["content"] : undefined;
+        if (writtenContent) {
+          lastText = writtenContent;
+        }
+        loopComplete = true;
+        break; // exit inner tool loop; outer loop exits on loopComplete check
       }
     }
   }

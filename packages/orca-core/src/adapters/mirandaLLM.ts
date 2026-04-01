@@ -84,24 +84,16 @@ function extractText(record: RunRecord): string | undefined {
 }
 
 /**
- * Wraps Miranda's full PLAN → ANSWER → CRITIQUE → REWRITE pipeline as an
- * OrcaLLMService so Maestro never calls a model directly.
+ * @deprecated Not wired in the live pipeline.
  *
- * Each call to complete() runs the entire pipeline with built-in:
- *  - JSON/text validation
- *  - Per-model repair loops
- *  - Model escalation on failure
- *  - Circuit breaker / health tracking
- *  - Cost tracking
+ * This export previously wrapped miranda-core's runPipeline
+ * (PLAN → ANSWER → CRITIQUE → REWRITE) as an OrcaLLMService.
+ * It has been superseded by createDirectLLMService (directLLM.ts), which
+ * makes a single direct LLM call per prompt and is used everywhere in
+ * production. Miranda's current role in Orca is the compliance/permission
+ * gate (createMirandaGate) — not an LLM pipeline host.
  *
- * Usage (app shell):
- *   import { OpenRouterAdapter, createDefaultConfig } from "@clawde/miranda-core";
- *   import { createMirandaLLMService } from "@clawde/orca-core";
- *
- *   const llm = createMirandaLLMService(
- *     new OpenRouterAdapter({ apiKey: process.env.OPENROUTER_KEY }),
- *     createDefaultConfig(),
- *   );
+ * Retained for reference. Do not add new usages.
  */
 export function createMirandaLLMService(
   adapter: LLMAdapter,
