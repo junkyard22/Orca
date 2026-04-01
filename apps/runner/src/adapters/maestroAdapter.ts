@@ -5,6 +5,8 @@ import {
   selectRole,
   getRolePrompt,
   pickCoreRole as pickCoreRoleFromTask,
+  BRAIN_DECOMPOSE_SYSTEM,
+  parseBrainDecision,
 } from "maestro-core";
 import type {
   RoleName,
@@ -31,14 +33,23 @@ import { traceEvent } from "./tracerHooks.js";
 // ---------------------------------------------------------------------------
 // MaestroAdapter — wraps maestro-core's MaestroCore to satisfy MaestroPort.
 //
-// Responsibilities are split deliberately:
+// LIVE routing path (post-hardening patch):
 //   maestro-core.orchestrate()  →  task classification + risk metadata (sync)
-//   selectRole()                →  pick the best department head for this task
-//   getRolePrompt()             →  load that department head's system prompt
-//   ctx.llm.complete()          →  actual text generation (Miranda pipeline)
+//   routeRequest()              →  Brain-owned single routing entry point:
+//     ├─ simple tasks:  heuristic selectRole()/pickCoreRole() → direct decision
+//     │                 (no Brain LLM call; zero extra latency for simple asks)
+//     └─ complex tasks: ONE Brain LLM call (BRAIN_DECOMPOSE_SYSTEM) → direct
+//                       or decompose; Brain's role choice is authoritative here
+//   getRolePrompt()             →  load that role's system prompt
+//   ctx.llm.complete()          →  actual text generation
+//
+// Brain owns routing for decompose-candidate tasks. selectRole()/pickCoreRole()
+// heuristics are subordinate helpers: used for simple-task direct decisions and
+// as a fallback when the Brain LLM call fails.
 //
 // Maestro never touches a model directly; ctx.llm is the ONLY LLM surface
-// it uses (backed by Miranda's PLAN→ANSWER→CRITIQUE→REWRITE pipeline).
+// it uses. The concrete service (currently directLLM in the runner) is
+// injected by the app shell — not Miranda's stage pipeline.
 // ---------------------------------------------------------------------------
 
 // All optional roles are treated as available in the adapter layer.
@@ -166,23 +177,7 @@ export function createMaestroAdapter(): MaestroPort {
       // 1. Classify the task synchronously — no model call needed here.
       const orch = maestro.orchestrate(task.originalUserMessage);
 
-      // 2. Build role-selector context from the OrcaTaskSpec.
-      const roleCtx = buildRoleSelectorContext(task);
-
-      // 3. Pick the best role (optional-role detection + core-role heuristics).
-      const { role, isFallback, warning } = selectRole(
-        roleCtx,
-        ALL_OPTIONAL_ROLES,
-        pickCoreRole(task, settings),
-      );
-
-      if (warning) {
-        console.warn(`[MaestroAdapter] Role warning: ${warning}`);
-      }
-
-      traceEvent({ type: "brain:route", data: { role, isFallback, warning, coreRole: pickCoreRole(task, settings) } });
-
-      // 4. Dewey pre-flight — brief the table before Brain routes.
+      // 2. Dewey pre-flight — brief the table before routing.
       const brief = await dewey.brief(task.originalUserMessage);
       ctx.emit?.({
         type: "dewey:brief",
@@ -194,18 +189,19 @@ export function createMaestroAdapter(): MaestroPort {
       });
       traceEvent({ type: "dewey:brief", data: brief });
 
-      // 5. Subagent decomposition — only at top level, only for multiStep tasks.
-      //    planner_deep breaks the task into independent parallel subtasks.
-      //    subagentDepth guard prevents recursive subagent spawning.
-      //    DIRECT ROUTING: Skip decomposition for simple single-deliverable tasks.
-      if (shouldAttemptSubagentDecomposition(task, orch, ctx)) {
-        const subtasks = await decomposeTask(task.originalUserMessage, ctx.llm, settings);
-        if (subtasks !== null && subtasks.length > 1) {
-          return runSubagentPool(task, subtasks, orch, ctx);
-        }
+      // 3. Brain-owned routing decision — single entry point for all requests.
+      //    Simple tasks: heuristic direct decision, no Brain LLM call.
+      //    Decompose-candidate tasks: one Brain LLM call; Brain's decision is authoritative.
+      const routing = await routeRequest(task, orch, ctx, settings);
+      traceEvent({ type: "brain:route", data: routing });
+
+      if (routing.path === "decompose") {
+        return runSubagentPool(task, routing.subtasks, orch, ctx);
       }
 
-      // 6. Build candidate plan for Dewey review then run single-agent path.
+      const { role, isFallback } = routing;
+
+      // 4. Build candidate plan for Dewey review then run single-agent path.
       //    Dewey review loop: up to 3 attempts to get plan approved.
       const candidatePlan: BrainPlan = {
         steps: task.goals,
@@ -213,40 +209,48 @@ export function createMaestroAdapter(): MaestroPort {
         role,
       };
 
-      // Dewey pre-flight review: single pass.
-      //
-      // Dewey's contract is to surface compliance/preference concerns — not to
-      // own or modify the execution plan. The prior loop injected
-      // deweyReview.suggestions into approvedPlan.steps, causing Dewey to
-      // approve a plan that never matched what actually executed (Maestro always
-      // runs the original task, not the mutated approvedPlan). Removed.
-      //
-      // Hard blocks (required app not connected) still stop execution early.
-      // Soft concerns are logged and visible in trace; Maestro decides how to
-      // handle them — that is not Dewey's responsibility.
-      const deweyReview = await dewey.reviewPlan(candidatePlan, task.originalUserMessage, brief);
-      traceEvent({ type: "dewey:review", data: deweyReview });
+      let approvedPlan = candidatePlan;
+      let approved = false;
+      let attempts = 0;
+      let lastConcerns: string[] = [];
+      // Dewey suggestions collected across non-approved passes.
+      // Threaded into the agent prompt as advisory notes (not plan mutation).
+      const collectedSuggestions: string[] = [];
 
-      if (!deweyReview.approved) {
-        console.log("[Dewey] Pre-flight concerns:", deweyReview.concerns);
-        // Hard block: a required integration (e.g. Gmail, Calendar) is not connected.
-        // This is a genuine capability gap — execution cannot proceed.
-        const isHardBlock = deweyReview.concerns.some(
-          (c) => /requires .+ but it is not connected/i.test(c),
-        );
-        if (isHardBlock) {
-          return {
-            outputText: `I want to make sure I do this right for you. ${deweyReview.concerns.join(" ")}`,
-            toolEvents: [],
-            filesChanged: [],
-            summary: `dewey_blocked concerns=${deweyReview.concerns.length}`,
-          };
+      while (!approved && attempts < 3) {
+        const deweyReview = await dewey.reviewPlan(approvedPlan, task.originalUserMessage, brief);
+        traceEvent({ type: "dewey:review", data: deweyReview });
+
+        if (deweyReview.approved) {
+          approved = true;
+        } else {
+          lastConcerns = deweyReview.concerns;
+          // Collect suggestions as advisory notes — do not mutate approvedPlan.steps.
+          // They will be threaded into the agent prompt via deweyAdvisory, not
+          // injected into the plan's goal list (which would be plan mutation).
+          for (const s of deweyReview.suggestions) {
+            if (!collectedSuggestions.includes(s)) collectedSuggestions.push(s);
+          }
+          console.error("[Dewey] Pre-flight concerns:", deweyReview.concerns);
+          attempts++;
         }
-        // Soft concern: proceed. Concerns are recorded in trace via traceEvent above.
+      }
+
+      if (!approved) {
+        return {
+          outputText: `I want to make sure I do this right for you. ${lastConcerns.join(" ")}`,
+          toolEvents: [],
+          filesChanged: [],
+          summary: `dewey_review_blocked`,
+        };
       }
 
       // 7. Single-agent path.
-      const result = await runSingleAgent(task, role, isFallback, orch, ctx, false, brief);
+      // Pass any Dewey advisory suggestions as non-blocking notes to the agent.
+      const result = await runSingleAgent(
+        task, role, isFallback, orch, ctx, false, brief,
+        collectedSuggestions.length > 0 ? collectedSuggestions : undefined,
+      );
 
       // 8. Dewey post-flight observation.
       dewey.observe({
@@ -382,13 +386,15 @@ export function deriveDeweySignals(task: OrcaTaskSpec): string[] {
 // Task prompt builder
 // ---------------------------------------------------------------------------
 
-function buildTaskPrompt(
+/** @internal exported only for validation tests — do not use outside tests. */
+export function buildTaskPrompt(
   task: OrcaTaskSpec,
   role: string,
   isFallback: boolean,
   workspaceContext?: WorkspaceContext,
   deweyBrief?: Pick<UserBrief, "suggestedTone" | "relevantPreferences">,
   isSubagent: boolean = false,
+  deweyAdvisory?: string[],
 ): string {
   const isRepair = task.intent === "repair";
 
@@ -436,6 +442,17 @@ function buildTaskPrompt(
     if (preferenceLines.length > 0) {
       lines.push("", "### User Preferences", ...preferenceLines.map((line) => `- ${line}`));
     }
+  }
+
+  // ── Dewey advisory notes ───────────────────────────────────────────────────
+  // Non-blocking concerns Dewey raised during pre-flight review.
+  // Advisory only — the agent must not treat these as hard requirements.
+  if (deweyAdvisory && deweyAdvisory.length > 0) {
+    lines.push(
+      "",
+      "### User Context Notes",
+      ...deweyAdvisory.map((note) => `- ${note}`),
+    );
   }
 
   if (workspaceContext) {
@@ -585,6 +602,7 @@ async function runSingleAgent(
   ctx: OrcaRunCtx,
   isSubagent: boolean = false,
   deweyBrief?: Pick<UserBrief, "suggestedTone" | "relevantPreferences">,
+  deweyAdvisory?: string[],
 ): Promise<OrcaMaestroResult> {
   // Subagents may carry a forcedRole in context (set by runSubagentPool).
   const effectiveRole = (
@@ -594,7 +612,7 @@ async function runSingleAgent(
   ) as RoleName;
 
   const systemPrompt = getRolePrompt(effectiveRole);
-  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext, deweyBrief, isSubagent);
+  const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext, deweyBrief, isSubagent, deweyAdvisory);
 
   ctx.recordTrace?.("maestro.role.call", {
     role: effectiveRole,
@@ -678,6 +696,8 @@ export interface DecomposedSubtask {
   exportName?: string;
   dependedOnBy?: string[];
   siblings?: string[];
+  /** Advisory context set by Brain for this specific department. */
+  coordinationHint?: string;
 }
 
 export function shouldAttemptSubagentDecomposition(
@@ -700,103 +720,146 @@ export function shouldAttemptSubagentDecomposition(
   );
 }
 
-/**
- * Ask planner_deep to break a multi-step task into independent parallel
- * subtasks. Returns an array of subtask objects with coordination metadata,
- * or null if decomposition fails or produces a single-item list.
- *
- * ROUTING AUTHORITY NOTE: Brain is the canonical owner of routing and
- * decomposition decisions. The authoritative contract lives in
- * packages/maestro-core/src/decompose.ts (BRAIN_DECOMPOSE_SYSTEM +
- * parseBrainDecision — strict schema, validated JSON output).
- * This function is a parallel path that predates that contract and uses
- * planner_deep with a bespoke prompt. It is guarded by shouldDecompose() and
- * shouldAttemptSubagentDecomposition() to limit speculative firing.
- * Consolidation under the Brain routing contract in decompose.ts is the
- * intended future direction.
- */
-async function decomposeTask(
-  originalMessage: string,
-  llm: OrcaLLMService,
-  settings: OrcaSettings,
-): Promise<DecomposedSubtask[] | null> {
-  const systemPrompt = getRolePrompt("planner_deep");
-  const availableRoles = formatAvailableRoles(settings);
-  const decompositionPrompt = [
-    "## Task Decomposition",
-    "",
-    "Break the following request into the smallest set of INDEPENDENT parallel subtasks.",
-    "Respond with ONLY a valid JSON array — no markdown fences, no explanation.",
-    "",
-    "Format: [{",
-    '  "role": "ROLE",',
-    '  "task": "DESCRIPTION",',
-    '  "outputPath": "src/utils/filename.ts (optional, for file-producing tasks)",',
-    '  "exportName": "functionName (optional, for function exports)",',
-    '  "dependedOnBy": ["src/utils/index.ts"] (optional, files that will import this)",',
-    '  "siblings": ["other1.ts", "other2.ts"] (optional, other files being created)',
-    "},...]",
-    "",
-    `Available roles: ${availableRoles}, debugger, reader`,
-    "",
-    "## Coordination Requirements",
-    "When multiple subtasks produce files that will be combined:",
-    "- Specify the exact output path for each subtask (outputPath)",
-    "- Specify the exact export name each subtask must use (exportName)",
-    "- Tell each subtask what the other subtasks are producing (siblings)",
-    "- Tell each subtask what will import or depend on its output (dependedOnBy)",
-    "",
-    "Rules:",
-    "- Maximum 5 subtasks",
-    "- Each subtask MUST be fully independent (no subtask requires another's output)",
-    "- If the task is a single unit of work, return exactly one item",
-    "- Assign the most appropriate role to each subtask",
-    "- For file-producing tasks, always include outputPath",
-    "- For function exports, always include exportName",
-    "",
-    "Task to decompose:",
-    originalMessage,
-  ].join("\n");
+// ---------------------------------------------------------------------------
+// Brain-owned routing decision types (adapter-local; distinct from Brain's
+// JSON output schema types in decompose.ts).
+// ---------------------------------------------------------------------------
 
+interface MaestroDirectDecision {
+  path: "direct";
+  role: string;
+  isFallback: boolean;
+  done_criteria?: string[];
+  /** 'heuristic': selectRole() decided, no Brain LLM call.
+   *  'brain':     Brain LLM called; Brain's role choice is used. */
+  source: "heuristic" | "brain";
+}
+
+interface MaestroDecomposeDecision {
+  path: "decompose";
+  subtasks: DecomposedSubtask[];
+  done_criteria?: string[];
+  synthesis_hint?: string;
+}
+
+/** Union of the two possible routing decisions returned by routeRequest(). */
+export type MaestroRoutingDecision = MaestroDirectDecision | MaestroDecomposeDecision;
+
+// ---------------------------------------------------------------------------
+// Department → Subtask mapping with sibling coordination context
+// ---------------------------------------------------------------------------
+
+/**
+ * Map Brain's DepartmentTask array to DecomposedSubtask[] with sibling context.
+ *
+ * Each subtask receives a list of sibling task descriptions so parallel
+ * subagents are aware of what other agents are producing.
+ *
+ * @internal exported for validation tests only.
+ */
+export function mapDepartmentsToSubtasks(
+  departments: Array<{ head: string; subtask: string; context?: string }>,
+): DecomposedSubtask[] {
+  const siblingDescriptions = departments.map(
+    (d) => `${d.head}: ${d.subtask.slice(0, 80)}`,
+  );
+  return departments.map((dept, i) => ({
+    role: dept.head,
+    task: dept.subtask,
+    // Each subtask knows every other department's brief description.
+    siblings: siblingDescriptions.filter((_, j) => j !== i),
+    // Thread Brain's advisory context for this department through to the prompt.
+    coordinationHint: dept.context,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Brain-owned routing entry point
+// ---------------------------------------------------------------------------
+
+/**
+ * The single authoritative routing function — every request passes through here.
+ *
+ * Decision flow:
+ *   1. Heuristic gate (shouldDecompose): if the task clearly does not need
+ *      decomposition, return a direct decision immediately — no Brain LLM call,
+ *      no added latency for simple requests.
+ *   2. If gate passes: make ONE Brain LLM call using BRAIN_DECOMPOSE_SYSTEM.
+ *      Brain decides "direct" (returns its own role choice, takes precedence
+ *      over heuristic) or "decompose" (returns a department list with sibling
+ *      context populated via mapDepartmentsToSubtasks).
+ *   3. If Brain call fails: fall back to heuristic direct decision.
+ *
+ * Consolidates the previously split selectRole()/pickCoreRole() +
+ * shouldAttemptSubagentDecomposition()/decomposeTask() paths. Helpers are
+ * invoked from here and are subordinate to this entry point.
+ */
+async function routeRequest(
+  task: OrcaTaskSpec,
+  orch: OrchestrationResult,
+  ctx: OrcaRunCtx,
+  settings: OrcaSettings,
+): Promise<MaestroRoutingDecision> {
+  // Compute heuristic role — always needed (direct result or Brain-call fallback).
+  const roleCtx = buildRoleSelectorContext(task);
+  const coreRole = pickCoreRole(task, settings);
+  const { role: heuristicRole, isFallback, warning } = selectRole(
+    roleCtx,
+    ALL_OPTIONAL_ROLES,
+    coreRole,
+  );
+  if (warning) {
+    console.warn(`[MaestroAdapter] Role warning: ${warning}`);
+  }
+
+  // Heuristic gate: skip Brain LLM call for tasks that clearly don't need
+  // decomposition. Identical logic to shouldAttemptSubagentDecomposition().
+  const depth = ctx.subagentDepth ?? 0;
+  const isReadOnly = Boolean(
+    task.permissions && !task.permissions.fileWrite && !task.permissions.shellExec,
+  );
+  const isDecomposeCandidate =
+    depth === 0 &&
+    !isReadOnly &&
+    orch.classification.multiStep &&
+    shouldDecompose(task.originalUserMessage);
+
+  if (!isDecomposeCandidate) {
+    // Heuristic direct decision — no Brain LLM call needed.
+    return { path: "direct", role: heuristicRole, isFallback, source: "heuristic" };
+  }
+
+  // Brain routing call — one LLM call decides direct vs. decompose.
+  // Brain's role choice (direct path) takes precedence over the heuristic role.
   try {
-    const { text } = await llm.complete(
-      `${systemPrompt}\n\n---\n\n${decompositionPrompt}`,
-      { maxTokens: 2048 },
+    const { text } = await ctx.llm.complete(
+      `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${task.originalUserMessage}`,
+      { maxTokens: 1024, simple: true },
     );
 
-    // Strip markdown code fences the model may wrap the JSON in.
-    const stripped = text
-      .replace(/^```(?:json)?\s*/m, "")
-      .replace(/\s*```\s*$/m, "")
-      .trim();
+    const decision = parseBrainDecision(text);
 
-    const parsed = JSON.parse(stripped) as unknown;
-    if (!Array.isArray(parsed)) return null;
+    if (decision.routing === "direct") {
+      return {
+        path: "direct",
+        role: decision.role,
+        isFallback: false,
+        done_criteria: decision.done_criteria,
+        source: "brain",
+      };
+    }
 
-    const subtasks = (parsed as unknown[])
-      .filter((item): item is DecomposedSubtask =>
-        typeof item === "object" &&
-        item !== null &&
-        typeof (item as Record<string, unknown>)["role"] === "string" &&
-        typeof (item as Record<string, unknown>)["task"] === "string",
-      )
-      .map((item) => {
-        const obj = item as unknown as Record<string, unknown>;
-        return {
-          role: obj.role as string,
-          task: obj.task as string,
-          outputPath: typeof obj.outputPath === "string" ? obj.outputPath : undefined,
-          exportName: typeof obj.exportName === "string" ? obj.exportName : undefined,
-          dependedOnBy: Array.isArray(obj.dependedOnBy) ? obj.dependedOnBy as string[] : undefined,
-          siblings: Array.isArray(obj.siblings) ? obj.siblings as string[] : undefined,
-        };
-      })
-      .slice(0, 5);
-
-    return subtasks.length > 0 ? subtasks : null;
+    // Brain decided decompose — map departments to subtasks with sibling context.
+    return {
+      path: "decompose",
+      subtasks: mapDepartmentsToSubtasks(decision.departments),
+      done_criteria: decision.done_criteria,
+      synthesis_hint: decision.synthesis_hint,
+    };
   } catch {
-    // Decomposition is best-effort. Fall back to single-agent on any error.
-    return null;
+    // Brain call failed — fall back to heuristic direct decision.
+    traceEvent({ type: "brain:route_fallback", data: { reason: "brain_decision_failed", heuristicRole } });
+    return { path: "direct", role: heuristicRole, isFallback: true, source: "heuristic" };
   }
 }
 
@@ -837,8 +900,11 @@ async function runSubagentPool(
     task: st.task,
     outputPath: st.outputPath,
     exportName: st.exportName,
+    // st.siblings is populated by mapDepartmentsToSubtasks() when Brain routed.
+    // siblingFiles fallback covers manually-constructed DecomposedSubtask[] with outputPath.
     siblings: st.siblings || siblingFiles.filter((f) => f !== path.basename(st.outputPath || "")),
     dependedOnBy: st.dependedOnBy,
+    coordinationHint: st.coordinationHint,
   }));
 
   for (const agent of agents) {
@@ -856,19 +922,32 @@ async function runSubagentPool(
 
   // Run all agents concurrently.
   const agentPromises = agents.map(async (agent) => {
-    // Build coordination context for this subagent
+    // Build coordination context for this subagent.
     const coordinationContext: Record<string, unknown> = {
       forcedRole: agent.role,
     };
-    
-    // Add coordination metadata if available
     if (agent.outputPath) {
       coordinationContext.outputPath = agent.outputPath;
+    }
+
+    // Inject coordination context whenever multiple subagents run in parallel.
+    // Previously gated on outputPath, which Brain routing never provides.
+    // Now fires unconditionally for multi-agent pools — derives sibling context
+    // from mapDepartmentsToSubtasks() siblings or task descriptions as fallback.
+    if (agents.length > 1) {
+      const siblingRefs = agents
+        .filter((a) => a.subagentId !== agent.subagentId)
+        .map((a) => `${a.role}: ${a.task.slice(0, 80)}`);
+      const siblingList =
+        agent.siblings && agent.siblings.length > 0 ? agent.siblings : siblingRefs;
       coordinationContext.coordination = {
-        siblings: agent.siblings,
+        siblings: siblingList,
         exportName: agent.exportName,
         dependedOnBy: agent.dependedOnBy,
-        message: `Other agents are simultaneously creating: ${agent.siblings?.join(", ") || "related files"}. Your file will be imported by: ${agent.dependedOnBy?.join(", ") || "index files"}.`,
+        message:
+          `You are one of ${agents.length} parallel agents working on this task. ` +
+          `Other agents are handling: ${siblingRefs.join("; ")}.` +
+          (agent.coordinationHint ? ` Context: ${agent.coordinationHint}` : ""),
       };
     }
 

@@ -186,7 +186,7 @@ export class ModelFallbackPoolManager {
         const cooldownMs = pool.cooldownMs ?? globalCooldown;
         if (modelState.inCooldown && (now - modelState.lastFailureTime) < cooldownMs) {
           if (this.verbose) {
-            console.log(`[FallbackPool] Model ${model.id} for role ${role} is in cooldown`);
+            console.error(`[FallbackPool] Model ${model.id} for role ${role} is in cooldown`);
           }
           continue;
         }
@@ -259,7 +259,7 @@ export class ModelFallbackPoolManager {
     }
 
     if (this.verbose) {
-      console.log(`[FallbackPool] Model ${modelId} for role ${role} succeeded`);
+      console.error(`[FallbackPool] Model ${modelId} for role ${role} succeeded`);
     }
   }
 

@@ -3,10 +3,12 @@ import type { LLMRequest, LLMMessage } from "@clawde/miranda-core";
 import type { OrcaLLMService } from "../types.js";
 
 /**
- * createDirectLLMService — bypasses Miranda's pipeline entirely.
+ * createDirectLLMService — bypasses Miranda's LLM stage pipeline.
  *
- * Makes a single LLM call per prompt.  Used during Phase 1 (Maestro-only)
- * before Miranda gates and Pappy QC are wired back in.
+ * This is the current live LLM service used by the runner. It makes a
+ * single model call per prompt without Miranda's multi-stage pipeline
+ * (PLAN→ANSWER→CRITIQUE→REWRITE). Miranda's gate (ctx.gate) still runs
+ * at the tool-call and QC boundary — only the per-LLM-call staging is absent.
  *
  * Prompt format: Maestro joins systemPrompt and taskPrompt with "\n\n---\n\n".
  * This adapter splits on that separator so the model receives a proper

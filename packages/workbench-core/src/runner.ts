@@ -213,7 +213,7 @@ export class RunnerRegistry {
 
   register(runner: Runner): void {
     this.runners.set(runner.name, runner);
-    console.log(`[RunnerRegistry] Registered runner: ${runner.name}`);
+    console.error(`[RunnerRegistry] Registered runner: ${runner.name}`);
   }
 
   findRunner(toolSpec: ToolSpec): Runner | null {
@@ -224,7 +224,7 @@ export class RunnerRegistry {
       const runner = runnerArray[i];
       if (runner.canRun(toolSpec)) {
         // GUARDRAIL: Log which runner selected
-        console.log(`[RunnerRegistry] Selected runner: ${runner.name} for tool`);
+        console.error(`[RunnerRegistry] Selected runner: ${runner.name} for tool`);
         
         // ASSERTION: Phase 1 - must always be ShellRunner
         if (runner.name !== 'shell') {

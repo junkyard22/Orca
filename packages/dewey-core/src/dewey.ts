@@ -64,7 +64,7 @@ export class Dewey {
     ]);
     const tone = detectTone(context.warm.learnedPreferences.communication);
 
-    console.log(`[Dewey] Briefing for task type "${taskType}", tone "${tone}"`);
+    console.error(`[Dewey] Briefing for task type "${taskType}", tone "${tone}"`);
 
     return {
       userName: context.hot.name,
@@ -78,7 +78,7 @@ export class Dewey {
 
   async reviewPlan(plan: BrainPlan, task: string, existingBrief?: UserBrief): Promise<DeweyReview> {
     const brief = existingBrief ?? await this.brief(task);
-    console.log('[Dewey] Running pre-flight review');
+    console.error('[Dewey] Running pre-flight review');
     return this.reviewer.review(plan, brief);
   }
 
@@ -87,7 +87,7 @@ export class Dewey {
 
     // 1. Record task in session history (hot context)
     await this.store.recordTask(run.taskSummary);
-    console.log(`[Dewey] Observed run: ${run.taskType} — ${run.verdict}`);
+    console.error(`[Dewey] Observed run: ${run.taskType} — ${run.verdict}`);
 
     // 2. Add new signals to warm context
     if (run.newSignals.length > 0) {

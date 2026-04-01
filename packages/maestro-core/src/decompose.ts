@@ -1,18 +1,16 @@
 /**
- * Brain Decompose — Maestro's task routing intelligence.
+ * Brain Decompose — canonical Brain routing contract.
  *
- * This module defines the AUTHORITATIVE Brain routing contract.
- * Brain either routes a task to a single specialist ("direct") or
- * splits it into parallel department subtasks ("decompose").
+ * INTENDED ARCHITECTURE: Every incoming task is routed through Brain.
+ * Brain returns a routing decision: single specialist ("direct") or
+ * parallel department subtasks ("decompose"). Departments run after.
  *
- * Only Brain responds here — departments run AFTER this decision.
+ * LIVE STATUS (as of this patch): BRAIN_DECOMPOSE_SYSTEM + parseBrainDecision()
+ * are now used for the decomposition path in maestroAdapter.ts. Direct
+ * routing still uses heuristic selectRole() + pickCoreRole() — the full
+ * Brain-contract path for every request is the consolidation target.
  *
- * ARCHITECTURE NOTE: BRAIN_DECOMPOSE_SYSTEM + parseBrainDecision form the
- * canonical single owner of decomposition decisions in Orca. The current live
- * pipeline (apps/runner/src/adapters/maestroAdapter.ts::decomposeTask) uses a
- * parallel path via planner_deep that predates this contract. Future work
- * should consolidate decomposition under this module so Brain is the sole
- * routing authority.
+ * Only Brain responds to this prompt — departments run AFTER this decision.
  */
 
 import type { RoleName } from './roleSelector';

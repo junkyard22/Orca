@@ -5,7 +5,7 @@ import type { ExecutionResult, TaskSpec } from "./types.js";
 //   - Calm, concise, professional "butler" vibe.
 //   - No emojis. No internal system talk. No component names.
 //   - FAIL: brief apology + one next-step question.
-//   - followUpQuestion: surface it directly.
+//   - followUpQuestion: surface it via cleanFollowUp() — always sanitized.
 // ---------------------------------------------------------------------------
 
 /**
@@ -14,25 +14,36 @@ import type { ExecutionResult, TaskSpec } from "./types.js";
  * code, answer, or result — not the agent's thinking process.
  *
  * Stripping order:
- *   1. <tool_call> and <thought> blocks (closed and unclosed)
+ *   1. <tool_call>, <thought>, <thinking>, <scratchpad> XML blocks
  *   2. FINAL ANSWER: marker — extract ONLY what follows it, discarding all
  *      thinking that appears before it (Thought/Observation/Next blocks etc.)
  *   3. Fallback when no FINAL ANSWER: marker — if a code block exists, keep
  *      only that region; otherwise strip leading preamble lines.
- *   4. Strip any Thought:/Observation:/Next: lines that slipped through.
+ *   4. Strip any internal-monologue lines that slipped through.
  *   5. Collapse excess blank lines
+ *
+ * Trust boundary: this function is the last line of defence before content
+ * reaches the user. It must NEVER pass internal-role chatter, reasoning
+ * prefixes, or scratchpad text to the caller.
  */
 function cleanOutput(text: string): string {
-  // 1. Strip XML markup blocks (closed first, then unclosed tail)
+  // 1. Strip XML markup blocks — closed and unclosed tail variants.
+  //    Covers <tool_call>, <thought>, <thinking>, <scratchpad>, <analysis>,
+  //    <reasoning> and their unclosed variants that trail off.
   let out = text
-    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
-    .replace(/<tool_call>[\s\S]*/g, "")
-    .replace(/<thought>[\s\S]*?<\/thought>/g, "")
-    .replace(/<thought>[\s\S]*/g, "");
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+    .replace(/<tool_call>[\s\S]*/gi, "")
+    .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+    .replace(/<thought>[\s\S]*/gi, "")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+    .replace(/<thinking>[\s\S]*/gi, "")
+    .replace(/<scratchpad>[\s\S]*?<\/scratchpad>/gi, "")
+    .replace(/<scratchpad>[\s\S]*/gi, "")
+    .replace(/<analysis>[\s\S]*?<\/analysis>/gi, "")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
 
   // 2. FINAL ANSWER: is the primary thinking/deliverable boundary.
   //    Extract everything AFTER the marker — everything before it is thinking.
-  //    Previously this only stripped the label itself, leaving all the reasoning.
   const FA_RE = /^FINAL ANSWER:\s*/im;
   const faIdx = out.search(FA_RE);
   if (faIdx !== -1) {
@@ -63,17 +74,87 @@ function cleanOutput(text: string): string {
     }
   }
 
-  // 5. Strip any Thought:/Observation:/Next: lines that slipped into the answer
-  out = out.replace(/^(Thought|Observation|Next|Thinking):\s.*$/gmi, "");
+  // 5a. Strip internal-monologue label lines (Thought:, Observation:, etc.)
+  out = out.replace(/^(Thought|Observation|Next|Thinking|Reasoning|Analysis|Scratchpad|Internal note|Chain of thought):\s.*$/gmi, "");
+
+  // 5b. Strip role-prefixed handoff lines that are not meant for the user.
+  //     Matches lines like "Brain: let me route this" or "Reviewer: the code has issues".
+  //     Only strips lines where the role label is at the very start of the line,
+  //     so it doesn't catch legitimate inline text that happens to use these words.
+  out = out.replace(/^(Brain|Reviewer|Narrator|Planner|Utility|Debugger|Reader|Vision|Subagent):\s.*/gmi, "");
+
+  // 5c. Strip whole lines that are pure internal-thought openers.
+  //     These are conservative — only strip if the *entire line* matches a
+  //     known leakage pattern, so we don't accidentally cut real content.
+  out = out.replace(/^(thinking\.\.\.|let me think.*|i need to (think|figure|work|check|analyze|determine).*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+
+  // 5d. Strip internal pipeline metadata fragments.
+  //     Covers Pappy verdict tallies, run_id tokens, and Dewey block markers.
+  //     These are structural artifacts of the runtime, not user-facing content.
+  //     Pattern ^dewey_[a-z_]*blocked matches: dewey_blocked, dewey_review_blocked, etc.
+  out = out.replace(/\bverdict=(PASS|WARN|FAIL)\b[^\n]*/gi, "");
+  out = out.replace(/\b\d+x(CRITICAL|HIGH|MEDIUM|LOW)\b/gi, "");
+  out = out.replace(/\brun_id=\S+/gi, "");
+  out = out.replace(/^dewey_[a-z_]*blocked\b.*/gmi, "");
 
   // 6. Collapse excess blank lines
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/**
+ * Lighter sanitization for follow-up questions (clarifying questions the
+ * executor surfaces back to the user).  We apply all markup and label
+ * stripping from cleanOutput() but intentionally skip the destructive
+ * FINAL ANSWER extraction and code-block extraction steps — those heuristics
+ * assume an agent's full response, not a short clarifying question, and would
+ * incorrectly destroy legitimate content like "I'll need the API key first."
+ *
+ * Trust boundary: closes the bypass where followUpQuestion could carry
+ * <thinking> blocks, role-prefixed lines, or reasoning labels to the user.
+ */
+function cleanFollowUp(text: string): string {
+  // Step 1: strip XML internal blocks (same as cleanOutput step 1)
+  let out = text
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+    .replace(/<tool_call>[\s\S]*/gi, "")
+    .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+    .replace(/<thought>[\s\S]*/gi, "")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+    .replace(/<thinking>[\s\S]*/gi, "")
+    .replace(/<scratchpad>[\s\S]*?<\/scratchpad>/gi, "")
+    .replace(/<scratchpad>[\s\S]*/gi, "")
+    .replace(/<analysis>[\s\S]*?<\/analysis>/gi, "")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
+
+  // Step 5a: strip internal-monologue label lines (same as cleanOutput step 5a)
+  out = out.replace(/^(Thought|Observation|Next|Thinking|Reasoning|Analysis|Scratchpad|Internal note|Chain of thought):\s.*$/gmi, "");
+
+  // Step 5b: strip role-prefixed handoff lines (same as cleanOutput step 5b)
+  out = out.replace(/^(Brain|Reviewer|Narrator|Planner|Utility|Debugger|Reader|Vision|Subagent):\s.*/gmi, "");
+
+  // Step 5c: strip whole-line internal-thought openers (same as cleanOutput step 5c)
+  out = out.replace(/^(thinking\.\.\.|let me think.*|i need to (think|figure|work|check|analyze|determine).*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+
+  // Step 5d: strip internal pipeline metadata that should never reach the user.
+  //   Covers Pappy verdict tallies ("verdict=FAIL 2xHIGH"), run identifiers
+  //   ("run_id=run_123_abc"), and Dewey block markers ("dewey_blocked ...",
+  //   "dewey_review_blocked", and similar). Pattern ^dewey_[a-z_]*blocked covers
+  //   all current and future dewey_*blocked naming variants.
+  out = out.replace(/\bverdict=(PASS|WARN|FAIL)\b[^\n]*/gi, "");
+  out = out.replace(/\b\d+x(CRITICAL|HIGH|MEDIUM|LOW)\b/gi, "");
+  out = out.replace(/\brun_id=\S+/gi, "");
+  out = out.replace(/^dewey_[a-z_]*blocked\b.*/gmi, "");
+
+  // Step 6: collapse blank lines
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function presentResult(result: ExecutionResult, task: TaskSpec): string {
-  // followUpQuestion takes precedence — the executor needs more info
+  // followUpQuestion takes precedence — the executor needs more info.
+  // Always sanitized: the executor may have accidentally included internal
+  // markup in the question text.
   if (result.followUpQuestion) {
-    return result.followUpQuestion.trim();
+    return cleanFollowUp(result.followUpQuestion);
   }
 
   if (result.status === "SUCCESS") {
@@ -120,9 +201,12 @@ function presentFailure(result: ExecutionResult, task: TaskSpec): string {
 
   // Surface the internal error/summary so the user can diagnose the problem
   // (e.g. "API error 401: invalid key", "Brain role not configured", etc.)
+  // Trust boundary: apply cleanFollowUp() before surfacing — the summary can
+  // carry agent error messages (metadata.errorMessage) that may contain role
+  // prefixes or XML markup if the model included them in an error response.
   if (result.summary && !result.summary.startsWith("ok")) {
     const nextStep = chooseNextStepQuestion(task);
-    return `That did not complete as expected.\n\n> ${result.summary}\n\n${nextStep}`;
+    return `That did not complete as expected.\n\n> ${cleanFollowUp(result.summary)}\n\n${nextStep}`;
   }
 
   // Truly empty output — nothing to show

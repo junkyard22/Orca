@@ -20,8 +20,8 @@ import { throwIfAborted } from "./abort.js";
  *   3. pappy.evaluate() re-judges — Pappy is always the "judge".
  *   4. PASS/WARN → return SUCCESS. FAIL → next pass or cap out.
  *
- * Maestro never calls Miranda directly; ctx.llm (Miranda-backed) is the
- * only model surface it touches.
+ * Maestro never calls a model directly; ctx.llm is the only model surface
+ * it touches. The concrete LLM service is injected at startup by the app shell.
  */
 export async function handleRepairLoop(
   originalTask: OrcaTaskSpec,

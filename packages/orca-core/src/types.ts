@@ -131,8 +131,10 @@ export interface OrcaMaestroResult {
 export interface OrcaLLMService {
   /**
    * Generate text for a prompt.
-   * Implemented using Miranda's pipeline (PLAN→ANSWER→CRITIQUE→REWRITE)
-   * so Maestro never calls a model directly.
+   * The concrete implementation is injected by the app shell at startup.
+   * Currently the runner uses createDirectLLMService (single call, no stage
+   * pipeline). Miranda's PLAN→ANSWER→CRITIQUE→REWRITE pipeline is the
+   * intended future implementation but is not yet the live path.
    *
    * Pass `onToken` to receive incremental chunks as they stream from the LLM.
    * Falls back to a single buffered response when the adapter does not support

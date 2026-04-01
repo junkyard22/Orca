@@ -69,9 +69,9 @@ export class PlanReviewer {
 
     const approved = concerns.length === 0;
     if (approved) {
-      console.log('[Dewey] Pre-flight review: approved');
+      console.error('[Dewey] Pre-flight review: approved');
     } else {
-      console.log('[Dewey] Pre-flight review: rejected with concerns:', concerns);
+      console.error('[Dewey] Pre-flight review: rejected with concerns:', concerns);
     }
 
     return { approved, concerns, suggestions };

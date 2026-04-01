@@ -127,10 +127,10 @@ export class ContextStore {
       try {
         const raw = await fs.readFile(this.contextPath, 'utf-8');
         this.context = normalizeContext(JSON.parse(raw));
-        console.log('[Dewey] Context loaded from', this.contextPath);
+        console.error('[Dewey] Context loaded from', this.contextPath);
       } catch (err: unknown) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          console.log('[Dewey] Context file not found, creating default at', this.contextPath);
+          console.error('[Dewey] Context file not found, creating default at', this.contextPath);
           this.context = loadDefaultTemplate();
           await this.save();
         } else {
@@ -148,7 +148,7 @@ export class ContextStore {
     const dir = dirname(this.contextPath);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(this.contextPath, JSON.stringify(this.context, null, 2), 'utf-8');
-    console.log('[Dewey] Context saved to', this.contextPath);
+    console.error('[Dewey] Context saved to', this.contextPath);
   }
 
   getRelevantContext(taskType: string): {
@@ -170,7 +170,7 @@ export class ContextStore {
     const list = this.context.warm.learnedPreferences[category];
     if (!list.includes(signal)) {
       list.push(signal);
-      console.log(`[Dewey] New signal added to ${category}: ${signal}`);
+      console.error(`[Dewey] New signal added to ${category}: ${signal}`);
     }
     await this.save();
   }
@@ -178,7 +178,7 @@ export class ContextStore {
   async startSession(): Promise<void> {
     this.context.hot.currentSession.startedAt = new Date().toISOString();
     this.context.hot.currentSession.recentTasks = [];
-    console.log('[Dewey] Session started at', this.context.hot.currentSession.startedAt);
+    console.error('[Dewey] Session started at', this.context.hot.currentSession.startedAt);
     await this.save();
   }
 

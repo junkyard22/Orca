@@ -287,7 +287,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         });
 
         if (qcResult.verdict === "FAIL") {
-          console.log(
+          console.error(
             `[Pappy FAIL] ${qcResult.issues.length} issue(s):`,
             qcResult.issues.map((issue) => `${issue.severity} ${issue.code}: ${issue.description}`),
           );
