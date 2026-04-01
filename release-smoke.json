@@ -1,0 +1,40 @@
+{
+  "_comment": "Release smoke config for Orca trust gate. Run: pnpm -C apps/runner release-smoke",
+  "_comment2": "Each entry in 'configs' runs the full smoke suite against a provider/model.",
+  "_comment3": "Two source types: 'orca-settings' (reads from orca-settings.json) or 'env' (reads from env vars).",
+
+  "outputDir": "smoke-reports",
+
+  "configs": [
+    {
+      "name": "brain-default",
+      "label": "Brain (orca-settings default)",
+      "source": "orca-settings",
+      "role": "brain"
+    },
+    {
+      "name": "strong-model",
+      "label": "Strong coder (orca-settings strong_model role)",
+      "source": "orca-settings",
+      "role": "strong_model"
+    }
+  ],
+
+  "_example_env_config": {
+    "_comment": "Copy this object into 'configs' to test a provider via env vars",
+    "name": "openrouter-gpt4o-mini",
+    "label": "OpenRouter GPT-4o-mini",
+    "source": "env",
+    "provider": "openrouter",
+    "model": "openai/gpt-4o-mini"
+  },
+
+  "_example_ollama_config": {
+    "_comment": "Copy this object into 'configs' to test a local Ollama model",
+    "name": "ollama-llama3",
+    "label": "Ollama llama3.2",
+    "source": "env",
+    "provider": "ollama",
+    "model": "llama3.2"
+  }
+}

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "smoke": "tsx src/smoke-test.ts",
+    "release-smoke": "tsx src/release-smoke.ts",
     "build": "tsc --build",
     "build:exe": "node build-exe.mjs",
     "start": "node dist/index.js",
