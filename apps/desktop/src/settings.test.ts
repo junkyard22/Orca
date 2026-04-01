@@ -61,31 +61,31 @@ describe("settings", () => {
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  it("round-trips API keys when encryption is unavailable", () => {
-    saveSettings(baseSettings);
+  it("round-trips API keys when encryption is unavailable", async () => {
+    await saveSettings(baseSettings);
 
     const saved = JSON.parse(readFileSync(join(userDataDir, "orca-settings.json"), "utf-8")) as OrcaSettings;
-    expect(saved.providers[0]?.apiKey).toBe("b64:c2VjcmV0LWtleQ==");
+    expect(saved.providers[0]?.apiKey).toBe("plain:secret-key");
 
-    const loaded = loadSettings();
+    const loaded = await loadSettings();
     expect(loaded).toEqual(baseSettings);
   });
 
-  it("stores encrypted keys when safeStorage is available", () => {
+  it("stores encrypted keys when safeStorage is available", async () => {
     electronState.encryptionAvailable = true;
 
-    saveSettings(baseSettings);
+    await saveSettings(baseSettings);
 
     const saved = JSON.parse(readFileSync(join(userDataDir, "orca-settings.json"), "utf-8")) as OrcaSettings;
     expect(saved.providers[0]?.apiKey).toBe("enc:Y2lwaGVyOnNlY3JldC1rZXk=");
 
-    const loaded = loadSettings();
+    const loaded = await loadSettings();
     expect(loaded.providers[0]?.apiKey).toBe("secret-key");
     expect(electronState.encryptString).toHaveBeenCalledWith("secret-key");
     expect(electronState.decryptString).toHaveBeenCalled();
   });
 
-  it("round-trips MCP server env secrets (GitHub PAT) when encryption is unavailable", () => {
+  it("round-trips MCP server env secrets (GitHub PAT) when encryption is unavailable", async () => {
     const settingsWithMcp: OrcaSettings = {
       ...baseSettings,
       mcpServers: [
@@ -111,26 +111,26 @@ describe("settings", () => {
       ],
     };
 
-    saveSettings(settingsWithMcp);
+    await saveSettings(settingsWithMcp);
 
     const saved = JSON.parse(
       readFileSync(join(userDataDir, "orca-settings.json"), "utf-8"),
     ) as OrcaSettings;
 
-    // GitHub PAT must be base64-encoded on disk (encryption unavailable)
+    // GitHub PAT must be stored as plaintext on disk (encryption unavailable)
     const ghEnv = saved.mcpServers?.[0]?.env;
-    expect(ghEnv?.GITHUB_PERSONAL_ACCESS_TOKEN).toBe("b64:Z2hwX3Rlc3RfdG9rZW5fYWJjMTIz");
+    expect(ghEnv?.GITHUB_PERSONAL_ACCESS_TOKEN).toBe("plain:ghp_test_token_abc123");
 
     // Desktop Commander has no env — must stay undefined
     expect(saved.mcpServers?.[1]?.env).toBeUndefined();
 
     // Full round-trip: loaded value must equal original
-    const loaded = loadSettings();
+    const loaded = await loadSettings();
     expect(loaded.mcpServers?.[0]?.env?.GITHUB_PERSONAL_ACCESS_TOKEN).toBe("ghp_test_token_abc123");
     expect(loaded.mcpServers?.[1]?.env).toBeUndefined();
   });
 
-  it("encrypts MCP server env secrets via safeStorage when available", () => {
+  it("encrypts MCP server env secrets via safeStorage when available", async () => {
     electronState.encryptionAvailable = true;
 
     const settingsWithMcp: OrcaSettings = {
@@ -149,7 +149,7 @@ describe("settings", () => {
       ],
     };
 
-    saveSettings(settingsWithMcp);
+    await saveSettings(settingsWithMcp);
 
     const saved = JSON.parse(
       readFileSync(join(userDataDir, "orca-settings.json"), "utf-8"),
@@ -159,13 +159,13 @@ describe("settings", () => {
     expect(saved.mcpServers?.[0]?.env?.GITHUB_PERSONAL_ACCESS_TOKEN).toMatch(/^enc:/);
 
     // Round-trip: plaintext must be recovered after decrypt
-    const loaded = loadSettings();
+    const loaded = await loadSettings();
     expect(loaded.mcpServers?.[0]?.env?.GITHUB_PERSONAL_ACCESS_TOKEN).toBe("ghp_secret_pat");
     expect(electronState.encryptString).toHaveBeenCalledWith("ghp_secret_pat");
     expect(electronState.decryptString).toHaveBeenCalled();
   });
 
-  it("migrates legacy settings files into provider-role settings", () => {
+  it("migrates legacy settings files into provider-role settings", async () => {
     writeFileSync(
       join(userDataDir, "orca-settings.json"),
       JSON.stringify({
@@ -178,7 +178,7 @@ describe("settings", () => {
       "utf-8",
     );
 
-    const loaded = loadSettings();
+    const loaded = await loadSettings();
 
     expect(loaded.providers).toEqual([
       {
