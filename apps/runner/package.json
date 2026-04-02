@@ -21,6 +21,7 @@
     "@clawde/ext-web": "workspace:*",
     "@clawde/miranda-core": "workspace:*",
     "@clawde/orca-core": "workspace:*",
+    "@clawde/pappy-core": "workspace:*",
     "@clawde/tool-bootstrap": "workspace:*",
     "@yakstacks/workbench-core": "workspace:*",
     "maestro-core": "workspace:*",

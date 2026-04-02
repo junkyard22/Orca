@@ -208,9 +208,13 @@ function createTracingToolService(inner: OrcaToolService): OrcaToolService {
 function handleTracerEvent(event: TracerEvent): void {
   switch (event.type) {
     case "brain:route":
-      box(`[Brain]  Routing → role=${event.data.role}${event.data.isFallback ? " (fallback)" : ""}`, C.blue);
-      line("coreRole", event.data.coreRole);
-      if (event.data.warning) line("warning", event.data.warning, C.yellow);
+      box(`[Brain]  Routing → path=${event.data.path}${event.data.role ? ` role=${event.data.role}` : ""}${event.data.isFallback ? " (fallback)" : ""}`, C.blue);
+      if (event.data.source) line("source", event.data.source);
+      break;
+
+    case "brain:route_fallback":
+      box(`[Brain]  Routing fallback → heuristic role=${event.data.heuristicRole}`, C.yellow);
+      line("reason", event.data.reason);
       break;
 
     case "dewey:brief":

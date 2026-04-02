@@ -101,6 +101,9 @@ importers:
       '@clawde/orca-core':
         specifier: workspace:*
         version: link:../../packages/orca-core
+      '@clawde/pappy-core':
+        specifier: workspace:*
+        version: link:../../packages/pappy-core
       '@clawde/tool-bootstrap':
         specifier: workspace:*
         version: link:../../packages/tool-bootstrap

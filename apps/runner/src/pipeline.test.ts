@@ -6,7 +6,7 @@
  *
  * Architecture under test:
  *
- *   createBenson({ executeTask: runtime.executeTask })
+ *   createBenson({ executeTask: bensonExecuteTask(runtime.executeTask) })
  *         ↓
  *   benson.handleUserMessage(prompt)
  *         ↓  parseIntent (deterministic, no LLM)
@@ -30,9 +30,22 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createBenson } from "@clawde/benson-core";
+import type { TaskSpec, ExecutionResult, ExecuteTaskOptions } from "@clawde/benson-core";
 import { createOrcaRuntime } from "@clawde/orca-core";
-import type { MaestroPort, PappyPort, OrcaRunCtx, OrcaTaskSpec } from "@clawde/orca-core";
+import type { MaestroPort, PappyPort, OrcaRunCtx, OrcaTaskSpec, OrcaExecutionResult } from "@clawde/orca-core";
 import type { PappyResult, PappyInput } from "@clawde/pappy-core";
+
+// ---------------------------------------------------------------------------
+// Cross-boundary adapter: benson-core and orca-core are independent packages
+// with structurally compatible but nominally divergent types (permissions field).
+// normalizeTaskSpec() in orca-core already handles the array→object conversion
+// at runtime; this wrapper satisfies TypeScript at the wiring boundary.
+// ---------------------------------------------------------------------------
+function bensonExecuteTask(
+  executeTask: (taskSpec: OrcaTaskSpec, options?: { abortSignal?: AbortSignal }) => Promise<OrcaExecutionResult>
+): (task: TaskSpec, options?: ExecuteTaskOptions) => Promise<ExecutionResult> {
+  return (task, opts) => executeTask(task as unknown as OrcaTaskSpec, opts) as Promise<ExecutionResult>;
+}
 
 // ---------------------------------------------------------------------------
 // Stub builders
@@ -108,7 +121,7 @@ async function runPipeline(
     }),
   });
 
-  const benson = createBenson({ executeTask: runtime.executeTask });
+  const benson = createBenson({ executeTask: bensonExecuteTask(runtime.executeTask) });
 
   const start = Date.now();
   const reply = await benson.handleUserMessage(prompt);
@@ -699,7 +712,7 @@ describe("Pipeline: H — repair loop", () => {
       initialOutput: "Partial broken output.",
       repairedOutput: "The function has been implemented correctly.",
     });
-    const benson = createBenson({ executeTask: runtime.executeTask });
+    const benson = createBenson({ executeTask: bensonExecuteTask(runtime.executeTask) });
 
     const reply = await benson.handleUserMessage("Implement a debounce function");
 
@@ -715,7 +728,7 @@ describe("Pipeline: H — repair loop", () => {
       initialOutput: "Brain: error in generation\n<thinking>Something went wrong.</thinking>",
       repairedOutput: "The debounce function has been implemented.",
     });
-    const benson = createBenson({ executeTask: runtime.executeTask });
+    const benson = createBenson({ executeTask: bensonExecuteTask(runtime.executeTask) });
 
     const reply = await benson.handleUserMessage("Implement a debounce function");
 
@@ -735,7 +748,7 @@ describe("Pipeline: H — repair loop", () => {
         "The implementation is now correct.",
       ].join("\n"),
     });
-    const benson = createBenson({ executeTask: runtime.executeTask });
+    const benson = createBenson({ executeTask: bensonExecuteTask(runtime.executeTask) });
 
     const reply = await benson.handleUserMessage("Fix the broken function");
 
@@ -751,7 +764,7 @@ describe("Pipeline: H — repair loop", () => {
       repairedOutput: "Still cannot complete the implementation.",
       repairVerdicts: ["FAIL", "FAIL"],
     });
-    const benson = createBenson({ executeTask: runtime.executeTask });
+    const benson = createBenson({ executeTask: bensonExecuteTask(runtime.executeTask) });
 
     const reply = await benson.handleUserMessage("Fix the broken function");
 

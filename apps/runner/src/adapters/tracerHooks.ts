@@ -13,11 +13,12 @@
  */
 
 export type TracerEvent =
-  | { type: "dewey:brief";   data: { userName: string; relevantPreferences: string[]; relevantContext: string[]; availableApps: string[]; suggestedTone: string } }
-  | { type: "dewey:review";  data: { approved: boolean; concerns: string[]; suggestions: string[] } }
-  | { type: "brain:route";   data: { role: string; isFallback: boolean; warning?: string; coreRole: string } }
-  | { type: "tool:call";     data: { tool: string; input: Record<string, unknown> } }
-  | { type: "tool:result";   data: { tool: string; ok: boolean; outputLength: number; error?: string } };
+  | { type: "dewey:brief";          data: { userName: string; relevantPreferences: string[]; relevantContext: string[]; availableApps: string[]; suggestedTone: string } }
+  | { type: "dewey:review";         data: { approved: boolean; concerns: string[]; suggestions: string[] } }
+  | { type: "brain:route";          data: { path: string; role?: string; isFallback?: boolean; source?: string; subtasks?: unknown[] } }
+  | { type: "brain:route_fallback"; data: { reason: string; heuristicRole: string } }
+  | { type: "tool:call";            data: { tool: string; input: Record<string, unknown> } }
+  | { type: "tool:result";          data: { tool: string; ok: boolean; outputLength: number; error?: string } };
 
 type HookFn = (event: TracerEvent) => void;
 
