@@ -20,6 +20,30 @@ export default defineConfig({
         find: "@clawde/orca-core",
         replacement: resolve(__dirname, "../../packages/orca-core/src/index.ts"),
       },
+      {
+        find: "maestro-core",
+        replacement: resolve(__dirname, "../../packages/maestro-core/src/index.ts"),
+      },
+      {
+        find: "@clawde/miranda-core",
+        replacement: resolve(__dirname, "../../packages/miranda-core/src/index.ts"),
+      },
+      {
+        find: "@clawde/pappy-core",
+        replacement: resolve(__dirname, "../../packages/pappy-core/src/index.ts"),
+      },
+      {
+        find: "@clawde/dewey-core",
+        replacement: resolve(__dirname, "../../packages/dewey-core/src/index.ts"),
+      },
+      {
+        find: "@clawde/tool-bootstrap",
+        replacement: resolve(__dirname, "../../packages/tool-bootstrap/src/index.ts"),
+      },
+      {
+        find: "@yakstacks/workbench-core",
+        replacement: resolve(__dirname, "../../packages/workbench-core/src/index.ts"),
+      },
     ],
   },
   test: {
