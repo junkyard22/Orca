@@ -260,6 +260,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           verifyAHPPacket(maestroResult.ahpPacket, {
             outputText: maestroResult.outputText,
             filesChanged: maestroResult.filesChanged,
+            workspaceRoot: workspaceContext?.cwd,
           });
           recordTrace("ahp.verify", {
             packet_id: maestroResult.ahpPacket.id,

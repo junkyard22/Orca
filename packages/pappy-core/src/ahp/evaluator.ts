@@ -22,6 +22,7 @@ import {
   deriveDefaultACs,
   mergeAcceptanceCriteria,
 } from "./taskClassifier.js";
+import { verifyFileChanges } from "./fileVerifier.js";
 
 // ---------------------------------------------------------------------------
 // Input shape — only the fields Pappy needs from the execution result
@@ -31,7 +32,18 @@ export interface AHPVerificationInput {
   /** Agent's final text output. */
   outputText?: string;
   /** Files written/modified during execution. */
-  filesChanged?: Array<{ path: string; diff?: string }>;
+  filesChanged?: Array<{
+    path: string;
+    diff?: string;
+    /** Add/Modify/Delete — sourced from OrcaFileChange.changeType. */
+    changeType?: "A" | "M" | "D";
+  }>;
+  /**
+   * Absolute path to the workspace root.  When provided Pappy can perform
+   * disk-based file verification (existence + content reads) in addition to
+   * checking the in-memory filesChanged list.
+   */
+  workspaceRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,9 +234,19 @@ export function verifyAHPPacket(
     packet.expectedOutput.acceptanceCriteria,
     derived,
   );
-
+  // ── Step 3c: File change verification for FileWrite / CodeEdit tasks ───────────
+  // Returns precise, disk-backed check results that override the keyword heuristic
+  // for the matching default ACs.
+  const fileOverrides = verifyFileChanges(packet, input, taskType);
   // ── Step 4: Acceptance Criteria evaluation ─────────────────────────────────
   const acResults = effectiveACs.map((ac, i) => {
+    // Use file-verification override when available — it provides stronger
+    // evidence than the generic keyword heuristic.
+    const overrideKey = ac.toLowerCase().trim();
+    if (fileOverrides.has(overrideKey)) {
+      const ov = fileOverrides.get(overrideKey)!;
+      return { id: `PAC${i + 1}`, ac, passed: ov.passed, evidence: ov.evidence };
+    }
     const { passed, evidence } = checkACAgainstOutput(ac, input);
     return { id: `PAC${i + 1}`, ac, passed, evidence };
   });

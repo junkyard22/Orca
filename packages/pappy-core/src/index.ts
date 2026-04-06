@@ -4,6 +4,8 @@ export { traceEvaluation } from "./pappy-trace.js";
 export { verifyAHPPacket } from "./ahp/evaluator.js";
 export type { AHPVerificationInput } from "./ahp/evaluator.js";
 export { TaskType, classifyTaskType, deriveDefaultACs, mergeAcceptanceCriteria } from "./ahp/taskClassifier.js";
+export { verifyFileChanges, extractExpectedPaths } from "./ahp/fileVerifier.js";
+export type { FileCheckResult, FileVerificationOverrides } from "./ahp/fileVerifier.js";
 export type {
   PappyInput,
   PappyResult,
