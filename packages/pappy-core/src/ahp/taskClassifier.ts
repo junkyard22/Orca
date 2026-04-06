@@ -161,7 +161,7 @@ const DEFAULT_ACS: Readonly<Record<TaskType, readonly string[]>> = {
   [TaskType.CodeGeneration]: [
     "compiles without errors",
     "implements the described interface",
-    "no hardcoded values",
+    "avoids unjustified hardcoded values",
   ],
   [TaskType.CodeEdit]: [
     "existing tests continue to pass",
@@ -195,6 +195,39 @@ export function deriveDefaultACs(taskType: TaskType): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Soft / hard AC classification
+// ---------------------------------------------------------------------------
+
+/**
+ * Priority of an acceptance criterion:
+ *   hard — structural or factual; failures drive FAIL/WARN verdicts directly.
+ *   soft — stylistic or subjective; soft-only failures downgrade FAIL → WARN.
+ */
+export type ACPriority = "hard" | "soft";
+
+/**
+ * Default ACs that are stylistic/subjective rather than structural.
+ * A FAIL verdict requires at least one hard AC to be failing;
+ * if only soft ACs fail the verdict is downgraded to WARN.
+ */
+const SOFT_DEFAULT_ACS = new Set<string>([
+  "appropriate length",
+  "appropriate level of detail",
+]);
+
+/**
+ * Return the priority of an acceptance criterion text.
+ *
+ * All user-authored (packet-level) ACs are treated as hard — the author
+ * explicitly chose them, so they carry full weight.
+ *
+ * Only the specific derived default ACs listed in SOFT_DEFAULT_ACS are soft.
+ */
+export function getACPriority(acText: string): ACPriority {
+  return SOFT_DEFAULT_ACS.has(acText.toLowerCase().trim()) ? "soft" : "hard";
+}
+
+// ---------------------------------------------------------------------------
 // AC merge — packet ACs take precedence
 // ---------------------------------------------------------------------------
 
@@ -210,8 +243,8 @@ export function deriveDefaultACs(taskType: TaskType): string[] {
  * suppress a default AC (by having packet ACs that already cover it).
  */
 export function mergeAcceptanceCriteria(
-  packetACs: string[],
-  derived: string[],
+  packetACs: readonly string[],
+  derived: readonly string[],
 ): string[] {
   const existing = new Set(packetACs.map((ac) => ac.toLowerCase().trim()));
   const toAdd    = derived.filter((ac) => !existing.has(ac.toLowerCase().trim()));

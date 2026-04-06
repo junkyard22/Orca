@@ -59,6 +59,13 @@ export { createRunAnalysisWriter } from "./analysis/runAnalysis.js";
 export type { RunAnalysisWriter } from "./analysis/runAnalysis.js";
 
 // Agent Handoff Protocol (re-exported from miranda-core — canonical home)
-export type { AHPInput, AHPConstraint, AHPExpectedOutput, AHPTraceEntry, AHPMeta, AHPPacket } from "./ahp/types.js";
-export { AHPLifecycle, AHPVerdict } from "./ahp/types.js";
+export type {
+  AHPInput, AHPConstraint, AHPExpectedOutput, AHPTraceEntry, AHPMeta, AHPPacket,
+  CreatePacketOptions,
+} from "./ahp/types.js";
+export {
+  AHPLifecycle, AHPVerdict, AHPPacketRole,
+  createRootPacket, createChildPacket, registerChildOnRoot, deriveRootLifecycleFromChildren,
+  appendAHPTrace, isTerminalAHPLifecycle,
+} from "./ahp/types.js";
 

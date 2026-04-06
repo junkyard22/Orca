@@ -30,6 +30,14 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
 
+      - name: Expose Node.js headers for native add-ons
+        # node-gyp (used by better-sqlite3) tries to download Node headers from
+        # nodejs.org, which times out in restricted CI runners.  The headers are
+        # already on disk because actions/setup-node installs them.  Setting
+        # npm_config_nodedir to the Node prefix tells node-gyp to use those
+        # local headers instead of fetching them over the network.
+        run: echo "npm_config_nodedir=$(dirname $(dirname $(which node)))" >> $GITHUB_ENV
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

@@ -14,13 +14,14 @@
  * Callers that need an immutable copy must clone before calling.
  */
 
-import type { AHPPacket } from "@clawde/miranda-core";
-import { AHPLifecycle, AHPVerdict } from "@clawde/miranda-core";
+import type { AHPPacket, AHPEvalMeta } from "@clawde/miranda-core";
+import { AHPLifecycle, AHPVerdict, appendAHPTrace } from "@clawde/miranda-core";
 import { transitionAHPLifecycle } from "@clawde/miranda-core";
 import {
   classifyTaskType,
   deriveDefaultACs,
   mergeAcceptanceCriteria,
+  getACPriority,
 } from "./taskClassifier.js";
 import { verifyFileChanges } from "./fileVerifier.js";
 import { buildAHPRepairPrompt } from "./repairPrompt.js";
@@ -191,7 +192,7 @@ export function verifyAHPPacket(
       }
       packet.lifecycle = AHPLifecycle.FAILED;
     }
-    packet.trace.push({
+    appendAHPTrace(packet, {
       timestamp: now,
       state: AHPLifecycle.FAILED,
       actor: "pappy",
@@ -210,7 +211,7 @@ export function verifyAHPPacket(
 
   if (!hasWorkerEntry || !hasOutput) {
     packet.verdict = AHPVerdict.INCONCLUSIVE;
-    packet.trace.push({
+    appendAHPTrace(packet, {
       timestamp: now,
       state: packet.lifecycle,
       actor: "pappy",
@@ -235,6 +236,16 @@ export function verifyAHPPacket(
     packet.expectedOutput.acceptanceCriteria,
     derived,
   );
+
+  // Store structured classification metadata on the packet.  Consumers inspect
+  // these typed fields instead of parsing trace note strings.
+  const evalMeta: AHPEvalMeta = {
+    taskType,
+    derivedAcceptanceCriteria: derived,
+    mergedAcceptanceCriteria:  effectiveACs,
+  };
+  packet.evalMeta = evalMeta;
+
   // ── Step 3c: File change verification for FileWrite / CodeEdit tasks ───────────
   // Returns precise, disk-backed check results that override the keyword heuristic
   // for the matching default ACs.
@@ -267,8 +278,11 @@ export function verifyAHPPacket(
   } else if (passed.length > 0 && failed.length > 0) {
     verdict = AHPVerdict.WARN;
   } else {
-    // All ACs failed
-    verdict = AHPVerdict.FAIL;
+    // All ACs failed.  If every failure is a soft (stylistic) criterion, downgrade
+    // to WARN — soft-only failures should not drive a hard FAIL verdict.
+    verdict = failed.every((r) => getACPriority(r.ac) === "soft")
+      ? AHPVerdict.WARN
+      : AHPVerdict.FAIL;
   }
 
   packet.verdict = verdict;
@@ -294,7 +308,7 @@ export function verifyAHPPacket(
     noteParts.push(`schema missing keys: ${missingKeys.join(", ")}`);
   }
 
-  packet.trace.push({
+  appendAHPTrace(packet, {
     timestamp: now,
     state: packet.lifecycle,
     actor: "pappy",

@@ -43,6 +43,18 @@ export interface OrcaExecutionResult {
   summary?: string;
   artifacts?: unknown;
   followUpQuestion?: string;
+  /**
+   * Root AHP packet for this run.
+   * Present when AHP is enabled (i.e. when the runtime created one).
+   * Carries the orchestration-level lifecycle, objective, and trace.
+   */
+  ahpRootPacket?: AHPPacket;
+  /**
+   * Child AHP packets linked to the root packet (one per worker branch).
+   * Empty or absent for single-run (non-decomposed) tasks where the root
+   * was finalized directly (Option A single-run behaviour).
+   */
+  ahpChildPackets?: AHPPacket[];
 }
 
 export interface OrcaFileChange {
@@ -120,6 +132,12 @@ export interface OrcaMaestroResult {
    * Pappy receives this via the host runtime for final verification.
    */
   ahpPacket?: AHPPacket;
+  /**
+   * Child AHP packets when Maestro performed decomposed/parallel execution.
+   * Each element is a child packet linked to `ahpPacket` (the root).
+   * Absent (or empty) for single-run non-decomposed tasks.
+   */
+  ahpChildPackets?: AHPPacket[];
   /** Populated when Maestro decomposed the task into parallel subagents (Phase 2). */
   subagentRuns?: Array<{
     subagentId: string;
@@ -241,6 +259,15 @@ export interface OrcaRunCtx {
    * The LLM gates (before/after_llm_call) live inside the Miranda pipeline.
    */
   gate?: MirandaGate;
+  /**
+   * Root AHP packet for the current run.
+   * Populated by the runtime before invoking Maestro so that adapters,
+   * workers, and the repair loop can reference the orchestration-level packet
+   * without needing to pass it as an explicit argument.
+   * Never write worker-level execution traces directly to this packet;
+   * those belong on child packets.
+   */
+  ahpRootPacket?: AHPPacket;
   /**
    * Optional approval hook — when set, the agent loop calls this before
    * executing each tool. Return false to deny the call.

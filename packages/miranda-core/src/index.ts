@@ -75,15 +75,26 @@ export type {
 } from "./gate/mirandaGate.js";
 
 // AHP — Agent Handoff Protocol types
-export { AHPLifecycle, AHPVerdict } from "./ahp/types.js";
+export { AHPLifecycle, AHPVerdict, AHPPacketRole } from "./ahp/types.js";
 export type {
   AHPInput,
   AHPConstraint,
   AHPExpectedOutput,
   AHPTraceEntry,
   AHPMeta,
+  AHPEvalMeta,
   AHPPacket,
 } from "./ahp/types.js";
+// AHP helpers — packet mutation utilities
+export {
+  appendAHPTrace,
+  isTerminalAHPLifecycle,
+  createRootPacket,
+  createChildPacket,
+  registerChildOnRoot,
+  deriveRootLifecycleFromChildren,
+} from "./ahp/helpers.js";
+export type { CreatePacketOptions } from "./ahp/helpers.js";
 export { OpenRouterAdapter } from "./llm/openrouter.js";
 export type { OpenRouterConfig } from "./llm/openrouter.js";
 export { OllamaAdapter } from "./llm/ollama.js";

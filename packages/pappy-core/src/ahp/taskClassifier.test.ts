@@ -14,6 +14,7 @@ import {
   classifyTaskType,
   deriveDefaultACs,
   mergeAcceptanceCriteria,
+  getACPriority,
 } from "./taskClassifier.js";
 
 // ---------------------------------------------------------------------------
@@ -129,7 +130,7 @@ describe("deriveDefaultACs", () => {
     expect(acs).toHaveLength(3);
     expect(acs).toContain("compiles without errors");
     expect(acs).toContain("implements the described interface");
-    expect(acs).toContain("no hardcoded values");
+    expect(acs).toContain("avoids unjustified hardcoded values");
   });
 
   it("returns three ACs for CodeEdit", () => {
@@ -228,9 +229,46 @@ describe("mergeAcceptanceCriteria", () => {
   });
 
   it("packet ACs of same count as derived are not duplicated", () => {
-    const packet  = ["compiles without errors", "implements the described interface", "no hardcoded values"];
-    const derived = ["compiles without errors", "implements the described interface", "no hardcoded values"];
+    const packet  = ["compiles without errors", "implements the described interface", "avoids unjustified hardcoded values"];
+    const derived = ["compiles without errors", "implements the described interface", "avoids unjustified hardcoded values"];
     const merged  = mergeAcceptanceCriteria(packet, derived);
     expect(merged).toHaveLength(3); // no duplicates added
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getACPriority
+// ---------------------------------------------------------------------------
+
+describe("getACPriority", () => {
+  it("classifies 'appropriate length' as soft", () => {
+    expect(getACPriority("appropriate length")).toBe("soft");
+  });
+
+  it("classifies 'appropriate level of detail' as soft", () => {
+    expect(getACPriority("appropriate level of detail")).toBe("soft");
+  });
+
+  it("classifies 'compiles without errors' as hard", () => {
+    expect(getACPriority("compiles without errors")).toBe("hard");
+  });
+
+  it("classifies 'avoids unjustified hardcoded values' as hard", () => {
+    expect(getACPriority("avoids unjustified hardcoded values")).toBe("hard");
+  });
+
+  it("is case-insensitive for soft ACs", () => {
+    expect(getACPriority("APPROPRIATE LENGTH")).toBe("soft");
+    expect(getACPriority("Appropriate Level Of Detail")).toBe("soft");
+  });
+
+  it("trims whitespace before matching", () => {
+    expect(getACPriority("  appropriate length  ")).toBe("soft");
+  });
+
+  it("classifies user-authored ACs as hard by default", () => {
+    expect(getACPriority("implements the described interface")).toBe("hard");
+    expect(getACPriority("does not hallucinate facts")).toBe("hard");
+    expect(getACPriority("")).toBe("hard");
   });
 });

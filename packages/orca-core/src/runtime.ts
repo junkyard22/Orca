@@ -10,6 +10,7 @@ import type {
   OrcaPipelineTrace,
   OrcaPipelineTraceEntry,
 } from "./types.js";
+import type { AHPPacket } from "./ahp/types.js";
 import type { PappyResult } from "@clawde/pappy-core";
 import { verifyAHPPacket } from "@clawde/pappy-core";
 import type { RunRecord } from "./persistence/types.js";
@@ -17,6 +18,14 @@ import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
 import { handleRepairLoop } from "./repairLoop.js";
 import { isAbortError, throwIfAborted } from "./abort.js";
+import {
+  createRootPacket,
+  registerChildOnRoot,
+  deriveRootLifecycleFromChildren,
+  appendAHPTrace,
+  isTerminalAHPLifecycle,
+} from "./ahp/types.js";
+import { AHPLifecycle } from "./ahp/types.js";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -163,6 +172,37 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       fileWrite: normalizedTaskSpec.permissions?.fileWrite ?? true,
       shellExec: normalizedTaskSpec.permissions?.shellExec ?? false,
       toolsEnabled: !!ctx.tools,
+    });
+
+    // ── Root AHP packet ────────────────────────────────────────────────────────────
+    // Created once per run.  Miranda transitions it PENDING→RUNNING.
+    // Workers operate on child packets; the root lifecycle is finalized
+    // from children (or directly, for single-run Option-A paths).
+    const ahpRootPacket = createRootPacket({
+      id: `${taskId}_root`,
+      objective: normalizedTaskSpec.intent,
+      expectedOutput: {
+        schema:             {},
+        acceptanceCriteria: normalizedTaskSpec.goals ?? [],
+      },
+    });
+    // Pass root packet through ctx so adapters/workers can reference it.
+    ctx.ahpRootPacket = ahpRootPacket;
+
+    // Miranda: PENDING → RUNNING (orchestration starts)
+    const now0 = new Date().toISOString();
+    ahpRootPacket.lifecycle       = AHPLifecycle.RUNNING;
+    ahpRootPacket.meta.startedAt  = now0;
+    ahpRootPacket.meta.updatedAt  = now0;
+    appendAHPTrace(ahpRootPacket, {
+      timestamp: now0,
+      state: AHPLifecycle.RUNNING,
+      actor: "orca-runtime",
+      note: `Run ${taskId} started`,
+    });
+    recordTrace("ahp.root_packet.created", {
+      packet_id: ahpRootPacket.id,
+      objective: ahpRootPacket.objective,
     });
 
     let repairPasses = 0;
@@ -389,6 +429,79 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     unsubRepair();
     unsubDewey();
     unsubMiranda();
+
+    // ── Finalize root AHP packet ───────────────────────────────────────────
+    // Collect child packets from the maestro result (if any).
+    const ahpChildPackets: AHPPacket[] = [];
+
+    if (persistedMaestroResult?.ahpPacket) {
+      const childPacket = persistedMaestroResult.ahpPacket;
+      // Hydrate hierarchy fields if the Maestro adapter pre-dates hierarchy support.
+      if (!childPacket.parentPacketId) {
+        (childPacket as { parentPacketId?: string }).parentPacketId = ahpRootPacket.id;
+      }
+      registerChildOnRoot(ahpRootPacket, childPacket);
+      ahpChildPackets.push(childPacket);
+    }
+
+    // Also collect any explicit child packets Maestro returned.
+    if (persistedMaestroResult?.ahpChildPackets) {
+      for (const cp of persistedMaestroResult.ahpChildPackets) {
+        if (!ahpChildPackets.includes(cp)) {
+          if (!cp.parentPacketId) {
+            (cp as { parentPacketId?: string }).parentPacketId = ahpRootPacket.id;
+          }
+          registerChildOnRoot(ahpRootPacket, cp);
+          ahpChildPackets.push(cp);
+        }
+      }
+    }
+
+    // Derive final root lifecycle.
+    // Option A (single-run, no decompose): root packet finalized directly from
+    // execution result because there are no child packets from Maestro.
+    // If child packets exist, use aggregate rules.
+    const nowFinal = new Date().toISOString();
+    if (!isTerminalAHPLifecycle(ahpRootPacket.lifecycle)) {
+      let finalLifecycle: AHPLifecycle;
+      if (ahpChildPackets.length > 0) {
+        // Aggregate children — derive from their terminal states.
+        finalLifecycle = deriveRootLifecycleFromChildren(ahpChildPackets);
+      } else {
+        // Option A: no children — finalize directly from execution result.
+        if (abortError) {
+          finalLifecycle = AHPLifecycle.INCONCLUSIVE;
+        } else if (result.status === "SUCCESS") {
+          finalLifecycle = AHPLifecycle.COMPLETE;
+        } else if (result.status === "WARN") {
+          // WARN means work completed but quality was imperfect — still COMPLETE.
+          finalLifecycle = AHPLifecycle.COMPLETE;
+        } else {
+          // FAIL status → FAILED lifecycle
+          finalLifecycle = AHPLifecycle.FAILED;
+        }
+      }
+      ahpRootPacket.lifecycle       = finalLifecycle;
+      ahpRootPacket.meta.completedAt = nowFinal;
+      ahpRootPacket.meta.updatedAt   = nowFinal;
+      appendAHPTrace(ahpRootPacket, {
+        timestamp: nowFinal,
+        state:     finalLifecycle,
+        actor:     "orca-runtime",
+        note: ahpChildPackets.length > 0
+          ? `Aggregated from ${ahpChildPackets.length} child packet(s)`
+          : `Single-run finalization; result=${result.status}${abortError ? " (aborted)" : ""}`,
+      });
+      recordTrace("ahp.root_packet.finalized", {
+        packet_id:  ahpRootPacket.id,
+        lifecycle:  finalLifecycle,
+        childCount: ahpChildPackets.length,
+      });
+    }
+
+    // Attach root/child packets to the execution result.
+    result.ahpRootPacket   = ahpRootPacket;
+    result.ahpChildPackets = ahpChildPackets.length > 0 ? ahpChildPackets : undefined;
 
     const trace: OrcaPipelineTrace = {
       version: 1,

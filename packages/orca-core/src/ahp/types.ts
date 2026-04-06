@@ -12,6 +12,17 @@ export type {
   AHPTraceEntry,
   AHPMeta,
   AHPPacket,
+  CreatePacketOptions,
 } from "@clawde/miranda-core";
 
-export { AHPLifecycle, AHPVerdict } from "@clawde/miranda-core";
+export {
+  AHPLifecycle,
+  AHPVerdict,
+  AHPPacketRole,
+  createRootPacket,
+  createChildPacket,
+  registerChildOnRoot,
+  deriveRootLifecycleFromChildren,
+  appendAHPTrace,
+  isTerminalAHPLifecycle,
+} from "@clawde/miranda-core";
