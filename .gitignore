@@ -21,6 +21,10 @@ release/
 .env.*.local
 .env.tracer
 
+# User config files — contain real API keys; use *.example.json as templates
+orca-settings.json
+apps/desktop/alibaba-config.json
+
 # Logs
 *.log
 npm-debug.log*
