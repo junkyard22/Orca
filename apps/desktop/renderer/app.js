@@ -29,6 +29,9 @@ if (!window.orca) {
     loadSession:       async () => null,
     deleteSession:     async () => ({ ok: false, error: "No Electron context" }),
     abortTask:         () => {},
+    onStreamStart:     () => () => {},
+    onStreamChunk:     () => () => {},
+    onStreamEnd:       () => () => {},
   };
 }
 
@@ -91,6 +94,9 @@ let pendingStats = null;
 let pendingPipelineSummary = null;
 // Pipeline event log — collects key events during a task for display in the badge.
 let pipelineEventLog = [];
+// Whether the pipeline summary badge has already been rendered for the current task.
+// Set by onStreamEnd when the summary is available; prevents double-render in sendMessage.
+let pipelineBadgeRendered = false;
 // Tool call cards keyed by pending approval id.
 const toolCallCards = new Map();
 
@@ -301,41 +307,6 @@ orca.onOrcaEvent((e) => {
     return;
   }
 
-  // Stream tokens arrive here during the sendMessage await.
-  // Build a live bubble and append each chunk as raw text;
-  // sendMessage's finally block replaces the raw text with rendered markdown.
-  // Guard with busy: late IPC delivery after the task resolves must NOT create
-  // a second bubble (would cause the response to appear twice).
-  if (e.type === "stream:token") {
-    if (!busy) return;
-    if (!streamBubble) {
-      removeThinking();
-      showMessages();
-      const div = document.createElement("div");
-      div.className = "msg orca streaming";
-      div.innerHTML = `<div class="msg-label">Orca</div><div class="msg-bubble stream-content"></div>`;
-      messages.appendChild(div);
-      streamBubble = div;
-      streamText   = "";
-    }
-    streamText += e.chunk;
-    // If a <tool_call> tag has appeared, this is the agent's internal ReAct
-    // reasoning + tool invocation — not a final answer.  Wipe the buffer so
-    // the internal monologue never shows, and skip rendering until the next
-    // fresh iteration (stream:reset or a new streamBubble will start clean).
-    if (/<tool_call>/i.test(streamText)) {
-      streamText = "";
-      const bubbleEl = streamBubble.querySelector(".stream-content");
-      if (bubbleEl) bubbleEl.textContent = "";
-      scrollToBottom();
-      return;
-    }
-    const bubbleEl = streamBubble.querySelector(".stream-content");
-    if (bubbleEl) bubbleEl.textContent = streamText;
-    scrollToBottom();
-    return;
-  }
-
   const labels = {
     "task:start":    "planning\u2026",
     "maestro:start": e.isRepair ? `repairing (pass ${e.attempt})\u2026` : "generating\u2026",
@@ -348,6 +319,63 @@ orca.onOrcaEvent((e) => {
   // Only update the status bar while a task is actively running;
   // late-arriving events after the task resolves should not override "ready".
   if (busy) setStatus(label, e.type !== "task:done");
+});
+
+// ── Streaming IPC channels ────────────────────────────────────────────────
+// Dedicated per-task lifecycle: start → chunks → end.
+// These take ownership of bubble creation/teardown and cursor control.
+// The general orca-event stream:token path no longer touches the bubble.
+
+orca.onStreamStart((_data) => {
+  if (!busy) return;
+  if (streamBubble) {
+    // Repair rewrite: reuse the existing bubble — re-add streaming class and clear content.
+    streamText = "";
+    streamBubble.classList.add("streaming");
+    const bubbleEl = streamBubble.querySelector(".stream-content");
+    if (bubbleEl) bubbleEl.textContent = "";
+    return;
+  }
+  removeThinking();
+  showMessages();
+  const div = document.createElement("div");
+  div.className = "msg orca streaming";
+  div.innerHTML = `<div class="msg-label">Orca</div><div class="msg-bubble stream-content"></div>`;
+  messages.appendChild(div);
+  streamBubble = div;
+  streamText   = "";
+  scrollToBottom();
+});
+
+orca.onStreamChunk(({ chunk }) => {
+  if (!busy || !streamBubble) return;
+  streamText += chunk;
+  // Suppress ReAct internal monologue — <tool_call> blocks are never the final answer.
+  if (/<tool_call>/i.test(streamText)) {
+    streamText = "";
+    const bubbleEl = streamBubble.querySelector(".stream-content");
+    if (bubbleEl) bubbleEl.textContent = "";
+    scrollToBottom();
+    return;
+  }
+  const bubbleEl = streamBubble.querySelector(".stream-content");
+  if (bubbleEl) bubbleEl.textContent = streamText;
+  scrollToBottom();
+});
+
+orca.onStreamEnd((_data) => {
+  // Remove blinking cursor — generation is finished.
+  if (streamBubble) streamBubble.classList.remove("streaming");
+  // Render the pipeline summary badge immediately when the summary has already
+  // arrived via orca-event (typical path: summary fires before stream-end IPC).
+  // For mid-task repair resets the summary is not set yet — badge renders later
+  // from sendMessage's post-resolve block.
+  if (pendingPipelineSummary) {
+    pendingPipelineSummary._eventLog = pipelineEventLog.slice();
+    appendPipelineBadge(pendingPipelineSummary);
+    pendingPipelineSummary = null;
+    pipelineBadgeRendered = true;
+  }
 });
 
 // ── Chat helpers ──────────────────────────────────────────────────────────
@@ -801,6 +829,7 @@ async function sendMessage() {
   busy = true;
   activeSessionId = null;
   pipelineEventLog = [];
+  pipelineBadgeRendered = false;
   setInputEnabled(false);
   inputEl.value = "";
   autoResize();
@@ -853,7 +882,7 @@ async function sendMessage() {
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
     const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary;
-    if (summaryToRender) {
+    if (summaryToRender && !pipelineBadgeRendered) {
       summaryToRender._eventLog = pipelineEventLog.slice();
       appendPipelineBadge(summaryToRender);
       pendingPipelineSummary = null;

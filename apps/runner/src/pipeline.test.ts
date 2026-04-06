@@ -113,7 +113,10 @@ async function runPipeline(
   const runtime = createOrcaRuntime({
     maestro: stubMaestro(maestroOutput),
     pappy: stubPappy(pappyVerdict),
-    llm: { complete: async (p: string) => ({ text: `llm: ${p}` }) },
+    llm: {
+      complete: async (p: string) => ({ text: `llm: ${p}` }),
+      stream:   async (p: string, _opts: unknown, onChunk: (c: string) => void) => { const t = `llm: ${p}`; onChunk(t); return { text: t }; },
+    },
     ...(opts.captureTrace && {
       writeTrace: (trace) => {
         traceEntries.push(...trace.entries.map((e) => e.stage));
@@ -432,7 +435,10 @@ describe("Pipeline: E — followUpQuestion sanitization in real pipeline", () =>
           // Inject followUpQuestion via the execution result contract
         }),
       },
-      llm: { complete: async (p: string) => ({ text: `llm: ${p}` }) },
+      llm: {
+        complete: async (p: string) => ({ text: `llm: ${p}` }),
+        stream:   async (p: string, _opts: unknown, onChunk: (c: string) => void) => { const t = `llm: ${p}`; onChunk(t); return { text: t }; },
+      },
     });
 
     // Bypass the runtime and inject followUpQuestion directly through Benson's
@@ -702,7 +708,10 @@ describe("Pipeline: H — repair loop", () => {
     return createOrcaRuntime({
       maestro,
       pappy,
-      llm: { complete: async (p: string) => ({ text: `llm: ${p}` }) },
+      llm: {
+        complete: async (p: string) => ({ text: `llm: ${p}` }),
+        stream:   async (p: string, _opts: unknown, onChunk: (c: string) => void) => { const t = `llm: ${p}`; onChunk(t); return { text: t }; },
+      },
       maxRepairPasses: 2,
     });
   }

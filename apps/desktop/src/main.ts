@@ -1221,6 +1221,9 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   // renderer may receive the invoke response before the orca-event message
   // if they arrive on different IPC channels (race condition on long tasks).
   let capturedPipelineSummary: OrcaEvent | undefined;
+  // Track streaming state for dedicated orca:stream-start/chunk/end channels.
+  let isStreaming = false;
+  let streamRunId = "";
   const unsubs = EVENT_TYPES.map((type) =>
     runtime!.on(type, (e: OrcaEvent) => {
       win?.webContents.send("orca-event", e);
@@ -1248,6 +1251,24 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
         case "pipeline:summary":
           console.log(`[Orca]   pipeline:summary  role=${e.role}  verdict=${e.verdict}  confidence=${Math.round(e.confidence * 100)}%  issues=${e.issueCount}  duration=${e.durationMs}ms`);
           break;
+        case "stream:token": {
+          const te = e as Extract<OrcaEvent, { type: "stream:token" }>;
+          if (!isStreaming) {
+            isStreaming = true;
+            streamRunId = te.taskId;
+            win?.webContents.send("orca:stream-start", { runId: te.taskId });
+          }
+          win?.webContents.send("orca:stream-chunk", { chunk: te.chunk, runId: te.taskId });
+          break;
+        }
+        case "stream:reset": {
+          const re = e as Extract<OrcaEvent, { type: "stream:reset" }>;
+          if (isStreaming) {
+            isStreaming = false;
+            win?.webContents.send("orca:stream-end", { runId: re.taskId });
+          }
+          break;
+        }
       }
     }),
   );
@@ -1273,6 +1294,10 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     ]);
     return { ...result, pipelineSummary: capturedPipelineSummary };
   } finally {
+    if (isStreaming) {
+      isStreaming = false;
+      win?.webContents.send("orca:stream-end", { runId: streamRunId });
+    }
     activeAbortResolve = null;   // clean up if task finished naturally
     if (activeAbortController === abortController) {
       activeAbortController = null;

@@ -1,6 +1,8 @@
 export { evaluateWithPappy } from "./pappy.js";
 export { buildRepairTask } from "./repair.js";
 export { traceEvaluation } from "./pappy-trace.js";
+export { verifyAHPPacket } from "./ahp/evaluator.js";
+export type { AHPVerificationInput } from "./ahp/evaluator.js";
 export type {
   PappyInput,
   PappyResult,

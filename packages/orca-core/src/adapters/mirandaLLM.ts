@@ -124,5 +124,29 @@ export function createMirandaLLMService(
       });
       return { text: extractText(record) ?? "" };
     },
+
+    async stream(prompt, options, onChunk) {
+      // Miranda's multi-stage pipeline does not natively support per-token
+      // streaming for intermediate stages. Route through the answer stage
+      // with onToken so at least the answer tokens stream, then resolve.
+      let effectiveConfig = config;
+      if (options?.maxTokens != null) {
+        effectiveConfig = {
+          ...config,
+          stages: {
+            ...config.stages,
+            answer:  { ...config.stages.answer,  maxTokens: options.maxTokens },
+            rewrite: { ...config.stages.rewrite, maxTokens: options.maxTokens },
+          },
+        };
+      }
+
+      const { record } = await runPipeline(prompt, adapter, effectiveConfig, {
+        onToken: onChunk,
+        gate,
+        simple: options?.simple,
+      });
+      return { text: extractText(record) ?? "" };
+    },
   };
 }

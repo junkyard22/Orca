@@ -62,6 +62,7 @@ export type { LLMAdapter } from "./llm/adapter.js";
 // Gate (Miranda's 6-checkpoint validation layer)
 export {
   createMirandaGate,
+  transitionAHPLifecycle,
 } from "./gate/mirandaGate.js";
 export type {
   MirandaGate,
@@ -72,6 +73,17 @@ export type {
   ToolGateContext,
   QCGateContext,
 } from "./gate/mirandaGate.js";
+
+// AHP — Agent Handoff Protocol types
+export { AHPLifecycle, AHPVerdict } from "./ahp/types.js";
+export type {
+  AHPInput,
+  AHPConstraint,
+  AHPExpectedOutput,
+  AHPTraceEntry,
+  AHPMeta,
+  AHPPacket,
+} from "./ahp/types.js";
 export { OpenRouterAdapter } from "./llm/openrouter.js";
 export type { OpenRouterConfig } from "./llm/openrouter.js";
 export { OllamaAdapter } from "./llm/ollama.js";

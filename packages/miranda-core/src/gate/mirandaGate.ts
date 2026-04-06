@@ -11,7 +11,48 @@
  *   after_tool_run   → receipt captured?
  *   before_qc        → non-empty output ready for QC?
  *   after_qc         → verdict well-formed and logged?
+ *
+ * AHP enforcement (layered within gate logic):
+ *   - transitionAHPLifecycle  validates state-machine transitions; throws on illegal moves
+ *   - beforeToolRun           blocks tool execution when lifecycle ≠ RUNNING
+ *   - beforeToolRun           evaluates constraints[]; VIOLATION verdict on any failure
  */
+
+import type { AHPPacket, AHPConstraint } from "../ahp/types.js";
+import { AHPLifecycle, AHPVerdict } from "../ahp/types.js";
+
+// ---------------------------------------------------------------------------
+// AHP lifecycle transition enforcement
+// ---------------------------------------------------------------------------
+
+const LEGAL_AHP_TRANSITIONS: ReadonlyArray<readonly [AHPLifecycle, AHPLifecycle]> = [
+  [AHPLifecycle.PENDING, AHPLifecycle.RUNNING],
+  [AHPLifecycle.RUNNING, AHPLifecycle.COMPLETE],
+  [AHPLifecycle.RUNNING, AHPLifecycle.FAILED],
+  [AHPLifecycle.RUNNING, AHPLifecycle.INCONCLUSIVE],
+] as const;
+
+/**
+ * Validate an AHP lifecycle state transition.
+ *
+ * Throws with a descriptive message if the transition is not in the legal set:
+ *   PENDING → RUNNING
+ *   RUNNING → COMPLETE
+ *   RUNNING → FAILED
+ *   RUNNING → INCONCLUSIVE
+ *
+ * All other transitions are illegal.
+ */
+export function transitionAHPLifecycle(from: AHPLifecycle, to: AHPLifecycle): void {
+  const legal = LEGAL_AHP_TRANSITIONS.some(([f, t]) => f === from && t === to);
+  if (!legal) {
+    throw new Error(
+      `[AHP] Illegal lifecycle transition: ${from} \u2192 ${to}. ` +
+      `Legal transitions: PENDING\u2192RUNNING, RUNNING\u2192COMPLETE, ` +
+      `RUNNING\u2192FAILED, RUNNING\u2192INCONCLUSIVE.`,
+    );
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Result & context shapes
@@ -130,6 +171,31 @@ export interface MirandaGateConfig {
     result: GateResult,
     ctx: LLMCallGateContext | ToolGateContext | QCGateContext,
   ) => void;
+
+  // ── AHP enforcement ──────────────────────────────────────────────────────
+
+  /**
+   * When provided, Miranda enforces AHP lifecycle and constraint rules:
+   *   - beforeToolRun blocks unless packet.lifecycle === RUNNING
+   *   - beforeToolRun evaluates packet.constraints[] via checkConstraint;
+   *     any violation blocks execution and triggers onViolation
+   */
+  ahpPacket?: AHPPacket;
+
+  /**
+   * Evaluate a single AHP constraint against the current tool gate context.
+   * Return true if the constraint is satisfied, false if it is violated.
+   * Called for each entry in ahpPacket.constraints[] at beforeToolRun.
+   * Omit to skip per-constraint evaluation (lifecycle check still applies).
+   */
+  checkConstraint?: (constraint: AHPConstraint, ctx: ToolGateContext) => boolean;
+
+  /**
+   * Invoked when a constraint violation is detected.
+   * Use this hook to set packet.verdict = AHPVerdict.VIOLATION and update
+   * the trace — Miranda is stateless and does not mutate the packet directly.
+   */
+  onViolation?: (packet: AHPPacket, violatedConstraints: AHPConstraint[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +208,15 @@ export interface MirandaGateConfig {
  * The returned object is stateless and safe to share across concurrent runs.
  */
 export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
-  const { allowedModels, allowedTools, verbose = false, onGate } = config;
+  const {
+    allowedModels,
+    allowedTools,
+    verbose = false,
+    onGate,
+    ahpPacket,
+    checkConstraint,
+    onViolation,
+  } = config;
 
   function log(msg: string): void {
     if (verbose) console.error(`[Miranda] ${msg}`);
@@ -217,6 +291,40 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
 
     beforeToolRun(ctx): GateResult {
       const violations: string[] = [];
+
+      // ── AHP: lifecycle guard ────────────────────────────────────────────
+      // Tools may only execute when the packet lifecycle is RUNNING.
+      if (ahpPacket !== undefined && ahpPacket.lifecycle !== AHPLifecycle.RUNNING) {
+        const result: GateResult = {
+          allowed: false,
+          reason: `AHP lifecycle gate: tool execution requires lifecycle=RUNNING, got ${ahpPacket.lifecycle}`,
+          violations: [`AHP lifecycle is ${ahpPacket.lifecycle} — tool execution not permitted`],
+        };
+        log(`before_tool_run BLOCKED (AHP lifecycle)  tool=${ctx.tool}  lifecycle=${ahpPacket.lifecycle}`);
+        return report("before_tool_run", result, ctx);
+      }
+
+      // ── AHP: constraint enforcement ─────────────────────────────────────
+      // If a constraint evaluator is provided, test every constraint now.
+      // A single violation blocks execution and triggers the onViolation hook.
+      if (ahpPacket !== undefined && checkConstraint !== undefined) {
+        const violated = ahpPacket.constraints.filter(
+          (c) => !checkConstraint(c, ctx),
+        );
+        if (violated.length > 0) {
+          const ruleList = violated.map((c) => `"${c.rule}" (enforcer: ${c.enforcer})`).join(", ");
+          onViolation?.(ahpPacket, violated);
+          const result: GateResult = {
+            allowed: false,
+            reason: `AHP constraint violation: ${ruleList}`,
+            violations: violated.map((c) =>
+              `VIOLATION — rule: ${c.rule}  enforcer: ${c.enforcer} (verdict set to ${AHPVerdict.VIOLATION})`,
+            ),
+          };
+          log(`before_tool_run BLOCKED (AHP constraint)  tool=${ctx.tool}  rules=${ruleList}`);
+          return report("before_tool_run", result, ctx);
+        }
+      }
 
       if (allowedTools && !allowedTools.includes(ctx.tool)) {
         violations.push(`Tool "${ctx.tool}" not in allowlist`);

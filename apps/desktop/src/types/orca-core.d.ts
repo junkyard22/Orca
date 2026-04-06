@@ -99,18 +99,22 @@ declare module '@clawde/orca-core' {
     }>;
   }
 
+  export interface LLMOptions {
+    maxTokens?: number;
+    temperature?: number;
+    onToken?: (chunk: string) => void;
+    onStreamReset?: () => void;
+    simple?: boolean;
+    enableThinking?: boolean;
+    abortSignal?: AbortSignal;
+  }
+
   export interface OrcaLLMService {
-    complete(
+    complete(prompt: string, opts?: LLMOptions): Promise<{ text: string }>;
+    stream(
       prompt: string,
-      opts?: {
-        maxTokens?: number;
-        temperature?: number;
-        onToken?: (chunk: string) => void;
-        onStreamReset?: () => void;
-        simple?: boolean;
-        enableThinking?: boolean;
-        abortSignal?: AbortSignal;
-      },
+      options: LLMOptions,
+      onChunk: (chunk: string) => void,
     ): Promise<{ text: string }>;
   }
 

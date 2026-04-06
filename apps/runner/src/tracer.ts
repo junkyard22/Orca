@@ -138,6 +138,32 @@ function createTracingLLMService(adapter: LLMAdapter, modelId: string): OrcaLLMS
 
       return result;
     },
+
+    async stream(prompt, options, onChunk) {
+      const n = ++idx;
+      const maxTok = options?.maxTokens ?? 4096;
+      box(`[LLM Stream #${n}]  model=${modelId}  maxTokens=${maxTok}`, C.cyan);
+
+      if (DEBUG) {
+        const sepIdx = prompt.indexOf(SEP);
+        if (sepIdx !== -1) {
+          detail(`system`, prompt.slice(0, sepIdx));
+          detail(`user`, prompt.slice(sepIdx + SEP.length));
+        } else {
+          detail(`prompt`, prompt);
+        }
+      }
+
+      const t0 = Date.now();
+      const result = await direct.stream(prompt, options, onChunk);
+      const ms = Date.now() - t0;
+
+      line("duration", `${ms}ms`, C.yellow);
+      line("response", `${result.text.length} chars`, C.white);
+      if (DEBUG) detail(`response`, result.text);
+
+      return result;
+    },
   };
 }
 

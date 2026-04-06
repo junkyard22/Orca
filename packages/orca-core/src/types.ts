@@ -4,6 +4,7 @@ import type { WorkspaceContext } from "./workspaceContext.js";
 import type { OrcaStore } from "./persistence/types.js";
 import type { ThoughtRecord } from "./persistence/types.js";
 import type { RoleName } from "maestro-core";
+import type { AHPPacket } from "./ahp/types.js";
 
 // ---------------------------------------------------------------------------
 // Task / result shapes
@@ -112,6 +113,13 @@ export interface OrcaMaestroResult {
    * Passed to Pappy so it can enforce them instead of deriving generic ones.
    */
   doneCriteria?: string[];
+  /**
+   * Agent Handoff Protocol packet threaded through the Maestro role pipeline.
+   * Brain creates it (PENDING) → Miranda transitions to RUNNING → worker
+   * appends trace entries → transitions to COMPLETE/FAILED after execution.
+   * Pappy receives this via the host runtime for final verification.
+   */
+  ahpPacket?: AHPPacket;
   /** Populated when Maestro decomposed the task into parallel subagents (Phase 2). */
   subagentRuns?: Array<{
     subagentId: string;
@@ -128,6 +136,19 @@ export interface OrcaMaestroResult {
 // Contains everything Maestro needs without coupling to any specific impl.
 // ---------------------------------------------------------------------------
 
+/** Shared options for LLM calls — used by both complete() and stream(). */
+export interface LLMOptions {
+  maxTokens?: number;
+  temperature?: number;
+  /** Incremental token callback. complete() uses this for optional streaming. */
+  onToken?: (chunk: string) => void;
+  /** Called before a stream restart so callers can clear partial output. */
+  onStreamReset?: () => void;
+  simple?: boolean;
+  enableThinking?: boolean;
+  abortSignal?: AbortSignal;
+}
+
 export interface OrcaLLMService {
   /**
    * Generate text for a prompt.
@@ -136,21 +157,23 @@ export interface OrcaLLMService {
    * pipeline). Miranda's PLAN→ANSWER→CRITIQUE→REWRITE pipeline is the
    * intended future implementation but is not yet the live path.
    *
-   * Pass `onToken` to receive incremental chunks as they stream from the LLM.
-   * Falls back to a single buffered response when the adapter does not support
-   * SSE streaming.
+   * Pass `onToken` inside opts to receive incremental chunks as they stream
+   * from the LLM. Falls back to a single buffered response when the adapter
+   * does not support SSE streaming.
    */
-  complete(
+  complete(prompt: string, opts?: LLMOptions): Promise<{ text: string }>;
+
+  /**
+   * Streaming variant — fires onChunk for every incremental token and
+   * resolves with the full assembled response when the stream closes.
+   *
+   * Falls back to complete() (single buffered call → single onChunk
+   * invocation) when the underlying adapter does not support SSE streaming.
+   */
+  stream(
     prompt: string,
-    opts?: {
-      maxTokens?: number;
-      temperature?: number;
-      onToken?: (chunk: string) => void;
-      onStreamReset?: () => void;
-      simple?: boolean;
-      enableThinking?: boolean;
-      abortSignal?: AbortSignal;
-    },
+    options: LLMOptions,
+    onChunk: (chunk: string) => void,
   ): Promise<{ text: string }>;
 }
 

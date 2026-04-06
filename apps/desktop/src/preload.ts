@@ -158,4 +158,27 @@ contextBridge.exposeInMainWorld("orca", {
 
   // Abort the currently running task (if any).
   abortTask: (): void => ipcRenderer.send("task:abort"),
+
+  // ── Streaming output ─────────────────────────────────────────────────────
+  // Dedicated channels for streaming answer output to the renderer.
+  // Only fires during the agent answer/generation stage — Miranda preflight,
+  // Pappy QC, and repair passes run silently via complete() and never emit.
+
+  onStreamStart: (cb: (data: { runId: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { runId: string }) => cb(data);
+    ipcRenderer.on("orca:stream-start", handler);
+    return () => ipcRenderer.removeListener("orca:stream-start", handler);
+  },
+
+  onStreamChunk: (cb: (data: { chunk: string; runId: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { chunk: string; runId: string }) => cb(data);
+    ipcRenderer.on("orca:stream-chunk", handler);
+    return () => ipcRenderer.removeListener("orca:stream-chunk", handler);
+  },
+
+  onStreamEnd: (cb: (data: { runId: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { runId: string }) => cb(data);
+    ipcRenderer.on("orca:stream-end", handler);
+    return () => ipcRenderer.removeListener("orca:stream-end", handler);
+  },
 });

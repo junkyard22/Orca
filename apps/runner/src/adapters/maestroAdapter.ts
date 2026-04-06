@@ -25,6 +25,8 @@ import type {
   OrcaLLMService,
   WorkspaceContext,
 } from "@clawde/orca-core";
+import type { AHPPacket } from "@clawde/miranda-core";
+import { AHPLifecycle, transitionAHPLifecycle } from "@clawde/miranda-core";
 import { Dewey } from "@clawde/dewey-core";
 import type { BrainPlan, UserBrief } from "@clawde/dewey-core";
 import type { ExtendedOrcaToolService } from "./toolService.js";
@@ -195,8 +197,63 @@ export function createMaestroAdapter(): MaestroPort {
       const routing = await routeRequest(task, orch, ctx, settings);
       traceEvent({ type: "brain:route", data: routing });
 
+      // ── AHP packet flow ──────────────────────────────────────────────────
+      // Brain creates the packet (PENDING) immediately after the routing
+      // decision.  Miranda then authorises execution (PENDING → RUNNING).
+      // The packet is threaded through every subsequent role and returned in
+      // OrcaMaestroResult so the host runtime can hand it to Pappy.
+      const ahpNow = new Date().toISOString();
+      const ahpPacket: AHPPacket = {
+        id: orch.run_id,
+        objective: task.originalUserMessage,
+        lifecycle: AHPLifecycle.PENDING,
+        inputs: task.goals.map((g, i) => ({ id: `input-${i}`, type: "goal", value: g })),
+        constraints: Object.entries(task.constraints ?? {}).map(([rule, value]) => ({
+          rule,
+          enforcer: String(value),
+        })),
+        expectedOutput: {
+          schema: {},
+          acceptanceCriteria: routing.done_criteria ?? task.goals,
+        },
+        trace: [{
+          timestamp: ahpNow,
+          state: AHPLifecycle.PENDING,
+          actor: "brain",
+          note: routing.path === "direct"
+            ? `Brain routed direct to role: ${routing.role}`
+            : `Brain decomposed into ${routing.subtasks.length} subtask(s)`,
+        }],
+        meta: { ackRequired: false, createdAt: ahpNow, updatedAt: ahpNow },
+      };
+
+      // Miranda: PENDING → RUNNING — authorises tool execution for this run.
+      transitionAHPLifecycle(AHPLifecycle.PENDING, AHPLifecycle.RUNNING);
+      ahpPacket.lifecycle = AHPLifecycle.RUNNING;
+      ahpPacket.trace.push({
+        timestamp: new Date().toISOString(),
+        state: AHPLifecycle.RUNNING,
+        actor: "miranda",
+        note: "Lifecycle PENDING→RUNNING; execution authorised",
+      });
+      ahpPacket.meta.updatedAt = new Date().toISOString();
+      traceEvent({ type: "ahp:lifecycle", data: { lifecycle: AHPLifecycle.RUNNING, id: ahpPacket.id } });
+
       if (routing.path === "decompose") {
-        return runSubagentPool(task, routing.subtasks, orch, ctx);
+        const decomposeResult = await runSubagentPool(task, routing.subtasks, orch, ctx, ahpPacket);
+        const allFailed = decomposeResult.subagentRuns?.every((r) => r.status === "failed") ?? false;
+        const decomposeState = allFailed ? AHPLifecycle.FAILED : AHPLifecycle.COMPLETE;
+        transitionAHPLifecycle(AHPLifecycle.RUNNING, decomposeState);
+        ahpPacket.lifecycle = decomposeState;
+        ahpPacket.trace.push({
+          timestamp: new Date().toISOString(),
+          state: decomposeState,
+          actor: "maestro",
+          note: `Subagent pool complete: ${decomposeResult.subagentRuns?.length ?? 0} agent(s)`,
+        });
+        ahpPacket.meta.updatedAt = new Date().toISOString();
+        traceEvent({ type: "ahp:lifecycle", data: { lifecycle: decomposeState, id: ahpPacket.id } });
+        return { ...decomposeResult, ahpPacket };
       }
 
       const { role, isFallback } = routing;
@@ -237,11 +294,21 @@ export function createMaestroAdapter(): MaestroPort {
       }
 
       if (!approved) {
+        transitionAHPLifecycle(AHPLifecycle.RUNNING, AHPLifecycle.INCONCLUSIVE);
+        ahpPacket.lifecycle = AHPLifecycle.INCONCLUSIVE;
+        ahpPacket.trace.push({
+          timestamp: new Date().toISOString(),
+          state: AHPLifecycle.INCONCLUSIVE,
+          actor: "dewey",
+          note: `Pre-flight blocked: ${lastConcerns.join("; ")}`,
+        });
+        ahpPacket.meta.updatedAt = new Date().toISOString();
         return {
           outputText: `I want to make sure I do this right for you. ${lastConcerns.join(" ")}`,
           toolEvents: [],
           filesChanged: [],
           summary: `dewey_review_blocked`,
+          ahpPacket,
         };
       }
 
@@ -250,7 +317,22 @@ export function createMaestroAdapter(): MaestroPort {
       const result = await runSingleAgent(
         task, role, isFallback, orch, ctx, false, brief,
         collectedSuggestions.length > 0 ? collectedSuggestions : undefined,
+        ahpPacket,
       );
+
+      // Transition the packet RUNNING → COMPLETE/FAILED after execution.
+      const anyToolFailed = result.toolEvents?.some((e) => !e.ok) ?? false;
+      const singleState = anyToolFailed ? AHPLifecycle.FAILED : AHPLifecycle.COMPLETE;
+      transitionAHPLifecycle(AHPLifecycle.RUNNING, singleState);
+      ahpPacket.lifecycle = singleState;
+      ahpPacket.trace.push({
+        timestamp: new Date().toISOString(),
+        state: singleState,
+        actor: "maestro",
+        note: `Single-agent execution complete (role: ${role})`,
+      });
+      ahpPacket.meta.updatedAt = new Date().toISOString();
+      traceEvent({ type: "ahp:lifecycle", data: { lifecycle: singleState, id: ahpPacket.id } });
 
       // 8. Dewey post-flight observation.
       dewey.observe({
@@ -264,7 +346,7 @@ export function createMaestroAdapter(): MaestroPort {
         console.warn("[Dewey] Failed to record observation:", err);
       });
 
-      return result;
+      return { ...result, ahpPacket };
     },
   };
 }
@@ -603,6 +685,7 @@ async function runSingleAgent(
   isSubagent: boolean = false,
   deweyBrief?: Pick<UserBrief, "suggestedTone" | "relevantPreferences">,
   deweyAdvisory?: string[],
+  ahpPacket?: AHPPacket,
 ): Promise<OrcaMaestroResult> {
   // Subagents may carry a forcedRole in context (set by runSubagentPool).
   const effectiveRole = (
@@ -610,6 +693,17 @@ async function runSingleAgent(
       ? task.context["forcedRole"]
       : role
   ) as RoleName;
+
+  // Worker role appends trace entry on receipt of the packet.
+  if (ahpPacket) {
+    ahpPacket.trace.push({
+      timestamp: new Date().toISOString(),
+      state: AHPLifecycle.RUNNING,
+      actor: effectiveRole,
+      note: `Worker role received packet${isSubagent ? " (subagent)" : ""}`,
+    });
+    ahpPacket.meta.updatedAt = new Date().toISOString();
+  }
 
   const systemPrompt = getRolePrompt(effectiveRole);
   const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext, deweyBrief, isSubagent, deweyAdvisory);
@@ -632,9 +726,10 @@ async function runSingleAgent(
     toolEvents = result.toolEvents;
     filesChanged = result.filesChanged;
   } else {
-    const { text } = await ctx.llm.complete(
+    const { text } = await ctx.llm.stream(
       `${systemPrompt}\n\n---\n\n${taskPrompt}`,
       { maxTokens: 4096 },
+      (chunk) => ctx.emit?.({ type: "stream:token", taskId: ctx.runId, chunk }),
     );
     outputText = text;
   }
@@ -873,6 +968,7 @@ async function runSubagentPool(
   subtasks: DecomposedSubtask[],
   orch: OrchestrationResult,
   ctx: OrcaRunCtx,
+  ahpPacket?: AHPPacket,
 ): Promise<OrcaMaestroResult> {
   const allToolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
   const subagentRuns: NonNullable<OrcaMaestroResult["subagentRuns"]> = [];
@@ -969,6 +1065,9 @@ async function runSubagentPool(
         orch,
         childCtx,
         true,  // isSubagent
+        undefined, // deweyBrief
+        undefined, // deweyAdvisory
+        ahpPacket,
       );
 
       ctx.emit?.({
@@ -1172,7 +1271,14 @@ async function runAgentLoop(
     // Completion contract: stop immediately when the runtime has already
     // observed a terminal condition — do not call the model again.
     if (loopComplete) break;
-    const { text } = await ctx.llm.complete(conversation, { maxTokens: 8192, simple: true });
+    if (i > 0) {
+      ctx.emit?.({ type: "stream:reset", taskId: ctx.runId });
+    }
+    const { text } = await ctx.llm.stream(
+      conversation,
+      { maxTokens: 8192, simple: true },
+      (chunk) => ctx.emit?.({ type: "stream:token", taskId: ctx.runId, chunk }),
+    );
     lastText = text;
 
     const calls = parseToolCalls(text);

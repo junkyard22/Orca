@@ -11,6 +11,7 @@ import type {
   OrcaPipelineTraceEntry,
 } from "./types.js";
 import type { PappyResult } from "@clawde/pappy-core";
+import { verifyAHPPacket } from "@clawde/pappy-core";
 import type { RunRecord } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
@@ -252,6 +253,20 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
         const qcResult = pappy.evaluate(qcInput);
         persistedQcResult = qcResult;
+
+        // AHP verification — runs after Pappy's main evaluation when the
+        // Maestro adapter threaded an AHPPacket through the pipeline.
+        if (maestroResult.ahpPacket) {
+          verifyAHPPacket(maestroResult.ahpPacket, {
+            outputText: maestroResult.outputText,
+            filesChanged: maestroResult.filesChanged,
+          });
+          recordTrace("ahp.verify", {
+            packet_id: maestroResult.ahpPacket.id,
+            lifecycle: maestroResult.ahpPacket.lifecycle,
+            verdict: maestroResult.ahpPacket.verdict,
+          });
+        }
 
         const afterQcGate = ctx.gate?.afterQC(
           { taskId, outputText: maestroResult.outputText ?? "" },

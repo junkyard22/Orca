@@ -18,7 +18,8 @@ export type TracerEvent =
   | { type: "brain:route";          data: { path: string; role?: string; isFallback?: boolean; source?: string; subtasks?: unknown[] } }
   | { type: "brain:route_fallback"; data: { reason: string; heuristicRole: string } }
   | { type: "tool:call";            data: { tool: string; input: Record<string, unknown> } }
-  | { type: "tool:result";          data: { tool: string; ok: boolean; outputLength: number; error?: string } };
+  | { type: "tool:result";          data: { tool: string; ok: boolean; outputLength: number; error?: string } }
+  | { type: "ahp:lifecycle";        data: { lifecycle: string; id: string } };
 
 type HookFn = (event: TracerEvent) => void;
 

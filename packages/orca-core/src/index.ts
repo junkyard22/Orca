@@ -30,6 +30,7 @@ export type {
   OrcaTaskSpec,
   OrcaExecutionResult,
   OrcaFileChange,
+  LLMOptions,
   OrcaLLMService,
   OrcaToolService,
   OrcaToolEvent,
@@ -56,4 +57,8 @@ export type { ExportOptions, TrainingRecord, ExportSummary } from "./export/expo
 // Run analysis artifacts (run-analysis.md + run-events.json)
 export { createRunAnalysisWriter } from "./analysis/runAnalysis.js";
 export type { RunAnalysisWriter } from "./analysis/runAnalysis.js";
+
+// Agent Handoff Protocol (re-exported from miranda-core — canonical home)
+export type { AHPInput, AHPConstraint, AHPExpectedOutput, AHPTraceEntry, AHPMeta, AHPPacket } from "./ahp/types.js";
+export { AHPLifecycle, AHPVerdict } from "./ahp/types.js";
 
