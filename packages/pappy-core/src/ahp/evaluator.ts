@@ -17,6 +17,11 @@
 import type { AHPPacket } from "@clawde/miranda-core";
 import { AHPLifecycle, AHPVerdict } from "@clawde/miranda-core";
 import { transitionAHPLifecycle } from "@clawde/miranda-core";
+import {
+  classifyTaskType,
+  deriveDefaultACs,
+  mergeAcceptanceCriteria,
+} from "./taskClassifier.js";
 
 // ---------------------------------------------------------------------------
 // Input shape — only the fields Pappy needs from the execution result
@@ -210,8 +215,16 @@ export function verifyAHPPacket(
     input,
   );
 
+  // ── Step 3b: Derive and merge task-aware ACs ────────────────────────────────
+  const taskType   = classifyTaskType(packet);
+  const derived    = deriveDefaultACs(taskType);
+  const effectiveACs = mergeAcceptanceCriteria(
+    packet.expectedOutput.acceptanceCriteria,
+    derived,
+  );
+
   // ── Step 4: Acceptance Criteria evaluation ─────────────────────────────────
-  const acResults = packet.expectedOutput.acceptanceCriteria.map((ac, i) => {
+  const acResults = effectiveACs.map((ac, i) => {
     const { passed, evidence } = checkACAgainstOutput(ac, input);
     return { id: `PAC${i + 1}`, ac, passed, evidence };
   });
@@ -238,7 +251,7 @@ export function verifyAHPPacket(
   packet.verdict = verdict;
 
   // ── Step 6: Build trace note ───────────────────────────────────────────────
-  const noteParts: string[] = [`verdict=${verdict}`];
+  const noteParts: string[] = [`verdict=${verdict}`, `taskType=${taskType}`];
   if (passed.length > 0) {
     noteParts.push(`PASS: ${passed.map((r) => r.id).join(", ")}`);
   }
