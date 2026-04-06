@@ -2,12 +2,12 @@
   "providers": {
     "alibaba_coding_plan": {
       "type": "openai-compatible",
-      "apiKey": "sk-sp-015183610a8441db8aeb372f21f50fcb",
+      "apiKey": "YOUR_ALIBABA_API_KEY_HERE",
       "baseURL": "https://coding-intl.dashscope.aliyuncs.com/v1"
     },
     "openrouter": {
       "type": "openai-compatible",
-      "apiKey": "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",
+      "apiKey": "YOUR_OPENROUTER_API_KEY_HERE",
       "baseURL": "https://openrouter.ai/api/v1"
     }
   },
