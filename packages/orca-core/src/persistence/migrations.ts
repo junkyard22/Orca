@@ -89,6 +89,13 @@ export function runMigrations(db: Database): void {
     // Column already exists — safe to ignore.
   }
 
+  // Add ahp_packet_graph column to persist AHP hierarchy data (idempotent migration)
+  try {
+    db.run(`ALTER TABLE runs ADD COLUMN ahp_packet_graph TEXT;`);
+  } catch {
+    // Column already exists — safe to ignore.
+  }
+
   // Rename legacy role identifiers in existing rows (idempotent — no-op when already renamed)
   try {
     db.run(`UPDATE runs SET role = 'strong_model' WHERE role = 'coder_strong';`);

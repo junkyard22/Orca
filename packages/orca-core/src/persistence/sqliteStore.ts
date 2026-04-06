@@ -93,8 +93,8 @@ export class SqliteStore implements OrcaStore {
             id, created_at, intent, role, status, stopped_because,
             iteration_count, output_text, summary, verdict, confidence,
             issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
-            brain_decision, error_message
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            brain_decision, error_message, ahp_packet_graph
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             run.id,
             run.createdAt,
@@ -114,6 +114,7 @@ export class SqliteStore implements OrcaStore {
             run.repairPasses ?? null,
             run.brainDecision ?? null,
             run.errorMessage ?? null,
+            run.ahpPacketGraph ?? null,
           ]
         );
 
@@ -184,7 +185,7 @@ export class SqliteStore implements OrcaStore {
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
         issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
-        brain_decision, error_message
+        brain_decision, error_message, ahp_packet_graph
       FROM runs
       ORDER BY created_at DESC
       LIMIT ?`
@@ -210,6 +211,7 @@ export class SqliteStore implements OrcaStore {
       repair_passes: number | null;
       brain_decision: string | null;
       error_message: string | null;
+      ahp_packet_graph: string | null;
     }> = [];
 
     while (stmt.step()) {
@@ -237,6 +239,7 @@ export class SqliteStore implements OrcaStore {
       costUsd: row.cost_usd ?? undefined,
       repairPasses: row.repair_passes ?? undefined,
       brainDecision: row.brain_decision ?? undefined,
+      ahpPacketGraph: row.ahp_packet_graph ?? undefined,
     }));
   }
 
@@ -252,7 +255,7 @@ export class SqliteStore implements OrcaStore {
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
         issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
-        brain_decision, error_message
+        brain_decision, error_message, ahp_packet_graph
       FROM runs
       WHERE id = ?`
     );
@@ -285,6 +288,7 @@ export class SqliteStore implements OrcaStore {
       costUsd: row.cost_usd ?? undefined,
       repairPasses: row.repair_passes ?? undefined,
       brainDecision: row.brain_decision ?? undefined,
+      ahpPacketGraph: row.ahp_packet_graph ?? undefined,
     };
   }
 

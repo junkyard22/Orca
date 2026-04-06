@@ -91,6 +91,7 @@ export interface OrcaPipelineTrace {
     issueCount?: number;
     repairPasses: number;
     durationMs: number;
+    ahpPacketGraph?: import("./ahp/graph.js").AHPPacketGraph;
   };
 }
 

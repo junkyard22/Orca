@@ -60,7 +60,7 @@ export type { RunAnalysisWriter } from "./analysis/runAnalysis.js";
 
 // Agent Handoff Protocol (re-exported from miranda-core — canonical home)
 export type {
-  AHPInput, AHPConstraint, AHPExpectedOutput, AHPTraceEntry, AHPMeta, AHPPacket,
+  AHPInput, AHPConstraint, AHPExpectedOutput, AHPTraceEntry, AHPMeta, AHPEvalMeta, AHPPacket,
   CreatePacketOptions,
 } from "./ahp/types.js";
 export {
@@ -68,4 +68,14 @@ export {
   createRootPacket, createChildPacket, registerChildOnRoot, deriveRootLifecycleFromChildren,
   appendAHPTrace, isTerminalAHPLifecycle,
 } from "./ahp/types.js";
+
+// AHP Packet Graph — serialization and inspection helpers
+export type { AHPPacketGraph, AHPPacketGraphNode, AHPGraphSummaryMode } from "./ahp/graph.js";
+export {
+  serializeAHPPacketGraph,
+  formatAHPPacketGraphSummary,
+  formatAHPPacketGraphIssuesSummary,
+  isNodeInteresting,
+  parseAHPPacketGraph,
+} from "./ahp/graph.js";
 

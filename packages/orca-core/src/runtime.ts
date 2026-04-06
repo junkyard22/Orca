@@ -26,6 +26,8 @@ import {
   isTerminalAHPLifecycle,
 } from "./ahp/types.js";
 import { AHPLifecycle } from "./ahp/types.js";
+import { serializeAHPPacketGraph, formatAHPPacketGraphSummary, formatAHPPacketGraphIssuesSummary } from "./ahp/graph.js";
+import type { AHPPacketGraph } from "./ahp/graph.js";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -503,6 +505,12 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     result.ahpRootPacket   = ahpRootPacket;
     result.ahpChildPackets = ahpChildPackets.length > 0 ? ahpChildPackets : undefined;
 
+    // Build serializable graph snapshot for persistence and inspection.
+    let ahpGraph: AHPPacketGraph | undefined;
+    if (ahpRootPacket) {
+      ahpGraph = serializeAHPPacketGraph(ahpRootPacket, ahpChildPackets);
+    }
+
     const trace: OrcaPipelineTrace = {
       version: 1,
       taskId,
@@ -518,6 +526,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         issueCount: persistedQcResult?.issues.length,
         repairPasses,
         durationMs,
+        ahpPacketGraph: ahpGraph,
       },
     };
 
@@ -587,6 +596,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           outputTokens: persistedMaestroResult?.metadata?.outputTokens,
           costUsd: persistedMaestroResult?.metadata?.costUsd,
           repairPasses,
+          ahpPacketGraph: ahpGraph ? JSON.stringify(ahpGraph) : undefined,
         } as RunRecord,
         (persistedMaestroResult?.metadata?.thoughts ?? []).map((thought) => ({
           runId: taskId,
@@ -612,6 +622,16 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       }
     } catch (error) {
       console.error("[orca-core] store.saveRun failed:", error);
+    }
+
+    // Emit a human-readable AHP graph summary to stderr when AHP data is present.
+    if (ahpGraph) {
+      console.error(formatAHPPacketGraphSummary(ahpGraph));
+      // Emit focused issues view when something is wrong — zero noise on clean runs.
+      const issuesSummary = formatAHPPacketGraphIssuesSummary(ahpGraph);
+      if (issuesSummary) {
+        console.error(issuesSummary);
+      }
     }
 
     return result;

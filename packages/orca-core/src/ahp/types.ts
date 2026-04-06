@@ -11,6 +11,7 @@ export type {
   AHPExpectedOutput,
   AHPTraceEntry,
   AHPMeta,
+  AHPEvalMeta,
   AHPPacket,
   CreatePacketOptions,
 } from "@clawde/miranda-core";

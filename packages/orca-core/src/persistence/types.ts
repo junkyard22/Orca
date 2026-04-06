@@ -27,6 +27,8 @@ export interface RunRecord {
   outputTokens?: number;
   costUsd?: number;
   repairPasses?: number;
+  /** JSON-serialized AHPPacketGraph for this run. Null on older records. */
+  ahpPacketGraph?: string;
 }
 
 export interface ThoughtRecord {
