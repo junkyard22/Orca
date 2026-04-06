@@ -6,6 +6,8 @@ export type { AHPVerificationInput } from "./ahp/evaluator.js";
 export { TaskType, classifyTaskType, deriveDefaultACs, mergeAcceptanceCriteria } from "./ahp/taskClassifier.js";
 export { verifyFileChanges, extractExpectedPaths } from "./ahp/fileVerifier.js";
 export type { FileCheckResult, FileVerificationOverrides } from "./ahp/fileVerifier.js";
+export { buildAHPRepairPrompt } from "./ahp/repairPrompt.js";
+export type { ACFailure, SchemaInfo } from "./ahp/repairPrompt.js";
 export type {
   PappyInput,
   PappyResult,

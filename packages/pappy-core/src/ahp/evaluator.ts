@@ -23,6 +23,7 @@ import {
   mergeAcceptanceCriteria,
 } from "./taskClassifier.js";
 import { verifyFileChanges } from "./fileVerifier.js";
+import { buildAHPRepairPrompt } from "./repairPrompt.js";
 
 // ---------------------------------------------------------------------------
 // Input shape — only the fields Pappy needs from the execution result
@@ -271,6 +272,15 @@ export function verifyAHPPacket(
   }
 
   packet.verdict = verdict;
+
+  // ── Step 5b: Generate targeted repair prompt for WARN / FAIL ────────────────
+  if (verdict === AHPVerdict.WARN || verdict === AHPVerdict.FAIL) {
+    packet.repairPrompt = buildAHPRepairPrompt(
+      packet,
+      failed,
+      { passed: schemaPassed, missingKeys },
+    );
+  }
 
   // ── Step 6: Build trace note ───────────────────────────────────────────────
   const noteParts: string[] = [`verdict=${verdict}`, `taskType=${taskType}`];

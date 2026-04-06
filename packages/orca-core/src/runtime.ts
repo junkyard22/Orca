@@ -316,7 +316,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             summary: qcResult.internalSummary,
             artifacts: maestroResult,
           };
-        } else if (!qcResult.repairTask) {
+        } else if (!qcResult.repairTask && !maestroResult.ahpPacket?.repairPrompt) {
           recordTrace("repair.unavailable", { reason: "pappy_returned_no_repair_task" });
           result = {
             status: "FAIL",
@@ -351,6 +351,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             initialSpendUsd,
             maestroResult.metadata?.errorMessage,
             gateBlockReason,
+            maestroResult.ahpPacket,
           );
           if (result.artifacts) {
             persistedMaestroResult = normalizeMaestroResult(result.artifacts as OrcaMaestroResult);

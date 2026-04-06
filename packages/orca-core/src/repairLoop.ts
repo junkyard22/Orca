@@ -5,6 +5,7 @@ import type {
   MaestroPort,
   PappyPort,
 } from "./types.js";
+import type { AHPPacket } from "./ahp/types.js";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
@@ -37,6 +38,7 @@ export async function handleRepairLoop(
   spentSoFarUsd?: number,
   initialErrorMessage?: string,
   initialGateBlockReason?: string,
+  ahpPacket?: AHPPacket,
 ): Promise<OrcaExecutionResult> {
   let currentQC = initialQCResult;
   // Seed with the initial output so we always have something to show
@@ -69,8 +71,11 @@ export async function handleRepairLoop(
     // Preserve the original role in the repair task message so Brain routes
     // it back to the same role (e.g., reviewer) instead of a different one.
     const roleHint = originalRole ? `\n\nOriginal role: ${originalRole}\nRe-run using the ${originalRole} role.` : '';
+    // Prefer the AHP-based targeted repair prompt (set by Pappy's verifyAHPPacket)
+    // over the legacy generic repairTask string when available.
+    const repairInstruction = ahpPacket?.repairPrompt ?? currentQC.repairTask!;
     const repairSpec: OrcaTaskSpec = {
-      originalUserMessage: `${currentQC.repairTask!}${roleHint}`,
+      originalUserMessage: `${repairInstruction}${roleHint}`,
       intent: "repair",
       goals: [
         ...originalTask.goals,
