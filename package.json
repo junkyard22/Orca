@@ -23,7 +23,7 @@
     ],
     "overrides": {
       "esbuild": ">=0.25.0",
-      "vite": ">=6.2.0",
+      "vite": ">=8.0.5",
       "picomatch@4": "4.0.4",
       "brace-expansion@1": "1.1.13",
       "brace-expansion@2": "2.0.3",
