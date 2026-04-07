@@ -56,10 +56,10 @@
       "id": "github-mcp",
       "name": "GitHub MCP",
       "transport": "stdio",
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-               "ghcr.io/github/github-mcp-server"],
-      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "" },
+      "comment": "Option A (Docker, requires Docker Desktop): command=docker, args=[\"run\",\"-i\",\"--rm\",\"-e\",\"GITHUB_PERSONAL_ACCESS_TOKEN\",\"ghcr.io/github/github-mcp-server\"], env={\"GITHUB_PERSONAL_ACCESS_TOKEN\":\"\"}",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "YOUR_GITHUB_PAT_HERE" },
       "enabled": false
     }
   ]

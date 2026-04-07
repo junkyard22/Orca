@@ -1,6 +1,6 @@
 {
   "name": "@clawde/desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Orca — AI coding assistant desktop app",
   "author": "Clawde",
   "private": true,
@@ -46,6 +46,10 @@
       {
         "from": "orca.ico",
         "to": "orca.ico"
+      },
+      {
+        "from": "../../orca-settings.example.json",
+        "to": "orca-settings.example.json"
       }
     ],
     "files": [
