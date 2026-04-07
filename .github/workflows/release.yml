@@ -6,13 +6,9 @@ on:
       - 'v*.*.*'
 
 jobs:
-  build-runner:
-    name: Build CLI Runner
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+  build-desktop:
+    name: Build Desktop Installers
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -35,31 +31,36 @@ jobs:
       - name: Build packages
         run: pnpm --filter './packages/**' build
 
-      - name: Build runner
-        run: pnpm --filter @clawde/runner build
+      - name: Build desktop installer and portable
+        run: pnpm --filter @clawde/desktop dist
 
-      - name: Upload runner artifact
+      - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: runner-${{ matrix.os }}
-          path: apps/runner/dist/
+          name: desktop-windows
+          # Only the two user-facing executables — no blockmaps, no unpacked dir
+          path: |
+            apps/desktop/release/Orca Setup *.exe
+            apps/desktop/release/Orca *.exe
+          if-no-files-found: error
 
   create-release:
     name: Create GitHub Release
-    needs: build-runner
+    needs: build-desktop
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
 
     steps:
-      - name: Download artifacts
+      - name: Download installers
         uses: actions/download-artifact@v4
         with:
-          path: artifacts/
+          name: desktop-windows
+          path: release-assets/
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: release-assets/*.exe
           generate_release_notes: true
