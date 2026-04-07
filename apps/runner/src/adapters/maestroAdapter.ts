@@ -1247,7 +1247,7 @@ async function runAgentLoop(
   toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]>;
   filesChanged: OrcaFileChange[];
 }> {
-  const MAX_ITERATIONS = 10;
+  const MAX_ITERATIONS = 5;
   const toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
   const filesChanged: OrcaFileChange[] = [];
 
@@ -1276,7 +1276,7 @@ async function runAgentLoop(
     }
     const { text } = await ctx.llm.stream(
       conversation,
-      { maxTokens: 8192, simple: true },
+      { maxTokens: 4096, simple: true },
       (chunk) => ctx.emit?.({ type: "stream:token", taskId: ctx.runId, chunk }),
     );
     lastText = text;
@@ -1389,10 +1389,15 @@ async function runAgentLoop(
     }
   }
 
-  // Strip any dangling <tool_call> blocks from the final response
-  // (can happen if the model starts a call but we hit MAX_ITERATIONS).
+  // Strip dangling tool_call markup from the final response.
+  // Three cases:
+  //   1. Complete block:      <tool_call>...</tool_call>  (normal)
+  //   2. Unclosed opener:     <tool_call>...              (hit MAX_ITERATIONS mid-call)
+  //   3. Orphaned closer:     ...}</tool_call>            (opening tag was in prior lastText)
   const cleanText = lastText
-    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")  // case 1
+    .replace(/<tool_call>[\s\S]*/g, "")                // case 2
+    .replace(/[\s\S]*?<\/tool_call>/g, "")             // case 3
     .trim();
 
   return { text: cleanText, toolEvents, filesChanged };

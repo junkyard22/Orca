@@ -13,7 +13,7 @@ if (!window.orca) {
     onToolRequest:     () => () => {},
     onMaximizeChange:  () => () => {},
     sendMessage:       async () => ({ ok: false, error: "No Electron context" }),
-    getSettings:       async () => ({ providers: [], roles: {}, budgetUsd: 0.10, maxRepairPasses: 2, verbose: false, workspaceRoot: "", showPipeline: true }),
+    getSettings:       async () => ({ providers: [], roles: {}, budgetUsd: 0.10, maxRepairPasses: 2, verbose: false, workspaceRoot: "", showPipeline: true, githubToken: "" }),
     saveSettings:      async () => ({ ok: false, error: "No Electron context" }),
     getAuthStatus:     async () => ({ enabled: false, hasPassword: false, locked: false }),
     unlock:            async () => ({ ok: false, error: "No Electron context" }),
@@ -1557,6 +1557,8 @@ function openSettings() {
     setVerbose.checked        = !!s.verbose;
     setShowPipeline.checked   = s.showPipeline !== false;
     setWorkspace.value        = s.workspaceRoot ?? "";
+    const ghTokenEl = document.getElementById("set-github-token");
+    if (ghTokenEl) ghTokenEl.value = s.githubToken ?? "";
     setAuthEnabled.checked = !!authState.enabled;
     resetAuthSettingsInputs();
     setStatus2.textContent = "";
@@ -1596,6 +1598,7 @@ document.getElementById("btn-add-provider").addEventListener("click", () => {
 setSaveBtn.addEventListener("click", async () => {
   if (!editingSettings || (authKnown && authState.locked)) return;
 
+  const ghTokenInput = document.getElementById("set-github-token");
   const s = {
     ...editingSettings,
     budgetUsd:       parseFloat(setBudget.value)   || 0.10,
@@ -1603,6 +1606,7 @@ setSaveBtn.addEventListener("click", async () => {
     verbose:         setVerbose.checked,
     showPipeline:    setShowPipeline.checked,
     workspaceRoot:   setWorkspace.value.trim(),
+    githubToken:     ghTokenInput ? (ghTokenInput.value.trim() || undefined) : editingSettings.githubToken,
   };
 
   setSaveBtn.disabled    = true;
@@ -1973,6 +1977,19 @@ document.getElementById("btn-theme").addEventListener("click", () => {
 // ── MCP controls wiring ───────────────────────────────────────────────────
 
 initMcpControls();
+
+// ── GitHub token show/hide ────────────────────────────────────────────────
+(function () {
+  const ghShowBtn = document.getElementById("set-github-token-show");
+  const ghTokenEl = document.getElementById("set-github-token");
+  if (ghShowBtn && ghTokenEl) {
+    ghShowBtn.addEventListener("click", function () {
+      const showing = ghTokenEl.type === "text";
+      ghTokenEl.type = showing ? "password" : "text";
+      this.textContent = showing ? "Show" : "Hide";
+    });
+  }
+})();
 
 // ── Focus input on load ───────────────────────────────────────────────────
 

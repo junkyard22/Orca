@@ -292,10 +292,17 @@ const cloneRepoTool: ExtTool = {
     const destPath = path.resolve(ctx.workspaceRoot, destName);
 
     if (fs.existsSync(destPath)) {
+      // If it's already a git repo (from a previous run or repair pass), treat as success.
+      if (fs.existsSync(path.join(destPath, ".git"))) {
+        return {
+          ok: true,
+          output: `Already cloned at: ${destPath}`,
+        };
+      }
       return {
         ok: false,
         output: "",
-        error: `Destination already exists: ${destPath}. Remove it first or specify a different dest.`,
+        error: `Destination already exists but is not a git repo: ${destPath}. Remove it first or specify a different dest.`,
       };
     }
 

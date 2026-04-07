@@ -86,7 +86,22 @@ function cleanOutput(text: string): string {
   // 5c. Strip whole lines that are pure internal-thought openers.
   //     These are conservative — only strip if the *entire line* matches a
   //     known leakage pattern, so we don't accidentally cut real content.
-  out = out.replace(/^(thinking\.\.\.|let me think.*|i need to (think|figure|work|check|analyze|determine).*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+  out = out.replace(/^(thinking\.\.\.|let me (think|check|look|see|read|verify|review|examine|analyze|inspect|investigate|find|determine|try).*|i need to .*|i('ll| will) need to .*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+
+  // 5c2. Strip "I need to:" planning blocks — a colon-terminated opener followed
+  //      by a numbered or bulleted list is always an internal plan, never output.
+  out = out.replace(/^[Ii] need to:?\s*\n((?:\s*[\d\-\*•]+\.?\s+.+\n?)*)/gm, "");
+
+  // 5e. Strip inline "Let me [cognitive-verb]..." and "Now let me [verb]..."
+  //     sentences that narrate the agent's thinking process mid-response.
+  //     Only targets verbs that are unambiguously internal-process narration.
+  //     "Let me know" is intentionally excluded — it is user-facing language.
+  out = out.replace(/\.?\s*(Now\s+)?[Ll]et me (?:also\s+|just\s+|quickly\s+|then\s+|now\s+|go ahead and\s+)?(think|check|look|see|read|search|verify|review|examine|analyze|inspect|investigate|find|determine|try)\b[^.!?\n]*[.!?]?/gi, "");
+
+  // 5f. Remove immediately-repeated text blocks — the model sometimes echoes its
+  //     own prior turn when given conversation context, producing "X...X" output.
+  //     Matches any 30+ char string that appears twice in immediate succession.
+  out = out.replace(/(.{30,})\1/g, "$1");
 
   // 5d. Strip internal pipeline metadata fragments.
   //     Covers Pappy verdict tallies, run_id tokens, and Dewey block markers.
@@ -133,7 +148,13 @@ function cleanFollowUp(text: string): string {
   out = out.replace(/^(Brain|Reviewer|Narrator|Planner|Utility|Debugger|Reader|Vision|Subagent):\s.*/gmi, "");
 
   // Step 5c: strip whole-line internal-thought openers (same as cleanOutput step 5c)
-  out = out.replace(/^(thinking\.\.\.|let me think.*|i need to (think|figure|work|check|analyze|determine).*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+  out = out.replace(/^(thinking\.\.\.|let me (think|check|look|see|read|verify|review|examine|analyze|inspect|investigate|find|determine|try).*|i need to (think|figure|work|check|analyze|determine).*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+
+  // Step 5e: strip inline "Let me / Now let me [cognitive-verb]..." sentences (same as cleanOutput step 5e)
+  out = out.replace(/\.?\s*(Now\s+)?[Ll]et me (?:also\s+|just\s+|quickly\s+|then\s+|now\s+|go ahead and\s+)?(think|check|look|see|read|search|verify|review|examine|analyze|inspect|investigate|find|determine|try)\b[^.!?\n]*[.!?]?/gi, "");
+
+  // Step 5f: remove immediately-repeated text blocks (same as cleanOutput step 5f)
+  out = out.replace(/(.{30,})\1/g, "$1");
 
   // Step 5d: strip internal pipeline metadata that should never reach the user.
   //   Covers Pappy verdict tallies ("verdict=FAIL 2xHIGH"), run identifiers

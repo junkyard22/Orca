@@ -266,8 +266,18 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         result: maestroResult,
       });
 
-      if (!qcEnabled) {
-        recordTrace("qc.skipped", { reason: "pappy_not_configured" });
+      // Skip QC on pure read-only results — no files were written and no tools
+      // failed, so there is nothing for Pappy to verify.  Saves one round-trip
+      // and the repair loop on tasks like "read this file and explain it".
+      const isReadOnlyResult =
+        qcEnabled &&
+        (!maestroResult.filesChanged || maestroResult.filesChanged.length === 0) &&
+        (!maestroResult.toolEvents || maestroResult.toolEvents.every((e) => e.ok !== false));
+
+      if (!qcEnabled || isReadOnlyResult) {
+        recordTrace("qc.skipped", {
+          reason: !qcEnabled ? "pappy_not_configured" : "read_only_result",
+        });
         result = {
           status: "SUCCESS",
           userFacingText: maestroResult.outputText,

@@ -695,6 +695,17 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     const workspaceRoot = s.workspaceRoot || join(homedir(), "Orca");
     mkdirSync(workspaceRoot, { recursive: true });
 
+    // Inject GITHUB_TOKEN for the ext-github static extension (github_clone_repo, etc.).
+    // Primary source: settings.githubToken (dedicated field, always visible in Settings).
+    // Fallback: GitHub MCP server PAT (for users who configured it there first).
+    const ghMcpServer = s.mcpServers?.find((srv) => srv.id === "github-mcp");
+    const ghToken = s.githubToken || ghMcpServer?.env?.["GITHUB_PERSONAL_ACCESS_TOKEN"];
+    if (ghToken) {
+      process.env["GITHUB_TOKEN"] = ghToken;
+    } else {
+      delete process.env["GITHUB_TOKEN"];
+    }
+
     // Build unified tool stack: core workbench + ext-* + MCP servers
     const bootstrap = await buildToolBootstrap({
       workspaceRoot,

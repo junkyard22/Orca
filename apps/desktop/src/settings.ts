@@ -101,6 +101,12 @@ export interface OrcaSettings {
    * Defaults to true (shown).
    */
   showPipeline?:   boolean;
+  /**
+   * GitHub Personal Access Token. Injected as GITHUB_TOKEN for the
+   * github_clone_repo tool and other GitHub API calls. Requires `repo` scope
+   * for private repos. Stored encrypted on disk.
+   */
+  githubToken?:    string;
 }
 
 const DEFAULTS: OrcaSettings = {
@@ -196,6 +202,7 @@ function encryptSettings(settings: OrcaSettings): OrcaSettings {
         ? Object.fromEntries(Object.entries(srv.env).map(([k, v]) => [k, encryptApiKey(v)]))
         : undefined,
     })),
+    githubToken: settings.githubToken ? encryptApiKey(settings.githubToken) : undefined,
   };
 }
 
@@ -216,6 +223,7 @@ function decryptSettings(settings: OrcaSettings): OrcaSettings {
         ? Object.fromEntries(Object.entries(srv.env).map(([k, v]) => [k, decryptApiKey(v)]))
         : undefined,
     })),
+    githubToken: settings.githubToken ? decryptApiKey(settings.githubToken) : undefined,
   };
 }
 
