@@ -318,6 +318,7 @@ export function createMaestroAdapter(): MaestroPort {
         task, role, isFallback, orch, ctx, false, brief,
         collectedSuggestions.length > 0 ? collectedSuggestions : undefined,
         ahpPacket,
+        routing.done_criteria,
       );
 
       // Transition the packet RUNNING → COMPLETE/FAILED after execution.
@@ -686,6 +687,7 @@ async function runSingleAgent(
   deweyBrief?: Pick<UserBrief, "suggestedTone" | "relevantPreferences">,
   deweyAdvisory?: string[],
   ahpPacket?: AHPPacket,
+  doneCriteria?: string[],
 ): Promise<OrcaMaestroResult> {
   // Subagents may carry a forcedRole in context (set by runSubagentPool).
   const effectiveRole = (
@@ -721,7 +723,8 @@ async function runSingleAgent(
   let filesChanged: OrcaFileChange[] = [];
 
   if (ctx.tools) {
-    const result = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, ctx);
+    const writeHints = doneCriteria ?? task.goals;
+    const result = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, ctx, writeHints);
     outputText = result.text;
     toolEvents = result.toolEvents;
     filesChanged = result.filesChanged;
@@ -1237,17 +1240,35 @@ export function formatToolResult(tool: string, ok: boolean, output: string, erro
   return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
 }
 
+/**
+ * Extract a write target path from done_criteria or task goals.
+ * Returns the first path that looks like a file the agent must write.
+ * Used to inject a last-turn write nudge before iterations are exhausted.
+ */
+function extractWriteTarget(criteria: string[]): string | undefined {
+  // Match patterns like "SHIP-AUDIT.md created", "write_file called with AUDIT.md", etc.
+  const filePathRe = /(?:^|\s)([\w./\\-]+\.(?:md|txt|json|yaml|yml|ts|js|csv|log|html))\b/i;
+  for (const c of criteria) {
+    const m = c.match(filePathRe);
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
 async function runAgentLoop(
   systemPrompt: string,
   taskPrompt: string,
   tools: OrcaToolService,
   ctx: OrcaRunCtx,
+  /** Expected file write targets from done_criteria — used to inject a last-turn write nudge. */
+  writeTargets?: string[],
 ): Promise<{
   text: string;
   toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]>;
   filesChanged: OrcaFileChange[];
 }> {
   const MAX_ITERATIONS = 10;
+  const writeTarget = writeTargets ? extractWriteTarget(writeTargets) : undefined;
   const toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
   const filesChanged: OrcaFileChange[] = [];
 
@@ -1274,8 +1295,17 @@ async function runAgentLoop(
     if (i > 0) {
       ctx.emit?.({ type: "stream:reset", taskId: ctx.runId });
     }
+
+    // Write nudge: on the penultimate turn, if the task requires writing a file
+    // and no write has happened yet, inject a hard instruction so the model
+    // doesn't exhaust iterations without producing the required artifact.
+    const isLastChance = writeTarget && i === MAX_ITERATIONS - 2 && filesChanged.length === 0;
+    const activeConversation = isLastChance
+      ? conversation + `\n\nSystem: FINAL TURNS REMAINING. You MUST call write_file now to write the output to "${writeTarget}". Stop reading files. Compile everything you have learned and call write_file immediately.`
+      : conversation;
+
     const { text } = await ctx.llm.stream(
-      conversation,
+      activeConversation,
       { maxTokens: 4096, simple: true },
       (chunk) => ctx.emit?.({ type: "stream:token", taskId: ctx.runId, chunk }),
     );
