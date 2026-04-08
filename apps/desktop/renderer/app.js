@@ -761,6 +761,7 @@ function appendPipelineBadge(summary) {
   div.querySelector(".pb-details-btn").addEventListener("click", (e) => {
     e.stopPropagation();
     div.classList.toggle("expanded");
+    if (div.classList.contains("expanded")) setTimeout(scrollToBottom, 240); // after 0.22s CSS transition
   });
 
   messages.appendChild(div);
@@ -849,7 +850,8 @@ async function sendMessage() {
       streamText   = "";
     } else if (result.ok) {
       // Issue 2 fix: use streamText as fallback (BensonReply has no outputText field).
-      const replyText = result.reply?.text ?? streamText ?? JSON.stringify(result.reply);
+      // Use || not ?? so an empty string also falls through to streamText.
+      const replyText = (result.ok && result.reply?.text) || streamText || JSON.stringify(result.reply);
       const msgDiv = appendMsg("orca", cleanPipelineOutput(replyText));
       if (currentRole) attachRoleBadge(msgDiv, currentRole);
     } else if (result.error === "Stopped." || result.error === "Locked.") {

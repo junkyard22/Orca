@@ -243,6 +243,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     let persistedQcResult: PappyResult | undefined;
     let abortError: Error | undefined;
     let gateBlockReason: string | undefined;
+    let unknownTools: string[] = [];
 
     try {
       throwIfAborted(options?.abortSignal);
@@ -252,6 +253,15 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       const maestroResult = normalizeMaestroResult(await maestro.run(normalizedTaskSpec, ctx));
       persistedMaestroResult = maestroResult;
       const initialSpendUsd = maestroResult.metadata?.costUsd ?? 0;
+
+      // Detect tools the agent tried to call but weren't available.
+      unknownTools = [
+        ...new Set(
+          (maestroResult.toolEvents ?? [])
+            .filter((e) => !e.ok && typeof e.summary === "string" && e.summary.startsWith("Unknown tool:"))
+            .map((e) => e.tool),
+        ),
+      ];
 
       emitter.emit({
         type: "maestro:done",
@@ -634,6 +644,16 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       if (issuesSummary) {
         console.error(issuesSummary);
       }
+    }
+
+    // If the agent tried tools that weren't available, surface that to the user.
+    if (unknownTools && unknownTools.length > 0 && !result.followUpQuestion) {
+      const toolList = unknownTools.map((t) => `\`${t}\``).join(", ");
+      const plural = unknownTools.length > 1;
+      result = {
+        ...result,
+        followUpQuestion: `I needed the ${toolList} tool${plural ? "s" : ""} to complete this task, but ${plural ? "they aren't" : "it isn't"} currently available. Would you like me to add ${plural ? "them" : "it"} or find another way to complete the task?`,
+      };
     }
 
     return result;

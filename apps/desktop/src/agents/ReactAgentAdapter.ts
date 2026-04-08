@@ -550,6 +550,23 @@ export class ReactAgentAdapter implements AgentAdapter {
               });
               continue;
             }
+            // Guard: if the task explicitly asks to save output to a file, write_file
+            // must have been called before we accept a FINAL ANSWER.
+            const taskImpliesFileSave = (
+              /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(task.intent) ||
+              /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(task.intent)
+            );
+            const writeFileCalled = toolsUsed.some(e => e.tool === 'write_file');
+            if (taskImpliesFileSave && !writeFileCalled) {
+              messages.push({
+                role: 'user',
+                content:
+                  'Your task explicitly asks you to save a file, but you have not called write_file yet. ' +
+                  'You MUST call write_file with the complete file content before writing your FINAL ANSWER. ' +
+                  'Call write_file now.',
+              });
+              continue;
+            }
             currentOutputText = finalAnswer;
             stoppedBecause = 'done';
             ctx.recordTrace?.("agent.final_answer", {

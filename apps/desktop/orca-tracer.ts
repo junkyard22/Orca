@@ -939,6 +939,29 @@ function createTracingMaestro(
 
             if (calls.length === 0) {
               if (finalAnswer) {
+                // Gate 1: task clearly requires tool work but no tools called yet.
+                // Don't apply when tools are stripped (pure generation task) or
+                // when tools have already been called.
+                const taskImpliesToolUse = !shouldStripTools && (
+                  /\b(analyz|investigat|examin|read|list|search|find|save|write|creat)\w*/i.test(task.originalUserMessage) ||
+                  /\b\w+\.\w{2,5}\b/.test(task.originalUserMessage)  // explicit filename with extension
+                );
+                if (taskImpliesToolUse && cumulativeToolCallCount === 0) {
+                  conversation += `\n\nUser: Your task requires you to investigate files and/or write output to disk, but you have not called any tools yet. Do NOT write a final answer until you have:\n1. Used read_file or list_directory to examine the relevant files\n2. Called write_file if the task asks you to save a file\n\nStart by calling a tool now. Do not describe what you plan to do — make the actual tool call.`;
+                  trace("Maestro", C.yellow, `  [Gate] Rejected premature FINAL ANSWER (0 tool calls) — task implies tool use`);
+                  continue;
+                }
+                // Gate 2: task explicitly asks to save a file but write_file not yet called.
+                const taskImpliesFileSave = !shouldStripTools && (
+                  /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(task.originalUserMessage) ||
+                  /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(task.originalUserMessage)
+                );
+                const writeFileCalled = toolEvents.some(e => e.tool === 'write_file');
+                if (taskImpliesFileSave && !writeFileCalled) {
+                  conversation += `\n\nUser: Your task explicitly asks you to save a file, but you have not called write_file yet. You MUST call write_file with the complete file content before writing your FINAL ANSWER. Call write_file now.`;
+                  trace("Maestro", C.yellow, `  [Gate] Rejected FINAL ANSWER — write_file required but not yet called`);
+                  continue;
+                }
                 currentOutputText = finalAnswer;
                 stoppedBecause = 'done';
                 break;

@@ -1247,7 +1247,7 @@ async function runAgentLoop(
   toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]>;
   filesChanged: OrcaFileChange[];
 }> {
-  const MAX_ITERATIONS = 5;
+  const MAX_ITERATIONS = 10;
   const toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
   const filesChanged: OrcaFileChange[] = [];
 

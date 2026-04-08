@@ -27,29 +27,47 @@ import type { ExecutionResult, TaskSpec } from "./types.js";
  * prefixes, or scratchpad text to the caller.
  */
 function cleanOutput(text: string): string {
-  // 1. Strip XML markup blocks — closed and unclosed tail variants.
-  //    Covers <tool_call>, <thought>, <thinking>, <scratchpad>, <analysis>,
-  //    <reasoning> and their unclosed variants that trail off.
-  let out = text
-    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
-    .replace(/<tool_call>[\s\S]*/gi, "")
-    .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
-    .replace(/<thought>[\s\S]*/gi, "")
-    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
-    .replace(/<thinking>[\s\S]*/gi, "")
-    .replace(/<scratchpad>[\s\S]*?<\/scratchpad>/gi, "")
-    .replace(/<scratchpad>[\s\S]*/gi, "")
-    .replace(/<analysis>[\s\S]*?<\/analysis>/gi, "")
-    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
-
-  // 2. FINAL ANSWER: is the primary thinking/deliverable boundary.
-  //    Extract everything AFTER the marker — everything before it is thinking.
+  // 1. FINAL ANSWER: is the primary thinking/deliverable boundary.
+  //    Extract everything AFTER the marker first — before stripping XML blocks,
+  //    because the model sometimes wraps its final answer in <analysis> tags
+  //    which we must NOT strip from user-facing content.
   const FA_RE = /^FINAL ANSWER:\s*/im;
-  const faIdx = out.search(FA_RE);
+  const faIdx = text.search(FA_RE);
+  let out: string;
   if (faIdx !== -1) {
-    const faMatch = out.match(FA_RE)!;
-    out = out.slice(faIdx + faMatch[0].length);
+    const faMatch = text.match(FA_RE)!;
+    // Everything before FINAL ANSWER: is thinking — strip XML there, ignore it.
+    // Everything after is the deliverable — strip only guaranteed-internal tags.
+    out = text.slice(faIdx + faMatch[0].length);
+    // Strip internal-only XML tags from final-answer content.
+    // <analysis> and <reasoning> are intentionally left intact — the model uses
+    // them as structural wrappers around content the user should see.
+    out = out
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+      .replace(/<tool_call>[\s\S]*/gi, "")
+      .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+      .replace(/<thought>[\s\S]*/gi, "")
+      .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+      .replace(/<thinking>[\s\S]*/gi, "")
+      .replace(/<scratchpad>[\s\S]*?<\/scratchpad>/gi, "")
+      .replace(/<scratchpad>[\s\S]*/gi, "");
+    // Strip opening/closing <analysis> and <reasoning> tags but keep their content.
+    out = out
+      .replace(/<\/?analysis>/gi, "")
+      .replace(/<\/?reasoning>/gi, "");
   } else {
+    // No FINAL ANSWER marker — strip all internal XML blocks.
+    out = text
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+      .replace(/<tool_call>[\s\S]*/gi, "")
+      .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+      .replace(/<thought>[\s\S]*/gi, "")
+      .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+      .replace(/<thinking>[\s\S]*/gi, "")
+      .replace(/<scratchpad>[\s\S]*?<\/scratchpad>/gi, "")
+      .replace(/<scratchpad>[\s\S]*/gi, "")
+      .replace(/<\/?analysis>/gi, "")
+      .replace(/<\/?reasoning>/gi, "");
     // 3. No FINAL ANSWER: marker — if a code block exists, keep only that region.
     const codeBlockIdx = out.indexOf("```");
     if (codeBlockIdx > 0) {
@@ -192,10 +210,24 @@ export function presentResult(result: ExecutionResult, task: TaskSpec): string {
 function presentSuccess(result: ExecutionResult, task: TaskSpec): string {
   // Prefer an explicit user-facing message from the executor
   if (result.userFacingText) {
-    return cleanOutput(result.userFacingText);
+    const cleaned = cleanOutput(result.userFacingText);
+    if (cleaned) return cleaned;
+    // Fall through if cleanOutput stripped everything (e.g. model finished its
+    // work in tool calls but its last LLM response was only ReAct narration,
+    // which cleanOutput correctly strips as cognitive noise).
   }
 
-  // Construct a concise confirmation from the task goals
+  // If the executor changed files, confirm what was done from the artifact list
+  // rather than echoing the task description back at the user.
+  const arts = result.artifacts as { filesChanged?: Array<{ path?: string }> } | undefined;
+  if (arts?.filesChanged && arts.filesChanged.length > 0) {
+    const fileList = arts.filesChanged
+      .map((f) => `- ${f.path ?? "(unknown)"}`)
+      .join("\n");
+    return `Done. Created or updated:\n\n${fileList}`;
+  }
+
+  // Last resort — construct a concise confirmation from the task goals.
   const summary = task.goals.length === 1
     ? task.goals[0]
     : task.goals.map((g, i) => `${i + 1}. ${g}`).join("\n");
@@ -207,7 +239,8 @@ function presentWarn(result: ExecutionResult, task: TaskSpec): string {
   // Budget cap or soft-stop — show whatever output exists, with a clear note.
   const budgetNote = result.summary ?? "Spending limit reached.";
   if (result.userFacingText) {
-    return `${cleanOutput(result.userFacingText)}\n\n---\n*Note: ${budgetNote}*`;
+    const cleaned = cleanOutput(result.userFacingText);
+    if (cleaned) return `${cleaned}\n\n---\n*Note: ${budgetNote}*`;
   }
   return `Completed with a warning.\n\n> ${budgetNote}`;
 }
