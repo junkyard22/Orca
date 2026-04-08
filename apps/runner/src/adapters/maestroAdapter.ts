@@ -1419,6 +1419,44 @@ async function runAgentLoop(
     }
   }
 
+  // Post-loop write rescue: if the task required writing a file but the model
+  // never called write_file (e.g. it generated analysis as plain text without
+  // using tools), make one final targeted call with the analysis as content.
+  if (writeTarget && filesChanged.length === 0 && lastText.trim().length > 0) {
+    console.error(`[MaestroAdapter] write:rescue  target=${writeTarget}  analysisChars=${lastText.length}`);
+    const rescuePrompt =
+      conversation +
+      `\n\nSystem: Your analysis is complete. You MUST now call write_file to save it.\n` +
+      `Call write_file with path="${writeTarget}" and content=<your full analysis above>.\n` +
+      `Do not output anything else. Only the write_file tool call.`;
+    const { text: rescueText } = await ctx.llm.stream(
+      rescuePrompt,
+      { maxTokens: 8192, simple: true },
+      (chunk) => ctx.emit?.({ type: "stream:token", taskId: ctx.runId, chunk }),
+    );
+    const rescueCalls = parseToolCalls(rescueText);
+    for (const call of rescueCalls) {
+      if (call.tool !== "write_file") continue;
+      const result = await tools.execute(call.tool, call.input);
+      const outputText = normalizeToolText(result.output);
+      toolEvents.push({
+        tool: call.tool,
+        ok: result.ok,
+        summary: result.ok
+          ? `${call.tool}: ok (${outputText.length} chars)`
+          : `${call.tool}: failed — ${result.error ?? "unknown"}`,
+        raw: call.input,
+      });
+      if (result.ok) {
+        const filePath = typeof call.input["path"] === "string" ? call.input["path"] : "";
+        const content  = typeof call.input["content"] === "string" ? call.input["content"] : undefined;
+        if (filePath) filesChanged.push({ path: filePath, changeType: "A", diff: content });
+        if (content) lastText = content;
+      }
+      break;
+    }
+  }
+
   // Strip dangling tool_call markup from the final response.
   // Three cases:
   //   1. Complete block:      <tool_call>...</tool_call>  (normal)
