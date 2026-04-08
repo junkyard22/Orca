@@ -153,6 +153,14 @@ function formatToolResult(tool: string, ok: boolean, output: string, error?: str
 
 const REACT_PROMPT_BLOCK = `
 
+EXECUTION MODEL — READ THIS FIRST:
+1. Call a tool. Wait for the result.
+2. Reason about what you learned (Thought/Observation/Next).
+3. Call another tool if needed. Repeat until you have everything required.
+4. Only write FINAL ANSWER: when ALL required work is done (files read, files written if asked).
+
+CRITICAL: You MUST call at least one tool before writing FINAL ANSWER: whenever your task involves reading files, analyzing a repo, or saving output. "I think I should look at..." is NOT a tool call — make the actual call.
+
 After receiving a tool result, reason before acting again:
 
 Thought: [what did I just learn? what does it mean for the task?]
@@ -160,10 +168,10 @@ Observation: [current state of the task based on everything so far]
 Next: [what to do next and why — or "Task is complete" if done]
 
 FILE WRITING — MANDATORY:
-If your task involves creating or modifying a file (any filename with an extension, e.g. .ts .js .py .json):
+If your task involves creating or modifying a file (any filename with an extension, e.g. .ts .js .py .json .md):
 1. Call write_file with the complete file content BEFORE writing your final answer
 2. Your FINAL ANSWER must confirm what was written — it must NOT contain the file content itself
-3. Never output source code inline as a substitute for calling write_file
+3. Never output source code or document content inline as a substitute for calling write_file
 
 PREFERRED FORMAT:
 - Your Thought/Observation/Next blocks are INTERNAL REASONING ONLY
@@ -524,6 +532,24 @@ export class ReactAgentAdapter implements AgentAdapter {
         
         if (toolCalls.length === 0) {
           if (finalAnswer) {
+            // Guard: if the task clearly requires file/repo investigation and no tools
+            // were called at all, the model skipped the work — reject the premature answer.
+            const taskImpliesToolUse = (
+              /\b(analyz|investigat|examin|read|list|search|find|save|write|creat)\w*/i.test(task.intent) ||
+              /\b\w+\.\w{2,5}\b/.test(task.intent)  // explicit filename with extension
+            );
+            if (taskImpliesToolUse && cumulativeToolCallCount === 0) {
+              messages.push({
+                role: 'user',
+                content:
+                  'Your task requires you to investigate files and/or write output to disk, but you have not called any tools yet. ' +
+                  'Do NOT write a final answer until you have:\n' +
+                  '1. Used read_file or list_directory to examine the relevant files\n' +
+                  '2. Called write_file if the task asks you to save a file\n\n' +
+                  'Start by calling a tool now. Do not describe what you plan to do — make the actual tool call.',
+              });
+              continue;
+            }
             currentOutputText = finalAnswer;
             stoppedBecause = 'done';
             ctx.recordTrace?.("agent.final_answer", {
