@@ -296,11 +296,11 @@ orca.onOrcaEvent((e) => {
     pipelineEventLog.push({ ...e, _ts: Date.now() });
   }
 
-  // Stream reset: REWRITE is about to start — clear the ANSWER text from the
-  // bubble so the polished output replaces it instead of appending.
+  // Stream reset: a repair REWRITE is about to start — clear the fallback
+  // accumulator so the repair chunks don't append to the initial attempt's text.
   if (e.type === "stream:reset") {
+    streamText = "";
     if (streamBubble) {
-      streamText = "";
       const bubbleEl = streamBubble.querySelector(".stream-content");
       if (bubbleEl) bubbleEl.textContent = "";
     }
@@ -328,49 +328,28 @@ orca.onOrcaEvent((e) => {
 
 orca.onStreamStart((_data) => {
   if (!busy) return;
-  if (streamBubble) {
-    // Repair rewrite: reuse the existing bubble — re-add streaming class and clear content.
-    streamText = "";
-    streamBubble.classList.add("streaming");
-    const bubbleEl = streamBubble.querySelector(".stream-content");
-    if (bubbleEl) bubbleEl.textContent = "";
-    return;
-  }
-  removeThinking();
-  showMessages();
-  const div = document.createElement("div");
-  div.className = "msg orca streaming";
-  div.innerHTML = `<div class="msg-label">Orca</div><div class="msg-bubble stream-content"></div>`;
-  messages.appendChild(div);
-  streamBubble = div;
-  streamText   = "";
-  scrollToBottom();
+  // Issue 1 fix: intermediate streaming tokens must not render as a chat bubble.
+  // Only the final Benson reply (resolved via sendMessage) renders a message.
+  // Reset the fallback accumulator so each generation phase starts clean.
+  streamText = "";
 });
 
 orca.onStreamChunk(({ chunk }) => {
-  if (!busy || !streamBubble) return;
+  if (!busy) return;
   streamText += chunk;
-  // Suppress ReAct internal monologue — <tool_call> blocks are never the final answer.
+  // Suppress ReAct internal monologue — drop tool_call blocks from the fallback buffer.
   if (/<tool_call>/i.test(streamText)) {
     streamText = "";
-    const bubbleEl = streamBubble.querySelector(".stream-content");
-    if (bubbleEl) bubbleEl.textContent = "";
-    scrollToBottom();
-    return;
   }
-  const bubbleEl = streamBubble.querySelector(".stream-content");
-  if (bubbleEl) bubbleEl.textContent = streamText;
-  scrollToBottom();
 });
 
 orca.onStreamEnd((_data) => {
-  // Remove blinking cursor — generation is finished.
-  if (streamBubble) streamBubble.classList.remove("streaming");
-  // Render the pipeline summary badge immediately when the summary has already
-  // arrived via orca-event (typical path: summary fires before stream-end IPC).
-  // For mid-task repair resets the summary is not set yet — badge renders later
-  // from sendMessage's post-resolve block.
-  if (pendingPipelineSummary) {
+  // No stream bubble to clean up.
+  // Render the pipeline summary badge if it arrived via orca-event before the
+  // sendMessage invoke resolves (typical fast-path).  The !pipelineBadgeRendered
+  // guard prevents a double-render when sendMessage's post-resolve block also
+  // has the summary available via result.pipelineSummary.
+  if (pendingPipelineSummary && !pipelineBadgeRendered) {
     pendingPipelineSummary._eventLog = pipelineEventLog.slice();
     appendPipelineBadge(pendingPipelineSummary);
     pendingPipelineSummary = null;
@@ -869,7 +848,8 @@ async function sendMessage() {
       streamBubble = null;
       streamText   = "";
     } else if (result.ok) {
-      const replyText = result.reply?.text ?? result.reply?.outputText ?? JSON.stringify(result.reply);
+      // Issue 2 fix: use streamText as fallback (BensonReply has no outputText field).
+      const replyText = result.reply?.text ?? streamText ?? JSON.stringify(result.reply);
       const msgDiv = appendMsg("orca", cleanPipelineOutput(replyText));
       if (currentRole) attachRoleBadge(msgDiv, currentRole);
     } else if (result.error === "Stopped." || result.error === "Locked.") {
@@ -886,6 +866,7 @@ async function sendMessage() {
       summaryToRender._eventLog = pipelineEventLog.slice();
       appendPipelineBadge(summaryToRender);
       pendingPipelineSummary = null;
+      pipelineBadgeRendered = true;  // Issue 2 fix: prevent onStreamEnd double-badge
     }
 
     if (!result.ok) finalStatus = "error";
@@ -897,6 +878,7 @@ async function sendMessage() {
   } finally {
     currentRole  = null;
     pendingPipelineSummary = null;   // discard if not yet rendered (abort / error path)
+    streamText   = "";              // clear fallback accumulator for next task
     busy = false;          // clear busy FIRST so late events won't override status
     syncIdleStatus();
     syncComposerState();
