@@ -595,8 +595,14 @@ export class ReactAgentAdapter implements AgentAdapter {
           // would surface internal monologue to the user if the loop later exits
           // at max_iterations.
           const extractedText = stripThoughtBlocks(cleanedOutput);
-          const isSubstantive = extractedText.trim().length > 0
-            && !/^(Good|OK|Alright|Let me|I('ll| will| need| want| should)|Now |First)/im.test(extractedText.trim());
+          // Only reject short single-sentence thinking preambles.  Multi-paragraph
+          // text that starts with a thinking opener may contain real content after
+          // the first sentence — don't discard it.
+          const trimmed = extractedText.trim();
+          const looksLikePureThinking = trimmed.length < 500
+            && !/\n/.test(trimmed)
+            && /^(Good|OK|Alright|Let me|I('ll| will| need| want| should)|Now |First)/im.test(trimmed);
+          const isSubstantive = trimmed.length > 0 && !looksLikePureThinking;
           if (isSubstantive) {
             currentOutputText = extractedText;
           }

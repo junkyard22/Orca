@@ -74,8 +74,22 @@ export async function handleRepairLoop(
     // Prefer the AHP-based targeted repair prompt (set by Pappy's verifyAHPPacket)
     // over the legacy generic repairTask string when available.
     const repairInstruction = ahpPacket?.repairPrompt ?? currentQC.repairTask!;
+
+    // ── Tool-missing escalation ─────────────────────────────────────────────
+    // If QC flagged TOOL_MISSING, the agent ran but never called tools.
+    // Inject a strong directive — the agent MUST use its available tools.
+    const hasToolMissing = currentQC.issues.some(
+      (i) => i.code === 'TOOL_MISSING' || /tool.*(missing|not.*call)/i.test(i.message ?? i.description ?? ''),
+    );
+    const toolNudge = hasToolMissing
+      ? `\n\nCRITICAL: The previous attempt completed WITHOUT calling any tools. ` +
+        `You MUST use your available tools (read_file, write_file, list_directory, etc.) ` +
+        `to actually perform the work. Do NOT just describe what you would do — ` +
+        `call the tools and do it. Use <tool_call> blocks to invoke tools.`
+      : '';
+
     const repairSpec: OrcaTaskSpec = {
-      originalUserMessage: `${repairInstruction}${roleHint}`,
+      originalUserMessage: `${repairInstruction}${roleHint}${toolNudge}`,
       intent: "repair",
       goals: [
         ...originalTask.goals,

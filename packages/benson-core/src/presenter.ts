@@ -249,12 +249,11 @@ function presentSuccess(result: ExecutionResult, task: TaskSpec): string {
     return `Done. Created or updated:\n\n${fileList}`;
   }
 
-  // Last resort — construct a concise confirmation from the task goals.
-  const summary = task.goals.length === 1
-    ? task.goals[0]
-    : task.goals.map((g, i) => `${i + 1}. ${g}`).join("\n");
-
-  return `Done. Here is what was completed:\n\n${summary}`;
+  // Last resort — cleanOutput stripped everything and no files were changed.
+  // This means the agent produced no useful work.  Do NOT echo the task goals
+  // back ("Done. Here is what was completed:") — that's deceptive.  Instead
+  // delegate to the failure presenter so the user gets an honest answer.
+  return presentFailure(result, task);
 }
 
 function presentWarn(result: ExecutionResult, task: TaskSpec): string {
