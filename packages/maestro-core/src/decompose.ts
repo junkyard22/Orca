@@ -126,6 +126,8 @@ Expected output:
 - "what files changed recently" → { "routing": "direct", "role": "brain" }
 - "count how many filenames contain R" → { "routing": "direct", "role": "brain", "done_criteria": ["Output states the count of top-level filenames containing the letter R"] }
   BAD done_criteria for that task: ["Output explains inability to access filesystem"] ← NEVER invent limitations
+- "analyse the repo, find 3 critical missing features, save to SHIP-AUDIT.md" → { "routing": "direct", "role": "brain", "done_criteria": ["SHIP-AUDIT.md created via write_file", "File lists 3 missing features ranked by severity"] }
+- "analyze My-Ministry-OS and write a ship audit to AUDIT.md" → { "routing": "direct", "role": "brain", "done_criteria": ["AUDIT.md created via write_file", "File contains ranked findings from analysis"] }
 
 ## More routing examples — DECOMPOSE:
 - "implement a login form AND write the JSDoc for it" → decompose: [strong_model, narrator]
