@@ -349,7 +349,7 @@ orca.onStreamChunk(({ chunk }) => {
     streamText = "";
   }
   // Drop narration preambles that models emit while planning
-  if (/^(Good[,.]?\s+I can see|I can see|I'll start|I want to make sure|I need to|Let me start)/im.test(streamText.trim()) && !/FINAL ANSWER:/i.test(streamText)) {
+  if (/^(Good[,.]?\s+I can see|I can see|I'll start|I want to make sure|I need to|Let me (start|continue|explore|check|look|understand)|I should (check|look|read|verify|examine|review|analyze))/im.test(streamText.trim()) && !/FINAL ANSWER:/i.test(streamText)) {
     streamText = "";
   }
 });

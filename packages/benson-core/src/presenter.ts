@@ -104,7 +104,7 @@ function cleanOutput(text: string): string {
   // 5c. Strip whole lines that are pure internal-thought openers.
   //     These are conservative — only strip if the *entire line* matches a
   //     known leakage pattern, so we don't accidentally cut real content.
-  out = out.replace(/^(thinking\.\.\.|let me (think|check|look|see|read|verify|review|examine|analyze|inspect|investigate|find|determine|try).*|i need to .*|i('ll| will) need to .*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+  out = out.replace(/^(thinking\.\.\.|let me (think|check|look|see|read|verify|review|examine|analyze|inspect|investigate|find|determine|try|continue|explore|understand).*|i need to .*|i('ll| will) need to .*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
 
   // 5c1a. Strip narration preamble ("Good, I can see...", "I can see...", etc.)
   //       and planning sentences the model uses to narrate its own process.
@@ -123,7 +123,11 @@ function cleanOutput(text: string): string {
   //     sentences that narrate the agent's thinking process mid-response.
   //     Only targets verbs that are unambiguously internal-process narration.
   //     "Let me know" is intentionally excluded — it is user-facing language.
-  out = out.replace(/\.?\s*(Now\s+)?[Ll]et me (?:also\s+|just\s+|quickly\s+|then\s+|now\s+|go ahead and\s+)?(think|check|look|see|read|search|verify|review|examine|analyze|inspect|investigate|find|determine|try)\b[^.!?\n]*[.!?]?/gi, "");
+  out = out.replace(/\.?\s*(Now\s+)?[Ll]et me (?:also\s+|just\s+|quickly\s+|then\s+|now\s+|go ahead and\s+)?(think|check|look|see|read|search|verify|review|examine|analyze|inspect|investigate|find|determine|try|continue|explore|understand)\b[^.!?\n]*[.!?]?/gi, "");
+
+  // 5e2. Strip inline "I should/need to/want to [verb]" sentences that appear
+  //      mid-paragraph. These are internal planning narration, not user content.
+  out = out.replace(/\.?\s*I (should|need to|want to|'ll|will) (check|look|read|verify|examine|inspect|review|analyze|search|find|explore|investigate|continue|start|begin|make sure|understand)\b[^.!?\n]*[.!?]?/g, "");
 
   // 5f. Remove immediately-repeated text blocks — the model sometimes echoes its
   //     own prior turn when given conversation context, producing "X...X" output.
@@ -175,7 +179,7 @@ function cleanFollowUp(text: string): string {
   out = out.replace(/^(Brain|Reviewer|Narrator|Planner|Utility|Debugger|Reader|Vision|Subagent):\s.*/gmi, "");
 
   // Step 5c: strip whole-line internal-thought openers (same as cleanOutput step 5c)
-  out = out.replace(/^(thinking\.\.\.|let me (think|check|look|see|read|verify|review|examine|analyze|inspect|investigate|find|determine|try).*|i need to (think|figure|work|check|analyze|determine).*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+  out = out.replace(/^(thinking\.\.\.|let me (think|check|look|see|read|verify|review|examine|analyze|inspect|investigate|find|determine|try|continue|explore|understand).*|i need to (think|figure|work|check|analyze|determine).*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
 
   // Step 5c1a: strip narration preamble (same as cleanOutput step 5c1a)
   out = out.replace(/^(good[,.]?\s+i can see.*|i can see.*|i'll start\b.*|i want to make sure\b.*|i('ll| will| should| need to) (start|begin|check|look|read|verify|examine|review|analyze) .*|now i('ll| will| need| should)\s+.*|alright[,.]?\s+.*|ok[,.]\s+.*)$/gmi, "");
@@ -184,7 +188,10 @@ function cleanFollowUp(text: string): string {
   out = out.replace(/^\s*\d+\.\s+(The |Check |Look |Read |Verify |Examine |Inspect |Review |Analyze |Search |Find |Any )[^\n]*$/gmi, "");
 
   // Step 5e: strip inline "Let me / Now let me [cognitive-verb]..." sentences (same as cleanOutput step 5e)
-  out = out.replace(/\.?\s*(Now\s+)?[Ll]et me (?:also\s+|just\s+|quickly\s+|then\s+|now\s+|go ahead and\s+)?(think|check|look|see|read|search|verify|review|examine|analyze|inspect|investigate|find|determine|try)\b[^.!?\n]*[.!?]?/gi, "");
+  out = out.replace(/\.?\s*(Now\s+)?[Ll]et me (?:also\s+|just\s+|quickly\s+|then\s+|now\s+|go ahead and\s+)?(think|check|look|see|read|search|verify|review|examine|analyze|inspect|investigate|find|determine|try|continue|explore|understand)\b[^.!?\n]*[.!?]?/gi, "");
+
+  // Step 5e2: strip inline "I should/need to/want to [verb]" sentences (same as cleanOutput step 5e2)
+  out = out.replace(/\.?\s*I (should|need to|want to|'ll|will) (check|look|read|verify|examine|inspect|review|analyze|search|find|explore|investigate|continue|start|begin|make sure|understand)\b[^.!?\n]*[.!?]?/g, "");
 
   // Step 5f: remove immediately-repeated text blocks (same as cleanOutput step 5f)
   out = out.replace(/(.{30,})\1/g, "$1");

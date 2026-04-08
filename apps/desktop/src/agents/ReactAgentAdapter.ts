@@ -216,9 +216,12 @@ function stripThoughtBlocks(text: string): string {
   // Phase 2: catch any orphaned single-line headers that Phase 1 missed
   result = result.replace(/^(Thought|Observation|Next):.*$/gm, '');
   // Phase 3: strip narration preamble lines that are clearly internal planning
-  result = result.replace(/^(Good[,.] I can see|I can see|I'll start|I want to make sure|I need to:?|Now I'll|Now I need|Now let me|OK[,.]|Alright[,.])\b.*$/gmi, '');
+  result = result.replace(/^(Good[,.] I can see|I can see|I'll start|I want to make sure|I need to:?|Now I'll|Now I need|Now let me|Let me continue|Let me explore|OK[,.]|Alright[,.])\b.*$/gmi, '');
   // Phase 4: strip numbered planning lists ("1. The X to check Y", "2. Check the ...")
-  result = result.replace(/^\s*\d+\.\s+(The |Check |Look |Read |Verify |Examine |Inspect |Review |Analyze |Search |Find |Any ).*$/gmi, '');
+    result = result.replace(/^\s*\d+\.\s+(The |Check |Look |Read |Verify |Examine |Inspect |Review |Analyze |Search |Find |Any ).*$/gmi, '');
+  // Phase 5: strip inline planning sentences mid-paragraph (Let me continue..., I should check...)
+  result = result.replace(/[.]\s*(?:Now\s+)?[Ll]et me (?:also\s+|just\s+|quickly\s+|then\s+|now\s+|go ahead and\s+)?(?:think|check|look|see|read|search|verify|review|examine|analyze|inspect|investigate|find|determine|try|continue|explore|understand)[^.!?\n]*[.!?]?/gi, '.');
+  result = result.replace(/[.]\s*I (?:should|need to|want to|'ll|will) (?:check|look|read|verify|examine|inspect|review|analyze|search|find|explore|investigate|continue|start|begin|make sure|understand)[^.!?\n]*[.!?]?/g, '.');
   return result
     .replace(/\n{3,}/g, '\n\n')
     .trim();
