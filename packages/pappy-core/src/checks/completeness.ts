@@ -951,8 +951,10 @@ function detectDeliverable(
   }
 
   // Fix / debug deliverable
-  const fixVerbPlusNoun = /\b(fix|resolve|debug|correct|patch|repair)\b.{0,50}\b(bug|error|issue|problem|crash|exception|failure|fault|defect)\b/;
-  const nounPlusFixVerb = /\b(bug|error|issue|problem|crash|exception)\b.{0,50}\b(fix|resolve|debug|correct|patch)\b/;
+  // NOTE: fix(?!-) excludes compound nouns like "fix-plan", "fix-up" where
+  // "fix" is not being used as a transitive verb targeting a code artifact.
+  const fixVerbPlusNoun = /\b(fix(?!-)|resolve|debug|correct|patch|repair)\b.{0,50}\b(bug|error|issue|problem|crash|exception|failure|fault|defect)\b/;
+  const nounPlusFixVerb = /\b(bug|error|issue|problem|crash|exception)\b.{0,50}\b(fix(?!-)|resolve|debug|correct|patch)\b/;
   if (fixVerbPlusNoun.test(lower) || nounPlusFixVerb.test(lower)) {
     return { kind: "fix", artifact: "bug/error" };
   }
