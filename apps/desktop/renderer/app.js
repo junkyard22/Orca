@@ -337,8 +337,19 @@ orca.onStreamStart((_data) => {
 orca.onStreamChunk(({ chunk }) => {
   if (!busy) return;
   streamText += chunk;
-  // Suppress ReAct internal monologue — drop tool_call blocks from the fallback buffer.
+  // Suppress ReAct internal monologue — drop tool_call blocks and thinking
+  // patterns from the fallback buffer so they never flash in the UI during
+  // intermediate iterations of the agent loop.
   if (/<tool_call>/i.test(streamText)) {
+    streamText = "";
+  }
+  // Drop if the accumulated text is purely ReAct thought/observation/next blocks
+  // or narration preamble (typing these out is confusing for users).
+  if (/^(Thought|Observation|Next):\s/m.test(streamText) && !/FINAL ANSWER:/i.test(streamText)) {
+    streamText = "";
+  }
+  // Drop narration preambles that models emit while planning
+  if (/^(Good[,.]?\s+I can see|I can see|I'll start|I want to make sure|I need to|Let me start)/im.test(streamText.trim()) && !/FINAL ANSWER:/i.test(streamText)) {
     streamText = "";
   }
 });

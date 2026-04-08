@@ -204,13 +204,22 @@ function extractFinalAnswer(rawText: string): string | null {
 }
 
 function stripThoughtBlocks(text: string): string {
-  // Strip only the ReAct header lines themselves (Thought: / Observation: / Next:).
-  // Using the multiline flag (m) + line anchors so we never cross into the next
-  // line — the dotall (s) flag was previously causing lazy .*? to consume the
-  // entire rest of the string when no \n\n paragraph break was present, silently
-  // wiping recipe-style responses that used single newlines throughout.
-  return text
-    .replace(/^(Thought|Observation|Next):.*$/gm, '')
+  // Strip ReAct header lines AND the content paragraphs that follow them.
+  // A "thought section" is a Thought:/Observation:/Next: header followed by
+  // lines until the next header, a blank line, FINAL ANSWER:, or end-of-string.
+  //
+  // Phase 1: strip whole sections (header + following content lines)
+  let result = text.replace(
+    /^(Thought|Observation|Next):\s*[\s\S]*?(?=\n(?:Thought|Observation|Next|FINAL ANSWER):|\n\n|$)/gim,
+    '',
+  );
+  // Phase 2: catch any orphaned single-line headers that Phase 1 missed
+  result = result.replace(/^(Thought|Observation|Next):.*$/gm, '');
+  // Phase 3: strip narration preamble lines that are clearly internal planning
+  result = result.replace(/^(Good[,.] I can see|I can see|I'll start|I want to make sure|I need to:?|Now I'll|Now I need|Now let me|OK[,.]|Alright[,.])\b.*$/gmi, '');
+  // Phase 4: strip numbered planning lists ("1. The X to check Y", "2. Check the ...")
+  result = result.replace(/^\s*\d+\.\s+(The |Check |Look |Read |Verify |Examine |Inspect |Review |Analyze |Search |Find |Any ).*$/gmi, '');
+  return result
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
@@ -577,9 +586,15 @@ export class ReactAgentAdapter implements AgentAdapter {
             break;
           }
 
-          // Only preserve non-empty text — don't overwrite a good draft with an empty response
+          // Only preserve non-empty text — don't overwrite a good draft with an
+          // empty response.  Critically, don't preserve pure thinking/planning
+          // text that the model emitted without a FINAL ANSWER: marker — that
+          // would surface internal monologue to the user if the loop later exits
+          // at max_iterations.
           const extractedText = stripThoughtBlocks(cleanedOutput);
-          if (extractedText.trim()) {
+          const isSubstantive = extractedText.trim().length > 0
+            && !/^(Good|OK|Alright|Let me|I('ll| will| need| want| should)|Now |First)/im.test(extractedText.trim());
+          if (isSubstantive) {
             currentOutputText = extractedText;
           }
           // Do not exit — continue to next iteration to allow model to retry

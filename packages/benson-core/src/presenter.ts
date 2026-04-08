@@ -106,6 +106,15 @@ function cleanOutput(text: string): string {
   //     known leakage pattern, so we don't accidentally cut real content.
   out = out.replace(/^(thinking\.\.\.|let me (think|check|look|see|read|verify|review|examine|analyze|inspect|investigate|find|determine|try).*|i need to .*|i('ll| will) need to .*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
 
+  // 5c1a. Strip narration preamble ("Good, I can see...", "I can see...", etc.)
+  //       and planning sentences the model uses to narrate its own process.
+  out = out.replace(/^(good[,.]?\s+i can see.*|i can see.*|i'll start\b.*|i want to make sure\b.*|i('ll| will| should| need to) (start|begin|check|look|read|verify|examine|review|analyze) .*|now i('ll| will| need| should)\s+.*|alright[,.]?\s+.*|ok[,.]\s+.*)$/gmi, "");
+
+  // 5c1b. Strip numbered planning lists that are clearly internal investigation
+  //       steps, not user-facing content. Matches "1. The X to check/verify...",
+  //       "2. Check the ...", etc.
+  out = out.replace(/^\s*\d+\.\s+(The |Check |Look |Read |Verify |Examine |Inspect |Review |Analyze |Search |Find |Any )[^\n]*$/gmi, "");
+
   // 5c2. Strip "I need to:" planning blocks — a colon-terminated opener followed
   //      by a numbered or bulleted list is always an internal plan, never output.
   out = out.replace(/^[Ii] need to:?\s*\n((?:\s*[\d\-\*•]+\.?\s+.+\n?)*)/gm, "");
@@ -167,6 +176,12 @@ function cleanFollowUp(text: string): string {
 
   // Step 5c: strip whole-line internal-thought openers (same as cleanOutput step 5c)
   out = out.replace(/^(thinking\.\.\.|let me (think|check|look|see|read|verify|review|examine|analyze|inspect|investigate|find|determine|try).*|i need to (think|figure|work|check|analyze|determine).*|first[,.]?\s*i('ll| will)\s+.*|internal note:.*|scratchpad:.*|reasoning:.*|analysis:.*)$/gmi, "");
+
+  // Step 5c1a: strip narration preamble (same as cleanOutput step 5c1a)
+  out = out.replace(/^(good[,.]?\s+i can see.*|i can see.*|i'll start\b.*|i want to make sure\b.*|i('ll| will| should| need to) (start|begin|check|look|read|verify|examine|review|analyze) .*|now i('ll| will| need| should)\s+.*|alright[,.]?\s+.*|ok[,.]\s+.*)$/gmi, "");
+
+  // Step 5c1b: strip numbered planning lists (same as cleanOutput step 5c1b)
+  out = out.replace(/^\s*\d+\.\s+(The |Check |Look |Read |Verify |Examine |Inspect |Review |Analyze |Search |Find |Any )[^\n]*$/gmi, "");
 
   // Step 5e: strip inline "Let me / Now let me [cognitive-verb]..." sentences (same as cleanOutput step 5e)
   out = out.replace(/\.?\s*(Now\s+)?[Ll]et me (?:also\s+|just\s+|quickly\s+|then\s+|now\s+|go ahead and\s+)?(think|check|look|see|read|search|verify|review|examine|analyze|inspect|investigate|find|determine|try)\b[^.!?\n]*[.!?]?/gi, "");
