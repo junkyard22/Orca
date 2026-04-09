@@ -535,7 +535,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         // (The old cumulativeToolCallCount-based trigger never fired for 10-iteration runs
         // because it required 30 tool calls, which is 3× the iteration budget.)
         const iterationsRemaining = this.maxIterations - iteration - 1;
-        if (iterationsRemaining === 2 && !toolLimitWarningInjected && !finalAnswerFound) {
+        if (iterationsRemaining === 2 && iteration >= 1 && !toolLimitWarningInjected && !finalAnswerFound) {
           toolLimitWarningInjected = true;
           const allTaskTextForWarn = `${task.intent} ${task.goals.join(' ')} ${task.doneCriteria.join(' ')}`;
           const taskImpliesFileSaveForWarn =
