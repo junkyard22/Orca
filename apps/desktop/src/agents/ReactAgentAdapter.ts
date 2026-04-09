@@ -277,6 +277,10 @@ export class ReactAgentAdapter implements AgentAdapter {
     let cumulativeToolCallCount = 0;
     let toolLimitWarningInjected = false;
     let finalAnswerFound = false;
+    // Capture the most recent FINAL ANSWER that was rejected by the write_file guard.
+    // Used by the post-loop rescue to save the model's analysis even when it never
+    // called write_file on its own.
+    let lastRejectedFinalAnswer = '';
     
     const availableTools = tools;
     const toolSchemaLines = availableTools.flatMap((tool) => {
@@ -314,7 +318,11 @@ export class ReactAgentAdapter implements AgentAdapter {
     
     // When the task involves writing a file, put a hard imperative first so
     // even models that skip the system prompt can't miss it.
-    const needsFileWrite = /\.[a-z]{2,4}(\s|$)/i.test(task.intent);
+    // Check both intent AND goals — repair tasks use intent="repair" so the
+    // file extension only appears in the goals list.
+    const goalText = task.goals.join(' ');
+    const intentAndGoals = `${task.intent} ${goalText}`;
+    const needsFileWrite = /\.[a-z]{2,4}(\s|$)/i.test(intentAndGoals);
     const fileWriteDirective = needsFileWrite
       ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline — use the tool.**\n\n"
       : "";
@@ -521,34 +529,39 @@ export class ReactAgentAdapter implements AgentAdapter {
           finalAnswerFound = true;
         }
         
-        // Tool Use Discipline: warn when approaching the tool ceiling so the model wraps up.
-        if (cumulativeToolCallCount >= this.maxIterations * 3 && !toolLimitWarningInjected && !finalAnswerFound) {
-          // Inject warning message - do NOT execute any more tools this iteration
+        // Tool Use Discipline: warn when approaching the iteration ceiling so the model wraps up.
+        // Fire 3 iterations before the end so the model has time to call write_file AND produce
+        // a FINAL ANSWER — two distinct operations that each need their own turn.
+        // (The old cumulativeToolCallCount-based trigger never fired for 10-iteration runs
+        // because it required 30 tool calls, which is 3× the iteration budget.)
+        const iterationsRemaining = this.maxIterations - iteration - 1;
+        if (iterationsRemaining === 2 && !toolLimitWarningInjected && !finalAnswerFound) {
           toolLimitWarningInjected = true;
-          messages.push({ role: "user", content: "You have used many tools without producing a final answer. Do not call any more tools. Your next response must be your final answer." });
-          continue; // Skip tool execution, wait for model's final answer next iteration
-        }
-        
-        // If warning was already injected and this is the next iteration, extract output as final
-        if (toolLimitWarningInjected && !finalAnswerFound) {
-          // This is the iteration after warning injection - extract whatever we have as final answer
-          currentOutputText = stripThoughtBlocks(cleanedOutput);
-          stoppedBecause = 'done';
-          ctx.recordTrace?.("agent.final_answer.fallback", {
-            role: this.role,
-            iteration: iterationCount,
-            outputText: currentOutputText,
+          const allTaskTextForWarn = `${task.intent} ${task.goals.join(' ')} ${task.doneCriteria.join(' ')}`;
+          const taskImpliesFileSaveForWarn =
+            /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(allTaskTextForWarn) ||
+            /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(allTaskTextForWarn);
+          const writeFileCalledForWarn = toolsUsed.some(e => e.tool === 'write_file');
+          const writeFileReminder = taskImpliesFileSaveForWarn && !writeFileCalledForWarn
+            ? '\n\nCRITICAL: Your task requires saving a file. You MUST call write_file with the complete file content in your NEXT response — before writing your final answer.'
+            : '';
+          messages.push({
+            role: "user",
+            content: `You have 2 turns remaining.${writeFileReminder}\nAfter any required tool call (e.g. write_file), your next response MUST be your FINAL ANSWER using the FINAL ANSWER: marker.`,
           });
-          break;
+          continue; // give the model a clean turn to act on this warning
         }
         
         if (toolCalls.length === 0) {
           if (finalAnswer) {
             // Guard: if the task clearly requires file/repo investigation and no tools
             // were called at all, the model skipped the work — reject the premature answer.
+            // Check both intent and goals — repair tasks use intent="repair", so file/tool
+            // indicators only appear in the goals list.
+            const allTaskText = `${task.intent} ${task.goals.join(' ')}`;
             const taskImpliesToolUse = (
-              /\b(analyz|investigat|examin|read|list|search|find|save|write|creat)\w*/i.test(task.intent) ||
-              /\b\w+\.\w{2,5}\b/.test(task.intent)  // explicit filename with extension
+              /\b(analyz|investigat|examin|read|list|search|find|save|write|creat)\w*/i.test(allTaskText) ||
+              /\b\w+\.\w{2,5}\b/.test(allTaskText)  // explicit filename with extension
             );
             if (taskImpliesToolUse && cumulativeToolCallCount === 0) {
               messages.push({
@@ -565,11 +578,14 @@ export class ReactAgentAdapter implements AgentAdapter {
             // Guard: if the task explicitly asks to save output to a file, write_file
             // must have been called before we accept a FINAL ANSWER.
             const taskImpliesFileSave = (
-              /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(task.intent) ||
-              /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(task.intent)
+              /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(allTaskText) ||
+              /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(allTaskText)
             );
             const writeFileCalled = toolsUsed.some(e => e.tool === 'write_file');
             if (taskImpliesFileSave && !writeFileCalled) {
+              // Save this final answer — if the model keeps refusing to call write_file,
+              // the post-loop rescue will use this content to write the file directly.
+              lastRejectedFinalAnswer = finalAnswer;
               messages.push({
                 role: 'user',
                 content:
@@ -603,7 +619,10 @@ export class ReactAgentAdapter implements AgentAdapter {
             && !/\n/.test(trimmed)
             && /^(Good|OK|Alright|Let me|I('ll| will| need| want| should)|Now |First)/im.test(trimmed);
           const isSubstantive = trimmed.length > 0 && !looksLikePureThinking;
-          if (isSubstantive) {
+          // Only overwrite currentOutputText if the new text is longer — prevents
+          // a short thinking sentence like "I've gathered enough information" from
+          // clobbering a longer analysis the model produced in an earlier iteration.
+          if (isSubstantive && trimmed.length > currentOutputText.trim().length) {
             currentOutputText = extractedText;
           }
           // Do not exit — continue to next iteration to allow model to retry
@@ -821,6 +840,41 @@ export class ReactAgentAdapter implements AgentAdapter {
         }
       }
       
+      // ── Post-loop write rescue ────────────────────────────────────────────────
+      // If the task required a file write, the model never called write_file, but
+      // it DID produce a FINAL ANSWER (which was rejected by the guard), call
+      // write_file now using that content.  This handles models that understand the
+      // task but consistently refuse to emit <tool_call> blocks on their own.
+      const allTaskTextForRescue = `${task.intent} ${task.goals.join(' ')} ${task.doneCriteria.join(' ')}`;
+      const taskImpliesFileSaveRescue =
+        /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(allTaskTextForRescue) ||
+        /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(allTaskTextForRescue);
+      const writeFileCalledRescue = toolsUsed.some(e => e.tool === 'write_file');
+
+      if (taskImpliesFileSaveRescue && !writeFileCalledRescue && lastRejectedFinalAnswer.trim().length > 100) {
+        // Extract the target file path from doneCriteria or task text.
+        const pathMatch =
+          allTaskTextForRescue.match(/\b([\w.\-/]+\.(?:md|txt|ts|js|json|yaml|yml|py|sh|csv))\b/i);
+        const targetPath = pathMatch?.[1] ?? '';
+        const writeTool = availableTools.find(t => t.name === 'write_file');
+        if (targetPath && writeTool) {
+          try {
+            ctx.recordTrace?.("agent.postloop_write_rescue", { targetPath, contentLength: lastRejectedFinalAnswer.length });
+            const writeResult = await writeTool.execute(
+              { path: targetPath, content: lastRejectedFinalAnswer },
+              { workspaceRoot: ctx.workspaceRoot },
+            );
+            toolsUsed.push({ tool: 'write_file', ok: writeResult.ok, summary: writeResult.ok ? `Rescued: wrote ${targetPath}` : writeResult.error ?? 'write failed' });
+            if (writeResult.ok) {
+              filesChanged.push({ path: targetPath, changeType: 'A' });
+              currentOutputText = lastRejectedFinalAnswer;
+            }
+          } catch (rescueErr) {
+            ctx.recordTrace?.("agent.postloop_write_rescue.error", { error: String(rescueErr) });
+          }
+        }
+      }
+
       const cleanedLastOutput = stripToolCalls(lastModelOutput);
       // Prefer accumulated output (set on each iteration) over a fresh strip of
       // the last response — if stripping left nothing, fall back to the raw

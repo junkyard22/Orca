@@ -108,8 +108,12 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
     const satisfiedByFiles = expected.satisfiedByFilesChanged === true && hasFilesChanged;
 
     if (!toolWasCalled && !satisfiedByFiles) {
+      // write_file missing is HIGH — the task explicitly required a file to be
+      // created and it wasn't. This forces FAIL → repair rather than WARN → ship.
+      // Other missing tools stay MEDIUM (heuristic, may have false positives).
+      const severity = expected.tool === "write_file" ? "HIGH" : "MEDIUM";
       issues.push({
-        severity: "MEDIUM",
+        severity,
         code: "TOOL_MISSING",
         category: "Tooling",
         description: `Task implies using "${expected.tool}" but no such tool was called.`,

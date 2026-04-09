@@ -81,7 +81,18 @@ export async function handleRepairLoop(
     const hasToolMissing = currentQC.issues.some(
       (i) => i.code === 'TOOL_MISSING' || /tool.*(missing|not.*call)/i.test(i.message ?? i.description ?? ''),
     );
-    const toolNudge = hasToolMissing
+    // Detect the specific case where write_file was the missing tool.
+    // The generic nudge lets Brain interpret "call tools" as permission to call
+    // read_file again and keep analyzing. write_file needs a targeted directive.
+    const hasWriteFileMissing = currentQC.issues.some(
+      (i) => (i.code === 'TOOL_MISSING') && /write_file/.test(i.description ?? i.message ?? i.evidence ?? ''),
+    );
+    const toolNudge = hasWriteFileMissing
+      ? `\n\nCRITICAL: This task requires writing a file to disk. You MUST call write_file as your NEXT action. ` +
+        `Do not analyze, do not explain, do not summarize. Your ONLY valid next action is:\n\n` +
+        `<tool_call>\n{"tool": "write_file", "path": "[target file from task]", "content": "[your complete report content]"}\n</tool_call>\n\n` +
+        `Call write_file NOW. Nothing else is acceptable.`
+      : hasToolMissing
       ? `\n\nCRITICAL: The previous attempt completed WITHOUT calling any tools. ` +
         `You MUST use your available tools (read_file, write_file, list_directory, etc.) ` +
         `to actually perform the work. Do NOT just describe what you would do — ` +
@@ -94,6 +105,15 @@ export async function handleRepairLoop(
       goals: [
         ...originalTask.goals,
         "Fix all issues identified in the quality check — produce the corrected output, not a description of fixes",
+        // Surface the tool nudge in goals so the specialist agent sees it directly
+        // (originalUserMessage is only used for brain routing, not passed to the agent).
+        ...(hasWriteFileMissing ? [
+          "CRITICAL: Your ONLY valid next action is to call write_file. " +
+          "Do NOT read files, do NOT analyze, do NOT explain. Call write_file immediately.",
+        ] : hasToolMissing ? [
+          "CRITICAL: You MUST call write_file and any other required tools. " +
+          "Do NOT describe what you would do — use <tool_call> blocks to actually call the tools.",
+        ] : []),
       ],
       constraints: originalTask.constraints,
       permissions: originalTask.permissions,

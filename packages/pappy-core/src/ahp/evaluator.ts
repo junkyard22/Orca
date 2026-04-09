@@ -78,6 +78,28 @@ function checkACAgainstOutput(
     return { passed: false, evidence: "no output" };
   }
 
+  // tool_event requirement: AC asserts a specific tool was called (Brain done_criteria pattern).
+  // Keyword matching on outputText is insufficient — the model often MENTIONS the tool name
+  // without actually calling it. Require the file to appear in filesChanged instead.
+  if (/tool_event/i.test(acText)) {
+    const filePathMatch =
+      acText.match(/creating\s+([\w.\-\/]+)/i) ??
+      acText.match(/\b([\w.\-]+\.[\w]{1,6})\b/);
+    const p = filePathMatch?.[1] ?? "";
+    const touched = (input.filesChanged ?? []).map((f) => f.path);
+    if (p) {
+      if (touched.some((t) => t.endsWith(p) || t === p)) {
+        return { passed: true, evidence: `file present: ${p}` };
+      }
+      return { passed: false, evidence: `tool_event AC: file not created: ${p}` };
+    }
+    // No specific file — require at least one file change
+    if (touched.length > 0) {
+      return { passed: true, evidence: "files were changed" };
+    }
+    return { passed: false, evidence: "tool_event AC: no files changed" };
+  }
+
   // File-path requirement: `File "x" must be ...`
   const fileReq = acText.match(/[Ff]ile ["`']?([^"`'\s,]+)["`']?/);
   if (fileReq) {
