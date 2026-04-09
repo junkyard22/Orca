@@ -49,14 +49,15 @@ describe("runToolResultChecks — tool failures", () => {
 // ---------------------------------------------------------------------------
 
 describe("runToolResultChecks — tool correlation", () => {
-  it("flags MEDIUM when write-file task has no tool events and no filesChanged", () => {
+  it("flags HIGH when write-file task has no tool events and no filesChanged", () => {
     const issues = runToolResultChecks({
       task: "Create a new file and write content.",
     });
     // Should flag missing write_file tool and instrumentation warning
     const missing = issues.find((i) => i.code === "TOOL_MISSING");
     expect(missing).toBeDefined();
-    expect(missing!.severity).toBe("MEDIUM");
+    // write_file missing is HIGH — forces repair rather than warn-and-ship
+    expect(missing!.severity).toBe("HIGH");
   });
 
   it("does NOT flag write_file missing when filesChanged is populated", () => {
