@@ -106,6 +106,8 @@ function resolveToolCall(
     list_files: ["list_directory", "desktop-commander_list_directory"],
     list_dir: ["list_directory", "desktop-commander_list_directory"],
     read_dir: ["list_directory", "desktop-commander_list_directory"],
+    desktop_commander_search_files: ["search_files", "desktop-commander_start_search"],
+    "desktop-commander_search_files": ["search_files", "desktop-commander_start_search"],
     shell: ["run_command", "desktop-commander_execute_command"],
     run_shell: ["run_command", "desktop-commander_execute_command"],
   };

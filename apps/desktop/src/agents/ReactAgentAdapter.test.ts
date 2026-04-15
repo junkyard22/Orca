@@ -657,4 +657,37 @@ Next: Call it
     expect(capturedInput).toEqual({ path: ".", depth: 2 });
     expect(result.toolsUsed[0]?.tool).toBe("list_directory");
   });
+
+  it("maps desktop-commander_search_files to the available search_files tool", async () => {
+    let capturedInput: Record<string, unknown> | undefined;
+    const responses = [
+      `<tool_call>{"tool": "desktop-commander_search_files", "pattern": "error", "directory": "C:\\\\cari-platform", "glob": "*.log"}</tool_call>`,
+      `FINAL ANSWER:\nSearch completed.`,
+    ];
+    const tool = {
+      name: "search_files",
+      description: "Search files",
+      execute: async (input: Record<string, unknown>) => {
+        capturedInput = input;
+        return { ok: true, output: "No matches found." };
+      },
+    };
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(createTask(), [tool as any], createCtx());
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(capturedInput).toEqual({
+      pattern: "error",
+      directory: "C:\\cari-platform",
+      glob: "*.log",
+    });
+    expect(result.toolsUsed[0]?.tool).toBe("search_files");
+  });
 });

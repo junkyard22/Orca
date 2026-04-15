@@ -313,6 +313,9 @@ orca.onOrcaEvent((e) => {
     "maestro:done":  e.isRepair ? `repair pass ${e.attempt} done` : "reviewing\u2026",
     "qc:result":     e.verdict === "pass" ? "QC passed \u2713" : `QC found ${e.issueCount} issue(s)`,
     "repair:start":  `starting repair pass ${e.pass}/${e.maxPasses}\u2026`,
+    "subagent:spawned": `worker ${e.role} started\u2026`,
+    "subagent:done": e.ok ? `worker ${e.role} done; synthesizing\u2026` : `worker ${e.role} incomplete; synthesizing\u2026`,
+    "subagent:failed": `worker ${e.role} failed; synthesizing\u2026`,
     "task:done":     "done",
   };
   const label = labels[e.type] ?? e.type;

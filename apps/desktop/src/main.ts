@@ -166,6 +166,51 @@ type DesktopBrainRouting =
 
 // ── Brain routing helper ───────────────────────────────────────────────────
 
+function taskTextForRouting(task: OrcaTaskSpec): string {
+  return [
+    task.originalUserMessage,
+    task.intent,
+    ...(task.goals ?? []),
+  ]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join("\n");
+}
+
+function auditDecomposeFallback(task: OrcaTaskSpec): DecomposeDecision | null {
+  const text = taskTextForRouting(task);
+  if (!/\b(full\s+audit|ship[-\s]?readiness|release[-\s]?readiness|ready\s+to\s+ship|ship\s+ready)\b/i.test(text)) {
+    return null;
+  }
+
+  return {
+    routing: "decompose",
+    departments: [
+      {
+        head: "reviewer",
+        subtask: `Audit code quality, security, maintainability, tests, documentation, and deployment readiness for:\n\n${text}`,
+        context: "Broad ship-readiness audit fallback because Brain routing did not produce a reliable routing decision.",
+      },
+      {
+        head: "debugger",
+        subtask: `Investigate runtime errors, failing tests, tool failures, logs, and defects that could block shipping for:\n\n${text}`,
+        context: "Focus on concrete blockers and reproducible failure signals.",
+      },
+      {
+        head: "narrator",
+        subtask: `Prepare the user-facing ship-readiness assessment for:\n\n${text}`,
+        context: "State the readiness level clearly and summarize the evidence from the audit.",
+      },
+    ],
+    synthesis_hint: "Merge worker findings into a concise ship-readiness report with a clear readiness level, blockers, warnings, and next actions.",
+    done_criteria: [
+      "Output states a clear ship-readiness level",
+      "Output identifies concrete blockers or states that none were found",
+      "Output covers code, tests, documentation, deployment, and runtime risk",
+      "Output includes actionable next steps",
+    ],
+  };
+}
+
 async function brainRoute(
   task: OrcaTaskSpec,
   ctx: OrcaRunCtx,
@@ -215,11 +260,21 @@ async function brainRoute(
     }
   }
 
-  const resolved: DecomposeDecision = decision ?? { routing: 'direct', role: 'brain' };
+  const fallbackDecision = auditDecomposeFallback(task);
+  let resolved: DecomposeDecision = decision ?? fallbackDecision ?? { routing: 'direct', role: 'brain' };
   if (!decision) {
     ctx.recordTrace?.("brain.route.fallback", {
-      reason: "brain routing did not yield a valid decision; defaulting to direct brain",
+      reason: fallbackDecision
+        ? "brain routing did not yield a valid decision; using deterministic audit decomposition"
+        : "brain routing did not yield a valid decision; defaulting to direct brain",
     });
+  } else if (fallbackDecision && decision.routing === "direct") {
+    ctx.recordTrace?.("brain.route.override", {
+      reason: "broad audit / ship-readiness task requires multiple specialists",
+      decision,
+      override: fallbackDecision,
+    });
+    resolved = fallbackDecision;
   }
   const doneCriteria = resolved.done_criteria ?? [];
   if (resolved.routing === "decompose") {
@@ -708,11 +763,14 @@ function buildMaestroAdapter(
           .map((run) => run.childPacket)
           .filter((packet): packet is AHPPacket => packet !== undefined);
         const incompleteRuns = workerRuns.filter((run) => run.result.stoppedBecause !== "done");
-        const stoppedBecause = synthesisError
-          ? "error"
-          : incompleteRuns.length > 0
-            ? "no_final_output"
-            : "done";
+        const hasUserFacingOutput = outputText.trim().length > 0;
+        const stoppedBecause = hasUserFacingOutput
+          ? "done"
+          : synthesisError
+            ? "error"
+            : incompleteRuns.length > 0
+              ? "no_final_output"
+              : "done";
         const incompleteError = incompleteRuns
           .map((run) => `${run.role}: ${run.result.stoppedBecause}${run.result.error ? ` (${run.result.error})` : ""}`)
           .join("; ");
@@ -722,6 +780,7 @@ function buildMaestroAdapter(
           workerCount: workerRuns.length,
           incompleteCount: incompleteRuns.length,
           synthesisError,
+          stoppedBecause,
           outputText,
         });
 
