@@ -19,6 +19,105 @@ type FileChange = { path: string; changeType: "A" | "M" | "D"; diff?: string };
 const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
 const OPEN_TOOL_CALL_TAG = '<tool_call>';
 
+function extractFirstJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const json = extractFirstJsonObject(text);
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseToolCallBody(body: string): { tool: string; input: Record<string, unknown> } | null {
+  const trimmed = body.trim();
+  if (!trimmed) return null;
+
+  const jsonCall = parseJsonObject(trimmed);
+  if (jsonCall && typeof jsonCall["tool"] === "string" && jsonCall["tool"]) {
+    const { tool, ...input } = jsonCall;
+    return { tool, input };
+  }
+
+  const toolNameMatch = /^([\w-]+)/.exec(trimmed);
+  if (!toolNameMatch) return null;
+
+  const tool = toolNameMatch[1]!;
+  const rest = trimmed.slice(tool.length);
+  const input = parseJsonObject(rest) ?? {};
+  const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
+  let m: RegExpExecArray | null;
+  while ((m = argRe.exec(trimmed)) !== null) input[m[1]!] = m[2]!;
+
+  // Do not treat arbitrary text as a tool call just because it begins with a word.
+  if (Object.keys(input).length === 0 && !/<arg_key>|{/.test(rest)) return null;
+  return { tool, input };
+}
+
+function resolveToolCall(
+  call: { tool: string; input: Record<string, unknown> },
+  tools: Tool[],
+): { tool: Tool; toolName: string; requestedTool: string; input: Record<string, unknown>; aliased: boolean } | null {
+  const exact = tools.find((t) => t.name === call.tool);
+  if (exact) {
+    return { tool: exact, toolName: exact.name, requestedTool: call.tool, input: call.input, aliased: false };
+  }
+
+  const aliases: Record<string, string[]> = {
+    read_directory: ["list_directory", "desktop-commander_list_directory"],
+    list_files: ["list_directory", "desktop-commander_list_directory"],
+    list_dir: ["list_directory", "desktop-commander_list_directory"],
+    read_dir: ["list_directory", "desktop-commander_list_directory"],
+    shell: ["run_command", "desktop-commander_execute_command"],
+    run_shell: ["run_command", "desktop-commander_execute_command"],
+  };
+  for (const candidate of aliases[call.tool] ?? []) {
+    const tool = tools.find((t) => t.name === candidate);
+    if (tool) {
+      return { tool, toolName: tool.name, requestedTool: call.tool, input: call.input, aliased: true };
+    }
+  }
+  return null;
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
@@ -57,30 +156,10 @@ function parseToolCalls(text: string): {
     const body = match[1]!;
     let parsed = false;
 
-    // Strategy A – JSON with a "tool" key
-    try {
-      const obj = JSON.parse(body) as Record<string, unknown>;
-      const { tool, ...input } = obj;
-      if (typeof tool === 'string' && tool) {
-        calls.push({ tool, input });
-        parsed = true;
-      }
-    } catch { /* fall through to next strategy */ }
-
-    // Strategy B – XML-attribute style inside the block
-    if (!parsed) {
-      const toolNameMatch = /^([\w-]+)/.exec(body.trim());
-      if (toolNameMatch) {
-        const tool = toolNameMatch[1]!;
-        const input: Record<string, unknown> = {};
-        const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
-        let m: RegExpExecArray | null;
-        while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
-        if (tool) {
-          calls.push({ tool, input });
-          parsed = true;
-        }
-      }
+    const call = parseToolCallBody(body);
+    if (call) {
+      calls.push(call);
+      parsed = true;
     }
 
     if (!parsed) {
@@ -105,28 +184,10 @@ function parseToolCalls(text: string): {
       if (body.length > 5) {
         let parsed = false;
 
-        try {
-          const obj = JSON.parse(body) as Record<string, unknown>;
-          const { tool, ...input } = obj;
-          if (typeof tool === 'string' && tool) {
-            calls.push({ tool, input });
-            parsed = true;
-          }
-        } catch { /* fall through */ }
-
-        if (!parsed) {
-          const toolNameMatch = /^([\w-]+)/.exec(body);
-          if (toolNameMatch) {
-            const tool = toolNameMatch[1]!;
-            const input: Record<string, unknown> = {};
-            const argRe = /<arg_key>([^<]*)<\/arg_key>\s*<arg_value>([^<]*)<\/arg_value>/g;
-            let m: RegExpExecArray | null;
-            while ((m = argRe.exec(body)) !== null) input[m[1]!] = m[2]!;
-            if (tool) {
-              calls.push({ tool, input });
-              parsed = true;
-            }
-          }
+        const call = parseToolCallBody(body);
+        if (call) {
+          calls.push(call);
+          parsed = true;
         }
 
         if (!parsed) {
@@ -302,6 +363,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           "To invoke a tool you MUST use this exact XML format — never output tool names as plain text:",
           "",
           '<tool_call>{"tool": "TOOL_NAME", "PARAM1": "VALUE1", "PARAM2": "VALUE2"}</tool_call>',
+          'Do not write tool_name{"param":"value"} or put the tool name outside the JSON object.',
           "",
           "Example — run a shell command:",
           '<tool_call>{"tool": "run_command", "command": "ls -la"}</tool_call>',
@@ -634,9 +696,8 @@ export class ReactAgentAdapter implements AgentAdapter {
         // Execute tool calls
         for (const call of toolCalls) {
           throwIfAborted(ctx.abortSignal);
-          // Find the tool in the provided tools array
-          const tool = availableTools.find(t => t.name === call.tool);
-          if (!tool) {
+          const resolvedCall = resolveToolCall(call, availableTools);
+          if (!resolvedCall) {
             // Unknown tool - add error result
             const errorResult = formatToolResult(call.tool, false, '', `Unknown tool: ${call.tool}`);
             messages.push({ role: "user", content: errorResult });
@@ -654,50 +715,61 @@ export class ReactAgentAdapter implements AgentAdapter {
             });
             continue;
           }
+          const { tool, toolName, input: toolInput } = resolvedCall;
+          if (resolvedCall.aliased) {
+            ctx.recordTrace?.("agent.tool.alias", {
+              role: this.role,
+              iteration: iterationCount,
+              requestedTool: resolvedCall.requestedTool,
+              resolvedTool: toolName,
+              input: toolInput,
+            });
+          }
 
           const gateCtx = {
-            tool: call.tool,
-            args: call.input,
+            tool: toolName,
+            args: toolInput,
             schema: tool.schema,
           };
           const beforeToolGate = ctx.gate?.beforeToolRun(gateCtx);
           if (beforeToolGate && !beforeToolGate.allowed) {
-            const gateError = beforeToolGate.reason || `Tool "${call.tool}" blocked by Miranda`;
-            const gateResult = formatToolResult(call.tool, false, "", gateError);
+            const gateError = beforeToolGate.reason || `Tool "${toolName}" blocked by Miranda`;
+            const gateResult = formatToolResult(toolName, false, "", gateError);
             messages.push({ role: "user", content: gateResult });
             ctx.recordTrace?.("agent.tool.blocked", {
               role: this.role,
               iteration: iterationCount,
-              tool: call.tool,
-              input: call.input,
+              tool: toolName,
+              requestedTool: resolvedCall.requestedTool,
+              input: toolInput,
               reason: gateError,
             });
             toolsUsed.push({
-              tool: call.tool,
+              tool: toolName,
               ok: false,
-              summary: `${call.tool}: blocked — ${gateError}`,
-              raw: call.input,
+              summary: `${toolName}: blocked — ${gateError}`,
+              raw: toolInput,
             });
             continue;
           }
           
           // Fix 2: write_file content validation guard
-          if (call.tool === 'write_file' && typeof call.input.content !== 'string') {
+          if (toolName === 'write_file' && typeof toolInput.content !== 'string') {
             console.log(`[ReactAgent] BLOCKED: write_file requires "content" string parameter`);
-            const errorResult = formatToolResult(call.tool, false, '', 'write_file requires a "content" string parameter');
+            const errorResult = formatToolResult(toolName, false, '', 'write_file requires a "content" string parameter');
             messages.push({ role: "user", content: errorResult });
             ctx.recordTrace?.("agent.tool.invalid_input", {
               role: this.role,
               iteration: iterationCount,
-              tool: call.tool,
-              input: call.input,
+              tool: toolName,
+              input: toolInput,
               error: 'write_file requires a "content" string parameter',
             });
             toolsUsed.push({
-              tool: call.tool,
+              tool: toolName,
               ok: false,
               summary: `write_file: failed — requires "content" string parameter`,
-              raw: call.input
+              raw: toolInput
             });
             continue;
           }
@@ -715,17 +787,19 @@ export class ReactAgentAdapter implements AgentAdapter {
           ctx.recordTrace?.("agent.tool.call", {
             role: this.role,
             iteration: iterationCount,
-            tool: call.tool,
-            input: call.input,
+            tool: toolName,
+            requestedTool: resolvedCall.requestedTool,
+            input: toolInput,
           });
-          const result = await tool.execute(call.input, toolContext);
+          const result = await tool.execute(toolInput, toolContext);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
           ctx.recordTrace?.("agent.tool.result", {
             role: this.role,
             iteration: iterationCount,
-            tool: call.tool,
-            input: call.input,
+            tool: toolName,
+            requestedTool: resolvedCall.requestedTool,
+            input: toolInput,
             result,
           });
           
@@ -733,28 +807,28 @@ export class ReactAgentAdapter implements AgentAdapter {
           cumulativeToolCallCount++;
           
           // Format tool result
-          const toolResult = formatToolResult(call.tool, result.ok, result.output, result.error);
+          const toolResult = formatToolResult(toolName, result.ok, result.output, result.error);
           messages.push({ role: "user", content: toolResult });
           
           // Record tool usage
           toolsUsed.push({
-            tool: call.tool,
+            tool: toolName,
             ok: result.ok,
             summary: result.ok
-              ? `${call.tool}: ok (${result.output.length} chars)`
-              : `${call.tool}: failed — ${result.error ?? 'unknown'}`,
-            raw: call.input
+              ? `${toolName}: ok (${result.output.length} chars)`
+              : `${toolName}: failed — ${result.error ?? 'unknown'}`,
+            raw: toolInput
           });
           
           // Fix 3: Track file changes with content diff for Pappy verification
-          if (result.ok && ['write_file', 'create_file', 'delete_file', 'modify_file'].includes(call.tool)) {
-            const filePath = typeof call.input.path === 'string' ? call.input.path : '';
+          if (result.ok && ['write_file', 'create_file', 'delete_file', 'modify_file'].includes(toolName)) {
+            const filePath = typeof toolInput.path === 'string' ? toolInput.path : '';
             if (filePath) {
-              const content = typeof call.input.content === 'string' ? call.input.content : undefined;
+              const content = typeof toolInput.content === 'string' ? toolInput.content : undefined;
               const diff = content ? content.slice(0, 2000) : undefined; // Truncate for storage
               filesChanged.push({
                 path: filePath,
-                changeType: call.tool === 'delete_file' ? 'D' : call.tool === 'create_file' ? 'A' : 'M',
+                changeType: toolName === 'delete_file' ? 'D' : toolName === 'create_file' ? 'A' : 'M',
                 diff
               });
             }
@@ -763,7 +837,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           // === LOOP DETECTION CHECKS ===
           
           // Record this tool call in history for loop detection
-          const callSig = `${call.tool}:${JSON.stringify(call.input)}`;
+          const callSig = `${toolName}:${JSON.stringify(toolInput)}`;
           callHistory.push(callSig);
 
           // Check 1: Empty/error result loop
@@ -774,7 +848,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               stoppedBecause = 'loop_detected';
               loopEvidence = {
                 iteration: iterationCount,
-                repeatedCall: `${call.tool} returning empty/error`,
+                repeatedCall: `${toolName} returning empty/error`,
                 occurrences: consecutiveEmptyResults
               };
               ctx.recordTrace?.("agent.loop_detected", {

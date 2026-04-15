@@ -599,4 +599,62 @@ Next: Call it
     expect(result.stoppedBecause).toBe("no_final_output");
     expect(result.outputText).toBe("");
   });
+
+  it("recovers tool-name-prefixed JSON tool calls", async () => {
+    let capturedInput: Record<string, unknown> | undefined;
+    const responses = [
+      `<tool_call>list_directory{"path": "C:\\\\cari-platform"}</tool_call>`,
+      `FINAL ANSWER:\nDirectory inspected.`,
+    ];
+    const tool = {
+      name: "list_directory",
+      description: "List directory",
+      execute: async (input: Record<string, unknown>) => {
+        capturedInput = input;
+        return { ok: true, output: "package.json" };
+      },
+    };
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(createTask(), [tool as any], createCtx());
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(capturedInput).toEqual({ path: "C:\\cari-platform" });
+    expect(result.toolsUsed[0]?.tool).toBe("list_directory");
+  });
+
+  it("maps read_directory to the available directory listing tool", async () => {
+    let capturedInput: Record<string, unknown> | undefined;
+    const responses = [
+      `<tool_call>{"tool": "read_directory", "path": ".", "depth": 2}</tool_call>`,
+      `FINAL ANSWER:\nDirectory inspected.`,
+    ];
+    const tool = {
+      name: "list_directory",
+      description: "List directory",
+      execute: async (input: Record<string, unknown>) => {
+        capturedInput = input;
+        return { ok: true, output: "package.json" };
+      },
+    };
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(createTask(), [tool as any], createCtx());
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(capturedInput).toEqual({ path: ".", depth: 2 });
+    expect(result.toolsUsed[0]?.tool).toBe("list_directory");
+  });
 });
