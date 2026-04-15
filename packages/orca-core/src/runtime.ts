@@ -309,18 +309,27 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         persistedQcResult = qcResult;
 
         // AHP verification — runs after Pappy's main evaluation when the
-        // Maestro adapter threaded an AHPPacket through the pipeline.
-        if (maestroResult.ahpPacket) {
-          verifyAHPPacket(maestroResult.ahpPacket, {
+        // Maestro adapter threaded AHPPacket(s) through the pipeline.
+        const verifiedAHPIds = new Set<string>();
+        const verifyPacket = (packet: AHPPacket, traceStage: string): void => {
+          if (verifiedAHPIds.has(packet.id)) return;
+          verifiedAHPIds.add(packet.id);
+          verifyAHPPacket(packet, {
             outputText: maestroResult.outputText,
             filesChanged: maestroResult.filesChanged,
             workspaceRoot: workspaceContext?.cwd,
           });
-          recordTrace("ahp.verify", {
-            packet_id: maestroResult.ahpPacket.id,
-            lifecycle: maestroResult.ahpPacket.lifecycle,
-            verdict: maestroResult.ahpPacket.verdict,
+          recordTrace(traceStage, {
+            packet_id: packet.id,
+            lifecycle: packet.lifecycle,
+            verdict: packet.verdict,
           });
+        };
+        if (maestroResult.ahpPacket) {
+          verifyPacket(maestroResult.ahpPacket, "ahp.verify");
+        }
+        for (const childPacket of maestroResult.ahpChildPackets ?? []) {
+          verifyPacket(childPacket, "ahp.verify.child");
         }
 
         const afterQcGate = ctx.gate?.afterQC(

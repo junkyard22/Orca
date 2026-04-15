@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOrcaRuntime } from "./runtime.js";
+import { AHPLifecycle, appendAHPTrace, createChildPacket } from "./ahp/types.js";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaRuntime, OrcaRuntimeDeps, OrcaTaskSpec, OrcaExecutionResult, MaestroPort, PappyPort, OrcaEvent } from "./types.js";
 
@@ -197,6 +198,56 @@ describe("createOrcaRuntime", () => {
       expect(artifacts.metadata?.filesChanged).toEqual([
         { path: "tmp-test/prompt2-calculator.py", changeType: "M" },
       ]);
+    });
+
+    it("verifies explicit child AHP packets returned by Maestro", async () => {
+      const pappy = {
+        evaluate: vi.fn(() => createMockPappyResult("PASS")),
+      } satisfies PappyPort;
+
+      const maestro: MaestroPort = {
+        run: async (_task, ctx) => {
+          if (!ctx.ahpRootPacket) {
+            throw new Error("missing root AHP packet");
+          }
+          const child = createChildPacket(ctx.ahpRootPacket.id, {
+            id: `${ctx.runId}_reviewer_0`,
+            objective: "Review the audit result",
+            expectedOutput: {
+              schema: {},
+              acceptanceCriteria: ["Output mentions audit"],
+            },
+          });
+          child.lifecycle = AHPLifecycle.COMPLETE;
+          appendAHPTrace(child, {
+            timestamp: new Date().toISOString(),
+            state: AHPLifecycle.COMPLETE,
+            actor: "reviewer",
+            note: "review worker completed",
+          });
+
+          return {
+            outputText: "Audit result verified.",
+            summary: "mock summary",
+            ahpChildPackets: [child],
+          };
+        },
+      };
+
+      const runtime = createOrcaRuntime({
+        maestro,
+        pappy,
+        llm: createMockLLM(),
+      });
+
+      const result = await runtime.executeTask(createTaskSpec({
+        originalUserMessage: "Audit the app",
+        goals: ["Output mentions audit"],
+      }));
+
+      const child = result.ahpChildPackets?.[0];
+      expect(child?.verdict).toBeDefined();
+      expect(child?.trace.some((entry) => entry.actor === "pappy")).toBe(true);
     });
   });
 

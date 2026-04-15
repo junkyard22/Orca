@@ -165,6 +165,12 @@ export function buildPappyInput(
     outputText: normalizedResult.outputText,
     filesChanged: normalizedResult.filesChanged,
     toolEvents: normalizedResult.toolEvents,
+    metadata: normalizedResult.metadata
+      ? {
+          stoppedBecause: normalizedResult.metadata.stoppedBecause,
+          loopEvidence: normalizedResult.metadata.loopEvidence,
+        }
+      : undefined,
     constraints: {
       forbidDeletes:   raw["forbidDeletes"]   as boolean  | undefined,
       requireFiles:    raw["requireFiles"]    as string[] | undefined,

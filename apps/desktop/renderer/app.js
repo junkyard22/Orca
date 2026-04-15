@@ -291,7 +291,7 @@ orca.onOrcaEvent((e) => {
   }
 
   // Collect key events for the pipeline log section of the badge.
-  const LOG_TYPES = new Set(['task:start','maestro:start','maestro:done','qc:result','repair:start','task:done','dewey:brief','miranda:checkpoint']);
+  const LOG_TYPES = new Set(['task:start','maestro:start','maestro:done','qc:result','repair:start','task:done','dewey:brief','miranda:checkpoint','subagent:spawned','subagent:done','subagent:failed']);
   if (LOG_TYPES.has(e.type)) {
     pipelineEventLog.push({ ...e, _ts: Date.now() });
   }
@@ -728,8 +728,13 @@ function appendPipelineBadge(summary) {
       if (e.type === "repair:start")      label = `repair ${e.pass}/${e.maxPasses}`;
       if (e.type === "dewey:brief")       label = `Dewey brief — tone: ${e.suggestedTone}`;
       if (e.type === "miranda:checkpoint") label = `Miranda ${e.gate}: ${e.allowed ? "ALLOWED" : "BLOCKED"}`;
+      if (e.type === "subagent:spawned")  label = `worker ${e.role} started`;
+      if (e.type === "subagent:done")     label = `worker ${e.role} done (${e.ok ? "ok" : "incomplete"})`;
+      if (e.type === "subagent:failed")   label = `worker ${e.role} failed`;
       const cls = e.type === "qc:result" && e.verdict === "FAIL" ? " log-fail"
                 : e.type === "qc:result" && e.verdict === "WARN" ? " log-warn"
+                : e.type === "subagent:failed" ? " log-fail"
+                : e.type === "subagent:done" && !e.ok ? " log-warn"
                 : "";
       return `<div class="pb-log-row${cls}">
         <span class="pb-log-ts">+${rel}s</span>

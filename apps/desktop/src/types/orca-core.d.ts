@@ -82,7 +82,8 @@ declare module '@clawde/orca-core' {
       role?: string;
       thoughts?: unknown[];
       iterationCount?: number;
-      stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "error";
+      stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "error";
+      loopEvidence?: { repeatedCall: string; occurrences: number };
       inputTokens?: number;
       outputTokens?: number;
       costUsd?: number;
@@ -195,7 +196,7 @@ declare module '@clawde/orca-core' {
     | { type: "subagent:failed"; taskId: string; subagentId: string; role: string; error: string }
     | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
     | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
-    | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } };
+    | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } };
 
   export interface OrcaStore {
     close(): void;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTaskSpec } from "./helpers.js";
+import { buildPappyInput, normalizeTaskSpec } from "./helpers.js";
 
 describe("normalizeTaskSpec", () => {
   it("converts Benson's legacy read-only permission array into boolean flags without a tool whitelist", () => {
@@ -31,5 +31,30 @@ describe("normalizeTaskSpec", () => {
     expect(task.permissions?.shellExec).toBe(true);
     // No whitelist — all registered tools (including MCP) are available
     expect(task.permissions?.toolsAllowed).toBeUndefined();
+  });
+});
+
+describe("buildPappyInput", () => {
+  it("passes agent stop metadata through to Pappy", () => {
+    const input = buildPappyInput(
+      {
+        originalUserMessage: "Audit the app",
+        intent: "audit",
+        goals: ["Output lists shipping blockers"],
+      },
+      {
+        outputText: "",
+        toolEvents: [{ tool: "read_file", ok: true, summary: "read package.json" }],
+        metadata: {
+          stoppedBecause: "no_final_output",
+          loopEvidence: { repeatedCall: "read_file", occurrences: 3 },
+        },
+      },
+    );
+
+    expect(input.metadata).toEqual({
+      stoppedBecause: "no_final_output",
+      loopEvidence: { repeatedCall: "read_file", occurrences: 3 },
+    });
   });
 });

@@ -14,6 +14,10 @@ import {
   createDirectLLMService,
   createPappyPort,
   createRunAnalysisWriter,
+  createChildPacket,
+  registerChildOnRoot,
+  appendAHPTrace,
+  AHPLifecycle,
   deriveFilesChangedFromToolEvents,
   SqliteStore,
 } from "@clawde/orca-core";
@@ -28,6 +32,7 @@ import type {
   OrcaLLMService,
   OrcaPipelineTrace,
   OrcaToolService,
+  AHPPacket,
 } from "@clawde/orca-core";
 import { buildToolBootstrap } from "@clawde/tool-bootstrap";
 import type { BootstrappedTool } from "@clawde/tool-bootstrap";
@@ -46,6 +51,7 @@ import {
 import type {
   RoleName,
   DecomposeDecision,
+  DepartmentTask,
 } from "maestro-core";
 import {
   getAuthView,
@@ -59,7 +65,7 @@ import type {
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
-import type { AgentRunContext } from "./agents/AgentAdapter";
+import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 
 type AgentTool = {
   name: string;
@@ -141,13 +147,30 @@ function normalizeConversationHistory(rawHistory: unknown): Message[] {
   return normalized;
 }
 
+type DesktopBrainRouting =
+  | {
+      path: "direct";
+      role: RoleName;
+      doneCriteria: string[];
+      brainDecision?: string;
+      decision: DecomposeDecision;
+    }
+  | {
+      path: "decompose";
+      departments: DepartmentTask[];
+      doneCriteria: string[];
+      synthesisHint?: string;
+      brainDecision?: string;
+      decision: DecomposeDecision;
+    };
+
 // ── Brain routing helper ───────────────────────────────────────────────────
 
 async function brainRoute(
   task: OrcaTaskSpec,
   ctx: OrcaRunCtx,
   roleAdapters: Partial<Record<RoleName, OrcaLLMService>>,
-): Promise<{ role: RoleName; doneCriteria: string[]; brainDecision?: string }> {
+): Promise<DesktopBrainRouting> {
   const brainLLM = roleAdapters['brain'] ?? ctx.llm;
 
   // Small, fast JSON call to decide routing. One repair pass on schema validation failure.
@@ -192,33 +215,47 @@ async function brainRoute(
     }
   }
 
-  // For now, we only handle direct routing in the new architecture
-  // Decompose routing would need to be handled differently in the future
-  const resolved = decision ?? { routing: 'direct' as const, role: 'brain' as const };
+  const resolved: DecomposeDecision = decision ?? { routing: 'direct', role: 'brain' };
   if (!decision) {
     ctx.recordTrace?.("brain.route.fallback", {
       reason: "brain routing did not yield a valid decision; defaulting to direct brain",
     });
   }
-  if (resolved.routing !== 'direct') {
-    ctx.recordTrace?.("brain.route.decompose_not_implemented", {
-      decision: resolved,
-      note: "Full decompose not yet implemented — running first department as single task",
-    });
-  }
-  // Full decompose not yet implemented: run the first department or fall back to brain.
-  const role = resolved.routing === 'direct'
-    ? resolved.role
-    : (resolved.departments?.[0]?.head ?? 'brain');
   const doneCriteria = resolved.done_criteria ?? [];
+  if (resolved.routing === "decompose") {
+    const departments = resolved.departments.slice(0, 3);
+    ctx.recordTrace?.("brain.route.final", {
+      decision: resolved,
+      path: "decompose",
+      departments,
+      doneCriteria,
+      brainDecision,
+    });
+    return {
+      path: "decompose",
+      departments,
+      synthesisHint: resolved.synthesis_hint,
+      doneCriteria,
+      brainDecision,
+      decision: resolved,
+    };
+  }
+
   ctx.recordTrace?.("brain.route.final", {
     decision: resolved,
-    role,
+    path: "direct",
+    role: resolved.role,
     doneCriteria,
     brainDecision,
   });
 
-  return { role: role as RoleName, doneCriteria, brainDecision };
+  return {
+    path: "direct",
+    role: resolved.role as RoleName,
+    doneCriteria,
+    brainDecision,
+    decision: resolved,
+  };
 }
 
 
@@ -290,6 +327,269 @@ function buildMaestroAdapter(
     return tools;
   };
 
+  const createWorkerPacket = (
+    task: OrcaTaskSpec,
+    ctx: OrcaRunCtx,
+    role: RoleName,
+    doneCriteria: string[],
+    workerIndex: number,
+    objective: string,
+  ): AHPPacket | undefined => {
+    if (!ctx.ahpRootPacket) return undefined;
+    const safeRole = role.replace(/[^a-z0-9_-]/gi, "_");
+    const childPacket = createChildPacket(ctx.ahpRootPacket.id, {
+      id: `${ctx.runId}_${safeRole}_${workerIndex}_${Date.now().toString(36)}`,
+      objective,
+      inputs: [
+        ...(task.goals ?? []).map((goal, index) => ({
+          id: `goal-${index}`,
+          type: "goal",
+          value: goal,
+        })),
+        {
+          id: "worker-objective",
+          type: "subtask",
+          value: objective,
+        },
+      ],
+      constraints: Object.entries(task.constraints ?? {}).map(([rule, value]) => ({
+        rule,
+        enforcer: String(value),
+      })),
+      expectedOutput: {
+        schema: {},
+        acceptanceCriteria: doneCriteria.length > 0 ? doneCriteria : [objective],
+      },
+    });
+
+    registerChildOnRoot(ctx.ahpRootPacket, childPacket);
+    appendAHPTrace(childPacket, {
+      timestamp: new Date().toISOString(),
+      state: AHPLifecycle.PENDING,
+      actor: "brain",
+      note: `Brain routed desktop task to ${role}`,
+    });
+    const startedAt = new Date().toISOString();
+    childPacket.lifecycle = AHPLifecycle.RUNNING;
+    childPacket.meta.startedAt = startedAt;
+    childPacket.meta.updatedAt = startedAt;
+    appendAHPTrace(childPacket, {
+      timestamp: startedAt,
+      state: AHPLifecycle.RUNNING,
+      actor: "miranda",
+      note: "Worker execution authorised",
+    });
+    ctx.recordTrace?.("ahp.child_packet.created", {
+      packet_id: childPacket.id,
+      parentPacketId: childPacket.parentPacketId,
+      role,
+      workerIndex,
+      acceptanceCriteria: childPacket.expectedOutput.acceptanceCriteria,
+    });
+    return childPacket;
+  };
+
+  const finalizeWorkerPacket = (
+    childPacket: AHPPacket | undefined,
+    ctx: OrcaRunCtx,
+    role: RoleName,
+    result: AgentResult,
+  ): void => {
+    if (!childPacket) return;
+    const finishedAt = new Date().toISOString();
+    const lifecycle = result.stoppedBecause === "done"
+      ? AHPLifecycle.COMPLETE
+      : result.stoppedBecause === "error"
+        ? AHPLifecycle.FAILED
+        : AHPLifecycle.INCONCLUSIVE;
+    childPacket.lifecycle = lifecycle;
+    childPacket.meta.completedAt = finishedAt;
+    childPacket.meta.updatedAt = finishedAt;
+    appendAHPTrace(childPacket, {
+      timestamp: finishedAt,
+      state: lifecycle,
+      actor: role,
+      note: `Agent stopped: ${result.stoppedBecause}; iterations=${result.iterationCount}`,
+    });
+    ctx.recordTrace?.("ahp.child_packet.finalized", {
+      packet_id: childPacket.id,
+      lifecycle,
+      stoppedBecause: result.stoppedBecause,
+      iterations: result.iterationCount,
+    });
+  };
+
+  const selectAgentForRole = (
+    role: RoleName,
+    ctx: OrcaRunCtx,
+  ): { agent: RoleAgentAdapter; selectedModelId: string } => {
+    let selectedModelId = `${role}_primary`;
+    let agent = roleAgents.get(role) ?? roleAgents.get("brain");
+    if (!agent) {
+      throw new Error(`No LLM adapter configured for role ${role} or brain`);
+    }
+
+    if (poolManager && modelEntries) {
+      const selectedModel = poolManager.selectModel(role);
+      if (selectedModel) {
+        selectedModelId = selectedModel.id;
+        const entry = modelEntries.get(selectedModel.id);
+        const isPrimary = selectedModel.id === `${role}_primary`;
+        if (entry && !isPrimary) {
+          const fallbackAdapter = buildAdapterForProvider(entry.provider, entry.model);
+          const rs = roleSettings?.get(role);
+          agent = new RoleAgentAdapter(role, fallbackAdapter, undefined, rs?.maxTokens, rs?.temperature);
+          logger.info(`[Maestro] Pool selected fallback model ${selectedModel.id} for role ${role}`);
+        }
+        ctx.recordTrace?.("maestro.model_selection", {
+          role,
+          selectedModelId: selectedModel.id,
+          selectedModel,
+          configuredEntry: entry,
+          applied: !isPrimary && !!entry,
+        });
+      }
+    }
+
+    return { agent, selectedModelId };
+  };
+
+  const runRoleWorker = async (
+    task: OrcaTaskSpec,
+    ctx: OrcaRunCtx,
+    role: RoleName,
+    agentTask: AgentTask,
+    options: {
+      workerIndex: number;
+      objective: string;
+      streamTokens: boolean;
+      subagent: boolean;
+    },
+  ): Promise<{
+    role: RoleName;
+    subagentId: string;
+    objective: string;
+    result: AgentResult;
+    filesChanged: ReturnType<typeof deriveFilesChangedFromToolEvents>;
+    childPacket?: AHPPacket;
+  }> => {
+    throwIfAborted(ctx.abortSignal);
+    const subagentId = `${ctx.runId}:${role}:${options.workerIndex}`;
+    const childPacket = createWorkerPacket(
+      task,
+      ctx,
+      role,
+      agentTask.doneCriteria,
+      options.workerIndex,
+      options.objective,
+    );
+    if (options.subagent) {
+      ctx.emit?.({
+        type: "subagent:spawned",
+        taskId: ctx.runId,
+        subagentId,
+        role,
+        task: options.objective,
+      });
+    }
+
+    const { agent, selectedModelId } = selectAgentForRole(role, ctx);
+    const taskTools = selectToolsForRole(ctx, role);
+    if (taskTools.length === 0) {
+      logger.warn(`[Maestro] WARNING: No tools passed to ${role} agent — tool calls will not be available`);
+    }
+    logger.info(`[Maestro] Passing ${taskTools.length} tools to ${role} agent: ${taskTools.map((tool) => tool.name).join(", ")}`);
+    ctx.recordTrace?.("maestro.agent_dispatch", {
+      role,
+      subagentId,
+      doneCriteria: agentTask.doneCriteria,
+      agentTask,
+      tools: taskTools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        schema: tool.schema,
+      })),
+    });
+
+    const agentCtx: AgentRunContext = {
+      ...ctx,
+      subagentDepth: options.subagent ? (ctx.subagentDepth ?? 0) + 1 : ctx.subagentDepth,
+      workspaceRoot: ctx.workspaceRoot ?? workspaceRoot,
+      onStreamToken: options.streamTokens
+        ? (chunk: string) => {
+            ctx.emit?.({
+              type: "stream:token",
+              taskId: ctx.runId,
+              chunk,
+            });
+          }
+        : undefined,
+      onStreamReset: options.streamTokens
+        ? () => {
+            ctx.emit?.({
+              type: "stream:reset",
+              taskId: ctx.runId,
+            });
+          }
+        : undefined,
+    };
+
+    let result: AgentResult;
+    try {
+      result = await agent.run(agentTask, taskTools, agentCtx);
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      result = {
+        outputText: "",
+        thoughts: [],
+        toolsUsed: [],
+        filesChanged: [],
+        iterationCount: 0,
+        stoppedBecause: "error",
+        error: message,
+      };
+    }
+    finalizeWorkerPacket(childPacket, ctx, role, result);
+
+    if (poolManager) {
+      if (result.stoppedBecause === "done") {
+        poolManager.recordSuccess(role, selectedModelId);
+      } else if (result.error) {
+        poolManager.recordFailure(role, selectedModelId, result.error);
+      }
+    }
+
+    const filesChanged = deriveFilesChangedFromToolEvents(result.toolsUsed, result.filesChanged);
+    ctx.recordTrace?.("maestro.agent_result", {
+      role,
+      subagentId,
+      result,
+      filesChanged,
+    });
+    if (options.subagent) {
+      if (result.stoppedBecause === "error") {
+        ctx.emit?.({
+          type: "subagent:failed",
+          taskId: ctx.runId,
+          subagentId,
+          role,
+          error: result.error ?? "Worker stopped with an error",
+        });
+      } else {
+        ctx.emit?.({
+          type: "subagent:done",
+          taskId: ctx.runId,
+          subagentId,
+          role,
+          ok: result.stoppedBecause === "done",
+        });
+      }
+    }
+
+    return { role, subagentId, objective: options.objective, result, filesChanged, childPacket };
+  };
+
   return {
     async run(task: OrcaTaskSpec, ctx: OrcaRunCtx): Promise<OrcaMaestroResult> {
       // 1. Classify and score risk (unchanged)
@@ -328,99 +628,144 @@ function buildMaestroAdapter(
         }
       }
 
-      // 3. Select model from fallback pool; build agent accordingly
-      let poolSelectedModelId = `${routing.role}_primary`;
-      let agent = roleAgents.get(routing.role) ?? roleAgents.get('brain')!;
+      if (routing.path === "decompose") {
+        const departments: DepartmentTask[] = routing.departments.length > 0
+          ? routing.departments
+          : [{ head: "brain", subtask: task.intent }];
+        ctx.recordTrace?.("maestro.decompose.start", {
+          departments,
+          doneCriteria: routing.doneCriteria,
+          synthesisHint: routing.synthesisHint,
+        });
 
-      if (poolManager && modelEntries) {
-        const selectedModel = poolManager.selectModel(routing.role);
-        if (selectedModel) {
-          poolSelectedModelId = selectedModel.id;
-          const entry = modelEntries.get(selectedModel.id);
-          const isPrimary = selectedModel.id === `${routing.role}_primary`;
-          if (entry && !isPrimary) {
-            // Pool chose a fallback — spin up an on-demand adapter for this run
-            const fallbackAdapter = buildAdapterForProvider(entry.provider, entry.model);
-            const rs = roleSettings?.get(routing.role);
-            agent = new RoleAgentAdapter(routing.role, fallbackAdapter, undefined, rs?.maxTokens, rs?.temperature);
-            logger.info(`[Maestro] Pool selected fallback model ${selectedModel.id} for role ${routing.role}`);
-          }
-          ctx.recordTrace?.("maestro.model_selection", {
-            role: routing.role,
-            selectedModelId: selectedModel.id,
-            selectedModel,
-            configuredEntry: entry,
-            applied: !isPrimary && !!entry,
+        const workerRuns = await Promise.all(departments.map((department, index) => {
+          const role = department.head as RoleName;
+          const objective = department.context
+            ? `${department.subtask}\n\nContext: ${department.context}`
+            : department.subtask;
+          const workerTask: AgentTask = {
+            intent: department.subtask,
+            goals: [department.subtask, ...(department.context ? [department.context] : [])],
+            doneCriteria: [department.subtask],
+            conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
+          };
+          return runRoleWorker(task, ctx, role, workerTask, {
+            workerIndex: index,
+            objective,
+            streamTokens: false,
+            subagent: true,
           });
+        }));
+
+        const departmentOutputs = workerRuns.map((run) => ({
+          head: run.role,
+          subtask: run.objective,
+          output: run.result.outputText?.trim()
+            ? run.result.outputText
+            : `[${run.role} stopped: ${run.result.stoppedBecause}${run.result.error ? `; ${run.result.error}` : ""}]`,
+        }));
+        const synthesisPrompt = buildSynthesisPrompt(
+          task.originalUserMessage ?? task.intent,
+          departmentOutputs,
+          routing.synthesisHint,
+        );
+
+        let outputText = "";
+        let synthesisError: string | undefined;
+        try {
+          ctx.emit?.({ type: "stream:reset", taskId: ctx.runId });
+          const brainLLM = roleAdapters["brain"] ?? ctx.llm;
+          const { text } = await brainLLM.complete(synthesisPrompt, {
+            maxTokens: 4096,
+            temperature: 0.2,
+            abortSignal: ctx.abortSignal,
+            onToken: (chunk: string) => {
+              ctx.emit?.({
+                type: "stream:token",
+                taskId: ctx.runId,
+                chunk,
+              });
+            },
+          });
+          outputText = text.trim();
+        } catch (err) {
+          if (isAbortError(err)) throw err;
+          synthesisError = err instanceof Error ? err.message : String(err);
         }
+
+        if (!outputText) {
+          outputText = departmentOutputs
+            .map((output) => `## ${output.head}\n${output.output}`)
+            .join("\n\n");
+        }
+
+        const toolEvents = workerRuns.flatMap((run) => run.result.toolsUsed);
+        const filesChanged = deriveFilesChangedFromToolEvents(
+          toolEvents,
+          workerRuns.flatMap((run) => run.result.filesChanged),
+        );
+        const childPackets = workerRuns
+          .map((run) => run.childPacket)
+          .filter((packet): packet is AHPPacket => packet !== undefined);
+        const incompleteRuns = workerRuns.filter((run) => run.result.stoppedBecause !== "done");
+        const stoppedBecause = synthesisError
+          ? "error"
+          : incompleteRuns.length > 0
+            ? "no_final_output"
+            : "done";
+        const incompleteError = incompleteRuns
+          .map((run) => `${run.role}: ${run.result.stoppedBecause}${run.result.error ? ` (${run.result.error})` : ""}`)
+          .join("; ");
+        const errorMessage = synthesisError ?? (incompleteError || undefined);
+
+        ctx.recordTrace?.("maestro.decompose.synthesis", {
+          workerCount: workerRuns.length,
+          incompleteCount: incompleteRuns.length,
+          synthesisError,
+          outputText,
+        });
+
+        return {
+          outputText,
+          summary: `brain decomposed to ${workerRuns.length} worker(s) — stopped: ${stoppedBecause}`,
+          toolEvents,
+          filesChanged,
+          doneCriteria: routing.doneCriteria,
+          metadata: {
+            role: "brain",
+            brainDecision: routing.brainDecision,
+            thoughts: workerRuns.flatMap((run) => run.result.thoughts),
+            iterationCount: workerRuns.reduce((sum, run) => sum + run.result.iterationCount, 0),
+            stoppedBecause,
+            errorMessage,
+            filesChanged,
+          },
+          ahpChildPackets: childPackets,
+          subagentRuns: workerRuns.map((run) => ({
+            subagentId: run.subagentId,
+            role: run.role,
+            task: run.objective,
+            status: run.result.stoppedBecause === "done" ? "done" : "failed",
+            outputText: run.result.outputText,
+            error: run.result.error,
+          })),
+        };
       }
 
-      // 4. Get the agent for the selected role
-      const taskTools = selectToolsForRole(ctx, routing.role);
-
-      if (taskTools.length === 0) {
-        logger.warn(`[Maestro] WARNING: No tools passed to ${routing.role} agent — tool calls will not be available`);
-      }
-      logger.info(`[Maestro] Passing ${taskTools.length} tools to ${routing.role} agent: ${taskTools.map((tool) => tool.name).join(', ')}`);
-      const agentTask = {
+      const agentTask: AgentTask = {
         intent: task.intent,
         goals: task.goals ?? [],
         doneCriteria: routing.doneCriteria,
         conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
       };
-      ctx.recordTrace?.("maestro.agent_dispatch", {
-        role: routing.role,
-        doneCriteria: routing.doneCriteria,
-        agentTask,
-        tools: taskTools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          schema: tool.schema,
-        })),
+      const worker = await runRoleWorker(task, ctx, routing.role, agentTask, {
+        workerIndex: 0,
+        objective: task.originalUserMessage ?? task.intent,
+        streamTokens: true,
+        subagent: false,
       });
-      
-      // 5. Build agent context with streaming support
-      const agentCtx: AgentRunContext = {
-        ...ctx,
-        workspaceRoot: ctx.workspaceRoot ?? workspaceRoot,
-        onStreamToken: (chunk: string) => {
-          // Emit stream:token event to renderer
-          ctx.emit?.({
-            type: 'stream:token',
-            taskId: ctx.runId,
-            chunk,
-          });
-        },
-        onStreamReset: () => {
-          // Emit stream:reset event to renderer
-          ctx.emit?.({
-            type: 'stream:reset',
-            taskId: ctx.runId,
-          });
-        },
-      };
-      
-      // 6. Hand off to the agent — it runs autonomously until done
-      throwIfAborted(ctx.abortSignal);
-      const result = await agent.run(agentTask, taskTools, agentCtx);
+      const { result, filesChanged, childPacket } = worker;
 
-      // 7. Record success/failure to fallback pool manager
-      if (poolManager) {
-        if (result.stoppedBecause === 'done') {
-          poolManager.recordSuccess(routing.role, poolSelectedModelId);
-        } else if (result.error) {
-          poolManager.recordFailure(routing.role, poolSelectedModelId, result.error);
-        }
-      }
-
-      const filesChanged = deriveFilesChangedFromToolEvents(result.toolsUsed, result.filesChanged);
-      ctx.recordTrace?.("maestro.agent_result", {
-        role: routing.role,
-        result,
-        filesChanged,
-      });
-      
-      // 8. Map AgentResult → OrcaMaestroResult
       return {
         outputText: result.outputText,
         summary: `${routing.role} agent — ${result.iterationCount} iterations — stopped: ${result.stoppedBecause}`,
@@ -433,9 +778,11 @@ function buildMaestroAdapter(
           thoughts: result.thoughts,
           iterationCount: result.iterationCount,
           stoppedBecause: result.stoppedBecause,
+          loopEvidence: result.loopEvidence,
           errorMessage: result.error,
           filesChanged,
         },
+        ahpPacket: childPacket,
       };
     }
   };
@@ -1227,6 +1574,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
     "pipeline:summary",
     "dewey:brief", "miranda:checkpoint",
+    "subagent:spawned", "subagent:done", "subagent:failed",
   ];
   // Capture pipeline:summary so it can be embedded in the IPC reply — the
   // renderer may receive the invoke response before the orca-event message
@@ -1255,6 +1603,15 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
           break;
         case "repair:start":
           console.log(`[Orca]   repair:start   pass=${e.pass}/${e.maxPasses}`);
+          break;
+        case "subagent:spawned":
+          console.log(`[Orca]   worker:start   role=${e.role}  id=${e.subagentId}`);
+          break;
+        case "subagent:done":
+          console.log(`[Orca]   worker:done    role=${e.role}  ok=${e.ok}`);
+          break;
+        case "subagent:failed":
+          console.log(`[Orca]   worker:failed  role=${e.role}  error=${e.error}`);
           break;
         case "task:done":
           console.log(`[Orca] ■ task:done`);

@@ -98,6 +98,7 @@ utility       — general tasks that don't fit other categories
 - Use "direct" for the VAST MAJORITY of requests.
 - Use "decompose" ONLY when the request explicitly combines two or more distinct types of work that require DIFFERENT specialist roles.
 - A strong signal: the request uses "AND" (or "ALSO", "AS WELL AS", "PLUS") to join two clearly different work categories (code vs docs, code vs review, plan vs implement).
+- Use "decompose" for broad repository/app audits, ship-readiness reviews, release-readiness checks, or "full audit" requests where useful output requires multiple domains such as code quality, tests, documentation, deployment, or security.
 - Maximum 3 departments.
 - Each subtask must be complete and actionable on its own — departments don't talk to each other.
 
@@ -126,14 +127,14 @@ Expected output:
 - "what files changed recently" → { "routing": "direct", "role": "brain" }
 - "count how many filenames contain R" → { "routing": "direct", "role": "brain", "done_criteria": ["Output states the count of top-level filenames containing the letter R"] }
   BAD done_criteria for that task: ["Output explains inability to access filesystem"] ← NEVER invent limitations
-- "analyse the repo, find 3 critical missing features, save to SHIP-AUDIT.md" → { "routing": "direct", "role": "brain", "done_criteria": ["SHIP-AUDIT.md created via write_file", "File lists 3 missing features ranked by severity"] }
-- "analyze My-Ministry-OS and write a ship audit to AUDIT.md" → { "routing": "direct", "role": "brain", "done_criteria": ["AUDIT.md created via write_file", "File contains ranked findings from analysis"] }
 
 ## More routing examples — DECOMPOSE:
 - "implement a login form AND write the JSDoc for it" → decompose: [strong_model, narrator]
 - "review this code AND fix all the bugs you find" → decompose: [reviewer, strong_model]
 - "write a detailed plan AND then implement it" → decompose: [planner_deep, strong_model]
-- "build the API endpoint AND write the README for it" → decompose: [strong_model, narrator]`;
+- "build the API endpoint AND write the README for it" → decompose: [strong_model, narrator]
+- "do a full audit of this app and tell me what is needed to ship" → decompose: [reviewer, debugger, narrator]
+- "analyze My-Ministry-OS and write a ship audit to AUDIT.md" → decompose: [reviewer, debugger, narrator]`;
 
 // ---------------------------------------------------------------------------
 // Schema Validation

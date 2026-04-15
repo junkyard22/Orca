@@ -571,4 +571,32 @@ Next: Call it
     expect(result.stoppedBecause).toBe("no_final_output");
     expect(result.toolsUsed.length).toBeGreaterThan(0);
   });
+
+  it("does not treat final-turn tool narration as a completed answer", async () => {
+    const responses = [
+      `I need to inspect package.json.<tool_call>{"tool": "read_file", "path": "package.json"}</tool_call>`,
+      `I need to inspect README.md.<tool_call>{"tool": "read_file", "path": "README.md"}</tool_call>`,
+      `README is minimal. Let me inspect src next.<tool_call>{"tool": "read_file", "path": "src/index.ts"}</tool_call>`,
+    ];
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(
+      createTask({
+        intent: "Audit the app",
+        goals: ["Audit the app and list shipping blockers"],
+        doneCriteria: ["Output lists shipping blockers"],
+      }),
+      [createMockTool("read_file", "file content") as any],
+      createCtx(),
+    );
+
+    expect(result.stoppedBecause).toBe("no_final_output");
+    expect(result.outputText).toBe("");
+  });
 });

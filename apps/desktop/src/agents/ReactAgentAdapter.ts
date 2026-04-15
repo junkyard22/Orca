@@ -880,7 +880,7 @@ export class ReactAgentAdapter implements AgentAdapter {
       // the last response — if stripping left nothing, fall back to the raw
       // tool-stripped output so the user always sees something rather than an
       // empty string that bubbles up as "did not complete as expected".
-      const finalOutput = currentOutputText || cleanedLastOutput.trim();
+      let finalOutput = currentOutputText || cleanedLastOutput.trim();
       
       // ── No-final-output detection ─────────────────────────────────────────
       // If the run ended without a FINAL ANSWER: and the derived output is empty
@@ -891,8 +891,16 @@ export class ReactAgentAdapter implements AgentAdapter {
       // reasoning, not user-facing output. If the only content left after stripping
       // is thought blocks, the run produced no real deliverable.
       const strippedForClassification = stripThoughtBlocks(effectiveOutput).trim();
+      if (!finalAnswerFound && toolsUsed.length > 0 && stoppedBecause === 'max_iterations') {
+        stoppedBecause = 'no_final_output';
+        finalOutput = '';
+        console.warn(
+          `[ReactAgent] no_final_output: run exhausted ${iterationCount} iteration(s) ` +
+          `after ${toolsUsed.length} tool event(s) without a FINAL ANSWER.`
+        );
+      }
       // Graceful fallback: a model that skipped the FINAL ANSWER: marker but produced
-      // real text is still done — don't penalise it with max_iterations.
+      // real text without needing tools is still done — don't penalise simple answers.
       if (strippedForClassification && stoppedBecause === 'max_iterations') {
         stoppedBecause = 'done';
       }
