@@ -136,6 +136,43 @@ describe("project audit pipeline", () => {
     }
   });
 
+  it("samples key files and source before assigning read-first confidence", () => {
+    const root = tempRoot();
+    mkdirSync(join(root, "src"));
+    writeJson(join(root, "package.json"), {
+      name: "sampled-demo",
+      scripts: { build: "tsc", test: "vitest", lint: "eslint ." },
+      dependencies: { express: "^5.0.0" },
+    });
+    writeFileSync(join(root, "README.md"), "# Sampled Demo\n\nRun build and tests before release.\n");
+    writeFileSync(join(root, ".env.example"), "API_URL=\nTOKEN=\n");
+    writeFileSync(join(root, ".env"), "API_URL=http://localhost\nTOKEN=secret\n");
+    writeFileSync(join(root, "src", "index.ts"), [
+      "try {",
+      "  console.error('startup failed');",
+      "} catch (error) {",
+      "  throw new Error(String(error));",
+      "}",
+    ].join("\n"));
+
+    try {
+      const result = runProjectAudit({ taskSpec: task(root) });
+      const output = formatProjectAuditResult(result);
+
+      expect(result.readiness.supportingEvidence).toEqual(expect.arrayContaining([
+        expect.stringContaining("package.json read"),
+        expect.stringContaining("Source sample inspected"),
+        expect.stringContaining("error-handling signal"),
+      ]));
+      expect(result.readiness.missingEvidence).toContain("Runtime build/test/lint commands were not run in this read-first audit");
+      expect(result.readiness.riskFlags).toContain("runtime_not_verified");
+      expect(result.readiness.confidence).toBeLessThanOrEqual(0.74);
+      expect(output).not.toContain("- src/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("formats incomplete evidence honestly", () => {
     const root = tempRoot();
     writeFileSync(join(root, "notes.txt"), "not a project\n");

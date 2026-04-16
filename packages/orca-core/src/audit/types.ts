@@ -71,6 +71,7 @@ export type AuditProbeName =
   | "detect_env_hygiene"
   | "detect_docs_presence"
   | "detect_packaging_signals"
+  | "inspect_source_sample"
   | "detect_logging_or_error_handling_signals";
 
 export type AuditProbeStatus = "pass" | "partial" | "missing" | "not_applicable" | "error";

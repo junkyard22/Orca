@@ -1,5 +1,5 @@
 import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import type {
   AuditCommandDecision,
   AuditCommandPolicy,
@@ -45,6 +45,10 @@ const MARKER_PATHS: Array<{ name: string; path: string; kind: "file" | "director
 
 const CONFIG_PREFIXES = ["vite.config.", "webpack.config."];
 const IGNORED_TREE_DIRS = new Set([".git", "node_modules", "dist", "build", "release", "coverage", ".next", ".turbo"]);
+const SOURCE_ROOTS = ["src", "app", "frontend", "backend", "lib", "server", "client"];
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".cs", ".css"]);
+const MAX_SOURCE_FILES = 120;
+const MAX_SOURCE_READS = 45;
 
 const APPROVED_RECIPES: Partial<Record<ProjectCategory, string[]>> = {
   node_app: ["npm run build", "npm test", "npm run lint"],
@@ -186,6 +190,39 @@ function readJsonFile(path: string): Record<string, unknown> | undefined {
   }
 }
 
+function safeReadText(path: string, maxChars = 30_000): string | undefined {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > 1_500_000) return undefined;
+    const text = readFileSync(path, "utf8");
+    if (text.includes("\0")) return undefined;
+    return text.slice(0, maxChars);
+  } catch {
+    return undefined;
+  }
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function envKeys(text: string | undefined): string[] {
+  if (!text) return [];
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"))
+    .map((line) => line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1])
+    .filter((key): key is string => typeof key === "string");
+}
+
+function workflowFiles(root: string): string[] {
+  const dir = join(root, ".github", "workflows");
+  return safeReadDir(dir)
+    .filter((entry) => /\.(ya?ml)$/i.test(entry))
+    .map((entry) => `.github/workflows/${entry}`);
+}
+
 function packageJson(root: string): Record<string, unknown> | undefined {
   return readJsonFile(join(root, "package.json"));
 }
@@ -297,6 +334,77 @@ function listTree(root: string, maxDepth = 2, maxEntries = 80): string[] {
   return output;
 }
 
+function collectSourceFiles(root: string): string[] {
+  const files: string[] = [];
+  const roots = SOURCE_ROOTS.filter((dir) => {
+    const fullPath = join(root, dir);
+    try {
+      return lstatSync(fullPath).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+  const startDirs = roots.length > 0 ? roots : ["."];
+
+  const walk = (dir: string, depth: number): void => {
+    if (files.length >= MAX_SOURCE_FILES || depth > 5) return;
+    for (const entry of safeReadDir(join(root, dir)).sort((a, b) => a.localeCompare(b))) {
+      if (files.length >= MAX_SOURCE_FILES) return;
+      if (IGNORED_TREE_DIRS.has(entry)) continue;
+      const rel = dir === "." ? entry : `${dir}/${entry}`;
+      const fullPath = join(root, rel);
+      let stat;
+      try {
+        stat = lstatSync(fullPath);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        walk(rel, depth + 1);
+      } else if (stat.isFile() && SOURCE_EXTENSIONS.has(extname(entry).toLowerCase())) {
+        files.push(rel.replace(/\\/g, "/"));
+      }
+    }
+  };
+
+  for (const dir of startDirs) walk(dir, 0);
+  return unique(files);
+}
+
+interface SourceInspection {
+  files: string[];
+  inspected: number;
+  testFiles: string[];
+  loggingSignals: string[];
+  errorHandlingSignals: string[];
+}
+
+function inspectSourceSample(root: string): SourceInspection {
+  const files = collectSourceFiles(root);
+  const testFiles = files.filter((file) => /(^|\/)(__tests__|tests?|e2e)(\/|$)|\.(test|spec|e2e)\./i.test(file));
+  const loggingSignals: string[] = [];
+  const errorHandlingSignals: string[] = [];
+
+  for (const file of files.slice(0, MAX_SOURCE_READS)) {
+    const text = safeReadText(join(root, file), 40_000);
+    if (!text) continue;
+    if (/\b(console\.(warn|error)|logger\.|createLogger|pino\(|winston|debug\(|Sentry\.)/i.test(text)) {
+      loggingSignals.push(`logging signal in ${file}`);
+    }
+    if (/\b(try\s*\{|catch\s*\(|throw\s+new|console\.error|process\.on\(["'](?:uncaughtException|unhandledRejection)|window\.onerror|addEventListener\(["']error)/i.test(text)) {
+      errorHandlingSignals.push(`error-handling signal in ${file}`);
+    }
+  }
+
+  return {
+    files,
+    inspected: Math.min(files.length, MAX_SOURCE_READS),
+    testFiles: testFiles.slice(0, 8),
+    loggingSignals: unique(loggingSignals).slice(0, 8),
+    errorHandlingSignals: unique(errorHandlingSignals).slice(0, 8),
+  };
+}
+
 function scriptsFromPackage(pkg: Record<string, unknown> | undefined): Record<string, string> {
   const scripts = pkg?.["scripts"];
   if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return {};
@@ -320,12 +428,27 @@ function runProbes(preflight: AuditPreflight, classification: ProjectClassificat
   const scripts = scriptsFromPackage(pkg);
   const deps = dependencyNames(pkg);
   const tree = listTree(root);
+  const sourceInspection = inspectSourceSample(root);
   const probes: AuditProbeResult[] = [];
 
-  probes.push(probe("inspect_directory_tree", tree.length > 0 ? "pass" : "missing", tree.slice(0, 20), tree.length === 0 ? ["No readable directory entries"] : [], { entries: tree }));
+  probes.push(probe("inspect_directory_tree", tree.length > 0 ? "pass" : "missing", [`Directory inventory collected (${tree.length} entries, ignored generated folders)`], tree.length === 0 ? ["No readable directory entries"] : [], { entries: tree }));
 
   const keyFiles = preflight.markers.filter((marker) => marker.kind === "file").map((marker) => marker.path);
-  probes.push(probe("read_key_files", keyFiles.length > 0 ? "pass" : "missing", keyFiles, keyFiles.length === 0 ? ["No key marker files found"] : []));
+  const scriptNames = Object.keys(scripts);
+  const readmePath = keyFiles.find((path) => /^README(?:\..+)?$/i.test(path));
+  const readmeText = readmePath ? safeReadText(join(root, readmePath), 20_000) : undefined;
+  const workflowNames = workflowFiles(root);
+  const envExampleKeys = envKeys(safeReadText(join(root, ".env.example"), 20_000));
+  const envKeysPresent = envKeys(safeReadText(join(root, ".env"), 20_000));
+  const keyFileEvidence = [
+    ...(pkg ? [`package.json read: ${scriptNames.length} script(s), ${deps.size} dependency name(s)`] : []),
+    ...(scriptNames.length > 0 ? [`package scripts: ${scriptNames.slice(0, 8).join(", ")}`] : []),
+    ...(readmeText ? [`${readmePath} read: ${readmeText.split(/\r?\n/).filter((line) => line.trim().length > 0).length} non-empty line(s)`] : []),
+    ...(workflowNames.length > 0 ? [`workflow files read: ${workflowNames.slice(0, 6).join(", ")}`] : []),
+    ...(envExampleKeys.length > 0 ? [`.env.example read: ${envExampleKeys.length} key(s) documented`] : []),
+    ...(envKeysPresent.length > 0 ? [`.env read: ${envKeysPresent.length} key name(s) present; values not displayed`] : []),
+  ];
+  probes.push(probe("read_key_files", keyFileEvidence.length > 0 ? "pass" : "missing", keyFileEvidence, keyFileEvidence.length === 0 ? ["No key marker files could be read"] : [], { keyFiles }));
 
   const packageManager =
     markers.has("pnpm-lock.yaml") ? "pnpm" :
@@ -335,19 +458,31 @@ function runProbes(preflight: AuditPreflight, classification: ProjectClassificat
     undefined;
   probes.push(probe("detect_package_manager", packageManager ? "pass" : "not_applicable", packageManager ? [`${packageManager} marker detected`] : [], packageManager ? [] : ["No Node package manager lockfile found"], { packageManager }));
 
-  const scriptNames = Object.keys(scripts);
   probes.push(probe("detect_scripts", scriptNames.length > 0 ? "pass" : markers.has("package.json") ? "missing" : "not_applicable", scriptNames.map((name) => `script:${name}`), markers.has("package.json") && scriptNames.length === 0 ? ["package.json has no scripts"] : [], { scripts }));
 
-  const hasTests = scriptNames.some((name) => /test/i.test(name)) || markers.has("tests") || markers.has("__tests__") || markers.has("e2e");
-  probes.push(probe("detect_test_setup", hasTests ? "pass" : "missing", hasTests ? ["Test script or test directory detected"] : [], hasTests ? [] : ["No test script or test directory detected"]));
+  const hasTests = scriptNames.some((name) => /test/i.test(name)) || markers.has("tests") || markers.has("__tests__") || markers.has("e2e") || sourceInspection.testFiles.length > 0;
+  probes.push(probe("detect_test_setup", hasTests ? "pass" : "missing", [
+    ...(scriptNames.some((name) => /test/i.test(name)) ? ["Test script detected in package.json"] : []),
+    ...(sourceInspection.testFiles.length > 0 ? [`test file sample: ${sourceInspection.testFiles.slice(0, 4).join(", ")}`] : []),
+    ...((markers.has("tests") || markers.has("__tests__") || markers.has("e2e")) ? ["Test directory marker detected"] : []),
+  ], hasTests ? [] : ["No test script, test directory, or test file sample detected"]));
 
   const hasBuild = scriptNames.some((name) => /build|compile/i.test(name)) || markers.has("tsconfig.json") || classification.categories.includes("rust_app") || classification.categories.includes("go_app");
-  probes.push(probe("detect_build_setup", hasBuild ? "pass" : "missing", hasBuild ? ["Build script, compiler config, or compiled-language marker detected"] : [], hasBuild ? [] : ["No build script or compiler config detected"]));
+  probes.push(probe("detect_build_setup", hasBuild ? "pass" : "missing", [
+    ...(scriptNames.filter((name) => /build|compile/i.test(name)).map((name) => `build script:${name}`)),
+    ...(markers.has("tsconfig.json") ? ["tsconfig.json present"] : []),
+    ...((classification.categories.includes("rust_app") || classification.categories.includes("go_app")) ? ["compiled-language project marker detected"] : []),
+  ], hasBuild ? [] : ["No build script or compiler config detected"]));
 
-  const hasRelease = markers.has(".github/workflows") || markers.has("Dockerfile") || markers.has("docker-compose.yml") || scriptNames.some((name) => /dist|release|pack|package/i.test(name));
-  probes.push(probe("detect_release_setup", hasRelease ? "pass" : "missing", hasRelease ? ["Release, packaging, Docker, or workflow signal detected"] : [], hasRelease ? [] : ["No release or packaging signal detected"]));
+  const hasRelease = workflowNames.length > 0 || markers.has("Dockerfile") || markers.has("docker-compose.yml") || scriptNames.some((name) => /dist|release|pack|package/i.test(name));
+  probes.push(probe("detect_release_setup", hasRelease ? "pass" : "missing", [
+    ...(workflowNames.length > 0 ? [`workflow signal: ${workflowNames.slice(0, 4).join(", ")}`] : []),
+    ...(markers.has("Dockerfile") ? ["Dockerfile present"] : []),
+    ...(markers.has("docker-compose.yml") ? ["docker-compose.yml present"] : []),
+    ...(scriptNames.filter((name) => /dist|release|pack|package/i.test(name)).map((name) => `release script:${name}`)),
+  ], hasRelease ? [] : ["No release, packaging, Docker, or workflow signal detected"]));
 
-  probes.push(probe("detect_ci_setup", markers.has(".github/workflows") ? "pass" : "missing", markers.has(".github/workflows") ? [".github/workflows present"] : [], markers.has(".github/workflows") ? [] : ["No GitHub Actions workflows detected"]));
+  probes.push(probe("detect_ci_setup", workflowNames.length > 0 ? "pass" : "missing", workflowNames.length > 0 ? [`GitHub Actions workflows present: ${workflowNames.slice(0, 4).join(", ")}`] : [], workflowNames.length > 0 ? [] : ["No GitHub Actions workflows detected"]));
 
   const envExample = markers.has(".env.example");
   const envPresent = markers.has(".env");
@@ -360,7 +495,7 @@ function runProbes(preflight: AuditPreflight, classification: ProjectClassificat
   ]));
 
   const docs = preflight.markers.filter((marker) => marker.name === "README*");
-  probes.push(probe("detect_docs_presence", docs.length > 0 ? "pass" : "missing", docs.map((marker) => marker.path), docs.length === 0 ? ["No README detected"] : []));
+  probes.push(probe("detect_docs_presence", docs.length > 0 ? "pass" : "missing", docs.map((marker) => `${marker.path} present`), docs.length === 0 ? ["No README detected"] : []));
 
   const packagingEvidence = [
     ...(markers.has("Dockerfile") ? ["Dockerfile present"] : []),
@@ -369,9 +504,18 @@ function runProbes(preflight: AuditPreflight, classification: ProjectClassificat
   ];
   probes.push(probe("detect_packaging_signals", packagingEvidence.length > 0 ? "pass" : "missing", packagingEvidence, packagingEvidence.length === 0 ? ["No packaging signal detected"] : []));
 
+  probes.push(probe("inspect_source_sample", sourceInspection.files.length > 0 ? "pass" : "missing", sourceInspection.files.length > 0 ? [
+    `Source sample inspected: ${sourceInspection.inspected} of ${sourceInspection.files.length} source-like file(s)`,
+  ] : [], sourceInspection.files.length === 0 ? ["No source files found in common source directories"] : [], {
+    totalSourceFiles: sourceInspection.files.length,
+    inspectedSourceFiles: sourceInspection.inspected,
+    sample: sourceInspection.files.slice(0, 20),
+  }));
+
   const loggingEvidence = [
     ...[...deps].filter((dep) => /log|sentry|winston|pino|bunyan|debug/i.test(dep)).map((dep) => `dependency:${dep}`),
-    ...tree.filter((entry) => /logger|logging|error|exception/i.test(entry)).slice(0, 6),
+    ...sourceInspection.loggingSignals,
+    ...sourceInspection.errorHandlingSignals,
   ];
   probes.push(probe("detect_logging_or_error_handling_signals", loggingEvidence.length > 0 ? "partial" : "missing", loggingEvidence, loggingEvidence.length === 0 ? ["No obvious logging or error-handling signal detected"] : []));
 
@@ -388,7 +532,7 @@ function scoreFromStatus(status: AuditProbeResult["status"], full: number, parti
   return 0;
 }
 
-function scoreReadiness(preflight: AuditPreflight, classification: ProjectClassification, probes: AuditProbeResult[], failures: AuditFailure[]): ReadinessScore {
+function scoreReadiness(preflight: AuditPreflight, classification: ProjectClassification, probes: AuditProbeResult[], failures: AuditFailure[], commandPolicy: AuditCommandPolicy): ReadinessScore {
   if (!preflight.exists || !preflight.readable || preflight.kind !== "directory") {
     return {
       readiness: "insufficient_evidence",
@@ -413,14 +557,24 @@ function scoreReadiness(preflight: AuditPreflight, classification: ProjectClassi
     observability: scoreFromStatus(probeStatus(probes, "detect_logging_or_error_handling_signals"), 10, 5),
   };
   const totalScore = Object.values(categories).reduce((sum, value) => sum + value, 0);
-  const supportingEvidence = probes.flatMap((item) => item.evidence).slice(0, 20);
-  const missingEvidence = probes.flatMap((item) => item.missing).slice(0, 20);
+  const runtimeUnverified = commandPolicy.decisions.some((decision) => decision.status === "allowed_not_run");
+  const supportingEvidence = unique([
+    ...classification.evidence,
+    ...probes
+      .filter((item) => item.name !== "inspect_directory_tree")
+      .flatMap((item) => item.evidence),
+  ]).slice(0, 20);
+  const missingEvidence = unique([
+    ...probes.flatMap((item) => item.missing),
+    ...(runtimeUnverified ? ["Runtime build/test/lint commands were not run in this read-first audit"] : []),
+  ]).slice(0, 20);
   const riskFlags = [
     ...(classification.primary === "unknown" ? ["unsupported_stack"] : []),
     ...(probeStatus(probes, "detect_test_setup") === "missing" ? ["no_test_evidence"] : []),
     ...(probeStatus(probes, "detect_build_setup") === "missing" ? ["no_build_evidence"] : []),
     ...(probeStatus(probes, "detect_ci_setup") === "missing" ? ["no_ci_evidence"] : []),
     ...(probeStatus(probes, "detect_env_hygiene") !== "pass" ? ["config_hygiene_incomplete"] : []),
+    ...(runtimeUnverified ? ["runtime_not_verified"] : []),
   ];
 
   let readiness: ReadinessScore["readiness"];
@@ -430,10 +584,14 @@ function scoreReadiness(preflight: AuditPreflight, classification: ProjectClassi
   else if (totalScore >= 45) readiness = "prototype";
   else readiness = "not_production_ready";
 
-  const confidence = Math.max(
-    0.1,
-    Math.min(0.95, 0.25 + classification.confidence * 0.35 + probes.filter((item) => item.status === "pass").length * 0.06 - failures.length * 0.08),
-  );
+  const meaningfulPasses = probes.filter((item) => item.name !== "inspect_directory_tree" && item.status === "pass").length;
+  const partials = probes.filter((item) => item.status === "partial").length;
+  const sourceWasInspected = probeStatus(probes, "inspect_source_sample") === "pass";
+  let confidence = 0.18 + classification.confidence * 0.28 + meaningfulPasses * 0.045 + partials * 0.025 - failures.length * 0.08 - riskFlags.length * 0.03;
+  if (runtimeUnverified) confidence = Math.min(confidence, 0.74);
+  if (!sourceWasInspected) confidence = Math.min(confidence, 0.58);
+  if (probeStatus(probes, "detect_env_hygiene") !== "pass") confidence = Math.min(confidence, 0.72);
+  confidence = Math.max(0.1, Math.min(0.9, confidence));
 
   return {
     readiness,
@@ -521,7 +679,7 @@ export function runProjectAudit(input: ProjectAuditInput): ProjectAuditResult {
   const probes = runProbes(preflight, classification);
   const commandPolicy = buildCommandPolicy(preflight, classification);
   const failures = collectFailures(preflight, classification, probes, commandPolicy);
-  const readiness = scoreReadiness(preflight, classification, probes, failures);
+  const readiness = scoreReadiness(preflight, classification, probes, failures, commandPolicy);
 
   return {
     mode: "project_audit",
