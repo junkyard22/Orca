@@ -166,6 +166,23 @@ type DesktopBrainRouting =
 
 // ── Brain routing helper ───────────────────────────────────────────────────
 
+/**
+ * Derive a short, output-focused done criterion for a worker from its subtask.
+ *
+ * Subtask directives are written as instructions ("Audit X for:\n\n...") which
+ * make poor AHP acceptance criteria — the AHP evaluator uses keyword matching
+ * and a 100-word instruction paragraph requires too many keyword matches.
+ *
+ * This extracts the first line (the action summary), strips any trailing colon,
+ * and caps it at 120 chars to produce a concise, verifiable statement.
+ */
+function deriveWorkerDoneCriteria(subtask: string): string[] {
+  const firstLine = subtask.split('\n')[0]?.trim() ?? subtask.trim();
+  const stripped = firstLine.replace(/:$/, '').trim();
+  const criterion = stripped.length > 120 ? `${stripped.slice(0, 117)}...` : stripped;
+  return criterion ? [criterion] : [subtask.slice(0, 120).replace(/:$/, '').trim()];
+}
+
 function taskTextForRouting(task: OrcaTaskSpec): string {
   return [
     task.originalUserMessage,
@@ -261,6 +278,11 @@ async function brainRoute(
   }
 
   const fallbackDecision = auditDecomposeFallback(task);
+  // Only apply the audit fallback when brain failed to return a valid decision
+  // (timeout, validation error, or network failure). When brain successfully
+  // returned "direct", that is a deliberate routing choice and we must respect
+  // it — overriding it would triple LLM cost for every audit-keyword task even
+  // when brain correctly judged that a single specialist is sufficient.
   let resolved: DecomposeDecision = decision ?? fallbackDecision ?? { routing: 'direct', role: 'brain' };
   if (!decision) {
     ctx.recordTrace?.("brain.route.fallback", {
@@ -268,13 +290,6 @@ async function brainRoute(
         ? "brain routing did not yield a valid decision; using deterministic audit decomposition"
         : "brain routing did not yield a valid decision; defaulting to direct brain",
     });
-  } else if (fallbackDecision && decision.routing === "direct") {
-    ctx.recordTrace?.("brain.route.override", {
-      reason: "broad audit / ship-readiness task requires multiple specialists",
-      decision,
-      override: fallbackDecision,
-    });
-    resolved = fallbackDecision;
   }
   const doneCriteria = resolved.done_criteria ?? [];
   if (resolved.routing === "decompose") {
@@ -701,7 +716,7 @@ function buildMaestroAdapter(
           const workerTask: AgentTask = {
             intent: department.subtask,
             goals: [department.subtask, ...(department.context ? [department.context] : [])],
-            doneCriteria: [department.subtask],
+            doneCriteria: deriveWorkerDoneCriteria(department.subtask),
             conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
           };
           return runRoleWorker(task, ctx, role, workerTask, {
@@ -763,7 +778,14 @@ function buildMaestroAdapter(
           .map((run) => run.childPacket)
           .filter((packet): packet is AHPPacket => packet !== undefined);
         const incompleteRuns = workerRuns.filter((run) => run.result.stoppedBecause !== "done");
-        const hasUserFacingOutput = outputText.trim().length > 0;
+        // Determine whether the output is real (synthesis text or a worker's actual
+        // final answer) vs. the placeholder error messages injected by the fallback.
+        // The fallback always produces non-empty text even when every worker failed,
+        // so we must check whether any worker produced real output before treating
+        // the result as "done".
+        const synthesisProducedOutput = !synthesisError && outputText.trim().length > 0;
+        const workerProducedOutput = workerRuns.some((run) => run.result.outputText?.trim());
+        const hasUserFacingOutput = synthesisProducedOutput || workerProducedOutput;
         const stoppedBecause = hasUserFacingOutput
           ? "done"
           : synthesisError
