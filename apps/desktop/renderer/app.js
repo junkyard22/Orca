@@ -311,7 +311,7 @@ orca.onOrcaEvent((e) => {
     "task:start":    "planning\u2026",
     "maestro:start": e.isRepair ? `repairing (pass ${e.attempt})\u2026` : "generating\u2026",
     "maestro:done":  e.isRepair ? `repair pass ${e.attempt} done` : "reviewing\u2026",
-    "qc:result":     e.verdict === "pass" ? "QC passed \u2713" : `QC found ${e.issueCount} issue(s)`,
+    "qc:result":     e.verdict === "PASS" ? "QC passed \u2713" : `QC found ${e.issueCount} issue(s)`,
     "repair:start":  `starting repair pass ${e.pass}/${e.maxPasses}\u2026`,
     "subagent:spawned": `worker ${e.role} started\u2026`,
     "subagent:done": e.ok ? `worker ${e.role} done; synthesizing\u2026` : `worker ${e.role} incomplete; synthesizing\u2026`,
