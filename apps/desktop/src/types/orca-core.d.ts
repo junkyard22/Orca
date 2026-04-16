@@ -22,6 +22,7 @@ declare module '@clawde/orca-core' {
     originalUserMessage: string;
     intent: string;
     goals: string[];
+    mode?: "default" | "project_audit";
     constraints?: Record<string, unknown>;
     context?: Record<string, unknown>;
     permissions?: TaskPermissions;
@@ -88,6 +89,7 @@ declare module '@clawde/orca-core' {
       outputTokens?: number;
       costUsd?: number;
       filesChanged?: OrcaFileChange[];
+      auditResult?: unknown;
     };
     doneCriteria?: string[];
     subagentRuns?: Array<{

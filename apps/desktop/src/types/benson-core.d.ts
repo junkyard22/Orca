@@ -21,6 +21,7 @@ declare module '@clawde/benson-core' {
     originalUserMessage: string;
     intent: string;
     goals: string[];
+    mode?: "default" | "project_audit";
     constraints?: Record<string, unknown>;
     context?: {
       conversationHistory?: LLMMessage[];

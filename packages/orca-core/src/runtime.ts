@@ -18,6 +18,7 @@ import { dirname } from "node:path";
 import type { RunRecord } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
+import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
 import { isAbortError, throwIfAborted } from "./abort.js";
 import {
@@ -314,6 +315,74 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
     try {
       throwIfAborted(options?.abortSignal);
+      if (isProjectAuditTask(normalizedTaskSpec)) {
+        recordTrace("audit.mode.activated", {
+          mode: "project_audit",
+          reason: normalizedTaskSpec.mode === "project_audit" ? "task_mode" : "audit_request_detected",
+        });
+        const auditResult = runProjectAudit({
+          taskSpec: normalizedTaskSpec,
+          workspaceRoot: effectiveWorkspaceRoot,
+        });
+        recordTrace("audit.preflight", auditResult.preflight);
+        recordTrace("audit.classification", auditResult.classification);
+        recordTrace("audit.probes", auditResult.probes.map((probe) => ({
+          name: probe.name,
+          status: probe.status,
+          evidenceCount: probe.evidence.length,
+          missingCount: probe.missing.length,
+        })));
+        recordTrace("audit.command_policy", auditResult.commandPolicy);
+        recordTrace("audit.readiness", auditResult.readiness);
+
+        const outputText = formatProjectAuditResult(auditResult);
+        const auditMaestroResult = normalizeMaestroResult({
+          outputText,
+          summary: `project_audit ${auditResult.readiness.readiness}`,
+          toolEvents: [],
+          filesChanged: [],
+          metadata: {
+            role: "project_audit",
+            stoppedBecause: "done",
+            auditResult,
+          },
+          doneCriteria: [
+            "Output distinguishes observed file/config evidence from runtime verification",
+            "Output states readiness, confidence, supporting evidence, missing evidence, and risk flags",
+          ],
+        });
+        persistedMaestroResult = auditMaestroResult;
+
+        if (qcEnabled) {
+          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult);
+          recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
+          const qcResult = pappy.evaluate(qcInput);
+          persistedQcResult = qcResult;
+          recordTrace("qc.run.result", {
+            attempt: 0,
+            isRepair: false,
+            verdict: qcResult.verdict,
+            confidence: qcResult.confidence,
+            issues: qcResult.issues,
+            repairTask: qcResult.repairTask,
+            internalSummary: qcResult.internalSummary,
+          });
+          result = {
+            status: qcResult.verdict === "FAIL" ? "FAIL" : "SUCCESS",
+            userFacingText: outputText,
+            summary: qcResult.internalSummary,
+            artifacts: { auditResult },
+          };
+        } else {
+          recordTrace("qc.skipped", { reason: "pappy_not_configured" });
+          result = {
+            status: "SUCCESS",
+            userFacingText: outputText,
+            summary: auditMaestroResult.summary,
+            artifacts: { auditResult },
+          };
+        }
+      } else {
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
       recordTrace("maestro.run.start", { attempt: 0, isRepair: false, task: normalizedTaskSpec });
 
@@ -491,6 +560,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             });
           }
         }
+      }
       }
       recordTrace("task.completed", {
         status: result.status,

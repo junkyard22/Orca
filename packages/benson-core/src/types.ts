@@ -8,6 +8,8 @@ export type OutputFormat =
   | "bullets"
   | "table";
 
+export type TaskMode = "default" | "project_audit";
+
 export interface ConversationTurn {
   user: string;
   assistant: string;
@@ -17,6 +19,7 @@ export interface TaskSpec {
   originalUserMessage: string;
   intent: string;
   goals: string[];
+  mode?: TaskMode;
   constraints?: Record<string, unknown>;
   context?: Record<string, unknown>;
   permissions?: Permission[];

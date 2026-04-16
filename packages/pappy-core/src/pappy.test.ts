@@ -547,4 +547,23 @@ describe("evaluateWithPappy — COMPLETENESS_NO_FINAL_OUTPUT", () => {
     expect(result.verdict).toBe("FAIL");
     expect(result.issues.some(i => i.code === "UNREQUESTED_FILE_CHANGE")).toBe(true);
   });
+
+  it("fails audit outputs when structured preflight failures are present", () => {
+    const result = evaluateWithPappy({
+      task: "Check this app for production readiness C:\\missing",
+      outputText: "Readiness: insufficient evidence\nStructured failures:\n- missing_path",
+      goals: ["Output states readiness level"],
+      metadata: {
+        stoppedBecause: "done",
+        audit: {
+          failures: [
+            { category: "missing_path", retryable: false, summary: "Path does not exist", suggestedNextAction: "Fix path" },
+          ],
+        },
+      },
+    } as any);
+
+    expect(result.verdict).toBe("FAIL");
+    expect(result.issues.some(i => i.code === "AUDIT_PREFLIGHT_FAILED")).toBe(true);
+  });
 });

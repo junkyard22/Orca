@@ -19,6 +19,7 @@ import type { AHPPacket } from "./ahp/types.js";
 // ---------------------------------------------------------------------------
 
 export type OutputFormat = "bullets" | "table" | "code" | "diff" | "file_diff" | "json" | "prose";
+export type TaskMode = "default" | "project_audit";
 
 export interface TaskPermissions {
   fileRead:     boolean;
@@ -31,6 +32,7 @@ export interface OrcaTaskSpec {
   originalUserMessage: string;
   intent: string;
   goals: string[];
+  mode?: TaskMode;
   constraints?: Record<string, unknown>;
   context?: Record<string, unknown>;
   permissions?: TaskPermissions;
@@ -121,6 +123,7 @@ export interface OrcaMaestroResult {
     outputTokens?: number;
     costUsd?: number;
     filesChanged?: OrcaFileChange[];
+    auditResult?: unknown;
   };
   /**
    * Acceptance criteria Brain defined for this task.

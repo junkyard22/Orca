@@ -1,6 +1,7 @@
 // Runtime factory
 export { createOrcaRuntime } from "./runtime.js";
 export { buildPappyInput, deriveFilesChangedFromToolEvents, normalizeMaestroResult } from "./helpers.js";
+export { extractAuditTargetPath, formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 
 // Concrete adapter factories (convenience — can be swapped for custom impls)
 export { createMirandaLLMService } from "./adapters/mirandaLLM.js";
@@ -38,11 +39,31 @@ export type {
   OrcaPipelineTraceEntry,
   OrcaRunCtx,
   OrcaMaestroResult,
+  TaskMode,
   MaestroPort,
   PappyPort,
   OrcaEvent,
   OrcaEventType,
 } from "./types.js";
+export type {
+  AuditCommandDecision,
+  AuditCommandPolicy,
+  AuditFailure,
+  AuditFailureCategory,
+  AuditMarker,
+  AuditPathKind,
+  AuditPreflight,
+  AuditProbeName,
+  AuditProbeResult,
+  AuditProbeStatus,
+  ProductionReadiness,
+  ProjectAuditInput,
+  ProjectAuditMode,
+  ProjectAuditResult,
+  ProjectCategory,
+  ProjectClassification,
+  ReadinessScore,
+} from "./audit/index.js";
 
 export type { WorkspaceContext } from "./workspaceContext.js";
 

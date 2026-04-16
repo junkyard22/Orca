@@ -179,9 +179,10 @@ export function buildPappyInput(
     filesChanged: normalizedResult.filesChanged,
     toolEvents: normalizedResult.toolEvents,
     metadata: normalizedResult.metadata
-      ? {
+        ? {
           stoppedBecause: normalizedResult.metadata.stoppedBecause,
           loopEvidence: normalizedResult.metadata.loopEvidence,
+          ...(normalizedResult.metadata.auditResult !== undefined ? { audit: normalizedResult.metadata.auditResult } : {}),
           ...(ahpNonCompleteChildren.length > 0 ? { ahpNonCompleteChildren } : {}),
         }
       : ahpNonCompleteChildren.length > 0

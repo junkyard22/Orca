@@ -52,6 +52,27 @@ const ACTION_VERBS = [
   'help', 'show', 'list',
 ];
 
+function extractLocalPath(message: string): string | undefined {
+  for (const line of message.split(/\r?\n/)) {
+    const windowsMatch = line.match(/\b[A-Za-z]:[\\/][^\r\n]+/);
+    if (windowsMatch?.[0]) return windowsMatch[0].trim().replace(/[.,"'`]+$/, "");
+
+    const posixMatch = line.match(/(?:^|\s)(\/[^\r\n]+)/);
+    if (posixMatch?.[1]) return posixMatch[1].trim().replace(/[.,"'`]+$/, "");
+  }
+  return undefined;
+}
+
+function isProjectAuditRequest(message: string): boolean {
+  const hasPath = !!extractLocalPath(message);
+  const auditLanguage =
+    /\b(check|review|audit|inspect|assess|evaluate)\b.{0,80}\b(app|repo|repository|project|codebase|code base)\b/i.test(message) ||
+    /\b(app|repo|repository|project|codebase|code base)\b.{0,80}\b(check|review|audit|inspect|assess|evaluate)\b/i.test(message) ||
+    /\b(production|prod|ship|release)\s+read(?:y|iness)\b/i.test(message) ||
+    /\bready\s+for\s+(production|prod|release|ship|shipping)\b/i.test(message);
+  return auditLanguage && (hasPath || /\b(this|the|my)\s+(app|repo|repository|project|codebase|code base)\b/i.test(message));
+}
+
 function extractLeadingVerb(message: string): string | null {
   const lower = message.toLowerCase();
   for (const verb of ACTION_VERBS) {
@@ -129,6 +150,8 @@ function extractConstraints(message: string): Record<string, unknown> | undefine
 }
 
 function extractPermissions(message: string): Permission[] {
+  if (isProjectAuditRequest(message)) return ["read"];
+
   const permissions: Permission[] = ["read"];
   const leadingVerb = extractLeadingVerb(message);
 
@@ -157,6 +180,10 @@ function extractOutputFormat(message: string): OutputFormat {
 
 function extractContext(message: string, history?: Message[]): Record<string, unknown> | undefined {
   const ctx: Record<string, unknown> = {};
+  const localPath = extractLocalPath(message);
+  if (localPath) {
+    ctx["auditPath"] = localPath;
+  }
   
   // Extract file paths (simple pattern: word.extension or path/to/file.ext)
   const filePattern = /[\w./\\-]+\.(ts|tsx|js|jsx|py|json|yaml|yml|md|txt|rs|go|java|c|cpp|h|hpp|css|html|xml|sql|sh|bash|zsh)/gi;
@@ -205,14 +232,16 @@ function buildClarify(): ParseResult {
 
 function buildTaskSpec(message: string, history?: Message[]): TaskSpec {
   const extractedContext = extractContext(message, history);
+  const auditMode = isProjectAuditRequest(message);
 
   return {
     originalUserMessage: message,
     intent: extractIntent(message),
     goals: extractGoals(message),
+    mode: auditMode ? "project_audit" : "default",
     constraints: extractConstraints(message),
     permissions: extractPermissions(message),
-    outputFormat: extractOutputFormat(message),
+    outputFormat: auditMode ? "bullets" : extractOutputFormat(message),
     context: {
       ...extractedContext,
       conversationHistory: history ?? [],

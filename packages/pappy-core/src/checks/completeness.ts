@@ -588,6 +588,16 @@ function taskExplicitlyAllowsFileChanges(input: PappyInput): boolean {
   );
 }
 
+function auditFailureCategories(input: PappyInput): string[] {
+  const audit = input.metadata?.audit;
+  if (!audit || typeof audit !== "object") return [];
+  const failures = (audit as { failures?: unknown }).failures;
+  if (!Array.isArray(failures)) return [];
+  return failures
+    .map((item) => item && typeof item === "object" ? (item as { category?: unknown }).category : undefined)
+    .filter((category): category is string => typeof category === "string" && category.length > 0);
+}
+
 /**
  * Run completeness checks with semantic verification
  */
@@ -661,6 +671,36 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
       fix_hint: "Do not call file-writing tools unless the user explicitly asks to create, edit, save, or update a file.",
       message: "Run made an unrequested file change.",
       suggestedFix: "Return the requested answer without writing files for read-only inspection tasks.",
+    });
+  }
+
+  const auditFailures = auditFailureCategories(input);
+  const blockingAuditFailures = auditFailures.filter((category) =>
+    ["missing_path", "unreadable_path", "bad_workdir", "permission_denied"].includes(category)
+  );
+  if (blockingAuditFailures.length > 0) {
+    issues.push({
+      severity: "HIGH",
+      code: "AUDIT_PREFLIGHT_FAILED",
+      category: "Completeness",
+      description: "Project audit preflight failed, so readiness cannot be treated as verified.",
+      expected_receipt: "Audit preflight must confirm an existing, readable project directory before scoring readiness.",
+      evidence: `audit_failures=${blockingAuditFailures.join(", ")}`,
+      fix_hint: "Rerun the audit with an existing readable project directory.",
+      message: "Audit preflight failed.",
+      suggestedFix: "Provide a valid project path and rerun the audit.",
+    });
+  } else if (auditFailures.includes("insufficient_evidence") || auditFailures.includes("unsupported_stack")) {
+    issues.push({
+      severity: "LOW",
+      code: "AUDIT_INSUFFICIENT_EVIDENCE",
+      category: "Completeness",
+      description: "Project audit completed but evidence was incomplete or stack classification was weak.",
+      expected_receipt: "Audit output should clearly state incomplete evidence and avoid unsupported readiness claims.",
+      evidence: `audit_failures=${auditFailures.join(", ")}`,
+      fix_hint: "Keep the response qualified, or add project markers, build/test scripts, docs, and CI evidence.",
+      message: "Audit evidence is incomplete.",
+      suggestedFix: "Avoid broad readiness claims until more evidence is available.",
     });
   }
 

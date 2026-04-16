@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOrcaRuntime } from "./runtime.js";
 import { AHPLifecycle, appendAHPTrace, createChildPacket } from "./ahp/types.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PappyResult } from "@clawde/pappy-core";
@@ -277,13 +277,64 @@ describe("createOrcaRuntime", () => {
 
         await runtime.executeTask(createTaskSpec({
           originalUserMessage: [
-            "Inspect this project and tell me whether it is ready for a local test release.",
+            "Read package.json in this workspace.",
             explicitRoot,
             "Only check apps/desktop/package.json.",
           ].join("\n"),
         }));
 
         expect(seenWorkspaceRoot).toBe(explicitRoot);
+      } finally {
+        rmSync(explicitRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("runs project audit mode before Maestro and records pipeline visibility", async () => {
+      const explicitRoot = mkdtempSync(join(tmpdir(), "orca-audit-runtime-"));
+      mkdirSync(join(explicitRoot, "src"));
+      writeFileSync(join(explicitRoot, "package.json"), JSON.stringify({
+        name: "audit-runtime",
+        scripts: { build: "tsc", test: "vitest" },
+      }));
+
+      const maestro: MaestroPort = {
+        run: async () => {
+          throw new Error("maestro should not run for deterministic project audit mode");
+        },
+      };
+      const pappy = {
+        evaluate: vi.fn(() => createMockPappyResult("PASS")),
+      } satisfies PappyPort;
+      const writeTrace = vi.fn();
+
+      try {
+        const runtime = createOrcaRuntime({
+          maestro,
+          pappy,
+          llm: createMockLLM(),
+          writeTrace,
+        });
+
+        const result = await runtime.executeTask(createTaskSpec({
+          originalUserMessage: `Check this app for production readiness\n${explicitRoot}`,
+          intent: "check this app",
+          mode: "project_audit",
+          permissions: { fileRead: true, fileWrite: false, shellExec: false },
+          context: { auditPath: explicitRoot },
+        }));
+
+        expect(result.status).toBe("SUCCESS");
+        expect(result.userFacingText).toContain("Runtime commands:");
+        expect(pappy.evaluate.mock.calls[0]?.[0].metadata?.audit).toBeDefined();
+        const trace = writeTrace.mock.calls[0]?.[0] as any;
+        expect(trace.entries.map((entry: any) => entry.stage)).toEqual(expect.arrayContaining([
+          "audit.mode.activated",
+          "audit.preflight",
+          "audit.classification",
+          "audit.probes",
+          "audit.command_policy",
+          "audit.readiness",
+        ]));
       } finally {
         rmSync(explicitRoot, { recursive: true, force: true });
       }

@@ -153,6 +153,30 @@ describe("createBenson", () => {
         expect(reply.kind).toBe("RESULT");
       });
 
+      it("routes local app readiness requests into read-only project audit mode", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult([
+          "Readiness: insufficient evidence",
+          "Observed from files/config:",
+          "- package.json present",
+          "Missing or unverified:",
+          "- No test script or test directory detected",
+          "Runtime commands:",
+          "- npm test: allowed not run - audit mode is read-first",
+          "Note: commands were not executed automatically.",
+        ].join("\n")));
+        const benson = createBenson({ executeTask });
+
+        const reply = await benson.handleUserMessage("Is this production ready?\nC:\\Orca\\Orca");
+        const spec = executeTask.mock.calls[0]?.[0] as TaskSpec | undefined;
+
+        expect(reply.kind).toBe("RESULT");
+        expect(spec?.mode).toBe("project_audit");
+        expect(spec?.permissions).toEqual(["read"]);
+        expect(spec?.context?.auditPath).toBe("C:\\Orca\\Orca");
+        expect(reply.text).toContain("Missing or unverified:");
+        expect(reply.text).toContain("commands were not executed automatically");
+      });
+
       it("keeps consecutive messages separated and preserves the exact current turn text", async () => {
         const executeTask = vi.fn().mockResolvedValue(createSuccessResult("ok"));
         const benson = createBenson({ executeTask });
@@ -394,6 +418,17 @@ describe("parseIntent", () => {
     expect(result.kind).toBe("TASK");
     if (result.kind === "TASK") {
       expect(result.spec.permissions).toContain("shell");
+    }
+  });
+
+  it("parses local project assessment prompts as project_audit", () => {
+    const result = parseIntent("Review this repo and tell me production readiness\nC:\\Orca\\Orca");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.mode).toBe("project_audit");
+      expect(result.spec.permissions).toEqual(["read"]);
+      expect(result.spec.outputFormat).toBe("bullets");
+      expect(result.spec.context?.auditPath).toBe("C:\\Orca\\Orca");
     }
   });
 
