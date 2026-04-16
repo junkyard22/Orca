@@ -117,6 +117,7 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
   const hasTools   = (input.toolEvents?.length ?? 0) > 0;
   const touched    = new Set((input.filesChanged ?? []).map((f) => f.path));
   const lowerOutput = outputText.toLowerCase();
+  const lowerCriterion = ac.text.toLowerCase();
   
   // Build combined search text from output and diffs
   const diffText = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
@@ -125,6 +126,8 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
   // Helper to check if a pattern matches
   const matchesPattern = (pattern: RegExp): boolean => pattern.test(searchText);
   const containsTerm = (term: string): boolean => matchesPattern(new RegExp(`\\b${term}\\w*\\b`, 'i'));
+  const criterionMatchesPattern = (pattern: RegExp): boolean => pattern.test(lowerCriterion);
+  const criterionContainsTerm = (term: string): boolean => criterionMatchesPattern(new RegExp(`\\b${term}\\w*\\b`, 'i'));
   
   // Required file criterion
   const fileMatch = ac.text.match(/[Ff]ile ["`']?([^"`'\s]+)["`']? must be/);
@@ -136,9 +139,16 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
       evidence: proved ? [`filesChanged: ${path}`] : [],
     };
   }
+
+  if (/^Output must contain a section titled/i.test(ac.text)) {
+    return {
+      proved: hasOutput,
+      evidence: hasOutput ? ["outputText is non-empty"] : [],
+    };
+  }
   
   // Check for code block / implementation requirement
-  if (containsTerm("code") || containsTerm("implementation") || containsTerm("function") || containsTerm("class") || containsTerm("TypeScript")) {
+  if (criterionContainsTerm("code") || criterionContainsTerm("implementation") || criterionContainsTerm("function") || criterionContainsTerm("class") || criterionContainsTerm("TypeScript")) {
     const hasCodeBlock = /```/.test(outputText);
     const hasCodeKeywords = /\b(function |class |const |let |var |export |import |type |interface |enum |def |async )/.test(outputText);
     const hasCode = hasCodeBlock || hasCodeKeywords || hasFiles;
@@ -154,7 +164,7 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
   
   // Check for unit test requirement
   const mentionsTestingFramework =
-    containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha") || containsTerm("spec");
+    criterionContainsTerm("vitest") || criterionContainsTerm("jest") || criterionContainsTerm("mocha") || criterionContainsTerm("spec");
   const explicitlyRequestsTests =
     /\b(unit|integration|e2e|end-to-end)\s+tests?\b/i.test(ac.text) ||
     /\b(test file|spec file|test suite|coverage)\b/i.test(ac.text) ||
@@ -193,7 +203,7 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
   }
   
   // Check for tracking/cleanup requirement
-  if (containsTerm("track") || containsTerm("per") || containsTerm("client") || containsTerm("cleanup") || containsTerm("stale")) {
+  if (criterionContainsTerm("track") || criterionContainsTerm("per") || criterionContainsTerm("client") || criterionContainsTerm("cleanup") || criterionContainsTerm("stale")) {
     const hasTracking = containsTerm("clientid") || containsTerm("client") || containsTerm("map") || containsTerm("track");
     const hasCleanup = containsTerm("cleanup") || containsTerm("stale") || containsTerm("delete") || containsTerm("remove");
     

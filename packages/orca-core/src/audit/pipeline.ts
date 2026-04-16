@@ -482,7 +482,7 @@ function buildCommandPolicy(preflight: AuditPreflight, classification: ProjectCl
     ? recipes.map((command) => ({
         command,
         status: "allowed_not_run",
-        reason: "Approved recipe after preflight and classification, but audit mode is read-first and did not execute commands automatically.",
+        reason: "Approved recipe after preflight and classification; audit mode is read-first, so this command was not run in this pass.",
       }))
     : [{
         command: "shell",
@@ -568,6 +568,6 @@ export function formatProjectAuditResult(result: ProjectAuditResult): string {
       ? failures.map((item) => `- ${item.category}: ${item.summary} Next: ${item.suggestedNextAction}`)
       : ["- none"]),
     "",
-    "Note: This audit is read-first. It distinguishes file/config evidence from runtime verification; commands listed above were not executed automatically.",
+    "Note: This audit is read-first. It separates file/config evidence from runtime verification; listed commands were not run in this pass.",
   ].join("\n");
 }

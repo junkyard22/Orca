@@ -99,6 +99,53 @@ describe("evaluateWithPappy — verdict", () => {
     expect(result.verdict).toBe("WARN");
   });
 
+  it("returns FAIL when an action claim has no receipt", () => {
+    const result = evaluateWithPappy({
+      task: "Update the config file.",
+      outputText: "I updated `config.ts` with the new setting.",
+    });
+
+    expect(result.verdict).toBe("FAIL");
+    expect(result.issues.some((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toBe(true);
+  });
+
+  it("passes read-first audit output when audit receipts are present", () => {
+    const result = evaluateWithPappy({
+      task: "Check this app C:\\Codepad",
+      goals: [
+        "Output distinguishes observed file/config evidence from runtime verification",
+        "Output states readiness, confidence, supporting evidence, missing evidence, and risk flags",
+      ],
+      outputText: [
+        "Readiness: mostly ready",
+        "Confidence: 82%",
+        "Observed from files/config:",
+        "- package.json contains build and test scripts",
+        "Missing or unverified:",
+        "- Runtime verification remains unverified because commands were not run in this pass",
+        "Runtime commands:",
+        "- npm test: allowed not run - Approved recipe after preflight and classification; audit mode is read-first, so this command was not run in this pass.",
+        "Risk flags:",
+        "- config hygiene incomplete",
+        "Structured failures:",
+        "- none",
+        "Note: This audit is read-first. It separates file/config evidence from runtime verification; listed commands were not run in this pass.",
+      ].join("\n"),
+      toolEvents: [
+        { tool: "audit_preflight", ok: true, summary: "audit_preflight: exists=true; kind=directory" },
+        { tool: "audit_classification", ok: true, summary: "audit_classification: primary=node_app" },
+        { tool: "audit_command_policy", ok: true, summary: "audit_command_policy: recipes=3; decisions=3" },
+        { tool: "audit_readiness", ok: true, summary: "audit_readiness: readiness=mostly_ready; confidence=0.82" },
+      ],
+      metadata: { stoppedBecause: "done", audit: { mode: "project_audit" } },
+    });
+
+    expect(result.verdict).toBe("PASS");
+    expect(result.issues.some((issue) => issue.code === "PROOF_NO_TRACE")).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "CORE_GOAL_MISSING")).toBe(false);
+  });
+
   it("returns FAIL when AGENT_LOOP_DETECTED is present", () => {
     const result = evaluateWithPappy({
       task: "Summarize the file.",

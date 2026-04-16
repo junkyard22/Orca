@@ -145,7 +145,7 @@ describe("project audit pipeline", () => {
       const output = formatProjectAuditResult(result);
 
       expect(output).toContain("Runtime commands:");
-      expect(output).toContain("were not executed automatically");
+      expect(output).toContain("not run in this pass");
       expect(output).toContain("Structured failures:");
       expect(output).toContain("unsupported_stack");
     } finally {

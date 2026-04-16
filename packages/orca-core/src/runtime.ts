@@ -7,6 +7,7 @@ import type {
   OrcaEventType,
   OrcaEvent,
   OrcaMaestroResult,
+  OrcaToolEvent,
   OrcaPipelineTrace,
   OrcaPipelineTraceEntry,
 } from "./types.js";
@@ -19,6 +20,7 @@ import type { RunRecord } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
 import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
+import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
 import { isAbortError, throwIfAborted } from "./abort.js";
 import {
@@ -87,6 +89,49 @@ function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec): string | undefine
   }
 
   return undefined;
+}
+
+function buildAuditToolEvents(auditResult: ProjectAuditResult): OrcaToolEvent[] {
+  return [
+    {
+      tool: "audit_preflight",
+      ok: true,
+      summary: `audit_preflight: exists=${auditResult.preflight.exists}; kind=${auditResult.preflight.kind}; readable=${auditResult.preflight.readable}; markers=${auditResult.preflight.markers.length}`,
+      raw: {
+        path: auditResult.preflight.targetPath,
+        exists: auditResult.preflight.exists,
+        readable: auditResult.preflight.readable,
+        kind: auditResult.preflight.kind,
+        isRepo: auditResult.preflight.isRepo,
+        markers: auditResult.preflight.markers.map((marker) => marker.path),
+        failures: auditResult.preflight.failures,
+      },
+    },
+    {
+      tool: "audit_classification",
+      ok: true,
+      summary: `audit_classification: primary=${auditResult.classification.primary}; confidence=${auditResult.classification.confidence}`,
+      raw: auditResult.classification,
+    },
+    ...auditResult.probes.map((probe): OrcaToolEvent => ({
+      tool: `audit_probe_${probe.name}`,
+      ok: true,
+      summary: `audit_probe: ${probe.name}; status=${probe.status}; evidence=${probe.evidence.length}; missing=${probe.missing.length}`,
+      raw: probe,
+    })),
+    {
+      tool: "audit_command_policy",
+      ok: true,
+      summary: `audit_command_policy: shellAllowed=${auditResult.commandPolicy.shellAllowed}; recipes=${auditResult.commandPolicy.approvedRecipes.length}; decisions=${auditResult.commandPolicy.decisions.length}`,
+      raw: auditResult.commandPolicy,
+    },
+    {
+      tool: "audit_readiness",
+      ok: true,
+      summary: `audit_readiness: readiness=${auditResult.readiness.readiness}; confidence=${auditResult.readiness.confidence}; score=${auditResult.readiness.totalScore}`,
+      raw: auditResult.readiness,
+    },
+  ];
 }
 
 function sanitizeTraceValue(
@@ -339,7 +384,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         const auditMaestroResult = normalizeMaestroResult({
           outputText,
           summary: `project_audit ${auditResult.readiness.readiness}`,
-          toolEvents: [],
+          toolEvents: buildAuditToolEvents(auditResult),
           filesChanged: [],
           metadata: {
             role: "project_audit",

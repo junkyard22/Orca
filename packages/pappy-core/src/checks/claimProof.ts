@@ -8,8 +8,8 @@
  * Claims with no matching evidence become PROOF issues.
  *
  * Also handles the "NO-TOOLS" environment case: if the output makes
- * action claims but there is no trace at all, issue a MED instrumentation
- * warning so the repair asks for a re-run with logging enabled.
+ * action claims but there is no trace at all, keep the no-trace warning
+ * and fail the unverified claim so the task is sent back for repair.
  */
 
 import type { Issue, PappyInput, Claim, ReceiptEntry, ReceiptType } from "../types.js";
@@ -69,6 +69,14 @@ interface ClaimPattern {
   findProof(match: RegExpMatchArray, input: PappyInput): string | null;
   /** Build the "required receipt" details string */
   receiptDetails(match: RegExpMatchArray): string;
+}
+
+function isForwardLookingActionContext(contextBefore: string): boolean {
+  return /\b(i'?ll|will|let me|i'?m going to|need to|i would|i'?d|going to|plan to)\s*$/i.test(contextBefore);
+}
+
+function isNegatedActionContext(contextBefore: string): boolean {
+  return /\b(did\s+not|didn't|do\s+not|don't|does\s+not|doesn't|were\s+not|was\s+not|wasn't|not|never|no)\s*$/i.test(contextBefore);
 }
 
 const CLAIM_PATTERNS: ClaimPattern[] = [
@@ -225,7 +233,7 @@ export function extractClaims(outputText: string): Claim[] {
       // These are plans, not accomplished actions — no receipt should be required.
       const matchStart = match.index ?? 0;
       const contextBefore = outputText.slice(Math.max(0, matchStart - 35), matchStart);
-      if (/\b(i'?ll|will|let me|i'?m going to|need to|i would|i'?d|going to|plan to)\s*$/i.test(contextBefore)) {
+      if (isForwardLookingActionContext(contextBefore) || isNegatedActionContext(contextBefore)) {
         continue;
       }
 
@@ -271,7 +279,7 @@ export function runClaimProofChecks(
       // These are plans, not accomplished actions — requiring a receipt for them is a false positive.
       const matchStart = match.index ?? 0;
       const contextBefore = outputText.slice(Math.max(0, matchStart - 35), matchStart);
-      if (/\b(i'?ll|will|let me|i'?m going to|need to|i would|i'?d|going to|plan to)\s*$/i.test(contextBefore)) {
+      if (isForwardLookingActionContext(contextBefore) || isNegatedActionContext(contextBefore)) {
         continue;
       }
 
@@ -298,7 +306,7 @@ export function runClaimProofChecks(
 
       if (!proofPointer) {
         issues.push({
-          severity: hasAnyTrace ? "HIGH" : "MEDIUM",
+          severity: "HIGH",
           code: "PROOF_CLAIM_UNVERIFIED",
           category: "Proof",
           description: `Claim "${claimText}" has no supporting evidence in the trace.`,
@@ -322,13 +330,15 @@ export function runClaimProofChecks(
   }
 
   // If no trace at all AND the output made verifiable claims, add a warning.
-  // Skip for pure code-gen output that contains no claims (no toolEvents expected).
-  if (!hasAnyTrace && outputText.length > 0 && claims.length > 0) {
+  // Project audits are evidence products, so an audit result with no audit
+  // receipts is a hard proof failure even when no action claim was extracted.
+  const isAuditRun = input.metadata?.audit !== undefined;
+  if (!hasAnyTrace && outputText.length > 0 && (claims.length > 0 || isAuditRun)) {
     issues.push({
-      severity: "MEDIUM",
+      severity: isAuditRun ? "HIGH" : "MEDIUM",
       code: "PROOF_NO_TRACE",
       category: "Proof",
-      description: "No tool events or file changes were provided. Claims cannot be objectively verified.",
+      description: "No tool events or file changes were provided. Claims or audit conclusions cannot be objectively verified.",
       expected_receipt: "toolEvents and/or filesChanged populated by the runtime.",
       evidence: "toolEvents=[] filesChanged=[]",
       fix_hint: "Re-run with instrumentation enabled so Pappy can verify receipts.",

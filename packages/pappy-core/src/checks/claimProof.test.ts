@@ -132,6 +132,23 @@ describe("runClaimProofChecks — test command claims", () => {
 
     expect(issues.filter((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toHaveLength(0);
   });
+
+  it("does NOT treat explicitly negated command execution as an action claim", () => {
+    const { issues, claims } = runClaimProofChecks({
+      task: "Check this app.",
+      outputText: [
+        "Runtime commands:",
+        "- npm test: allowed not run - Approved recipe after preflight and classification, but audit mode is read-first and did not execute commands automatically.",
+      ].join("\n"),
+      toolEvents: [
+        { tool: "audit_preflight", ok: true, summary: "audit_preflight: exists=true" },
+        { tool: "audit_command_policy", ok: true, summary: "audit_command_policy: recipes=3; decisions=3" },
+      ],
+    });
+
+    expect(claims.some((claim) => /execute/i.test(claim.text))).toBe(false);
+    expect(issues.filter((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -147,6 +164,22 @@ describe("runClaimProofChecks — PROOF_NO_TRACE", () => {
     const noTrace = issues.find((i) => i.code === "PROOF_NO_TRACE");
     expect(noTrace).toBeDefined();
     expect(noTrace!.severity).toBe("MEDIUM");
+  });
+
+  it("still fires PROOF_NO_TRACE for audit output when Orca provides no audit receipts", () => {
+    const { issues } = runClaimProofChecks({
+      task: "Check this app.",
+      outputText: [
+        "Readiness: mostly ready",
+        "Observed from files/config:",
+        "- package.json contains build and test scripts",
+      ].join("\n"),
+      metadata: { stoppedBecause: "done", audit: { mode: "project_audit" } },
+    });
+
+    const noTrace = issues.find((i) => i.code === "PROOF_NO_TRACE");
+    expect(noTrace).toBeDefined();
+    expect(noTrace!.severity).toBe("HIGH");
   });
 
   it("does NOT fire PROOF_NO_TRACE when toolEvents are present", () => {

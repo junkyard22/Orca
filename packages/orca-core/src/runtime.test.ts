@@ -326,6 +326,11 @@ describe("createOrcaRuntime", () => {
         expect(result.status).toBe("SUCCESS");
         expect(result.userFacingText).toContain("Runtime commands:");
         expect(pappy.evaluate.mock.calls[0]?.[0].metadata?.audit).toBeDefined();
+        const qcInput = pappy.evaluate.mock.calls[0]?.[0];
+        expect(qcInput).toBeDefined();
+        expect(qcInput!.toolEvents?.some((event) => event.tool === "audit_preflight")).toBe(true);
+        expect(qcInput!.toolEvents?.some((event) => event.tool === "audit_classification")).toBe(true);
+        expect(qcInput!.toolEvents?.some((event) => event.tool === "audit_command_policy")).toBe(true);
         const trace = writeTrace.mock.calls[0]?.[0] as any;
         expect(trace.entries.map((entry: any) => entry.stage)).toEqual(expect.arrayContaining([
           "audit.mode.activated",
