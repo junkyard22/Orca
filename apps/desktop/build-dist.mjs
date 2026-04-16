@@ -33,10 +33,43 @@ function run(cmd) {
 run("node build-main.mjs");
 
 // ── 2. Package with electron-builder ─────────────────────────────────────
-// Resolve the local bin to avoid needing electron-builder on PATH.
+// Resolve the local bin — try several locations so this works on both
+// Windows (electron-builder.cmd) and Linux/macOS (pnpm store).
 
-const ebBin = resolve(__dirname, "node_modules", ".bin", "electron-builder.cmd");
-const eb    = existsSync(ebBin) ? `"${ebBin}"` : "electron-builder";
+import { readdirSync } from "node:fs";
+import process from "node:process";
+
+const workspaceRoot = resolve(__dirname, "..", "..");
+
+function findEbInPnpmStore(root) {
+  const pnpmStore = resolve(root, "node_modules", ".pnpm");
+  if (!existsSync(pnpmStore)) return null;
+  try {
+    const dirs = readdirSync(pnpmStore).filter((d) => d.startsWith("electron-builder@"));
+    for (const dir of dirs) {
+      const cli = resolve(pnpmStore, dir, "node_modules", "electron-builder", "cli.js");
+      if (existsSync(cli)) return cli;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+let eb;
+const ebCmd = resolve(__dirname, "node_modules", ".bin", "electron-builder.cmd");
+const ebBin = resolve(__dirname, "node_modules", ".bin", "electron-builder");
+const ebCli = findEbInPnpmStore(workspaceRoot) ?? findEbInPnpmStore(__dirname);
+
+if (existsSync(ebCmd)) {
+  eb = `"${ebCmd}"`;
+} else if (existsSync(ebBin)) {
+  eb = `"${ebBin}"`;
+} else if (ebCli) {
+  eb = `node "${ebCli}"`;
+} else {
+  eb = "electron-builder"; // last resort: must be on PATH
+}
 
 run(`${eb} --win --x64`);
 
