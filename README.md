@@ -183,4 +183,4 @@ pnpm dev export-training-data \
 
 ## License
 
-MIT
+Apache 2.0
