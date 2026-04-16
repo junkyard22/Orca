@@ -82,7 +82,13 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
         event.summary?.includes("ENOENT") ||
         event.summary?.includes("no such file or directory");
 
-      if (isPermissionDenied || isNavigationError) continue;
+      // A run_command non-zero exit code is informational — the shell ran to
+      // completion, the command signalled failure. The agent received the output
+      // and can reason about it. This is not a tool malfunction.
+      const isCommandExitCode =
+        event.tool === "run_command" && /Exit code -?\d+/.test(event.summary ?? "");
+
+      if (isPermissionDenied || isNavigationError || isCommandExitCode) continue;
 
       issues.push({
         severity: "HIGH",
