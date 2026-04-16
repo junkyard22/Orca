@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.2.6)'
+        required: true
+        default: 'v1.2.6'
 
 jobs:
   build-desktop:
@@ -62,5 +68,6 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: release-assets/*.exe
           generate_release_notes: true
