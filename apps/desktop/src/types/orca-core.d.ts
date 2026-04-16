@@ -167,6 +167,7 @@ declare module '@clawde/orca-core' {
     pappy?: PappyPort;
     llm: OrcaLLMService;
     tools?: OrcaToolService;
+    workspaceRoot?: string;
     store?: unknown;
     writeTrace?: (trace: OrcaPipelineTrace) => void | Promise<void>;
     getWorkspaceContext?: () => unknown;

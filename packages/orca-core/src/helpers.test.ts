@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPappyInput, normalizeTaskSpec } from "./helpers.js";
+import { AHPLifecycle, AHPVerdict, createChildPacket } from "./ahp/types.js";
 
 describe("normalizeTaskSpec", () => {
   it("converts Benson's legacy read-only permission array into boolean flags without a tool whitelist", () => {
@@ -56,5 +57,74 @@ describe("buildPappyInput", () => {
       stoppedBecause: "no_final_output",
       loopEvidence: { repeatedCall: "read_file", occurrences: 3 },
     });
+  });
+
+  it("passes non-complete AHP child packets through to Pappy metadata", () => {
+    const child = createChildPacket("root", {
+      id: "child-reviewer",
+      objective: "Review ship readiness",
+      expectedOutput: {
+        schema: {},
+        acceptanceCriteria: ["Output states readiness"],
+      },
+    });
+    child.lifecycle = AHPLifecycle.INCONCLUSIVE;
+
+    const input = buildPappyInput(
+      {
+        originalUserMessage: "Audit the app",
+        intent: "audit",
+        goals: ["Output states readiness"],
+      },
+      {
+        outputText: "Partial fallback output.",
+        ahpChildPackets: [child],
+      },
+    );
+
+    expect(input.metadata?.ahpNonCompleteChildren).toEqual([
+      {
+        id: "child-reviewer",
+        role: "Child",
+        lifecycle: "INCONCLUSIVE",
+        verdict: undefined,
+        objective: "Review ship readiness",
+      },
+    ]);
+  });
+
+  it("passes non-passing AHP child verdicts through to Pappy metadata", () => {
+    const child = createChildPacket("root", {
+      id: "child-brain",
+      objective: "Inspect release readiness",
+      expectedOutput: {
+        schema: {},
+        acceptanceCriteria: ["Output states readiness"],
+      },
+    });
+    child.lifecycle = AHPLifecycle.COMPLETE;
+    child.verdict = AHPVerdict.INCONCLUSIVE;
+
+    const input = buildPappyInput(
+      {
+        originalUserMessage: "Inspect this project",
+        intent: "inspect",
+        goals: ["Output states readiness"],
+      },
+      {
+        outputText: "Partial answer.",
+        ahpChildPackets: [child],
+      },
+    );
+
+    expect(input.metadata?.ahpNonCompleteChildren).toEqual([
+      {
+        id: "child-brain",
+        role: "Child",
+        lifecycle: "COMPLETE",
+        verdict: "INCONCLUSIVE",
+        objective: "Inspect release readiness",
+      },
+    ]);
   });
 });

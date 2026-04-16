@@ -1,4 +1,5 @@
 import type { PappyInput } from "@clawde/pappy-core";
+import { AHPLifecycle, AHPVerdict } from "./ahp/types.js";
 import type { OrcaTaskSpec, OrcaMaestroResult, OrcaFileChange, OrcaToolEvent, TaskPermissions } from "./types.js";
 
 function uniqueStrings(values: string[]): string[] {
@@ -158,6 +159,18 @@ export function buildPappyInput(
 ): PappyInput {
   const raw = taskSpec.constraints ?? {};
   const normalizedResult = normalizeMaestroResult(maestroResult);
+  const ahpNonCompleteChildren = (normalizedResult.ahpChildPackets ?? [])
+    .filter((packet) =>
+      packet.lifecycle !== AHPLifecycle.COMPLETE ||
+      (packet.verdict !== undefined && packet.verdict !== AHPVerdict.PASS)
+    )
+    .map((packet) => ({
+      id: packet.id,
+      role: String(packet.role),
+      lifecycle: String(packet.lifecycle),
+      verdict: packet.verdict === undefined ? undefined : String(packet.verdict),
+      objective: packet.objective,
+    }));
   return {
     task: taskSpec.originalUserMessage,
     // Brain-defined done criteria take precedence; fall back to task goals.
@@ -169,8 +182,11 @@ export function buildPappyInput(
       ? {
           stoppedBecause: normalizedResult.metadata.stoppedBecause,
           loopEvidence: normalizedResult.metadata.loopEvidence,
+          ...(ahpNonCompleteChildren.length > 0 ? { ahpNonCompleteChildren } : {}),
         }
-      : undefined,
+      : ahpNonCompleteChildren.length > 0
+        ? { ahpNonCompleteChildren }
+        : undefined,
     constraints: {
       forbidDeletes:   raw["forbidDeletes"]   as boolean  | undefined,
       requireFiles:    raw["requireFiles"]    as string[] | undefined,

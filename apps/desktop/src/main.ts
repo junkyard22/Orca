@@ -183,6 +183,18 @@ function deriveWorkerDoneCriteria(subtask: string): string[] {
   return criterion ? [criterion] : [subtask.slice(0, 120).replace(/:$/, '').trim()];
 }
 
+function isNonDeliverableOutput(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  return (
+    /\[[^\]]+\s+stopped:\s*(?:no_final_output|max_iterations|loop_detected|parse_failure_loop|error)\]/i.test(trimmed) ||
+    /\[your complete response to the user here\b/i.test(trimmed) ||
+    /\b(?:is still in progress|are still in progress)\b/i.test(trimmed) ||
+    /\bOnce (?:the )?.{0,80}(?:complete|finish|done|available),?\s+I (?:will|can)\b/i.test(trimmed) ||
+    /\bPlease provide .{0,120}\bso (?:that )?I (?:can|will)\b/i.test(trimmed)
+  );
+}
+
 function taskTextForRouting(task: OrcaTaskSpec): string {
   return [
     task.originalUserMessage,
@@ -741,6 +753,8 @@ function buildMaestroAdapter(
         );
 
         let outputText = "";
+        let synthesisProducedOutput = false;
+        let usedDepartmentFallback = false;
         let synthesisError: string | undefined;
         try {
           ctx.emit?.({ type: "stream:reset", taskId: ctx.runId });
@@ -758,12 +772,14 @@ function buildMaestroAdapter(
             },
           });
           outputText = text.trim();
+          synthesisProducedOutput = outputText.length > 0 && !isNonDeliverableOutput(outputText);
         } catch (err) {
           if (isAbortError(err)) throw err;
           synthesisError = err instanceof Error ? err.message : String(err);
         }
 
         if (!outputText) {
+          usedDepartmentFallback = true;
           outputText = departmentOutputs
             .map((output) => `## ${output.head}\n${output.output}`)
             .join("\n\n");
@@ -778,18 +794,19 @@ function buildMaestroAdapter(
           .map((run) => run.childPacket)
           .filter((packet): packet is AHPPacket => packet !== undefined);
         const incompleteRuns = workerRuns.filter((run) => run.result.stoppedBecause !== "done");
-        // Determine whether the output is real (synthesis text or a worker's actual
-        // final answer) vs. the placeholder error messages injected by the fallback.
-        // The fallback always produces non-empty text even when every worker failed,
-        // so we must check whether any worker produced real output before treating
-        // the result as "done".
-        const synthesisProducedOutput = !synthesisError && outputText.trim().length > 0;
-        const workerProducedOutput = workerRuns.some((run) => run.result.outputText?.trim());
-        const hasUserFacingOutput = synthesisProducedOutput || workerProducedOutput;
+        const workerProducedOutput = workerRuns.some((run) =>
+          run.result.stoppedBecause === "done" &&
+          !!run.result.outputText?.trim() &&
+          !isNonDeliverableOutput(run.result.outputText),
+        );
+        const fallbackIsComplete = usedDepartmentFallback && incompleteRuns.length === 0 && workerProducedOutput && !isNonDeliverableOutput(outputText);
+        const hasUserFacingOutput = synthesisProducedOutput || fallbackIsComplete;
         const stoppedBecause = hasUserFacingOutput
           ? "done"
           : synthesisError
-            ? "error"
+            ? incompleteRuns.length > 0
+              ? "no_final_output"
+              : "error"
             : incompleteRuns.length > 0
               ? "no_final_output"
               : "done";
@@ -802,6 +819,8 @@ function buildMaestroAdapter(
           workerCount: workerRuns.length,
           incompleteCount: incompleteRuns.length,
           synthesisError,
+          synthesisProducedOutput,
+          usedDepartmentFallback,
           stoppedBecause,
           outputText,
         });
@@ -1192,6 +1211,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       llm,
       maxRepairPasses: s.maxRepairPasses,
       tools: toolService,
+      workspaceRoot,
       store,
       writeTrace: writePipelineTrace,
       requestToolApproval,

@@ -489,4 +489,62 @@ describe("evaluateWithPappy — COMPLETENESS_NO_FINAL_OUTPUT", () => {
 
     expect(result.issues.some(i => i.code === "COMPLETENESS_NO_FINAL_OUTPUT")).toBe(false);
   });
+
+  it("fails non-empty decomposed fallback output that still contains no_final_output placeholders", () => {
+    const result = evaluateWithPappy({
+      task: "Do a full audit of this app and tell me what level of ship readiness it is at",
+      outputText: [
+        "## reviewer",
+        "[reviewer stopped: no_final_output]",
+        "",
+        "## debugger",
+        "[debugger stopped: no_final_output]",
+        "",
+        "## narrator",
+        "The search is still in progress. Once complete, I will synthesize the report.",
+      ].join("\n"),
+      goals: ["Output states a clear ship-readiness level"],
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read package.json" }],
+      metadata: { stoppedBecause: "done" },
+    } as any);
+
+    expect(result.verdict).toBe("FAIL");
+    expect(result.issues.some(i => i.code === "COMPLETENESS_NO_FINAL_OUTPUT")).toBe(true);
+  });
+
+  it("fails when AHP child packets are incomplete even if fallback output is non-empty", () => {
+    const result = evaluateWithPappy({
+      task: "Do a full audit of this app and tell me what level of ship readiness it is at",
+      outputText: "Partial fallback output.",
+      goals: ["Output states a clear ship-readiness level"],
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read package.json" }],
+      metadata: {
+        stoppedBecause: "done",
+        ahpNonCompleteChildren: [
+          { id: "run_1_reviewer_0", role: "reviewer", lifecycle: "INCONCLUSIVE", verdict: "INCONCLUSIVE" },
+        ],
+      },
+    } as any);
+
+    expect(result.verdict).toBe("FAIL");
+    expect(result.issues.some(i => i.code === "AHP_CHILD_INCONCLUSIVE")).toBe(true);
+  });
+
+  it("fails read-only inspections that write files", () => {
+    const result = evaluateWithPappy({
+      task: [
+        "Inspect this project and tell me whether it is ready for a local test release.",
+        "Only check apps/desktop/package.json and .github/workflows/release.yml.",
+        "Return readiness level, evidence, blockers, and next action.",
+      ].join(" "),
+      outputText: "Readiness level: YELLOW",
+      goals: ["Output states readiness level"],
+      toolEvents: [{ tool: "write_file", ok: true, summary: "write_file: ok", raw: { path: "release-readiness-report.md" } }],
+      filesChanged: [{ path: "release-readiness-report.md", changeType: "A", diff: "Readiness level: YELLOW" }],
+      metadata: { stoppedBecause: "done" },
+    } as any);
+
+    expect(result.verdict).toBe("FAIL");
+    expect(result.issues.some(i => i.code === "UNREQUESTED_FILE_CHANGE")).toBe(true);
+  });
 });

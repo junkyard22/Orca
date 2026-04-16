@@ -13,6 +13,8 @@ import type {
 import type { AHPPacket } from "./ahp/types.js";
 import type { PappyResult } from "@clawde/pappy-core";
 import { verifyAHPPacket } from "@clawde/pappy-core";
+import { existsSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 import type { RunRecord } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
@@ -31,6 +33,59 @@ import type { AHPPacketGraph } from "./ahp/graph.js";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function resolveWorkspaceRootCandidate(raw: string): string | undefined {
+  const cleaned = raw
+    .trim()
+    .replace(/^[`"']+/, "")
+    .replace(/[`"',.;:]+$/, "");
+  if (!cleaned) return undefined;
+
+  const attempts = [cleaned];
+  const parts = cleaned.split(/\s+/);
+  for (let end = parts.length - 1; end > 0; end--) {
+    attempts.push(parts.slice(0, end).join(" "));
+  }
+
+  for (const candidate of [...new Set(attempts)]) {
+    if (!existsSync(candidate)) continue;
+    const stat = statSync(candidate);
+    if (stat.isDirectory()) return candidate;
+    if (stat.isFile()) return dirname(candidate);
+  }
+
+  return undefined;
+}
+
+function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec): string | undefined {
+  const contextRoot = taskSpec.context?.["workspaceRoot"];
+  if (typeof contextRoot === "string") {
+    const resolved = resolveWorkspaceRootCandidate(contextRoot);
+    if (resolved) return resolved;
+  }
+
+  const text = [
+    taskSpec.originalUserMessage,
+    taskSpec.intent,
+    ...(taskSpec.goals ?? []),
+  ].join("\n");
+
+  for (const line of text.split(/\r?\n/)) {
+    const windowsMatch = line.match(/\b[A-Za-z]:[\\/][^\r\n]+/);
+    if (windowsMatch) {
+      const resolved = resolveWorkspaceRootCandidate(windowsMatch[0]);
+      if (resolved) return resolved;
+    }
+
+    const posixMatch = line.match(/(?:^|\s)(\/[^\r\n]+)/);
+    if (posixMatch?.[1]) {
+      const resolved = resolveWorkspaceRootCandidate(posixMatch[1]);
+      if (resolved) return resolved;
+    }
+  }
+
+  return undefined;
 }
 
 function sanitizeTraceValue(
@@ -111,6 +166,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     throwIfAborted(options?.abortSignal);
     const normalizedTaskSpec = normalizeTaskSpec(taskSpec);
     const workspaceContext = deps.getWorkspaceContext?.();
+    const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec);
+    const effectiveWorkspaceRoot = explicitWorkspaceRoot ?? deps.workspaceRoot ?? workspaceContext?.cwd;
+    const effectiveWorkspaceContext = effectiveWorkspaceRoot
+      ? { ...(workspaceContext ?? {}), cwd: effectiveWorkspaceRoot }
+      : workspaceContext;
     const taskId = generateRunId();
     const startTime = Date.now();
     const traceEntries: OrcaPipelineTraceEntry[] = [];
@@ -161,13 +221,20 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         };
       })(),
       emit: (event) => emitter.emit(event),
-      workspaceContext,
+      workspaceContext: effectiveWorkspaceContext,
+      workspaceRoot: effectiveWorkspaceRoot,
       gate: deps.gate,
       requestToolApproval: deps.requestToolApproval,
     };
 
     recordTrace("task.received", { taskSpec: normalizedTaskSpec });
-    recordTrace("workspace.context", workspaceContext);
+    recordTrace("workspace.context", effectiveWorkspaceContext);
+    recordTrace("workspace.root", {
+      configured: deps.workspaceRoot ?? null,
+      context: workspaceContext?.cwd ?? null,
+      explicit: explicitWorkspaceRoot ?? null,
+      effective: effectiveWorkspaceRoot ?? null,
+    });
     recordTrace("task.permissions", {
       toolsAllowed: normalizedTaskSpec.permissions?.toolsAllowed ?? null,
       fileRead: normalizedTaskSpec.permissions?.fileRead ?? true,
@@ -288,6 +355,28 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         };
       } else {
         throwIfAborted(options?.abortSignal);
+        const verifiedAHPIdsForQc = new Set<string>();
+        const verifyPacketForQc = (packet: AHPPacket, traceStage: string): void => {
+          if (verifiedAHPIdsForQc.has(packet.id)) return;
+          verifiedAHPIdsForQc.add(packet.id);
+          verifyAHPPacket(packet, {
+            outputText: maestroResult.outputText,
+            filesChanged: maestroResult.filesChanged,
+            workspaceRoot: effectiveWorkspaceRoot,
+          });
+          recordTrace(traceStage, {
+            packet_id: packet.id,
+            lifecycle: packet.lifecycle,
+            verdict: packet.verdict,
+          });
+        };
+        if (maestroResult.ahpPacket) {
+          verifyPacketForQc(maestroResult.ahpPacket, "ahp.verify");
+        }
+        for (const childPacket of maestroResult.ahpChildPackets ?? []) {
+          verifyPacketForQc(childPacket, "ahp.verify.child");
+        }
+
         const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult);
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
 
@@ -307,30 +396,6 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
         const qcResult = pappy.evaluate(qcInput);
         persistedQcResult = qcResult;
-
-        // AHP verification — runs after Pappy's main evaluation when the
-        // Maestro adapter threaded AHPPacket(s) through the pipeline.
-        const verifiedAHPIds = new Set<string>();
-        const verifyPacket = (packet: AHPPacket, traceStage: string): void => {
-          if (verifiedAHPIds.has(packet.id)) return;
-          verifiedAHPIds.add(packet.id);
-          verifyAHPPacket(packet, {
-            outputText: maestroResult.outputText,
-            filesChanged: maestroResult.filesChanged,
-            workspaceRoot: workspaceContext?.cwd,
-          });
-          recordTrace(traceStage, {
-            packet_id: packet.id,
-            lifecycle: packet.lifecycle,
-            verdict: packet.verdict,
-          });
-        };
-        if (maestroResult.ahpPacket) {
-          verifyPacket(maestroResult.ahpPacket, "ahp.verify");
-        }
-        for (const childPacket of maestroResult.ahpChildPackets ?? []) {
-          verifyPacket(childPacket, "ahp.verify.child");
-        }
 
         const afterQcGate = ctx.gate?.afterQC(
           { taskId, outputText: maestroResult.outputText ?? "" },

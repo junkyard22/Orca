@@ -16,6 +16,7 @@ import type { RoleName } from "maestro-core";
 class MockLLMAdapter implements LLMAdapter {
   private responses: string[] = [];
   private callCount = 0;
+  public requests: LLMRequest[] = [];
   
   constructor(responses: string[]) {
     this.responses = responses;
@@ -24,12 +25,14 @@ class MockLLMAdapter implements LLMAdapter {
   get name() { return "mock"; }
   
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    this.requests.push(request);
     const response = this.responses[this.callCount] ?? "";
     this.callCount++;
     return { content: response, usage: { totalTokens: 100, promptTokens: 50, completionTokens: 50 } };
   }
   
   async stream(request: LLMRequest, onToken: (chunk: string) => void): Promise<LLMResponse> {
+    this.requests.push(request);
     const response = this.responses[this.callCount] ?? "";
     this.callCount++;
     onToken(response);
@@ -570,6 +573,73 @@ Next: Call it
     // max_iterations reached with no final answer → no_final_output
     expect(result.stoppedBecause).toBe("no_final_output");
     expect(result.toolsUsed.length).toBeGreaterThan(0);
+  });
+
+  it("uses one final no-tools turn to synthesize after max iterations", async () => {
+    const responses = [
+      `Thought: Read package data\n<tool_call>{"tool": "read_file", "path": "package.json"}</tool_call>`,
+      `Thought: Read README\n<tool_call>{"tool": "read_file", "path": "README.md"}</tool_call>`,
+      `Thought: Search source\n<tool_call>{"tool": "search_files", "pattern": "ship", "directory": "src"}</tool_call>`,
+      `FINAL ANSWER:
+Ship readiness is yellow. Package metadata and README were reviewed, but source search found shipping-related follow-up work.`,
+    ];
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "reviewer" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(
+      createTask({
+        intent: "Audit the app for ship readiness",
+        goals: ["Output states a ship readiness level"],
+        doneCriteria: ["Output states a ship readiness level"],
+      }),
+      [
+        createMockTool("read_file", "file content") as any,
+        createMockTool("search_files", "ship TODO") as any,
+      ],
+      createCtx(),
+    );
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.outputText).toContain("Ship readiness is yellow");
+    expect(result.iterationCount).toBe(3);
+  });
+
+  it("does not require write_file for read-only inspections that name files", async () => {
+    const mockAdapter = new MockLLMAdapter([`FINAL ANSWER:\nReadiness is green.`]);
+    const adapter = new ReactAgentAdapter(
+      mockAdapter,
+      "You are a helpful assistant.",
+      "reviewer" as RoleName,
+      3,
+    );
+
+    await adapter.run(
+      createTask({
+        intent: [
+          "Inspect this project and tell me whether it is ready for a local test release.",
+          "C:\\Orca\\Orca",
+          "Only check these files:",
+          "apps\\desktop\\package.json",
+          "apps\\desktop\\build-dist.mjs",
+          ".github\\workflows\\release.yml",
+        ].join("\n"),
+        goals: ["Return readiness level, evidence, blockers, and next action"],
+        doneCriteria: ["Output states readiness level"],
+      }),
+      [
+        createMockTool("read_file", "file content") as any,
+        createMockTool("write_file", "written") as any,
+      ],
+      createCtx(),
+    );
+
+    const taskContext = mockAdapter.requests[0]?.messages.at(-1)?.content ?? "";
+    expect(taskContext).not.toContain("ACTION REQUIRED: Call write_file");
   });
 
   it("does not treat final-turn tool narration as a completed answer", async () => {

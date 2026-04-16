@@ -225,9 +225,12 @@ export function verifyAHPPacket(
   }
 
   // ── Step 2: INCONCLUSIVE guard ─────────────────────────────────────────────
-  // Incomplete trace: no worker role entry (only brain/miranda trace entries).
+  // Incomplete trace: no worker role entry. Brain can be a real worker in the
+  // direct desktop path, so an "Agent stopped" trace entry also counts.
   const INFRASTRUCTURE_ACTORS = new Set(["brain", "miranda", "pappy"]);
-  const hasWorkerEntry = packet.trace.some((e) => !INFRASTRUCTURE_ACTORS.has(e.actor));
+  const hasWorkerEntry =
+    packet.trace.some((e) => !INFRASTRUCTURE_ACTORS.has(e.actor)) ||
+    packet.trace.some((e) => /\bAgent stopped:/i.test(e.note ?? ""));
   const outputText     = input.outputText ?? "";
   const hasOutput      = outputText.trim().length > 0;
 

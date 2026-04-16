@@ -243,7 +243,7 @@ PREFERRED FORMAT:
 - When the task is complete, write your final answer using EXACTLY this format:
 
 FINAL ANSWER:
-[your complete response to the user here — no thought blocks, no reasoning, just the answer]
+Write the actual user-facing answer here. Do not copy this instruction or any placeholder text.
 
 - Everything before FINAL ANSWER: is thinking
 - Everything after FINAL ANSWER: is what the user receives
@@ -288,6 +288,28 @@ function stripThoughtBlocks(text: string): string {
   return result
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function looksLikePureProgress(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return (
+    /\[your complete response to the user here\b/i.test(trimmed) ||
+    /\b(?:is still in progress|are still in progress)\b/i.test(trimmed) ||
+    /\bOnce (?:the )?.{0,80}(?:complete|finish|done|available),?\s+I (?:will|can)\b/i.test(trimmed) ||
+    /\bPlease provide .{0,120}\bso (?:that )?I (?:can|will)\b/i.test(trimmed)
+  );
+}
+
+function taskExplicitlyRequestsFileSave(text: string): boolean {
+  const fileExtPattern = String.raw`[\w./\\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|txt|yaml|yml|py|css|html|csv|sh|ps1)`;
+  const saveVerbPattern = String.raw`(?:save|saves|saved|saving|write|writes|writing|wrote|written|create|creates|created|creating|update|updates|updated|updating|modify|modifies|modified|modifying|edit|edits|edited|editing|replace|replaces|replaced|replacing|patch|patches|patched|patching|add|adds|added|adding|fix|fixes|fixed|fixing|implement|implements|implemented|implementing|generate|generates|generated|generating)`;
+  const hasPathLikeTarget = new RegExp(String.raw`\b${fileExtPattern}\b`, "i").test(text);
+  return (
+    new RegExp(String.raw`\b${saveVerbPattern}\b.{0,80}\b${fileExtPattern}\b`, "i").test(text) ||
+    new RegExp(String.raw`\b${fileExtPattern}\b.{0,80}\b(saved|written|updated|modified|edited|created|fixed|implemented|generated)\b`, "i").test(text) ||
+    (hasPathLikeTarget && /\b(save|saves|saved|saving|write|writes|writing|wrote|written|create|creates|created|creating|generate|generates|generated|generating)\b.{0,40}(report|file|output|result|summary|plan|audit)\b/i.test(text))
+  );
 }
 
 export class ReactAgentAdapter implements AgentAdapter {
@@ -386,7 +408,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     // file extension only appears in the goals list.
     const goalText = task.goals.join(' ');
     const intentAndGoals = `${task.intent} ${goalText}`;
-    const needsFileWrite = /\.[a-z]{2,4}(\s|$)/i.test(intentAndGoals);
+    const needsFileWrite = taskExplicitlyRequestsFileSave(intentAndGoals);
     const fileWriteDirective = needsFileWrite
       ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline — use the tool.**\n\n"
       : "";
@@ -602,9 +624,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         if (iterationsRemaining === 2 && iteration >= 1 && !toolLimitWarningInjected && !finalAnswerFound) {
           toolLimitWarningInjected = true;
           const allTaskTextForWarn = `${task.intent} ${task.goals.join(' ')} ${task.doneCriteria.join(' ')}`;
-          const taskImpliesFileSaveForWarn =
-            /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(allTaskTextForWarn) ||
-            /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(allTaskTextForWarn);
+          const taskImpliesFileSaveForWarn = taskExplicitlyRequestsFileSave(allTaskTextForWarn);
           const writeFileCalledForWarn = toolsUsed.some(e => e.tool === 'write_file');
           const writeFileReminder = taskImpliesFileSaveForWarn && !writeFileCalledForWarn
             ? '\n\nCRITICAL: Your task requires saving a file. You MUST call write_file with the complete file content in your NEXT response — before writing your final answer.'
@@ -641,10 +661,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             }
             // Guard: if the task explicitly asks to save output to a file, write_file
             // must have been called before we accept a FINAL ANSWER.
-            const taskImpliesFileSave = (
-              /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(allTaskText) ||
-              /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(allTaskText)
-            );
+            const taskImpliesFileSave = taskExplicitlyRequestsFileSave(allTaskText);
             const writeFileCalled = toolsUsed.some(e => e.tool === 'write_file');
             if (taskImpliesFileSave && !writeFileCalled) {
               // Save this final answer — if the model keeps refusing to call write_file,
@@ -922,9 +939,7 @@ export class ReactAgentAdapter implements AgentAdapter {
       // write_file now using that content.  This handles models that understand the
       // task but consistently refuse to emit <tool_call> blocks on their own.
       const allTaskTextForRescue = `${task.intent} ${task.goals.join(' ')} ${task.doneCriteria.join(' ')}`;
-      const taskImpliesFileSaveRescue =
-        /\b(save|write|creat)\w*.{0,40}\.\w{2,6}/i.test(allTaskTextForRescue) ||
-        /\b(save|write).{0,20}(report|file|output|result|summary|plan|audit)/i.test(allTaskTextForRescue);
+      const taskImpliesFileSaveRescue = taskExplicitlyRequestsFileSave(allTaskTextForRescue);
       const writeFileCalledRescue = toolsUsed.some(e => e.tool === 'write_file');
 
       if (taskImpliesFileSaveRescue && !writeFileCalledRescue && lastRejectedFinalAnswer.trim().length > 100) {
@@ -948,6 +963,59 @@ export class ReactAgentAdapter implements AgentAdapter {
           } catch (rescueErr) {
             ctx.recordTrace?.("agent.postloop_write_rescue.error", { error: String(rescueErr) });
           }
+        }
+      }
+
+      if (!finalAnswerFound && toolsUsed.length > 0 && stoppedBecause === 'max_iterations') {
+        try {
+          ctx.recordTrace?.("agent.finalization.request", {
+            role: this.role,
+            iterationCount,
+            toolCount: toolsUsed.length,
+          });
+          const finalization = await this.llmAdapter.complete({
+            model: '',
+            messages: [
+              ...messages,
+              {
+                role: "user",
+                content:
+                  "No more tool calls are allowed. Use only the tool results already in this conversation. " +
+                  "Produce the final user-facing deliverable now using exactly this format:\n\n" +
+                  "FINAL ANSWER:\n" +
+                  "The complete answer to the user's request.",
+              },
+            ],
+            maxTokens: this.maxTokens,
+            temperature: Math.min(this.temperature, 0.3),
+            signal: ctx.abortSignal,
+          });
+          throwIfAborted(ctx.abortSignal);
+          const finalizationText = stripToolCalls(finalization.content);
+          const finalizationAnswer = extractFinalAnswer(finalizationText);
+          ctx.recordTrace?.("agent.finalization.response", {
+            role: this.role,
+            output: finalization.content,
+            accepted: !!finalizationAnswer && !looksLikePureProgress(finalizationAnswer),
+          });
+          if (finalizationAnswer && !looksLikePureProgress(finalizationAnswer)) {
+            finalAnswerFound = true;
+            currentOutputText = finalizationAnswer;
+            lastModelOutput = finalization.content;
+            stoppedBecause = 'done';
+            ctx.recordTrace?.("agent.final_answer", {
+              role: this.role,
+              iteration: iterationCount,
+              outputText: currentOutputText,
+              recoveredAfterMaxIterations: true,
+            });
+          }
+        } catch (finalizationErr) {
+          if (isAbortError(finalizationErr)) throw finalizationErr;
+          ctx.recordTrace?.("agent.finalization.error", {
+            role: this.role,
+            error: finalizationErr instanceof Error ? finalizationErr.message : String(finalizationErr),
+          });
         }
       }
 
@@ -977,7 +1045,7 @@ export class ReactAgentAdapter implements AgentAdapter {
       }
       // Graceful fallback: a model that skipped the FINAL ANSWER: marker but produced
       // real text without needing tools is still done — don't penalise simple answers.
-      if (strippedForClassification && stoppedBecause === 'max_iterations') {
+      if (strippedForClassification && !looksLikePureProgress(strippedForClassification) && stoppedBecause === 'max_iterations') {
         stoppedBecause = 'done';
       }
       if (!finalAnswerFound && strippedForClassification.length === 0 && stoppedBecause === 'max_iterations') {

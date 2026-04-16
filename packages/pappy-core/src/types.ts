@@ -127,6 +127,13 @@ export interface PappyInput {
   metadata?: {
     stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "error" | string;
     loopEvidence?: { repeatedCall?: string; occurrences?: number };
+    ahpNonCompleteChildren?: Array<{
+      id?: string;
+      role?: string;
+      lifecycle?: string;
+      verdict?: string;
+      objective?: string;
+    }>;
   };
   constraints?: Constraints;
 }

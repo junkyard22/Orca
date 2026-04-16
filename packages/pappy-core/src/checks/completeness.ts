@@ -564,6 +564,30 @@ function hasProvedAC(input: PappyInput): boolean {
   return false;
 }
 
+function hasNonDeliverableOutputSignal(outputText: string): boolean {
+  return (
+    /\[[^\]]+\s+stopped:\s*(?:no_final_output|max_iterations|loop_detected|parse_failure_loop|error)\]/i.test(outputText) ||
+    /\[your complete response to the user here\b/i.test(outputText) ||
+    /\b(?:is still in progress|are still in progress)\b/i.test(outputText) ||
+    /\bOnce (?:the )?.{0,80}(?:complete|finish|done|available),?\s+I (?:will|can)\b/i.test(outputText) ||
+    /\bPlease provide .{0,120}\bso (?:that )?I (?:can|will)\b/i.test(outputText)
+  );
+}
+
+function taskExplicitlyAllowsFileChanges(input: PappyInput): boolean {
+  if ((input.constraints?.requireFiles?.length ?? 0) > 0) return true;
+
+  const combined = [input.task, ...(input.goals ?? [])].join(" ");
+  const hasChangeVerb =
+    /\b(add|adds|added|adding|build|builds|built|building|create|creates|created|creating|delete|deletes|deleted|deleting|edit|edits|edited|editing|fix|fixes|fixed|fixing|generate|generates|generated|generating|implement|implements|implemented|implementing|make|makes|made|making|modify|modifies|modified|modifying|patch|patches|patched|patching|refactor|refactors|refactored|refactoring|remove|removes|removed|removing|replace|replaces|replaced|replacing|save|saves|saved|saving|update|updates|updated|updating|write|writes|writing|wrote|written)\b/i.test(combined);
+  if (!hasChangeVerb) return false;
+
+  return (
+    /\b(repo|repository|project|code|file|files|app|component|module|script|feature|bug|test|workflow|config|package|source|implementation)\b/i.test(combined) ||
+    /\b[\w./\\-]+\.\w{1,8}\b/i.test(combined)
+  );
+}
+
 /**
  * Run completeness checks with semantic verification
  */
@@ -606,6 +630,37 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
       fix_hint: 'Check model output format handling and ensure the system prompt is clear about the required tool-call JSON format.',
       message: 'Agent stopped after repeated malformed tool call blocks.',
       suggestedFix: 'Ensure the model receives a clear tool-call format instruction and retry.'
+    });
+  }
+
+  const ahpNonCompleteChildren = input.metadata?.ahpNonCompleteChildren ?? [];
+  if (ahpNonCompleteChildren.length > 0) {
+    issues.push({
+      severity: "HIGH",
+      code: "AHP_CHILD_INCONCLUSIVE",
+      category: "Completeness",
+      description: "One or more AHP child packets did not reach a passing complete state, so the decomposed task cannot be treated as successfully delivered.",
+      expected_receipt: "Every required worker child packet must reach COMPLETE with a PASS verdict before the run can pass.",
+      evidence: ahpNonCompleteChildren
+        .map((child) => `${child.role ?? "child"}:${child.lifecycle ?? "unknown"}:${child.verdict ?? "no-verdict"}:${child.id ?? "unknown"}`)
+        .join("; "),
+      fix_hint: "Repair or rerun non-passing worker branches and synthesize only after all required child packets pass.",
+      message: "AHP child packet did not pass.",
+      suggestedFix: "Ensure all decomposed workers produce verified final outputs before QC can pass.",
+    });
+  }
+
+  if (hasFiles && !taskExplicitlyAllowsFileChanges(input)) {
+    issues.push({
+      severity: "HIGH",
+      code: "UNREQUESTED_FILE_CHANGE",
+      category: "Completeness",
+      description: "The run changed files even though the task only requested inspection or a returned answer.",
+      expected_receipt: "Read-only tasks must not produce filesChanged entries or successful write_file/create_file/modify_file/delete_file events.",
+      evidence: `filesChanged=${(input.filesChanged ?? []).map((file) => file.path).join(", ")}`,
+      fix_hint: "Do not call file-writing tools unless the user explicitly asks to create, edit, save, or update a file.",
+      message: "Run made an unrequested file change.",
+      suggestedFix: "Return the requested answer without writing files for read-only inspection tasks.",
     });
   }
 
@@ -668,16 +723,17 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   // ── No final answer despite tool activity ────────────────────────────────
   // The agent ran tools (or files changed) but never produced a FINAL ANSWER.
   // Tool activity alone is not a deliverable — the user expects a response.
-  if (!hasOutput && (hasTools || hasFiles) && stoppedBecause === 'no_final_output') {
+  const hasNoFinalSignal = stoppedBecause === 'no_final_output' || hasNonDeliverableOutputSignal(outputText);
+  if (hasNoFinalSignal && (hasTools || hasFiles || hasOutput)) {
     issues.push({
       severity: "HIGH",
       code: "COMPLETENESS_NO_FINAL_OUTPUT",
       category: "Completeness",
-      description: "Agent completed tool calls but produced no final answer for the user.",
+      description: "Agent completed work but produced no final deliverable for the user.",
       expected_receipt: "Run must end with a FINAL ANSWER that addresses the task.",
-      evidence: `toolEvents=${(input.toolEvents?.length ?? 0)} filesChanged=${(input.filesChanged?.length ?? 0)} outputText=empty.`,
+      evidence: `stoppedBecause=${stoppedBecause ?? "unknown"} toolEvents=${(input.toolEvents?.length ?? 0)} filesChanged=${(input.filesChanged?.length ?? 0)} outputText=${hasOutput ? outputText.slice(0, 240) : "empty"}.`,
       fix_hint: "The agent must synthesise its tool findings into a FINAL ANSWER before completing the run.",
-      message: "Run has tool activity but no user-facing final answer.",
+      message: "Run has no user-facing final answer.",
     });
   }
 

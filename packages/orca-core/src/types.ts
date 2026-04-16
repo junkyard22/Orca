@@ -321,6 +321,11 @@ export interface OrcaRuntimeDeps {
   /** When supplied, ctx.tools is populated and the agent loop activates. */
   tools?: OrcaToolService;
   /**
+   * Configured workspace root for tool execution. Runtime may override this
+   * per task when the user explicitly names an existing absolute workspace path.
+   */
+  workspaceRoot?: string;
+  /**
    * Persist every completed run to a durable store.
    * Inject SqliteStore from @clawde/orca-core/persistence for production use.
    */

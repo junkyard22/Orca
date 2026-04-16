@@ -7,6 +7,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOrcaRuntime } from "./runtime.js";
 import { AHPLifecycle, appendAHPTrace, createChildPacket } from "./ahp/types.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaRuntime, OrcaRuntimeDeps, OrcaTaskSpec, OrcaExecutionResult, MaestroPort, PappyPort, OrcaEvent } from "./types.js";
 
@@ -248,6 +251,42 @@ describe("createOrcaRuntime", () => {
       const child = result.ahpChildPackets?.[0];
       expect(child?.verdict).toBeDefined();
       expect(child?.trace.some((entry) => entry.actor === "pappy")).toBe(true);
+    });
+
+    it("binds tool workspace root to an explicit existing path in the task", async () => {
+      const explicitRoot = mkdtempSync(join(tmpdir(), "orca-explicit-root-"));
+      let seenWorkspaceRoot: string | undefined;
+
+      const maestro: MaestroPort = {
+        run: async (_task, ctx) => {
+          seenWorkspaceRoot = ctx.workspaceRoot;
+          return { outputText: "Inspected requested workspace.", summary: "mock summary" };
+        },
+      };
+      const pappy = {
+        evaluate: vi.fn(() => createMockPappyResult("PASS")),
+      } satisfies PappyPort;
+
+      try {
+        const runtime = createOrcaRuntime({
+          maestro,
+          pappy,
+          llm: createMockLLM(),
+          workspaceRoot: join(tmpdir(), "stale-orca-root"),
+        });
+
+        await runtime.executeTask(createTaskSpec({
+          originalUserMessage: [
+            "Inspect this project and tell me whether it is ready for a local test release.",
+            explicitRoot,
+            "Only check apps/desktop/package.json.",
+          ].join("\n"),
+        }));
+
+        expect(seenWorkspaceRoot).toBe(explicitRoot);
+      } finally {
+        rmSync(explicitRoot, { recursive: true, force: true });
+      }
     });
   });
 

@@ -161,6 +161,26 @@ describe("verifyAHPPacket — evalMeta", () => {
     expect(packet.evalMeta).toBeUndefined();
   });
 
+  it("treats a brain Agent stopped trace as a worker completion for direct runs", () => {
+    const packet = makePacket();
+    packet.trace = [
+      {
+        timestamp: new Date().toISOString(),
+        state: AHPLifecycle.COMPLETE,
+        actor: "brain",
+        note: "Agent stopped: done; iterations=2",
+      },
+    ];
+
+    verifyAHPPacket(
+      packet,
+      makeInput("function binary search compiles and implements the described interface"),
+    );
+
+    expect(packet.verdict).not.toBe(AHPVerdict.INCONCLUSIVE);
+    expect(packet.evalMeta).toBeDefined();
+  });
+
   it("does NOT set evalMeta when INCONCLUSIVE guard fires (empty output)", () => {
     const packet = makePacket();
     verifyAHPPacket(packet, makeInput(""));
