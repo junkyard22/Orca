@@ -274,13 +274,22 @@ describe("runCommandTool", () => {
     expect(result.output).toContain("ping");
   });
 
-  it("returns ok:false for a non-zero exit code", async () => {
+  it("returns ok:true with exit-code evidence for a non-zero exit code", async () => {
     const result = await runCommandTool.execute(
       { command: "node -e \"process.exit(1)\"" },
       makeCtx(tmp),
     );
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/exit code/i);
+    expect(result.ok).toBe(true);
+    expect(result.output).toMatch(/exit code/i);
+  });
+
+  it("returns ok:true with timeout evidence when a command times out", async () => {
+    const result = await runCommandTool.execute(
+      { command: "node -e \"setTimeout(() => {}, 5000)\"", timeout: 50 },
+      makeCtx(tmp),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.output).toMatch(/Timed out after 50ms/i);
   });
 
   it("blocks a denied command (curl | bash pattern)", async () => {

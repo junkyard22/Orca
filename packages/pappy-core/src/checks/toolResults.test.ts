@@ -42,6 +42,21 @@ describe("runToolResultChecks — tool failures", () => {
     const fails = issues.filter((i) => i.code === "TOOL_FAILURE");
     expect(fails).toHaveLength(0);
   });
+
+  it("does NOT flag a run_command timeout as a tool failure", () => {
+    const issues = runToolResultChecks({
+      task: "Debug why the app hangs on startup.",
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: false,
+          summary: "run_command: failed - Timed out after 10000ms",
+        },
+      ],
+    });
+    const fails = issues.filter((i) => i.code === "TOOL_FAILURE");
+    expect(fails).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

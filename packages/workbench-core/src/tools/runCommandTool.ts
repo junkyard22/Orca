@@ -226,7 +226,14 @@ export const runCommandTool: Tool = {
         const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
 
         if (timedOut) {
-          finish({ ok: false, output: combined, error: `Timed out after ${timeout}ms` });
+          // A timeout is a command outcome, not a tool malfunction. The shell
+          // ran, Orca captured what it could, and the model can use the timeout
+          // as diagnostic evidence (common for servers and hanging startup).
+          const timeoutText = `Timed out after ${timeout}ms`;
+          const outputWithTimeout = combined
+            ? `[${timeoutText}]\n${combined}`
+            : `[${timeoutText}]`;
+          finish({ ok: true, output: outputWithTimeout });
         } else if ((code ?? -1) !== 0) {
           // A non-zero exit code is informational — the shell command ran to
           // completion, it just signalled failure. Return ok:true so Pappy QC
