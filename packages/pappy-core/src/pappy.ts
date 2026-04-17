@@ -189,32 +189,59 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
     return { proved: false, evidence: [] };
   }
   
-  // Check for configurable parameter requirement
+  // Check for configurable parameter requirement.
+  // The criterion names a specific parameter ("Supports configurable burstCapacity");
+  // proof requires that exact parameter name to appear — generic words like
+  // "config" or "option" are not evidence that the named parameter exists.
   const configMatch = ac.text.match(/configurab\w*\s+(\w+)/i);
   if (configMatch) {
     const paramName = configMatch[1]?.toLowerCase();
-    if (paramName && (containsTerm(paramName) || containsTerm("parameter") || containsTerm("option") || containsTerm("config"))) {
+    if (paramName && containsTerm(paramName)) {
       return {
         proved: true,
-        evidence: [`configurable parameter "${paramName}" or related term found`],
+        evidence: [`configurable parameter "${paramName}" found in output`],
       };
     }
     return { proved: false, evidence: [] };
   }
-  
-  // Check for tracking/cleanup requirement
-  if (criterionContainsTerm("track") || criterionContainsTerm("per") || criterionContainsTerm("client") || criterionContainsTerm("cleanup") || criterionContainsTerm("stale")) {
-    const hasTracking = containsTerm("clientid") || containsTerm("client") || containsTerm("map") || containsTerm("track");
-    const hasCleanup = containsTerm("cleanup") || containsTerm("stale") || containsTerm("delete") || containsTerm("remove");
-    
-    if (hasTracking || hasCleanup) {
-      return {
-        proved: true,
-        evidence: [
-          ...(hasTracking ? ["tracking mechanism (clientId/Map) found"] : []),
-          ...(hasCleanup ? ["cleanup/stale handling found"] : []),
-        ],
-      };
+
+  // Check for tracking/cleanup requirement.
+  // "Tracks usage per X" criteria must prove the specific entity X is tracked;
+  // a standalone `Map` mention is not enough. "cleanup" criteria require an
+  // actual cleanup verb (cleanup/stale/delete/remove/expire/evict).
+  const criterionMentionsTracking =
+    criterionContainsTerm("track") || criterionContainsTerm("client");
+  const criterionMentionsCleanup =
+    criterionContainsTerm("cleanup") || criterionContainsTerm("stale");
+  if (criterionMentionsTracking || criterionMentionsCleanup) {
+    // Extract the entity after "per" — e.g. "per clientId" → "clientid".
+    const perMatch = ac.text.match(/\bper\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    const entity = perMatch?.[1]?.toLowerCase();
+
+    const hasEntity = entity ? containsTerm(entity) : false;
+    const hasTracking = containsTerm("clientid") || containsTerm("track");
+    const hasCleanup =
+      containsTerm("cleanup") || containsTerm("stale") ||
+      containsTerm("expire") || containsTerm("evict");
+
+    const trackingProved = criterionMentionsTracking
+      ? (entity ? hasEntity : hasTracking)
+      : true;
+    const cleanupProved = criterionMentionsCleanup ? hasCleanup : true;
+
+    if (trackingProved && cleanupProved) {
+      const evidence: string[] = [];
+      if (criterionMentionsTracking) {
+        evidence.push(
+          entity
+            ? `tracked entity "${entity}" found in output`
+            : "tracking mechanism (clientId/track) found",
+        );
+      }
+      if (criterionMentionsCleanup) {
+        evidence.push("cleanup/stale/expire/evict term found");
+      }
+      return { proved: true, evidence };
     }
     return { proved: false, evidence: [] };
   }

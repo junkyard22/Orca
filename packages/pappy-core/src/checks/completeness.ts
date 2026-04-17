@@ -956,7 +956,11 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
         }
       }
 
-      const coverage = (goalTerms.length - uncovered.length) / goalTerms.length;
+      // Clamp to [0,1]: dedup and synonym handling can cause uncovered.length
+      // to exceed goalTerms.length, which would produce a spurious negative
+      // coverage that always trips the threshold check below.
+      const rawCoverage = (goalTerms.length - uncovered.length) / goalTerms.length;
+      const coverage = Math.max(0, Math.min(1, rawCoverage));
       const effectiveThreshold = (
         (isCondensedRequest && isStructuredOutput) ||
         (isStructuredOutput && hasSuccessfulToolUse)

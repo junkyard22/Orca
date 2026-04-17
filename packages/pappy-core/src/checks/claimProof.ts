@@ -299,7 +299,7 @@ export function runClaimProofChecks(
           type: def.receiptType,
           details: def.receiptDetails(match),
         },
-        status: proofPointer ? "PROVED" : hasAnyTrace ? "MISSING" : "MISSING",
+        status: proofPointer ? "PROVED" : "MISSING",
         evidence: proofPointer ? [proofPointer] : [],
       };
       ledger.push(entry);

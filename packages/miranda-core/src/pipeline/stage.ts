@@ -32,8 +32,9 @@ export interface StageExecutionContext {
   onToken?: (chunk: string) => void;
   /**
    * Miranda's gate — called before and after each LLM adapter call.
-   * before_llm_call: validates model + budget.
-   * after_llm_call:  validates output shape (informational; repair loop handles retries).
+   * before_llm_call: validates model + budget; block moves to next model.
+   * after_llm_call:  validates output shape; block fails the attempt and
+   *                  feeds its violations into the repair loop.
    */
   gate?: MirandaGate;
   /** USD spent in prior stages of this run — fed to before_llm_call gate. */
@@ -155,7 +156,36 @@ export async function executeStage(
         );
         const cost = calculateCost(model.id, usage, pricingTable);
 
-        const validation = validateStageOutput(stage, response.content);
+        let validation = validateStageOutput(stage, response.content);
+
+        // ── after_llm_call gate ───────────────────────────────────────────
+        // If the gate blocks (e.g. extra shape/compliance violations beyond
+        // the stage validator), merge its violations into the validation
+        // result so the repair loop treats this attempt as failed.
+        if (ctx.gate) {
+          const gateCtx = {
+            stage,
+            model: model.id,
+            budgetUsed: ctx.budgetUsed ?? 0,
+            budgetLimit: ctx.budgetLimit ?? Infinity,
+          };
+          const gateResult = ctx.gate.afterLLMCall(
+            gateCtx,
+            response.content,
+            validation,
+          );
+          if (!gateResult.allowed) {
+            const gateErrors =
+              gateResult.violations && gateResult.violations.length > 0
+                ? gateResult.violations
+                : [`Gate blocked: ${gateResult.reason}`];
+            validation = {
+              valid: false,
+              data: validation.data,
+              errors: [...(validation.errors ?? []), ...gateErrors],
+            };
+          }
+        }
 
         const attempt: StageAttempt = {
           attemptNumber: totalAttempts,
@@ -167,18 +197,6 @@ export async function executeStage(
           costEstimate: cost,
         };
         attempts.push(attempt);
-
-        // ── after_llm_call gate ───────────────────────────────────────────
-        if (ctx.gate) {
-          const gateCtx = {
-            stage,
-            model: model.id,
-            budgetUsed: ctx.budgetUsed ?? 0,
-            budgetLimit: ctx.budgetLimit ?? Infinity,
-          };
-          ctx.gate.afterLLMCall(gateCtx, response.content, validation);
-          // Informational: gate records the result; repair loop drives retries.
-        }
 
         if (validation.valid) {
           router.recordSuccess(model.id);
