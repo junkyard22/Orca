@@ -281,7 +281,7 @@ export async function connectMcpServer(
   });
 
   const client = new Client(
-    { name: "orca-mcp-client", version: "0.1.0" },
+    { name: "orca-mcp-client", version: "1.2.7" },
     { capabilities: {} },
   );
 
@@ -391,7 +391,7 @@ export async function connectMcpServer(
   return {
     id: `@clawde/mcp-${cfg.id}`,
     name: cfg.name,
-    version: "0.1.0",
+    version: "1.2.7",
     tools: extTools,
 
     async onUnload(): Promise<void> {

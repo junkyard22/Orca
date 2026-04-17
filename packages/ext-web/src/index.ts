@@ -165,7 +165,7 @@ const webSearchTool: ExtTool = {
 export const webExtension: OrcaExtension = {
   id:      "@clawde/ext-web",
   name:    "Web",
-  version: "0.1.0",
+  version: "1.2.7",
   tools:   [webFetchTool, webSearchTool],
 };
 

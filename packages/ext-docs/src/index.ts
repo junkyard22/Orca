@@ -204,7 +204,7 @@ const docsListTool: ExtTool = {
 export const docsExtension: OrcaExtension = {
   id:      "@clawde/ext-docs",
   name:    "Docs",
-  version: "0.1.0",
+  version: "1.2.7",
   tools:   [docsReadTool, docsListTool],
 };
 

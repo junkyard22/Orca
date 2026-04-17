@@ -366,7 +366,7 @@ const cloneRepoTool: ExtTool = {
 export const githubExtension: OrcaExtension = {
   id:      "@clawde/ext-github",
   name:    "GitHub",
-  version: "0.1.0",
+  version: "1.2.7",
   tools:   [listPrsTool, getPrTool, listIssuesTool, listReposTool, cloneRepoTool],
 
   async onLoad() {
