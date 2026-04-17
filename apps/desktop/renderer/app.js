@@ -403,6 +403,32 @@ function scrollToBottom() {
   messages.scrollTop = messages.scrollHeight;
 }
 
+function buildPipelineSummaryFromEvents(result) {
+  const qcEvent = [...pipelineEventLog].reverse().find((e) => e.type === "qc:result");
+  if (!qcEvent) return null;
+
+  const startEvent = pipelineEventLog.find((e) => e.type === "task:start" && e.taskId === qcEvent.taskId);
+  const doneEvent = [...pipelineEventLog].reverse().find((e) => e.type === "task:done" && e.taskId === qcEvent.taskId);
+  const durationMs = startEvent?._ts && doneEvent?._ts
+    ? Math.max(0, doneEvent._ts - startEvent._ts)
+    : 0;
+  const repairPasses = pipelineEventLog.filter((e) => e.type === "repair:start" && e.taskId === qcEvent.taskId).length;
+
+  return {
+    type: "pipeline:summary",
+    taskId: qcEvent.taskId,
+    role: currentRole?.role ?? "unknown",
+    verdict: qcEvent.verdict,
+    confidence: qcEvent.verdict === "PASS" ? 1 : qcEvent.verdict === "WARN" ? 0.8 : 0.5,
+    issueCount: qcEvent.issueCount ?? 0,
+    issues: [],
+    acceptanceCriteria: [],
+    durationMs,
+    repairPasses,
+    errorMessage: result?.ok === false ? result.error : undefined,
+  };
+}
+
 // ── Safe markdown renderer ────────────────────────────────────────────────
 
 function escapeHtml(str) {
@@ -874,7 +900,7 @@ async function sendMessage() {
     // Post-reply metadata
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
-    const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary;
+    const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary ?? buildPipelineSummaryFromEvents(result);
     if (summaryToRender && !pipelineBadgeRendered) {
       summaryToRender._eventLog = pipelineEventLog.slice();
       appendPipelineBadge(summaryToRender);
