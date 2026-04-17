@@ -198,6 +198,7 @@ body {
   height: 130px;
   object-fit: contain;
   animation: logo-float 4s ease-in-out infinite;
+  filter: none;
 }
 
 @keyframes logo-float {
@@ -239,6 +240,12 @@ body {
   height: 22px;
   object-fit: contain;
   flex-shrink: 0;
+  filter: none;
+}
+
+body.light .brand-logo,
+body.light .welcome-logo {
+  filter: invert(1) brightness(0.35) contrast(1.4);
 }
 
 /* ── Message feed ──────────────────────────────────────────────────────── */

@@ -88,6 +88,40 @@ describe("runCompletenessChecks — no output", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Routing criteria mismatch
+// ---------------------------------------------------------------------------
+
+describe("runCompletenessChecks - routing criteria mismatch", () => {
+  it("does not treat PASS/WARN/FAIL verdict formatting as limitation language", () => {
+    const issues = runCompletenessChecks({
+      task: "Run a read-only smoke test and end with a PASS/WARN/FAIL verdict.",
+      goals: [
+        "Output ends with a PASS/WARN/FAIL verdict and supporting evidence",
+      ],
+      outputText: "The renderer is owned by @clawde/desktop.\n\nVerdict: PASS",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "read package.json" }],
+    });
+
+    expect(issues.find((i) => i.code === "ROUTING_CRITERIA_MISMATCH")).toBeUndefined();
+  });
+
+  it("still flags genuine limitation criteria when all tools succeeded", () => {
+    const issues = runCompletenessChecks({
+      task: "Inspect the workspace.",
+      goals: [
+        "Output explains inability to access the filesystem",
+      ],
+      outputText: "The workspace is readable.",
+      toolEvents: [{ tool: "list_directory", ok: true, summary: "list root" }],
+    });
+
+    const mismatch = issues.find((i) => i.code === "ROUTING_CRITERIA_MISMATCH");
+    expect(mismatch).toBeDefined();
+    expect(mismatch!.severity).toBe("HIGH");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Task-aware semantic completeness (Phase 4.1)
 // ---------------------------------------------------------------------------
 

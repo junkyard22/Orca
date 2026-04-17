@@ -730,8 +730,11 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   // events all succeeded — the router invented a bad rubric that contradicts
   // what actually happened. Flag this as HIGH so it surfaces clearly.
   const LIMITATION_CRITERIA_TERMS = /\b(inability|unable|cannot|can't|can not|could not|couldn't|fail(ed|ure)?|no.access|not.possible|not.support|unavailable|limitation|constraint|denied|reject(ed)?|prohibit|cannot.be|not.be.able|out.of.scope)\b/i;
+  const ALLOWED_VERDICT_FORMAT = /\b(pass\s*\/\s*warn\s*\/\s*fail|pass\s*,\s*warn\s*,\s*(or\s+)?fail|pass\s+warn\s+fail)\b/i;
   const allToolsSucceeded = hasTools && (input.toolEvents ?? []).every((e) => e.ok === true);
-  const limitationCriteria = (input.goals ?? []).filter((g) => LIMITATION_CRITERIA_TERMS.test(g));
+  const limitationCriteria = (input.goals ?? []).filter((g) =>
+    LIMITATION_CRITERIA_TERMS.test(g) && !ALLOWED_VERDICT_FORMAT.test(g)
+  );
   if (limitationCriteria.length > 0 && allToolsSucceeded) {
     issues.push({
       severity: "HIGH",

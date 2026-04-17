@@ -1943,18 +1943,16 @@ document.getElementById("sidebar-btn-history").addEventListener("click",  () => 
 
 // ── Theme toggle ──────────────────────────────────────────────────────────
 
-// Titlebar / compact brand variants
-const BRAND_DARK  = "orca-logo-dark.png";
-const BRAND_LIGHT = "orca-logo-light.png";
-// Welcome screen: padded variants (more canvas, no clipping)
-const WELCOME_DARK  = "orca-welcome-dark-r.png";
-const WELCOME_LIGHT = "orca-welcome-light-r.png";
+// Use the light mark as the single source and invert it in CSS for light mode.
+// The asset names are historical and easy to wire backward.
+const BRAND_MARK = "orca-logo-dark.png";
+const WELCOME_MARK = "orca-welcome-dark-r.png";
 
 function setThemeLogos(isLight) {
   const brand   = document.getElementById("logo-brand");
   const welcome = document.getElementById("logo-welcome");
-  if (brand)   brand.src   = isLight ? BRAND_LIGHT   : BRAND_DARK;
-  if (welcome) welcome.src = isLight ? WELCOME_LIGHT  : WELCOME_DARK;
+  if (brand)   brand.src   = BRAND_MARK;
+  if (welcome) welcome.src = WELCOME_MARK;
 }
 
 (function initTheme() {

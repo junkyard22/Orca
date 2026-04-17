@@ -254,7 +254,8 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
   // Without this guard, ANY non-empty output silently proves such criteria,
   // even when the agent succeeded at the task and never said "cannot" at all.
   const LIMITATION_TERMS = /\b(inability|unable|cannot|can't|can not|could not|couldn't|fail(ed|ure)?|no.access|not.possible|not.support|unavailable|error|exception|limitation|constraint|denied|reject(ed)?|prohibit|cannot.be|not.be.able|out.of.scope)\b/i;
-  if (LIMITATION_TERMS.test(ac.text)) {
+  const ALLOWED_VERDICT_FORMAT = /\b(pass\s*\/\s*warn\s*\/\s*fail|pass\s*,\s*warn\s*,\s*(or\s+)?fail|pass\s+warn\s+fail)\b/i;
+  if (LIMITATION_TERMS.test(ac.text) && !ALLOWED_VERDICT_FORMAT.test(ac.text)) {
     const outputMentionsLimitation = LIMITATION_TERMS.test(lowerOutput);
     return {
       proved: outputMentionsLimitation,

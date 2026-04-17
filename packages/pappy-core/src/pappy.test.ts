@@ -40,6 +40,25 @@ describe("evaluateWithPappy — verdict", () => {
     expect(result.issues).toHaveLength(0);
   });
 
+  it("allows PASS/WARN/FAIL verdict wording as a required output format", () => {
+    const result = evaluateWithPappy(passInput({
+      task: "Run a read-only smoke test and end with a PASS/WARN/FAIL verdict.",
+      goals: [
+        "Output identifies which package owns the Electron renderer",
+        "Output ends with a PASS/WARN/FAIL verdict and supporting evidence",
+      ],
+      outputText: [
+        "Smoke test completed with the expected renderer evidence checked and no errors caught.",
+        "The Electron renderer is owned by @clawde/desktop.",
+        "Evidence: apps/desktop/package.json declares the package.",
+        "Verdict: PASS",
+      ].join("\n"),
+    }));
+
+    expect(result.issues.some((issue) => issue.code === "ROUTING_CRITERIA_MISMATCH")).toBe(false);
+    expect(result.verdict).toBe("PASS");
+  });
+
   it("returns FAIL when a safety CRITICAL issue fires", () => {
     const result = evaluateWithPappy(
       passInput({ outputText: "Run rm -rf /home to clean up." }),
