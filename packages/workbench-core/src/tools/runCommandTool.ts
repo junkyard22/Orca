@@ -228,7 +228,15 @@ export const runCommandTool: Tool = {
         if (timedOut) {
           finish({ ok: false, output: combined, error: `Timed out after ${timeout}ms` });
         } else if ((code ?? -1) !== 0) {
-          finish({ ok: false, output: combined, error: `Exit code ${code ?? -1}` });
+          // A non-zero exit code is informational — the shell command ran to
+          // completion, it just signalled failure. Return ok:true so Pappy QC
+          // doesn't treat this as a tool malfunction; the LLM can read the
+          // exit code in the output and reason about it.
+          const exitCode = code ?? -1;
+          const outputWithCode = combined
+            ? `[Exit code ${exitCode}]\n${combined}`
+            : `[Exit code ${exitCode}]`;
+          finish({ ok: true, output: outputWithCode });
         } else {
           // Include file changes in the output for the caller to parse
           const outputWithChanges = fileChanges.length > 0
