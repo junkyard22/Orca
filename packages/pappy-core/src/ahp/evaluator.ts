@@ -204,22 +204,45 @@ export function verifyAHPPacket(
 
   // ── Step 1: VIOLATION guard ────────────────────────────────────────────────
   // Miranda already set verdict = VIOLATION via onViolation callback.
-  // Force lifecycle to FAILED if not already there; do not run AC evaluation.
+  // Transition lifecycle to FAILED when the state machine permits it.
+  // Terminal states (COMPLETE) and illegal-source states are NOT rewritten —
+  // Pappy does not casually mutate finalized lifecycles. Instead we append a
+  // protocol-anomaly trace entry so the orchestrator can reconcile.
   if (packet.verdict === AHPVerdict.VIOLATION) {
-    if (packet.lifecycle !== AHPLifecycle.FAILED) {
+    if (packet.lifecycle === AHPLifecycle.FAILED) {
+      appendAHPTrace(packet, {
+        timestamp: now,
+        state: AHPLifecycle.FAILED,
+        actor: "pappy",
+        note: "Verification skipped — VIOLATION verdict; lifecycle already FAILED",
+      });
+    } else if (packet.lifecycle === AHPLifecycle.COMPLETE) {
+      appendAHPTrace(packet, {
+        timestamp: now,
+        state: packet.lifecycle,
+        actor: "pappy",
+        note: "ANOMALY: VIOLATION verdict on COMPLETE packet — terminal lifecycle preserved, not rewritten",
+      });
+    } else {
       try {
         transitionAHPLifecycle(packet.lifecycle, AHPLifecycle.FAILED);
-      } catch {
-        // lifecycle transition invalid from current state — override directly
+        packet.lifecycle = AHPLifecycle.FAILED;
+        appendAHPTrace(packet, {
+          timestamp: now,
+          state: AHPLifecycle.FAILED,
+          actor: "pappy",
+          note: "Verification skipped — VIOLATION verdict set by Miranda; lifecycle transitioned to FAILED",
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendAHPTrace(packet, {
+          timestamp: now,
+          state: packet.lifecycle,
+          actor: "pappy",
+          note: `ANOMALY: VIOLATION verdict from lifecycle=${packet.lifecycle} — ${msg}; lifecycle preserved`,
+        });
       }
-      packet.lifecycle = AHPLifecycle.FAILED;
     }
-    appendAHPTrace(packet, {
-      timestamp: now,
-      state: AHPLifecycle.FAILED,
-      actor: "pappy",
-      note: "Verification skipped — VIOLATION verdict set by Miranda; lifecycle forced to FAILED",
-    });
     packet.meta.updatedAt = now;
     return packet;
   }

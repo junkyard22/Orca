@@ -442,7 +442,11 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
     },
 
     afterQC(ctx, verdict, issueCount): GateResult {
-      const known = new Set(["PASS", "WARN", "FAIL"]);
+      // Accept any value defined in the AHPVerdict protocol vocabulary.
+      // Previously this list was hardcoded to {PASS, WARN, FAIL} and rejected
+      // INCONCLUSIVE / VIOLATION even though they are legitimate verdicts
+      // produced by Pappy's AHP evaluator and Miranda's own violation path.
+      const known = new Set<string>(Object.values(AHPVerdict));
       if (!known.has(verdict)) {
         const result: GateResult = {
           allowed: false,

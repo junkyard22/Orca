@@ -174,12 +174,15 @@ function extractSignificantKeywords(text: string): string[] {
   ];
 }
 
+const CONTENT_READ_BYTE_LIMIT = 10_000;
+
 function checkContentMatchesIntent(
   objective: string,
   filesChanged: Array<{ path: string; diff?: string; changeType?: string }>,
   workspaceRoot?: string,
 ): FileCheckResult {
   const contentParts: string[] = [];
+  const truncatedPaths: string[] = [];
 
   for (const file of filesChanged) {
     if (file.changeType === "D") continue; // deleted files have no content
@@ -194,8 +197,10 @@ function checkContentMatchesIntent(
           ? file.path
           : path.resolve(workspaceRoot, file.path);
         const content = fs.readFileSync(abs, "utf8");
-        // Truncate large files to avoid memory issues
-        contentParts.push(content.slice(0, 10_000));
+        if (content.length > CONTENT_READ_BYTE_LIMIT) {
+          truncatedPaths.push(file.path);
+        }
+        contentParts.push(content.slice(0, CONTENT_READ_BYTE_LIMIT));
       } catch {
         // File unreadable — diff is still in contentParts
       }
@@ -219,16 +224,22 @@ function checkContentMatchesIntent(
   // using identifiers and symbols rather than prose words.
   const threshold = Math.max(1, Math.ceil(keywords.length / 3));
 
+  // Surface truncation so a false-negative from unread content is visible.
+  const truncationNote =
+    truncatedPaths.length > 0
+      ? ` (note: content truncated at ${CONTENT_READ_BYTE_LIMIT} bytes for ${truncatedPaths.length} file(s): ${truncatedPaths.slice(0, 3).join(", ")}${truncatedPaths.length > 3 ? ", …" : ""})`
+      : "";
+
   if (matched.length >= threshold) {
     return {
       passed:   true,
-      evidence: `content reflects intent (${matched.length}/${keywords.length} keywords): ${matched.slice(0, 4).join(", ")}`,
+      evidence: `content reflects intent (${matched.length}/${keywords.length} keywords): ${matched.slice(0, 4).join(", ")}${truncationNote}`,
     };
   }
 
   return {
     passed:   false,
-    evidence: `file content does not reflect described intent: ${matched.length}/${keywords.length} keywords matched (need ≥${threshold}); objective keywords: ${keywords.slice(0, 5).join(", ")}`,
+    evidence: `file content does not reflect described intent: ${matched.length}/${keywords.length} keywords matched (need ≥${threshold}); objective keywords: ${keywords.slice(0, 5).join(", ")}${truncationNote}`,
   };
 }
 
