@@ -85,13 +85,28 @@ export interface AuditProbeResult {
   failure?: AuditFailure;
 }
 
-export type AuditCommandStatus = "allowed_not_run" | "blocked" | "not_applicable";
+export type AuditCommandStatus =
+  | "allowed_not_run"
+  | "blocked"
+  | "not_applicable"
+  | "passed"
+  | "failed"
+  | "timed_out";
+
+export interface AuditCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  error?: string;
+}
 
 export interface AuditCommandDecision {
   command: string;
   status: AuditCommandStatus;
   reason: string;
   failure?: AuditFailure;
+  result?: AuditCommandResult;
 }
 
 export interface AuditCommandPolicy {
@@ -126,9 +141,12 @@ export interface ProjectAuditResult {
   commandPolicy: AuditCommandPolicy;
   readiness: ReadinessScore;
   failures: AuditFailure[];
+  runtimeVerified?: boolean;
 }
 
 export interface ProjectAuditInput {
   taskSpec: OrcaTaskSpec;
   workspaceRoot?: string;
+  runCommands?: boolean;
+  abortSignal?: AbortSignal;
 }
