@@ -66,6 +66,16 @@ function terminateChildProcess(child: ChildProcess): void {
     return;
   }
 
+  const pid = child.pid;
+  if (pid != null) {
+    try {
+      process.kill(-pid, "SIGKILL");
+      return;
+    } catch {
+      // Fall back to killing the shell process if the process group is gone or
+      // unavailable. The close/error handlers remain responsible for settling.
+    }
+  }
   child.kill("SIGKILL");
 }
 
@@ -158,6 +168,7 @@ export const runCommandTool: Tool = {
       const child = spawn(command, [], {
         cwd,
         env: process.env,
+        detached: process.platform !== "win32",
         shell: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
