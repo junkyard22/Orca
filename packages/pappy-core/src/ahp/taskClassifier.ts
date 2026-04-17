@@ -17,6 +17,8 @@ import type { AHPPacket } from "@clawde/miranda-core";
 // ---------------------------------------------------------------------------
 
 export enum TaskType {
+  /** Running commands, scripts, build/test/lint pipelines. */
+  CommandExecution = "command_execution",
   /** Writing new source code (functions, classes, modules). */
   CodeGeneration = "code_generation",
   /** Modifying existing source code (fix, refactor, update). */
@@ -39,6 +41,27 @@ export enum TaskType {
 type ScoredKeyword = [string, number];
 
 const TYPE_KEYWORDS: Record<TaskType, ScoredKeyword[]> = {
+  [TaskType.CommandExecution]: [
+    ["run the tests", 4],
+    ["run the build", 4],
+    ["run the lint", 4],
+    ["run tests", 3],
+    ["run build", 3],
+    ["run lint", 3],
+    ["npm run", 3],
+    ["npm test", 3],
+    ["pnpm run", 3],
+    ["pnpm test", 3],
+    ["yarn run", 3],
+    ["yarn test", 3],
+    ["run these", 3],
+    ["run this", 2],
+    ["build and test", 3],
+    ["build/test/lint", 4],
+    ["build/test", 3],
+    ["execute these", 3],
+    ["execute this", 2],
+  ],
   [TaskType.CodeEdit]: [
     ["refactor", 3],
     ["fix", 2],
@@ -125,6 +148,7 @@ export function classifyTaskType(packet: AHPPacket): TaskType {
 
   // Ordered priority — first type >= best score wins ties
   const PRIORITY: TaskType[] = [
+    TaskType.CommandExecution,
     TaskType.CodeEdit,
     TaskType.CodeGeneration,
     TaskType.FileWrite,
@@ -158,6 +182,11 @@ export function classifyTaskType(packet: AHPPacket): TaskType {
 
 /** Immutable default ACs for each task category. */
 const DEFAULT_ACS: Readonly<Record<TaskType, readonly string[]>> = {
+  [TaskType.CommandExecution]: [
+    "output contains command execution results",
+    "commands ran to completion",
+    "no unintended files modified",
+  ],
   [TaskType.CodeGeneration]: [
     "compiles without errors",
     "implements the described interface",

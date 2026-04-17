@@ -272,3 +272,70 @@ describe("getACPriority", () => {
     expect(getACPriority("")).toBe("hard");
   });
 });
+
+// ---------------------------------------------------------------------------
+// CommandExecution classification
+// ---------------------------------------------------------------------------
+
+describe("classifyTaskType — CommandExecution", () => {
+  it("classifies 'run the build' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("run the build"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'run the tests' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("run the tests"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'run the lint' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("run the lint"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'run build' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("run build"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'run tests' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("run tests"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'npm run build' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("npm run build"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'npm test' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("npm test"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'pnpm run test' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("pnpm run test"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'run these in the app runtime build/test/lint' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("run these in the app runtime build/test/lint"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("classifies 'build and test the project' as CommandExecution", () => {
+    expect(classifyTaskType(makePacket("build and test the project"))).toBe(TaskType.CommandExecution);
+  });
+
+  it("CommandExecution wins over CodeEdit when both signals present", () => {
+    // 'run the build' should beat any incidental code-related words
+    expect(classifyTaskType(makePacket("run the build and fix any errors after"))).toBe(TaskType.CommandExecution);
+  });
+});
+
+describe("deriveDefaultACs — CommandExecution", () => {
+  it("returns three ACs for CommandExecution", () => {
+    const acs = deriveDefaultACs(TaskType.CommandExecution);
+    expect(acs).toHaveLength(3);
+    expect(acs).toContain("output contains command execution results");
+    expect(acs).toContain("commands ran to completion");
+    expect(acs).toContain("no unintended files modified");
+  });
+
+  it("all CommandExecution ACs are hard", () => {
+    for (const ac of deriveDefaultACs(TaskType.CommandExecution)) {
+      expect(getACPriority(ac)).toBe("hard");
+    }
+  });
+});

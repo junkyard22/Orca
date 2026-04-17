@@ -18,6 +18,7 @@ import {
   registerChildOnRoot,
   appendAHPTrace,
   AHPLifecycle,
+  AHPVerdict,
   deriveFilesChangedFromToolEvents,
   SqliteStore,
 } from "@clawde/orca-core";
@@ -347,6 +348,15 @@ async function brainRoute(
 // Tier 2: ReactAgentAdapter (ReAct loop implementation) 
 // Tier 3: RoleAgentAdapter (role-aware wrapper)
 
+/**
+ * Returns true when the objective text describes a command-execution task
+ * (running build, test, or lint pipelines — no file authoring expected).
+ */
+function isCommandExecutionObjective(objective: string): boolean {
+  const t = objective.toLowerCase();
+  return /\b(run the (tests?|build|lint)|run (tests?|build|lint)|npm run|npm test|pnpm run|pnpm test|yarn run|yarn test|build and test|build\/test(?:\/lint)?|execute these|execute this)\b/.test(t);
+}
+
 function buildMaestroAdapter(
   /** Per-role LLM adapters. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
   configuredAdapters: Map<RoleName, LLMAdapter>,
@@ -434,10 +444,15 @@ function buildMaestroAdapter(
           value: objective,
         },
       ],
-      constraints: Object.entries(task.constraints ?? {}).map(([rule, value]) => ({
-        rule,
-        enforcer: String(value),
-      })),
+      constraints: [
+        ...(isCommandExecutionObjective(objective)
+          ? [{ rule: "no_file_writes", enforcer: "miranda" }]
+          : []),
+        ...Object.entries(task.constraints ?? {}).map(([rule, value]) => ({
+          rule,
+          enforcer: String(value),
+        })),
+      ],
       expectedOutput: {
         schema: {},
         acceptanceCriteria: doneCriteria.length > 0 ? doneCriteria : [objective],
@@ -593,8 +608,32 @@ function buildMaestroAdapter(
       })),
     });
 
+    // Build a per-worker gate that enforces AHP constraints from the child packet.
+    // This is scoped per-run so the constraint state never leaks across workers.
+    const workerGate = childPacket && childPacket.constraints.length > 0
+      ? createMirandaGate({
+          ahpPacket: childPacket,
+          checkConstraint: (constraint, gateCtx) => {
+            if (constraint.rule === "no_file_writes") {
+              return gateCtx.tool !== "write_file";
+            }
+            return true;
+          },
+          onViolation: (packet, violated) => {
+            packet.verdict = AHPVerdict.VIOLATION;
+            appendAHPTrace(packet, {
+              timestamp: new Date().toISOString(),
+              state: packet.lifecycle,
+              actor: "miranda",
+              note: `Constraint violation blocked tool call: ${violated.map((c) => c.rule).join(", ")}`,
+            });
+          },
+        })
+      : ctx.gate;
+
     const agentCtx: AgentRunContext = {
       ...ctx,
+      gate: workerGate,
       subagentDepth: options.subagent ? (ctx.subagentDepth ?? 0) + 1 : ctx.subagentDepth,
       workspaceRoot: ctx.workspaceRoot ?? workspaceRoot,
       onStreamToken: options.streamTokens
