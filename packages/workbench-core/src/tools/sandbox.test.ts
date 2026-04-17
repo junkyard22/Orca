@@ -19,6 +19,31 @@ describe("evaluateCommandPolicy", () => {
     expect(evaluateCommandPolicy("pwd", policy).category).toBe("safe");
   });
 
+  it("auto-approves read-only shell command chains", () => {
+    const policy = createSandboxPolicy();
+    const result = evaluateCommandPolicy(
+      "cd C:\\Orca && echo %cd% && git status --short && git log -3 --oneline && cat package.json",
+      policy,
+    );
+
+    expect(result.category).toBe("safe");
+    expect(result.requiresApproval).toBe(false);
+  });
+
+  it("does not let a safe first segment hide a dangerous segment", () => {
+    const policy = createSandboxPolicy();
+
+    expect(evaluateCommandPolicy("echo ok && rm -rf /", policy).category).toBe("blocked");
+    expect(evaluateCommandPolicy("git status && git push origin main", policy).requiresApproval).toBe(true);
+  });
+
+  it("requires approval for write redirection but allows stderr-to-null redirection", () => {
+    const policy = createSandboxPolicy();
+
+    expect(evaluateCommandPolicy("echo ok > out.txt", policy).requiresApproval).toBe(true);
+    expect(evaluateCommandPolicy("dir missing 2>nul", policy).requiresApproval).toBe(false);
+  });
+
   it("classifies moderate commands correctly", () => {
     const policy = createSandboxPolicy();
     
