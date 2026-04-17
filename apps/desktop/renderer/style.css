@@ -61,12 +61,6 @@ body.light {
 body.light .icon-sun  { display: none; }
 body.light .icon-moon { display: inline; }
 
-/* Light mode: invert the white-on-transparent logo so it reads dark */
-body.light .brand-logo,
-body.light .welcome-logo {
-  filter: invert(1) brightness(0.8);
-}
-
 html,
 body {
   height: 100%;
@@ -204,8 +198,6 @@ body {
   height: 130px;
   object-fit: contain;
   animation: logo-float 4s ease-in-out infinite;
-  /* White-out the black source PNG so it reads on dark backgrounds */
-  filter: invert(1);
 }
 
 @keyframes logo-float {
@@ -246,7 +238,6 @@ body {
   width: 22px;
   height: 22px;
   object-fit: contain;
-  filter: invert(1);
   flex-shrink: 0;
 }
 

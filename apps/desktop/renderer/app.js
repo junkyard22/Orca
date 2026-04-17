@@ -358,17 +358,9 @@ orca.onStreamChunk(({ chunk }) => {
 });
 
 orca.onStreamEnd((_data) => {
-  // No stream bubble to clean up.
-  // Render the pipeline summary badge if it arrived via orca-event before the
-  // sendMessage invoke resolves (typical fast-path).  The !pipelineBadgeRendered
-  // guard prevents a double-render when sendMessage's post-resolve block also
-  // has the summary available via result.pipelineSummary.
-  if (pendingPipelineSummary && !pipelineBadgeRendered) {
-    pendingPipelineSummary._eventLog = pipelineEventLog.slice();
-    appendPipelineBadge(pendingPipelineSummary);
-    pendingPipelineSummary = null;
-    pipelineBadgeRendered = true;
-  }
+  // Keep the summary buffered until sendMessage has rendered the final reply.
+  // Appending here places the badge above the final response, then autoscrolls
+  // away from it when the response is added.
 });
 
 // ── Chat helpers ──────────────────────────────────────────────────────────
