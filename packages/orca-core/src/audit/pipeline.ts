@@ -1,8 +1,10 @@
 import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import type {
   AuditCommandDecision,
   AuditCommandPolicy,
+  AuditCommandResult,
   AuditFailure,
   AuditMarker,
   AuditPathKind,
@@ -558,6 +560,8 @@ function scoreReadiness(preflight: AuditPreflight, classification: ProjectClassi
   };
   const totalScore = Object.values(categories).reduce((sum, value) => sum + value, 0);
   const runtimeUnverified = commandPolicy.decisions.some((decision) => decision.status === "allowed_not_run");
+  const runtimeFailed = commandPolicy.decisions.some((decision) => decision.status === "failed" || decision.status === "timed_out");
+  const runtimePassed = commandPolicy.decisions.filter((decision) => decision.status === "passed").length;
   const supportingEvidence = unique([
     ...classification.evidence,
     ...probes
@@ -567,6 +571,7 @@ function scoreReadiness(preflight: AuditPreflight, classification: ProjectClassi
   const missingEvidence = unique([
     ...probes.flatMap((item) => item.missing),
     ...(runtimeUnverified ? ["Runtime build/test/lint commands were not run in this read-first audit"] : []),
+    ...(runtimeFailed ? [`${commandPolicy.decisions.filter((d) => d.status === "failed" || d.status === "timed_out").length} runtime command(s) failed`] : []),
   ]).slice(0, 20);
   const riskFlags = [
     ...(classification.primary === "unknown" ? ["unsupported_stack"] : []),
@@ -575,6 +580,7 @@ function scoreReadiness(preflight: AuditPreflight, classification: ProjectClassi
     ...(probeStatus(probes, "detect_ci_setup") === "missing" ? ["no_ci_evidence"] : []),
     ...(probeStatus(probes, "detect_env_hygiene") !== "pass" ? ["config_hygiene_incomplete"] : []),
     ...(runtimeUnverified ? ["runtime_not_verified"] : []),
+    ...(runtimeFailed ? ["runtime_command_failed"] : []),
   ];
 
   let readiness: ReadinessScore["readiness"];
@@ -588,10 +594,13 @@ function scoreReadiness(preflight: AuditPreflight, classification: ProjectClassi
   const partials = probes.filter((item) => item.status === "partial").length;
   const sourceWasInspected = probeStatus(probes, "inspect_source_sample") === "pass";
   let confidence = 0.18 + classification.confidence * 0.28 + meaningfulPasses * 0.045 + partials * 0.025 - failures.length * 0.08 - riskFlags.length * 0.03;
+  // Bonus for passing runtime commands.
+  confidence += runtimePassed * 0.04;
   if (runtimeUnverified) confidence = Math.min(confidence, 0.74);
+  if (runtimeFailed) confidence = Math.min(confidence, 0.68);
   if (!sourceWasInspected) confidence = Math.min(confidence, 0.58);
   if (probeStatus(probes, "detect_env_hygiene") !== "pass") confidence = Math.min(confidence, 0.72);
-  confidence = Math.max(0.1, Math.min(0.9, confidence));
+  confidence = Math.max(0.1, Math.min(0.95, confidence));
 
   return {
     readiness,
@@ -631,10 +640,21 @@ function buildCommandPolicy(preflight: AuditPreflight, classification: ProjectCl
     };
   }
 
-  const recipes = [...new Set([
+  const markers = markerPaths(preflight.markers);
+  const packageManager = markers.has("pnpm-lock.yaml") ? "pnpm" :
+                         markers.has("yarn.lock") ? "yarn" : "npm";
+
+  const rawRecipes = [...new Set([
     ...(APPROVED_RECIPES[classification.primary] ?? []),
     ...classification.categories.flatMap((category) => APPROVED_RECIPES[category] ?? []),
   ])];
+
+  const recipes = rawRecipes.map((recipe) => {
+    if (recipe.startsWith("npm ") && packageManager !== "npm") {
+      return recipe.replace(/^npm /, `${packageManager} `);
+    }
+    return recipe;
+  });
 
   const decisions: AuditCommandDecision[] = recipes.length > 0
     ? recipes.map((command) => ({
@@ -690,6 +710,191 @@ export function runProjectAudit(input: ProjectAuditInput): ProjectAuditResult {
     commandPolicy,
     readiness,
     failures,
+    runtimeVerified: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Runtime command execution
+// ---------------------------------------------------------------------------
+
+const COMMAND_TIMEOUT_MS = 60_000;
+const MAX_OUTPUT_BYTES = 4096;
+
+function truncateOutput(text: string): string {
+  if (text.length <= MAX_OUTPUT_BYTES) return text;
+  return text.slice(0, MAX_OUTPUT_BYTES) + `\n[truncated after ${MAX_OUTPUT_BYTES} chars]`;
+}
+
+function runSingleCommand(command: string, cwd: string, abortSignal?: AbortSignal): Promise<AuditCommandResult> {
+  return new Promise<AuditCommandResult>((resolveResult) => {
+    const start = Date.now();
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let timedOut = false;
+
+    const child = spawn(command, [], {
+      cwd,
+      env: { ...process.env },
+      shell: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, COMMAND_TIMEOUT_MS);
+
+    // Abort support
+    const onAbort = (): void => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    };
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+      resolveResult({
+        exitCode: -1,
+        stdout: truncateOutput(Buffer.concat(stdoutChunks).toString("utf8")),
+        stderr: truncateOutput(Buffer.concat(stderrChunks).toString("utf8")),
+        durationMs: Date.now() - start,
+        error: err.message,
+      });
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+      const stdout = truncateOutput(Buffer.concat(stdoutChunks).toString("utf8"));
+      const stderr = truncateOutput(Buffer.concat(stderrChunks).toString("utf8"));
+      const exitCode = code ?? -1;
+
+      if (timedOut) {
+        resolveResult({
+          exitCode: -1,
+          stdout,
+          stderr,
+          durationMs: Date.now() - start,
+          error: `Command timed out after ${COMMAND_TIMEOUT_MS}ms`,
+        });
+      } else {
+        resolveResult({
+          exitCode,
+          stdout,
+          stderr,
+          durationMs: Date.now() - start,
+        });
+      }
+    });
+  });
+}
+
+async function executeApprovedRecipes(
+  commandPolicy: AuditCommandPolicy,
+  targetPath: string,
+  abortSignal?: AbortSignal,
+): Promise<AuditCommandPolicy> {
+  if (!commandPolicy.shellAllowed || commandPolicy.approvedRecipes.length === 0) {
+    return commandPolicy;
+  }
+
+  const updatedDecisions: AuditCommandDecision[] = [];
+
+  for (const decision of commandPolicy.decisions) {
+    if (decision.status !== "allowed_not_run") {
+      updatedDecisions.push(decision);
+      continue;
+    }
+
+    console.error(`[audit] Running: ${decision.command} in ${targetPath}`);
+    const result = await runSingleCommand(decision.command, targetPath, abortSignal);
+
+    let status: AuditCommandDecision["status"];
+    let reason: string;
+
+    if (result.error && result.error.includes("timed out")) {
+      status = "timed_out";
+      reason = `Timed out after ${COMMAND_TIMEOUT_MS}ms`;
+    } else if (result.exitCode === 0) {
+      status = "passed";
+      reason = `Exited 0 in ${result.durationMs}ms`;
+    } else {
+      status = "failed";
+      reason = `Exit code ${result.exitCode} in ${result.durationMs}ms`;
+    }
+
+    console.error(`[audit]   ${decision.command}: ${status} (${reason})`);
+
+    updatedDecisions.push({
+      command: decision.command,
+      status,
+      reason,
+      result,
+      failure: status === "failed" || status === "timed_out"
+        ? failure(
+            status === "timed_out" ? "timeout" : "command_exit_nonzero",
+            `${decision.command}: ${reason}`,
+            status === "timed_out"
+              ? "Increase timeout or investigate why this command hangs."
+              : "Fix the failing command and rerun the audit.",
+            true,
+            result.stderr ? truncateOutput(result.stderr) : undefined,
+          )
+        : undefined,
+    });
+  }
+
+  return {
+    shellAllowed: commandPolicy.shellAllowed,
+    approvedRecipes: commandPolicy.approvedRecipes,
+    decisions: updatedDecisions,
+  };
+}
+
+export async function runProjectAuditAsync(input: ProjectAuditInput): Promise<ProjectAuditResult> {
+  // Phase 1: read-first audit (unchanged)
+  const readResult = runProjectAudit(input);
+
+  // Phase 2: execute approved recipes if requested
+  if (!input.runCommands || !readResult.commandPolicy.shellAllowed) {
+    return readResult;
+  }
+
+  const targetPath = readResult.preflight.targetPath;
+  const updatedCommandPolicy = await executeApprovedRecipes(
+    readResult.commandPolicy,
+    targetPath,
+    input.abortSignal,
+  );
+
+  // Re-collect failures with updated command policy
+  const updatedFailures = collectFailures(
+    readResult.preflight,
+    readResult.classification,
+    readResult.probes,
+    updatedCommandPolicy,
+  );
+
+  // Re-score readiness with runtime verification
+  const updatedReadiness = scoreReadiness(
+    readResult.preflight,
+    readResult.classification,
+    readResult.probes,
+    updatedFailures,
+    updatedCommandPolicy,
+  );
+
+  return {
+    ...readResult,
+    commandPolicy: updatedCommandPolicy,
+    readiness: updatedReadiness,
+    failures: updatedFailures,
+    runtimeVerified: true,
   };
 }
 
@@ -702,30 +907,44 @@ export function formatProjectAuditResult(result: ProjectAuditResult): string {
   const missing = result.readiness.missingEvidence.slice(0, 8);
   const commands = result.commandPolicy.decisions;
   const failures = result.failures.slice(0, 6);
+  const isVerified = result.runtimeVerified === true;
+
+  const commandLines = commands.map((decision) => {
+    const statusLabel = label(decision.status);
+    let line = `- ${decision.command}: ${statusLabel} - ${decision.reason}`;
+    if (decision.result && decision.status === "failed" && decision.result.stderr) {
+      const stderrPreview = decision.result.stderr.split("\n").slice(0, 3).join("\n    ");
+      line += `\n    stderr: ${stderrPreview}`;
+    }
+    return line;
+  });
 
   return [
     `Readiness: ${label(result.readiness.readiness)}`,
     `Confidence: ${Math.round(result.readiness.confidence * 100)}%`,
     `Project: ${result.preflight.targetPath}`,
     `Classification: ${result.classification.primary} (${result.classification.categories.join(", ")})`,
+    `Runtime verified: ${isVerified ? "yes" : "no"}`,
     "",
     "Observed from files/config:",
     ...(observed.length > 0 ? observed.map((item) => `- ${item}`) : ["- No supporting evidence found."]),
     "",
     "Missing or unverified:",
-    ...(missing.length > 0 ? missing.map((item) => `- ${item}`) : ["- No major missing file/config evidence from the read-only audit."]),
+    ...(missing.length > 0 ? missing.map((item) => `- ${item}`) : ["- No major missing file/config evidence."]),
     "",
-    "Runtime commands:",
-    ...commands.map((decision) => `- ${decision.command}: ${label(decision.status)} - ${decision.reason}`),
+    `Runtime commands${isVerified ? " (executed)" : ""}:`,
+    ...commandLines,
     "",
     "Risk flags:",
-    ...(result.readiness.riskFlags.length > 0 ? result.readiness.riskFlags.map((item) => `- ${label(item)}`) : ["- none from read-only evidence"]),
+    ...(result.readiness.riskFlags.length > 0 ? result.readiness.riskFlags.map((item) => `- ${label(item)}`) : ["- none"]),
     "",
     "Structured failures:",
     ...(failures.length > 0
       ? failures.map((item) => `- ${item.category}: ${item.summary} Next: ${item.suggestedNextAction}`)
       : ["- none"]),
     "",
-    "Note: This audit is read-first. It separates file/config evidence from runtime verification; listed commands were not run in this pass.",
+    ...(isVerified
+      ? ["Note: This audit includes both file/config inspection and runtime command verification."]
+      : ["Note: This audit is read-first. It separates file/config evidence from runtime verification; listed commands were not run in this pass."]),
   ].join("\n");
 }
