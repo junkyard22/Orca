@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Message, OutputFormat, ParseResult, Permission, TaskSpec } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -52,13 +54,47 @@ const ACTION_VERBS = [
   'help', 'show', 'list',
 ];
 
+function cleanPathCandidate(value: string): string {
+  return value.trim().replace(/[\s.,;'"`)\]}]+$/g, "");
+}
+
+function existingPathPrefix(candidate: string): string | undefined {
+  const cleaned = cleanPathCandidate(candidate);
+  const boundaries = new Set<number>([cleaned.length]);
+
+  for (let index = 0; index < cleaned.length; index += 1) {
+    const character = cleaned[index];
+    if (character && /\s/.test(character)) boundaries.add(index);
+  }
+
+  for (const boundary of [...boundaries].sort((a, b) => b - a)) {
+    const prefix = cleanPathCandidate(cleaned.slice(0, boundary));
+    if (!prefix) continue;
+    if (existsSync(resolve(prefix))) return prefix;
+  }
+
+  return undefined;
+}
+
+function firstPathToken(candidate: string): string | undefined {
+  return cleanPathCandidate(candidate).match(/^\S+/)?.[0];
+}
+
+function extractUnquotedPathCandidate(rawCandidate: string): string | undefined {
+  const cleaned = cleanPathCandidate(rawCandidate);
+  return existingPathPrefix(cleaned) ?? firstPathToken(cleaned);
+}
+
 function extractLocalPath(message: string): string | undefined {
   for (const line of message.split(/\r?\n/)) {
+    const quotedMatch = line.match(/["'`]((?:[A-Za-z]:[\\/]|\/)[^"'`\r\n]+)["'`]/);
+    if (quotedMatch?.[1]) return cleanPathCandidate(quotedMatch[1]);
+
     const windowsMatch = line.match(/\b[A-Za-z]:[\\/][^\r\n]+/);
-    if (windowsMatch?.[0]) return windowsMatch[0].trim().replace(/[.,"'`]+$/, "");
+    if (windowsMatch?.[0]) return extractUnquotedPathCandidate(windowsMatch[0]);
 
     const posixMatch = line.match(/(?:^|\s)(\/[^\r\n]+)/);
-    if (posixMatch?.[1]) return posixMatch[1].trim().replace(/[.,"'`]+$/, "");
+    if (posixMatch?.[1]) return extractUnquotedPathCandidate(posixMatch[1]);
   }
   return undefined;
 }

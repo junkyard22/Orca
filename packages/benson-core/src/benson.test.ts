@@ -432,6 +432,14 @@ describe("parseIntent", () => {
     }
   });
 
+  it("extracts Windows audit paths without trailing prose", () => {
+    const result = parseIntent("Use the workspace at C:\\Orca and verify the app can use its core tools without changing files.");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.context?.auditPath).toBe("C:\\Orca");
+    }
+  });
+
   it("keeps read-only permissions when only mentioning a test script", () => {
     const result = parseIntent(
       "Read package.json and say whether a top-level test script exists",
