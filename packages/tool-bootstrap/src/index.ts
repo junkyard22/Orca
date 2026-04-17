@@ -28,6 +28,7 @@ import { docsExtension } from "@clawde/ext-docs";
 import { webExtension } from "@clawde/ext-web";
 import { loadMcpExtensions } from "@clawde/mcp-client";
 import type { McpServerConfig } from "@clawde/mcp-client";
+export type { LoadMcpResult } from "@clawde/mcp-client";
 
 export type { McpServerConfig } from "@clawde/mcp-client";
 
@@ -103,6 +104,12 @@ export interface ToolBootstrap {
   mcpToolNames: string[];
 
   /**
+   * Extensions or MCP servers that failed to load during bootstrap.
+   * Callers should surface these as user-visible warnings.
+   */
+  failedExtensions: string[];
+
+  /**
    * Close all MCP server connections. Call once on app shutdown.
    * Safe to call even when no MCP servers were loaded.
    */
@@ -130,6 +137,7 @@ export async function buildToolBootstrap(
   // ── Step 2: static extension tools ───────────────────────────────────────
   // Load individually so one broken ext never stops the rest.
   const staticExtensions: OrcaExtension[] = [];
+  const failedExtensions: string[] = [];
   for (const ext of [githubExtension, docsExtension, webExtension]) {
     try {
       await ext.onLoad?.();
@@ -137,14 +145,19 @@ export async function buildToolBootstrap(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`[tools] ⚠ Failed to load static extension "${ext.id}": ${msg} — skipped`);
+      failedExtensions.push(`Extension "${ext.id}" failed to load: ${msg}`);
     }
   }
 
   // ── Step 3: MCP tools ─────────────────────────────────────────────────────
-  const mcpExtensions =
+  const mcpResult =
     cfg.mcpServers && cfg.mcpServers.length > 0
       ? await loadMcpExtensions(cfg.mcpServers, log)
-      : [];
+      : { extensions: [], failures: [] };
+  const mcpExtensions = mcpResult.extensions;
+  for (const f of mcpResult.failures) {
+    failedExtensions.push(`MCP server "${f.name}" (${f.id}) failed to connect`);
+  }
 
   // ── Step 4: load all extensions into a registry (calls onLoad() on each) ─
   // Static exts already had onLoad() called above; pass them directly to avoid
@@ -209,5 +222,5 @@ export async function buildToolBootstrap(
     }
   };
 
-  return { toolService, allTools, allToolNames, mcpToolNames, dispose };
+  return { toolService, allTools, allToolNames, mcpToolNames, failedExtensions, dispose };
 }

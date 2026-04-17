@@ -1200,6 +1200,9 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     });
     mcpDispose = bootstrap.dispose;
     _bootstrapTools = { all: bootstrap.allToolNames, mcp: bootstrap.mcpToolNames };
+    for (const warning of bootstrap.failedExtensions) {
+      _initWarnings.push(warning);
+    }
 
     // Map BootstrappedTool[] → AgentTool[], threading abort + approval through
     const availableTools: AgentTool[] = bootstrap.allTools.map((tool: BootstrappedTool) => ({

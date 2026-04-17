@@ -403,21 +403,28 @@ export async function connectMcpServer(
   };
 }
 
+export interface LoadMcpResult {
+  extensions: OrcaExtension[];
+  /** IDs of servers that failed to connect or had tool discovery errors. */
+  failures: Array<{ id: string; name: string }>;
+}
+
 /**
  * Load all enabled MCP server configurations, connect to each, and return
- * the successfully connected servers as OrcaExtension instances.
+ * the successfully connected servers as OrcaExtension instances alongside
+ * a list of servers that failed so callers can surface warnings to the user.
  *
- * Servers that fail to connect are warned and skipped — the returned array
- * may be shorter than the input.
+ * Servers that fail to connect are warned and skipped — the returned
+ * extensions array may be shorter than the input.
  */
 export async function loadMcpExtensions(
   configs: McpServerConfig[],
   log: (msg: string) => void = console.log,
-): Promise<OrcaExtension[]> {
+): Promise<LoadMcpResult> {
   const enabled = configs.filter((c) => c.enabled !== false);
 
   if (enabled.length === 0) {
-    return [];
+    return { extensions: [], failures: [] };
   }
 
   log(`[MCP] Connecting to ${enabled.length} server(s)…`);
@@ -427,6 +434,7 @@ export async function loadMcpExtensions(
   );
 
   const extensions: OrcaExtension[] = [];
+  const failures: Array<{ id: string; name: string }> = [];
   for (let i = 0; i < results.length; i++) {
     const result = results[i]!;
     const cfg = enabled[i]!;
@@ -434,11 +442,14 @@ export async function loadMcpExtensions(
       // connectMcpServer should never reject (it catches internally), but guard anyway
       const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
       log(`[MCP] ✗ Unexpected error loading "${cfg.id}": ${msg}`);
+      failures.push({ id: cfg.id, name: cfg.name });
     } else if (result.value !== null) {
       extensions.push(result.value);
+    } else {
+      failures.push({ id: cfg.id, name: cfg.name });
     }
   }
 
   log(`[MCP] Ready: ${extensions.length}/${enabled.length} server(s) connected`);
-  return extensions;
+  return { extensions, failures };
 }

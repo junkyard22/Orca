@@ -231,35 +231,6 @@ function handleInitStatus(s) {
 }
 
 orca.onInitStatus(handleInitStatus);
-if (false) orca.onInitStatus((s) => {
-  applyInitStatus(s);
-  return;
-  if (s.ok) {
-    setInputEnabled(true);
-    setStatus("ready", false);
-    // Clear any init-error sys-msgs and restore welcome if no real conversation yet
-    const sysMsgs = Array.from(messages.querySelectorAll(".sys-msg"));
-    const hasRealMsgs = Array.from(messages.children).some(el => !el.classList.contains("sys-msg"));
-    if (!hasRealMsgs && sysMsgs.length) {
-      sysMsgs.forEach(el => el.remove());
-    }
-    if (!messages.hasChildNodes()) {
-      welcome.style.display  = "";
-      messages.style.display = "none";
-    }
-  } else {
-    setInputEnabled(false);
-    setStatus("no API key", false);
-    // Update existing warn or append new one (avoid stacking duplicates)
-    const existing = messages.querySelector(".sys-msg.warn");
-    const msg = s.error ?? "Initialization failed. Click ⚙ Settings to configure.";
-    if (existing) {
-      existing.textContent = msg;
-    } else {
-      appendSys(msg, "warn");
-    }
-  }
-});
 
 orca.onAuthStatus(applyAuthStatus);
 orca.getAuthStatus().then(applyAuthStatus).catch(() => {
