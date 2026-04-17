@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { formatProjectAuditResult, runProjectAudit } from "./pipeline.js";
+import { extractAuditTargetPath, formatProjectAuditResult, runProjectAudit } from "./pipeline.js";
 import type { OrcaTaskSpec } from "../types.js";
 
 function tempRoot(): string {
@@ -20,11 +20,47 @@ function task(path: string): OrcaTaskSpec {
   };
 }
 
+function messageTask(message: string): OrcaTaskSpec {
+  return {
+    originalUserMessage: message,
+    intent: "check this app",
+    goals: ["Assess production readiness"],
+    mode: "project_audit",
+    permissions: { fileRead: true, fileWrite: false, shellExec: false },
+  };
+}
+
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2));
 }
 
 describe("project audit pipeline", () => {
+  it("extracts unquoted Windows paths without trailing prose", () => {
+    const targetPath = extractAuditTargetPath(messageTask("Use the workspace at C:\\Orca and verify the app can use its core tools."));
+
+    expect(targetPath).toBe("C:\\Orca");
+  });
+
+  it("audits an existing path embedded in a sentence", () => {
+    const root = tempRoot();
+    writeJson(join(root, "package.json"), {
+      name: "embedded-path-demo",
+      scripts: { build: "tsc", test: "vitest" },
+    });
+
+    try {
+      const result = runProjectAudit({
+        taskSpec: messageTask(`Use the workspace at ${root} and verify the app can use its core tools.`),
+      });
+
+      expect(result.preflight.targetPath).toBe(root);
+      expect(result.preflight.exists).toBe(true);
+      expect(result.failures.some((failure) => failure.category === "missing_path")).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports missing local paths with structured failure typing", () => {
     const missing = join(tmpdir(), `orca-missing-${Date.now()}`);
     const result = runProjectAudit({ taskSpec: task(missing) });
