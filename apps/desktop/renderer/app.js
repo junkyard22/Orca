@@ -1875,6 +1875,18 @@ async function loadSession(id) {
   } else if (session.status === "FAIL") {
     appendSys("This run failed — no output was recorded.", "warn");
   }
+  if (session.verdict) {
+    appendPipelineBadge({
+      role: session.role ?? "unknown",
+      verdict: session.verdict,
+      confidence: session.confidence ?? 1,
+      issueCount: session.issueCount ?? 0,
+      issues: [],
+      acceptanceCriteria: [],
+      repairPasses: session.repairPasses ?? 0,
+      errorMessage: session.errorMessage,
+    });
+  }
   scrollToBottom();
 }
 
