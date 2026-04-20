@@ -1111,7 +1111,7 @@ function buildFallbackPoolConfig(s: OrcaSettings): {
 let _initOrcaChain: Promise<string | null> = Promise.resolve(null);
 
 function initOrca(s: OrcaSettings): Promise<string | null> {
-  _initOrcaChain = _initOrcaChain.then(() => _initOrcaImpl(s));
+  _initOrcaChain = _initOrcaChain.catch(() => null).then(() => _initOrcaImpl(s));
   return _initOrcaChain;
 }
 
@@ -1402,9 +1402,14 @@ function createWindow(): void {
   win.once("ready-to-show", async () => {
     win!.show();
     win!.focus();
-    const settings = await loadSettings();
-    const err = await initOrca(settings);
-    win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+    try {
+      const settings = await loadSettings();
+      const err = await initOrca(settings);
+      win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      win?.webContents.send("init-status", { ok: false, error: `Startup error: ${msg}`, tools: _bootstrapTools, warnings: _initWarnings });
+    }
     emitAuthStatus();
   });
 
@@ -1502,7 +1507,10 @@ export function requestToolApproval(
 
 ipcMain.handle("auth:status", () => appAuthStatus);
 
-ipcMain.handle("auth:unlock", (_ev, password: string) => unlockApp(String(password ?? "")));
+ipcMain.handle("auth:unlock", (_ev, password: string) => {
+  const pw = String(password ?? "").slice(0, 1024);
+  return unlockApp(pw);
+});
 
 ipcMain.handle("auth:lock", () => lockApp());
 
@@ -1672,9 +1680,11 @@ ipcMain.handle(
     if (isAppLocked()) return { ok: false, error: lockedError() };
     if (!benson) return { ok: false, error: "Orca is not initialized." };
     if (!Array.isArray(turns)) return { ok: false, error: "turns must be an array." };
+    const MAX_TURN_LEN = 32_768;
     const safe = turns
       .filter((t) => typeof t?.user === "string" && typeof t?.assistant === "string")
-      .map((t) => ({ user: t.user, assistant: t.assistant }));
+      .slice(0, 500)
+      .map((t) => ({ user: t.user.slice(0, MAX_TURN_LEN), assistant: t.assistant.slice(0, MAX_TURN_LEN) }));
     benson.setHistory(safe);
     return { ok: true, count: safe.length };
   },
@@ -1709,7 +1719,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!benson || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
-  const normalizedText = String(text ?? "").replace(/\r\n?/g, "\n").trim();
+  const normalizedText = String(text ?? "").slice(0, 200_000).replace(/\r\n?/g, "\n").trim();
   if (!normalizedText) {
     return { ok: false, error: "Message is empty." };
   }

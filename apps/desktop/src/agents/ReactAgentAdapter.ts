@@ -542,9 +542,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             });
           }
         } else {
-          // Defensive logging: log when thought extraction fails so we can see it in the tracer
           console.log(`[ReactAgent] No Thought block found in iteration ${iterationCount} — model may have skipped format`);
-          console.log(`[ReactAgent] Raw output[0..200]: "${modelOutput.slice(0, 200).replace(/\n/g, "\\n")}..."`);
         }
         
         // Parse tool calls

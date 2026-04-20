@@ -119,21 +119,6 @@ export class OpenAICompatAdapter implements LLMAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown error");
-      if (response.status >= 400 && response.status < 500) {
-        console.error(`[4xx DEBUG] URL: ${this.url}`);
-        console.error(`[4xx DEBUG] Status: ${response.status}`);
-        console.error(`[4xx DEBUG] Request headers:`);
-        for (const [name, value] of Object.entries(headers)) {
-          const lname = name.toLowerCase();
-          if (lname === "authorization") {
-            // Only log header name + first 8 chars of value to avoid leaking full key
-            console.error(`[4xx DEBUG]   ${name}: ${value.slice(0, 15)}... (truncated — showing first 8 key chars: ${value.replace(/^Bearer\s+/i, "").slice(0, 8)}...)`);
-          } else {
-            console.error(`[4xx DEBUG]   ${name}: ${value}`);
-          }
-        }
-        console.error(`[4xx DEBUG] Response body: ${errorText}`);
-      }
       throw new Error(`API error ${response.status}: ${errorText}`);
     }
 
@@ -214,20 +199,6 @@ export class OpenAICompatAdapter implements LLMAdapter {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown error");
-      if (response.status >= 400 && response.status < 500) {
-        console.error(`[4xx DEBUG] URL: ${this.url}`);
-        console.error(`[4xx DEBUG] Status: ${response.status}`);
-        console.error(`[4xx DEBUG] Request headers:`);
-        for (const [name, value] of Object.entries(headers)) {
-          const lname = name.toLowerCase();
-          if (lname === "authorization") {
-            console.error(`[4xx DEBUG]   ${name}: ${value.slice(0, 15)}... (truncated — showing first 8 key chars: ${value.replace(/^Bearer\s+/i, "").slice(0, 8)}...)`);
-          } else {
-            console.error(`[4xx DEBUG]   ${name}: ${value}`);
-          }
-        }
-        console.error(`[4xx DEBUG] Response body: ${errorText}`);
-      }
       throw new Error(`API error ${response.status}: ${errorText}`);
     }
     if (!response.body) throw new Error("Response body is null");

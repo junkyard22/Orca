@@ -1,6 +1,6 @@
 {
   "name": "@clawde/desktop",
-  "version": "1.2.13",
+  "version": "1.2.14",
   "description": "Orca — AI coding assistant desktop app",
   "author": "Clawde",
   "private": true,
@@ -40,8 +40,8 @@
     "copyright": "Copyright © 2026",
     "asar": true,
     "electronFuses": {
-      "onlyLoadAppFromAsar": false,
-      "enableEmbeddedAsarIntegrityValidation": false
+      "onlyLoadAppFromAsar": true,
+      "enableEmbeddedAsarIntegrityValidation": true
     },
     "directories": {
       "output": "release"
