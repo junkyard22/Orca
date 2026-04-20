@@ -91,6 +91,32 @@ function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec): string | undefine
   return undefined;
 }
 
+function projectAuditVerdict(result: ProjectAuditResult): "PASS" | "WARN" | "FAIL" {
+  switch (result.readiness.readiness) {
+    case "ready":
+      return "PASS";
+    case "mostly_ready":
+      return "WARN";
+    default:
+      return "FAIL";
+  }
+}
+
+function projectAuditIssues(result: ProjectAuditResult): Array<{ severity: string; code: string; description: string }> {
+  return [
+    ...result.readiness.riskFlags.map((flag) => ({
+      severity: "MEDIUM",
+      code: String(flag).toUpperCase(),
+      description: String(flag).replace(/_/g, " "),
+    })),
+    ...result.readiness.missingEvidence.map((missing) => ({
+      severity: "LOW",
+      code: "MISSING_EVIDENCE",
+      description: missing,
+    })),
+  ];
+}
+
 function buildAuditToolEvents(auditResult: ProjectAuditResult): OrcaToolEvent[] {
   return [
     {
@@ -354,6 +380,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     let result: OrcaExecutionResult = { status: "FAIL", summary: "Unknown error" };
     let persistedMaestroResult: OrcaMaestroResult | undefined;
     let persistedQcResult: PappyResult | undefined;
+    let persistedAuditResult: ProjectAuditResult | undefined;
     let abortError: Error | undefined;
     let gateBlockReason: string | undefined;
     let unknownTools: string[] = [];
@@ -361,6 +388,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     try {
       throwIfAborted(options?.abortSignal);
       if (isProjectAuditTask(normalizedTaskSpec)) {
+        emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
         recordTrace("audit.mode.activated", {
           mode: "project_audit",
           reason: normalizedTaskSpec.mode === "project_audit" ? "task_mode" : "audit_request_detected",
@@ -369,6 +397,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           taskSpec: normalizedTaskSpec,
           workspaceRoot: effectiveWorkspaceRoot,
         });
+        persistedAuditResult = auditResult;
         recordTrace("audit.preflight", auditResult.preflight);
         recordTrace("audit.classification", auditResult.classification);
         recordTrace("audit.probes", auditResult.probes.map((probe) => ({
@@ -397,12 +426,27 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           ],
         });
         persistedMaestroResult = auditMaestroResult;
+        emitter.emit({
+          type: "maestro:done",
+          taskId,
+          attempt: 0,
+          isRepair: false,
+          hasOutput: !!auditMaestroResult.outputText,
+        });
 
         if (qcEnabled) {
           const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult);
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
           const qcResult = pappy.evaluate(qcInput);
           persistedQcResult = qcResult;
+          emitter.emit({
+            type: "qc:result",
+            taskId,
+            attempt: 0,
+            isRepair: false,
+            verdict: qcResult.verdict,
+            issueCount: qcResult.issues.length,
+          });
           recordTrace("qc.run.result", {
             attempt: 0,
             isRepair: false,
@@ -747,18 +791,19 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     emitter.emit({ type: "task:done", taskId, status: result.status });
 
     if (persistedQcResult) {
+      const auditIssues = persistedAuditResult ? projectAuditIssues(persistedAuditResult) : undefined;
       emitter.emit({
         type: "pipeline:summary",
         taskId,
         role: persistedMaestroResult?.metadata?.role ?? "unknown",
-        verdict: persistedQcResult.verdict,
-        confidence: persistedQcResult.confidence,
-        issueCount: persistedQcResult.issues.length,
-        issues: persistedQcResult.issues.map((issue) => ({
+        verdict: persistedAuditResult ? projectAuditVerdict(persistedAuditResult) : persistedQcResult.verdict,
+        confidence: persistedAuditResult ? persistedAuditResult.readiness.confidence : persistedQcResult.confidence,
+        issueCount: auditIssues ? auditIssues.length : persistedQcResult.issues.length,
+        issues: (auditIssues ?? persistedQcResult.issues.map((issue) => ({
           severity: issue.severity,
           code: issue.code,
           description: issue.description,
-        })),
+        }))),
         acceptanceCriteria: persistedQcResult.acceptance_criteria.map((criterion) => {
           const ledger = persistedQcResult.receipt_ledger.find((receipt) => receipt.ref === criterion.id);
           return {
@@ -771,8 +816,30 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         durationMs,
         repairPasses,
         errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
+        traceStages: trace.entries.map((entry) => entry.stage),
         deweyBrief: bufferedDeweyBrief,
         mirandaCheckpoints: bufferedMirandaCheckpoints.length > 0 ? bufferedMirandaCheckpoints : undefined,
+        auditDetail: persistedAuditResult ? {
+          classification: {
+            primary: persistedAuditResult.classification.primary,
+            categories: persistedAuditResult.classification.categories,
+            confidence: persistedAuditResult.classification.confidence,
+          },
+          probes: persistedAuditResult.probes.map((p) => ({
+            name: p.name,
+            status: p.status,
+            evidenceCount: p.evidence.length,
+            missingCount: p.missing.length,
+          })),
+          supportingEvidence: persistedAuditResult.readiness.supportingEvidence,
+          missingEvidence: persistedAuditResult.readiness.missingEvidence,
+          riskFlags: persistedAuditResult.readiness.riskFlags,
+          commandDecisions: persistedAuditResult.commandPolicy.decisions.map((d) => ({
+            command: d.command,
+            status: d.status,
+            reason: d.reason,
+          })),
+        } : undefined,
       });
     }
 

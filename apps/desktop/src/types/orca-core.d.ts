@@ -199,7 +199,31 @@ declare module '@clawde/orca-core' {
     | { type: "subagent:failed"; taskId: string; subagentId: string; role: string; error: string }
     | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
     | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
-    | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } };
+    | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }
+    | {
+        type: 'pipeline:summary';
+        taskId: string;
+        role: string;
+        verdict: 'PASS' | 'WARN' | 'FAIL';
+        confidence: number;
+        issueCount: number;
+        issues: Array<{ severity: string; code: string; description: string }>;
+        acceptanceCriteria: Array<{ id: string; text: string; required: boolean; met: boolean }>;
+        durationMs: number;
+        repairPasses: number;
+        errorMessage?: string;
+        traceStages?: string[];
+        deweyBrief?: { userName: string; suggestedTone: string; relevantPreferences: string[]; relevantContext: string[] };
+        mirandaCheckpoints?: Array<{ gate: string; allowed: boolean; reason: string }>;
+        auditDetail?: {
+          classification: { primary: string; categories: string[]; confidence: number };
+          probes: Array<{ name: string; status: string; evidenceCount: number; missingCount: number }>;
+          supportingEvidence: string[];
+          missingEvidence: string[];
+          riskFlags: string[];
+          commandDecisions: Array<{ command: string; status: string; reason: string }>;
+        };
+      };
 
   export interface OrcaStore {
     close(): void;

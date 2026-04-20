@@ -419,7 +419,7 @@ export type OrcaEvent =
       /** Role that generated the final answer (after any repair passes). */
       role: string;
       verdict: "PASS" | "WARN" | "FAIL";
-      /** 0–1 confidence score from Pappy. */
+      /** 0-1 confidence score from QC, or audit readiness in project-audit mode. */
       confidence: number;
       issueCount: number;
       issues: Array<{ severity: string; code: string; description: string }>;
@@ -428,6 +428,17 @@ export type OrcaEvent =
       repairPasses: number;
       /** Exception message from the agent worker, present when stoppedBecause === 'error'. */
       errorMessage?: string;
+      /** Runtime trace stages captured during the run; useful when UI event logs arrive late or are unavailable. */
+      traceStages?: string[];
       deweyBrief?: { userName: string; suggestedTone: string; relevantPreferences: string[]; relevantContext: string[] };
       mirandaCheckpoints?: Array<{ gate: string; allowed: boolean; reason: string }>;
+      /** Structured detail from a project_audit run — probes, evidence, risk flags, command decisions. */
+      auditDetail?: {
+        classification: { primary: string; categories: string[]; confidence: number };
+        probes: Array<{ name: string; status: string; evidenceCount: number; missingCount: number }>;
+        supportingEvidence: string[];
+        missingEvidence: string[];
+        riskFlags: string[];
+        commandDecisions: Array<{ command: string; status: string; reason: string }>;
+      };
     };

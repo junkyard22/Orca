@@ -314,6 +314,13 @@ describe("createOrcaRuntime", () => {
           llm: createMockLLM(),
           writeTrace,
         });
+        const recorder = createEventRecorder();
+        runtime.on("task:start", recorder.record);
+        runtime.on("maestro:start", recorder.record);
+        runtime.on("maestro:done", recorder.record);
+        runtime.on("qc:result", recorder.record);
+        runtime.on("task:done", recorder.record);
+        runtime.on("pipeline:summary", recorder.record);
 
         const result = await runtime.executeTask(createTaskSpec({
           originalUserMessage: `Check this app for production readiness\n${explicitRoot}`,
@@ -331,6 +338,22 @@ describe("createOrcaRuntime", () => {
         expect(qcInput!.toolEvents?.some((event) => event.tool === "audit_preflight")).toBe(true);
         expect(qcInput!.toolEvents?.some((event) => event.tool === "audit_classification")).toBe(true);
         expect(qcInput!.toolEvents?.some((event) => event.tool === "audit_command_policy")).toBe(true);
+        expect(recorder.getTypes()).toEqual([
+          "task:start",
+          "maestro:start",
+          "maestro:done",
+          "qc:result",
+          "task:done",
+          "pipeline:summary",
+        ]);
+        const summary = recorder.findByType("pipeline:summary")[0];
+        expect(summary).toEqual(expect.objectContaining({
+          verdict: "FAIL",
+          role: "project_audit",
+          traceStages: expect.arrayContaining(["audit.mode.activated", "qc.run.result", "task.completed"]),
+        }));
+        expect(summary.issueCount).toBeGreaterThan(0);
+        expect(summary.confidence).toBeLessThan(1);
         const trace = writeTrace.mock.calls[0]?.[0] as any;
         expect(trace.entries.map((entry: any) => entry.stage)).toEqual(expect.arrayContaining([
           "audit.mode.activated",

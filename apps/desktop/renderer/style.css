@@ -1642,6 +1642,9 @@ body.light .auth-card {
 body.hide-pipeline .pipeline-badge { display: none; }
 
 .pipeline-badge {
+  align-self: flex-start;
+  width: min(540px, 100%);
+  min-height: 34px;
   margin: 2px 0 10px;
   border: 1px solid var(--border-faint);
   border-radius: 8px;
@@ -1650,14 +1653,16 @@ body.hide-pipeline .pipeline-badge { display: none; }
   color: var(--text-muted);
   background: var(--surface);
   user-select: none;
-  max-width: 540px;
 }
 
 .pipeline-badge-header {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 32px;
   padding: 6px 10px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .pb-role {
@@ -1711,6 +1716,7 @@ body.hide-pipeline .pipeline-badge { display: none; }
   border-radius: 3px;
   flex-shrink: 0;
   transition: color 0.15s, background 0.15s;
+  -webkit-app-region: no-drag;
 }
 .pb-details-btn:hover {
   color: var(--text);
@@ -1726,19 +1732,17 @@ body.hide-pipeline .pipeline-badge { display: none; }
 .pipeline-badge.expanded .pb-chevron { transform: rotate(90deg); }
 
 .pipeline-badge-detail {
-  display: flex;
+  box-sizing: border-box;
+  display: none;
   flex-direction: column;
   gap: 10px;
-  padding: 0 12px;
-  overflow: hidden;
-  max-height: 0;
-  transition: max-height 0.22s ease, padding 0.22s ease;
-}
-.pipeline-badge.expanded .pipeline-badge-detail {
-  max-height: min(800px, 72vh);
+  max-height: min(560px, 72vh);
   overflow-y: auto;
   padding: 10px 12px;
   border-top: 1px solid var(--border-faint);
+}
+.pipeline-badge.expanded .pipeline-badge-detail {
+  display: flex;
 }
 
 .pb-section-title {
@@ -1749,6 +1753,22 @@ body.hide-pipeline .pipeline-badge { display: none; }
   color: var(--text-dim);
   font-family: var(--font-mono);
   margin-bottom: 4px;
+}
+
+.pb-outcome-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 10px;
+  font-size: 11px;
+}
+.pb-outcome-label {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.pb-outcome-value {
+  color: var(--text-muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .pb-criteria-list { display: flex; flex-direction: column; gap: 3px; }
@@ -1921,3 +1941,8 @@ body.light .pb-severity.LOW    { background: rgba(107, 107, 144, 0.08); }
 .pb-log-label { color: var(--text-muted); }
 .pb-log-row.log-warn .pb-log-label { color: var(--warn-text); }
 .pb-log-row.log-fail .pb-log-label { color: var(--danger); }
+.pb-empty-detail {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}

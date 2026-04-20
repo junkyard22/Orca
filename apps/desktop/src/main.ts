@@ -655,6 +655,13 @@ function buildMaestroAdapter(
         : undefined,
     };
 
+    ctx.emit?.({
+      type: "maestro:agent_start",
+      taskId: ctx.runId,
+      role,
+      doneCriteria: agentTask.doneCriteria,
+    });
+
     let result: AgentResult;
     try {
       result = await agent.run(agentTask, taskTools, agentCtx);
@@ -680,6 +687,14 @@ function buildMaestroAdapter(
         poolManager.recordFailure(role, selectedModelId, result.error);
       }
     }
+
+    ctx.emit?.({
+      type: "maestro:agent_done",
+      taskId: ctx.runId,
+      role,
+      stoppedBecause: result.stoppedBecause,
+      iterations: result.iterationCount,
+    });
 
     const filesChanged = deriveFilesChangedFromToolEvents(result.toolsUsed, result.filesChanged);
     ctx.recordTrace?.("maestro.agent_result", {
@@ -1714,6 +1729,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
 
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
+    "maestro:agent_start", "maestro:agent_done",
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
     "pipeline:summary",
     "dewey:brief", "miranda:checkpoint",

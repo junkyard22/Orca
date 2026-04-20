@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { runCompletenessChecks } from "./completeness.js";
+import { runCompletenessChecks, runSatisfactionChecks } from "./completeness.js";
 import type { PappyInput } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -118,6 +118,26 @@ describe("runCompletenessChecks - routing criteria mismatch", () => {
     const mismatch = issues.find((i) => i.code === "ROUTING_CRITERIA_MISMATCH");
     expect(mismatch).toBeDefined();
     expect(mismatch!.severity).toBe("HIGH");
+  });
+});
+
+describe("runCompletenessChecks — script references", () => {
+  it("does not require code when an audit asks to inspect package scripts", () => {
+    const issues = runSatisfactionChecks({
+      task: "Read the desktop package scripts and identify the exact command used to build the EXE.",
+      outputText: "The desktop package defines dev, build, dist, and test scripts. The EXE is built by npm run dist --workspace @clawde/desktop.",
+    });
+
+    expect(issues.find((i) => i.code === "SATISFACTION_CODE_MISSING")).toBeUndefined();
+  });
+
+  it("still requires code when the task asks to write a script", () => {
+    const issues = runSatisfactionChecks({
+      task: "Write a script that prints hello.",
+      outputText: "This should print hello.",
+    });
+
+    expect(issues.find((i) => i.code === "SATISFACTION_CODE_MISSING")).toBeDefined();
   });
 });
 

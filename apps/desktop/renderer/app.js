@@ -97,6 +97,7 @@ let pipelineEventLog = [];
 // Whether the pipeline summary badge has already been rendered for the current task.
 // Set by onStreamEnd when the summary is available; prevents double-render in sendMessage.
 let pipelineBadgeRendered = false;
+let finalReplyRendered = false;
 // Tool call cards keyed by pending approval id.
 const toolCallCards = new Map();
 
@@ -258,11 +259,14 @@ orca.onOrcaEvent((e) => {
   // The event arrives before sendMessage resolves, so we buffer it here.
   if (e.type === "pipeline:summary") {
     pendingPipelineSummary = e;
+    if (!pipelineBadgeRendered && (!busy || finalReplyRendered)) {
+      renderPipelineSummaryBadge(pendingPipelineSummary);
+    }
     return;
   }
 
   // Collect key events for the pipeline log section of the badge.
-  const LOG_TYPES = new Set(['task:start','maestro:start','maestro:done','qc:result','repair:start','task:done','dewey:brief','miranda:checkpoint','subagent:spawned','subagent:done','subagent:failed']);
+  const LOG_TYPES = new Set(['task:start','maestro:start','maestro:done','maestro:agent_start','maestro:agent_done','qc:result','repair:start','task:done','dewey:brief','miranda:checkpoint','subagent:spawned','subagent:done','subagent:failed']);
   if (LOG_TYPES.has(e.type)) {
     pipelineEventLog.push({ ...e, _ts: Date.now() });
   }
@@ -376,22 +380,49 @@ function scrollToBottom() {
 
 function buildPipelineSummaryFromEvents(result) {
   const qcEvent = [...pipelineEventLog].reverse().find((e) => e.type === "qc:result");
-  if (!qcEvent) return null;
+  
+  if (qcEvent) {
+    const startEvent = pipelineEventLog.find((e) => e.type === "task:start" && e.taskId === qcEvent.taskId);
+    const doneEvent = [...pipelineEventLog].reverse().find((e) => e.type === "task:done" && e.taskId === qcEvent.taskId);
+    const durationMs = startEvent?._ts && doneEvent?._ts
+      ? Math.max(0, doneEvent._ts - startEvent._ts)
+      : 0;
+    const repairPasses = pipelineEventLog.filter((e) => e.type === "repair:start" && e.taskId === qcEvent.taskId).length;
 
-  const startEvent = pipelineEventLog.find((e) => e.type === "task:start" && e.taskId === qcEvent.taskId);
-  const doneEvent = [...pipelineEventLog].reverse().find((e) => e.type === "task:done" && e.taskId === qcEvent.taskId);
+    return {
+      type: "pipeline:summary",
+      taskId: qcEvent.taskId,
+      role: currentRole?.role ?? "unknown",
+      verdict: qcEvent.verdict,
+      confidence: qcEvent.verdict === "PASS" ? 1 : qcEvent.verdict === "WARN" ? 0.8 : 0.5,
+      issueCount: qcEvent.issueCount ?? 0,
+      issues: [],
+      acceptanceCriteria: [],
+      durationMs,
+      repairPasses,
+      errorMessage: result?.ok === false ? result.error : undefined,
+    };
+  }
+
+  // Fallback: if no QC event was emitted, but we have other events, build a basic summary.
+  const lastEvent = pipelineEventLog[pipelineEventLog.length - 1];
+  if (!lastEvent) return null;
+
+  const taskId = lastEvent.taskId;
+  const startEvent = pipelineEventLog.find((e) => e.type === "task:start" && e.taskId === taskId);
+  const doneEvent = [...pipelineEventLog].reverse().find((e) => e.type === "task:done" && e.taskId === taskId);
   const durationMs = startEvent?._ts && doneEvent?._ts
     ? Math.max(0, doneEvent._ts - startEvent._ts)
     : 0;
-  const repairPasses = pipelineEventLog.filter((e) => e.type === "repair:start" && e.taskId === qcEvent.taskId).length;
+  const repairPasses = pipelineEventLog.filter((e) => e.type === "repair:start" && e.taskId === taskId).length;
 
   return {
     type: "pipeline:summary",
-    taskId: qcEvent.taskId,
+    taskId: taskId,
     role: currentRole?.role ?? "unknown",
-    verdict: qcEvent.verdict,
-    confidence: qcEvent.verdict === "PASS" ? 1 : qcEvent.verdict === "WARN" ? 0.8 : 0.5,
-    issueCount: qcEvent.issueCount ?? 0,
+    verdict: result?.ok ? "PASS" : "FAIL",
+    confidence: result?.ok ? 1 : 0.5,
+    issueCount: 0,
     issues: [],
     acceptanceCriteria: [],
     durationMs,
@@ -401,6 +432,15 @@ function buildPipelineSummaryFromEvents(result) {
 }
 
 // ── Safe markdown renderer ────────────────────────────────────────────────
+
+function renderPipelineSummaryBadge(summary) {
+  if (!summary || pipelineBadgeRendered) return false;
+  summary._eventLog = pipelineEventLog.slice();
+  appendPipelineBadge(summary);
+  pendingPipelineSummary = null;
+  pipelineBadgeRendered = true;
+  return true;
+}
 
 function escapeHtml(str) {
   return String(str ?? "")
@@ -649,6 +689,27 @@ function appendPipelineBadge(summary) {
     ? `<div class="pb-error-row"><span class="pb-error-label">Error</span><span class="pb-error-text">${escapeHtml(summary.errorMessage)}</span></div>`
     : "";
 
+  // ── Outcome summary ─────────────────────────────────────────────────────
+  const outcomeRows = [
+    ["Role", summary.role ?? "unknown"],
+    ["Verdict", summary.verdict ?? "unknown"],
+    ["Confidence", `${confidencePct}%`],
+    ["Issues", String(summary.issueCount ?? 0)],
+    ["Duration", `${durationSec}s`],
+    ["Repairs", String(summary.repairPasses ?? 0)],
+    ...(summary.taskId ? [["Task", summary.taskId]] : []),
+  ];
+  const outcomeHtml = `
+    <div>
+      <div class="pb-section-title">Outcome</div>
+      <div class="pb-outcome-grid">
+        ${outcomeRows.map(([label, value]) => `
+          <div class="pb-outcome-label">${escapeHtml(label)}</div>
+          <div class="pb-outcome-value">${escapeHtml(value)}</div>
+        `).join("")}
+      </div>
+    </div>`;
+
   // ── Dewey brief ─────────────────────────────────────────────────────────
   let deweyHtml = "";
   if (summary.deweyBrief) {
@@ -706,6 +767,74 @@ function appendPipelineBadge(summary) {
     </div>`
   ).join("");
 
+  // ── Audit detail (project_audit runs only) ───────────────────────────────
+  let auditDetailHtml = "";
+  if (summary.auditDetail) {
+    const ad = summary.auditDetail;
+
+    // Classification
+    const classHtml = `
+      <div>
+        <div class="pb-section-title">Classification</div>
+        <div class="pb-outcome-grid">
+          <div class="pb-outcome-label">Primary</div>
+          <div class="pb-outcome-value">${escapeHtml(ad.classification.primary)}</div>
+          <div class="pb-outcome-label">Categories</div>
+          <div class="pb-outcome-value">${escapeHtml(ad.classification.categories.join(", "))}</div>
+          <div class="pb-outcome-label">Confidence</div>
+          <div class="pb-outcome-value">${Math.round(ad.classification.confidence * 100)}%</div>
+        </div>
+      </div>`;
+
+    // Probes
+    const probeStatusIcon = (s) =>
+      s === "pass" ? "✓" : s === "partial" ? "~" : s === "missing" ? "○" : s === "not_applicable" ? "–" : "✕";
+    const probeStatusCls = (s) =>
+      s === "pass" ? "met" : s === "partial" ? "" : s === "missing" ? "unmet" : "";
+    const probeRows = ad.probes.map(p => `
+      <div class="pb-log-row">
+        <span class="pb-criterion-icon ${probeStatusCls(p.status)}">${probeStatusIcon(p.status)}</span>
+        <span class="pb-log-label">${escapeHtml(p.name.replace(/_/g, " "))}</span>
+        <span class="pb-log-ts">${p.evidenceCount} found · ${p.missingCount} missing</span>
+      </div>`).join("");
+    const probesHtml = `
+      <div>
+        <div class="pb-section-title">Probes</div>
+        <div class="pb-log">${probeRows}</div>
+      </div>`;
+
+    // Supporting / missing evidence + risk flags
+    const supHtml = ad.supportingEvidence.length
+      ? `<ul class="pb-dewey-list">${ad.supportingEvidence.map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`
+      : `<div class="pb-empty-detail">none</div>`;
+    const misHtml = ad.missingEvidence.length
+      ? `<ul class="pb-dewey-list pb-dewey-ctx">${ad.missingEvidence.map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`
+      : `<div class="pb-empty-detail">none</div>`;
+    const riskHtml = ad.riskFlags.length
+      ? `<ul class="pb-dewey-list pb-dewey-ctx">${ad.riskFlags.map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`
+      : `<div class="pb-empty-detail">none</div>`;
+    const evidenceHtml = `
+      <div>
+        <div class="pb-section-title">Supporting evidence</div>${supHtml}
+        <div class="pb-section-title" style="margin-top:6px">Missing evidence</div>${misHtml}
+        <div class="pb-section-title" style="margin-top:6px">Risk flags</div>${riskHtml}
+      </div>`;
+
+    // Command decisions
+    const cmdRows = ad.commandDecisions.map(d => `
+      <div class="pb-log-row">
+        <span class="pb-log-ts">${escapeHtml(d.status.replace(/_/g, " "))}</span>
+        <span class="pb-log-label">${escapeHtml(d.command)}</span>
+      </div>`).join("");
+    const cmdHtml = cmdRows ? `
+      <div>
+        <div class="pb-section-title">Runtime commands</div>
+        <div class="pb-log">${cmdRows}</div>
+      </div>` : "";
+
+    auditDetailHtml = classHtml + probesHtml + evidenceHtml + cmdHtml;
+  }
+
   // ── Pipeline event log ───────────────────────────────────────────────────
   let logHtml = "";
   const log = summary._eventLog ?? [];
@@ -720,6 +849,8 @@ function appendPipelineBadge(summary) {
       if (e.type === "repair:start")      label = `repair ${e.pass}/${e.maxPasses}`;
       if (e.type === "dewey:brief")       label = `Dewey brief — tone: ${e.suggestedTone}`;
       if (e.type === "miranda:checkpoint") label = `Miranda ${e.gate}: ${e.allowed ? "ALLOWED" : "BLOCKED"}`;
+      if (e.type === "maestro:agent_start") label = `agent ${e.role} started`;
+      if (e.type === "maestro:agent_done")  label = `agent ${e.role} done — ${e.stoppedBecause} (${e.iterations} iter)`;
       if (e.type === "subagent:spawned")  label = `worker ${e.role} started`;
       if (e.type === "subagent:done")     label = `worker ${e.role} done (${e.ok ? "ok" : "incomplete"})`;
       if (e.type === "subagent:failed")   label = `worker ${e.role} failed`;
@@ -727,6 +858,8 @@ function appendPipelineBadge(summary) {
                 : e.type === "qc:result" && e.verdict === "WARN" ? " log-warn"
                 : e.type === "subagent:failed" ? " log-fail"
                 : e.type === "subagent:done" && !e.ok ? " log-warn"
+                : e.type === "maestro:agent_done" && e.stoppedBecause === "error" ? " log-fail"
+                : e.type === "maestro:agent_done" && e.stoppedBecause !== "done" ? " log-warn"
                 : "";
       return `<div class="pb-log-row${cls}">
         <span class="pb-log-ts">+${rel}s</span>
@@ -737,6 +870,24 @@ function appendPipelineBadge(summary) {
       <div>
         <div class="pb-section-title">Pipeline log</div>
         <div class="pb-log">${rows}</div>
+      </div>`;
+  } else if (summary.traceStages?.length) {
+    const rows = summary.traceStages.map((stage) => `
+      <div class="pb-log-row">
+        <span class="pb-log-ts">trace</span>
+        <span class="pb-log-label">${escapeHtml(stage)}</span>
+      </div>`
+    ).join("");
+    logHtml = `
+      <div>
+        <div class="pb-section-title">Runtime trace</div>
+        <div class="pb-log">${rows}</div>
+      </div>`;
+  } else {
+    logHtml = `
+      <div>
+        <div class="pb-section-title">Pipeline log</div>
+        <div class="pb-empty-detail">No live pipeline event log was captured for this run; showing the runtime summary above.</div>
       </div>`;
   }
 
@@ -749,10 +900,12 @@ function appendPipelineBadge(summary) {
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
       <span class="pb-confidence">${confidencePct}%</span>
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
-      <button class="pb-details-btn">Details <span class="pb-chevron">›</span></button>
+      <button class="pb-details-btn" type="button" aria-expanded="true">Hide <span class="pb-chevron">›</span></button>
     </div>
     <div class="pipeline-badge-detail">
+      ${outcomeHtml}
       ${errorHtml}
+      ${auditDetailHtml}
       ${deweyHtml}
       ${mirandaHtml}
       ${criteriaHtml ? `<div><div class="pb-section-title">Acceptance criteria</div><div class="pb-criteria-list">${criteriaHtml}</div></div>` : ""}
@@ -761,19 +914,39 @@ function appendPipelineBadge(summary) {
       <div class="pb-footer-row">${durationSec}s total · ${summary.repairPasses ?? 0} repair pass${(summary.repairPasses ?? 0) !== 1 ? "es" : ""}</div>
     </div>`;
 
-  // Auto-expand on hard failure so the user immediately sees why.
-  if (verdictClass === "fail") {
-    div.classList.add("expanded");
-  }
-
-  div.querySelector(".pb-details-btn").addEventListener("click", (e) => {
+  div.classList.add("expanded");
+  const header = div.querySelector(".pipeline-badge-header");
+  const detail = div.querySelector(".pipeline-badge-detail");
+  const detailsBtn = div.querySelector(".pb-details-btn");
+  const applyDetailVisibility = (expanded) => {
+    if (!detail) return;
+    detail.style.display = expanded ? "flex" : "none";
+    detail.style.flexDirection = "column";
+    detail.style.gap = "10px";
+    detail.style.maxHeight = "";
+    detail.style.overflowY = "visible";
+    detail.style.padding = expanded ? "10px 12px 24px" : "0 12px";
+    detail.style.borderTop = expanded ? "1px solid var(--border-faint)" : "0";
+  };
+  const setExpanded = (expanded) => {
+    div.classList.toggle("expanded", expanded);
+    if (detailsBtn) {
+      detailsBtn.setAttribute("aria-expanded", String(expanded));
+      detailsBtn.firstChild.nodeValue = expanded ? "Hide " : "Details ";
+    }
+    applyDetailVisibility(expanded);
+    if (expanded) requestAnimationFrame(() => div.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+  };
+  const toggleDetails = (e) => {
     e.stopPropagation();
-    div.classList.toggle("expanded");
-    if (div.classList.contains("expanded")) setTimeout(scrollToBottom, 240); // after 0.22s CSS transition
-  });
+    setExpanded(!div.classList.contains("expanded"));
+  };
+  detailsBtn?.addEventListener("click", toggleDetails);
+  header?.addEventListener("click", toggleDetails);
+  applyDetailVisibility(true);
 
   messages.appendChild(div);
-  scrollToBottom();
+  requestAnimationFrame(() => div.scrollIntoView({ block: "start" }));
 }
 
 // ── Tool call card ────────────────────────────────────────────────────────
@@ -818,6 +991,8 @@ async function sendMessage() {
   activeSessionId = null;
   pipelineEventLog = [];
   pipelineBadgeRendered = false;
+  finalReplyRendered = false;
+  pendingPipelineSummary = null;
   setInputEnabled(false);
   inputEl.value = "";
   autoResize();
@@ -867,17 +1042,13 @@ async function sendMessage() {
     } else {
       appendSys(result.error ?? "Unknown error.", "error");
     }
+    finalReplyRendered = true;
 
     // Post-reply metadata
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
     const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary ?? buildPipelineSummaryFromEvents(result);
-    if (summaryToRender && !pipelineBadgeRendered) {
-      summaryToRender._eventLog = pipelineEventLog.slice();
-      appendPipelineBadge(summaryToRender);
-      pendingPipelineSummary = null;
-      pipelineBadgeRendered = true;  // Issue 2 fix: prevent onStreamEnd double-badge
-    }
+    renderPipelineSummaryBadge(summaryToRender);
 
     if (!result.ok) finalStatus = "error";
   } catch (err) {
@@ -888,6 +1059,7 @@ async function sendMessage() {
   } finally {
     currentRole  = null;
     pendingPipelineSummary = null;   // discard if not yet rendered (abort / error path)
+    finalReplyRendered = false;
     streamText   = "";              // clear fallback accumulator for next task
     busy = false;          // clear busy FIRST so late events won't override status
     syncIdleStatus();
@@ -1875,7 +2047,9 @@ async function loadSession(id) {
   } else if (session.status === "FAIL") {
     appendSys("This run failed — no output was recorded.", "warn");
   }
-  if (session.verdict) {
+  if (session.pipelineSummary) {
+    appendPipelineBadge(session.pipelineSummary);
+  } else if (session.verdict) {
     appendPipelineBadge({
       role: session.role ?? "unknown",
       verdict: session.verdict,

@@ -1049,7 +1049,14 @@ function detectDeliverable(
   const codeVerb   = /\b(write|implement|create|build|make|add|code|generate|define)\b/;
   const codeNoun   = /\b(function|method|class|hook|component|algorithm|handler|helper|utility|script|module|interface|type|enum|struct|api|endpoint|middleware|route|service|controller|reducer|action|selector|mixin|decorator|plugin)\b/;
   const codeMatch  = codeNoun.exec(lower);
+  const isPackageScriptReference =
+    /\b(package(?:\.json)?|npm|pnpm|yarn)\s+scripts?\b/.test(lower) ||
+    /\b(read|inspect|identify|list|check|show|summari[sz]e)\b.{0,60}\b(package\s+)?scripts?\b/.test(lower) ||
+    /\b(build|test|lint|dist|package)\s+scripts?\b/.test(lower);
   if (codeVerb.test(lower) && codeMatch) {
+    if (codeMatch[0] === "script" && isPackageScriptReference) {
+      return null;
+    }
     return { kind: "code", artifact: codeMatch[0] };
   }
 
