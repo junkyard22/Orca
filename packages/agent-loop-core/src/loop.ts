@@ -303,5 +303,12 @@ export async function runAgentLoop(
     .replace(/[\s\S]*?<\/tool_call>/g, "")             // case 3
     .trim();
 
-  return { text: cleanText, toolEvents, filesChanged };
+  return {
+    text: cleanText,
+    toolEvents,
+    filesChanged,
+    thoughts: [],
+    iterationCount: iterations,
+    stoppedBecause: loopComplete || cleanText.length > 0 ? "done" : "max_iterations",
+  };
 }

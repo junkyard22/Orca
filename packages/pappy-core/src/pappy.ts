@@ -26,6 +26,16 @@ import { runClaimProofChecks } from "./checks/claimProof.js";
 import { runBrainChecks }      from "./checks/brain.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
 
+type OrcaProfileEvent = Record<string, unknown>;
+type OrcaProfileEmitter = (event: OrcaProfileEvent) => void;
+
+function emitOrcaProfileEvent(event: OrcaProfileEvent): void {
+  const emitter = (globalThis as typeof globalThis & {
+    __orcaProfileEmit?: OrcaProfileEmitter;
+  }).__orcaProfileEmit;
+  emitter?.(event);
+}
+
 // ---------------------------------------------------------------------------
 // Stable issue ID — FNV-1a 32-bit, no external dependencies.
 // Same defect always hashes to the same ID so Doctor/Maestro can track
@@ -457,7 +467,7 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
   const repairTaskStr = repair_task ? repairTaskToString(repair_task) : undefined;
 
   if (process.env["ORCA_PROFILE"] === "1") {
-    (globalThis as Record<string, unknown>)["__orcaProfileEmit"]?.({
+    emitOrcaProfileEvent({
       phase: "pappy_eval",
       durationMs: Date.now() - _profStart,
       verdict,

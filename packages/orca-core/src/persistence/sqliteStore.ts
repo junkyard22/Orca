@@ -15,6 +15,16 @@ import type { RunRecord, ThoughtRecord, ToolEvent, FileChange, OrcaStore } from 
 import * as fs from "fs";
 import * as path from "path";
 
+type OrcaProfileEvent = Record<string, unknown>;
+type OrcaProfileEmitter = (event: OrcaProfileEvent) => void;
+
+function emitOrcaProfileEvent(event: OrcaProfileEvent): void {
+  const emitter = (globalThis as typeof globalThis & {
+    __orcaProfileEmit?: OrcaProfileEmitter;
+  }).__orcaProfileEmit;
+  emitter?.(event);
+}
+
 /**
  * SqliteStore - SQLite-backed implementation of OrcaStore.
  * 
@@ -166,7 +176,7 @@ export class SqliteStore implements OrcaStore {
         this.persistToDisk();
 
         if (process.env["ORCA_PROFILE"] === "1") {
-          (globalThis as Record<string, unknown>)["__orcaProfileEmit"]?.({
+          emitOrcaProfileEvent({
             phase: "sqlite_save",
             durationMs: Date.now() - _profStart,
             thoughtCount: thoughts.length,

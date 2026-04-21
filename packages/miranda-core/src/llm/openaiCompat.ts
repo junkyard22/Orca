@@ -18,6 +18,16 @@ import type { LLMAdapter } from "./adapter.js";
 import type { LLMRequest, LLMResponse, TokenUsage } from "../pipeline/types.js";
 import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
 
+type OrcaProfileEvent = Record<string, unknown>;
+type OrcaProfileEmitter = (event: OrcaProfileEvent) => void;
+
+function emitOrcaProfileEvent(event: OrcaProfileEvent): void {
+  const emitter = (globalThis as typeof globalThis & {
+    __orcaProfileEmit?: OrcaProfileEmitter;
+  }).__orcaProfileEmit;
+  emitter?.(event);
+}
+
 export interface OpenAICompatConfig {
   /**
    * API base URL — do NOT include /chat/completions.
@@ -117,46 +127,46 @@ export class OpenAICompatAdapter implements LLMAdapter {
         signal,
       });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "unknown error");
-      throw new Error(`API error ${response.status}: ${errorText}`);
-    }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "unknown error");
+        throw new Error(`API error ${response.status}: ${errorText}`);
+      }
 
-    const data = (await response.json()) as OpenAIChatResponse;
-    const durationMs = Date.now() - startMs;
+      const data = (await response.json()) as OpenAIChatResponse;
+      const durationMs = Date.now() - startMs;
 
-    if (process.env["ORCA_PROFILE"] === "1") {
-      (globalThis as Record<string, unknown>)["__orcaProfileEmit"]?.({
-        phase: "llm_call",
-        method: "complete",
-        model: data.model ?? model,
-        durationMs,
-        promptTokens: data.usage?.prompt_tokens,
-        completionTokens: data.usage?.completion_tokens,
-        totalTokens: data.usage?.total_tokens,
-      });
-    }
+      if (process.env["ORCA_PROFILE"] === "1") {
+        emitOrcaProfileEvent({
+          phase: "llm_call",
+          method: "complete",
+          model: data.model ?? model,
+          durationMs,
+          promptTokens: data.usage?.prompt_tokens,
+          completionTokens: data.usage?.completion_tokens,
+          totalTokens: data.usage?.total_tokens,
+        });
+      }
 
-    const firstChoice = data.choices[0];
-    if (!firstChoice) {
-      throw new Error("API returned no choices");
-    }
+      const firstChoice = data.choices[0];
+      if (!firstChoice) {
+        throw new Error("API returned no choices");
+      }
 
-    let usage: TokenUsage | null = null;
-    if (data.usage) {
-      usage = {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
-      };
-    }
+      let usage: TokenUsage | null = null;
+      if (data.usage) {
+        usage = {
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        };
+      }
 
-    // Some thinking models (e.g. Alibaba qwen3.5-plus on DashScope) return the
-    // actual response in `reasoning_content` while `content` is null/empty.
-    // Fall back to reasoning_content so we don't return an empty string.
-    const rawContent = firstChoice.message.content;
-    const rawReasoning = (firstChoice.message as Record<string, unknown>)["reasoning_content"] as string | undefined;
-    const content = (rawContent && rawContent.trim()) ? rawContent : (rawReasoning ?? "");
+      // Some thinking models (e.g. Alibaba qwen3.5-plus on DashScope) return the
+      // actual response in `reasoning_content` while `content` is null/empty.
+      // Fall back to reasoning_content so we don't return an empty string.
+      const rawContent = firstChoice.message.content;
+      const rawReasoning = (firstChoice.message as Record<string, unknown>)["reasoning_content"] as string | undefined;
+      const content = (rawContent && rawContent.trim()) ? rawContent : (rawReasoning ?? "");
 
       return {
         content,
@@ -209,53 +219,53 @@ export class OpenAICompatAdapter implements LLMAdapter {
         signal,
       });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "unknown error");
-      throw new Error(`API error ${response.status}: ${errorText}`);
-    }
-    if (!response.body) throw new Error("Response body is null");
-
-    let fullContent = "";
-    let finalModel = model;
-    let completionTokens = 0;
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data: ")) continue;
-          const data = trimmed.slice(6);
-          if (data === "[DONE]") break;
-          try {
-            const chunk = JSON.parse(data) as {
-              choices: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
-              model?: string;
-            };
-            // Some thinking models (e.g. Alibaba qwen3.5-plus) stream actual
-            // output via `reasoning_content` while `content` is empty/null.
-            const delta = chunk.choices[0]?.delta;
-            const token = delta?.content || delta?.reasoning_content || "";
-            if (token) { fullContent += token; completionTokens++; onToken(token); }
-            if (chunk.model) finalModel = chunk.model;
-          } catch { /* skip malformed chunks */ }
-        }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "unknown error");
+        throw new Error(`API error ${response.status}: ${errorText}`);
       }
-    } finally {
-      reader.releaseLock();
-    }
+      if (!response.body) throw new Error("Response body is null");
+
+      let fullContent = "";
+      let finalModel = model;
+      let completionTokens = 0;
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data: ")) continue;
+            const data = trimmed.slice(6);
+            if (data === "[DONE]") break;
+            try {
+              const chunk = JSON.parse(data) as {
+                choices: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
+                model?: string;
+              };
+              // Some thinking models (e.g. Alibaba qwen3.5-plus) stream actual
+              // output via `reasoning_content` while `content` is empty/null.
+              const delta = chunk.choices[0]?.delta;
+              const token = delta?.content || delta?.reasoning_content || "";
+              if (token) { fullContent += token; completionTokens++; onToken(token); }
+              if (chunk.model) finalModel = chunk.model;
+            } catch { /* skip malformed chunks */ }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
 
       const streamDurationMs = Date.now() - startMs;
       if (process.env["ORCA_PROFILE"] === "1") {
-        (globalThis as Record<string, unknown>)["__orcaProfileEmit"]?.({
+        emitOrcaProfileEvent({
           phase: "llm_call",
           method: "stream",
           model: finalModel,
