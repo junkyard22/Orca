@@ -83,6 +83,21 @@ Servers are declared in `orca-settings.json` under `mcpServers[]` (type: `McpSer
   ]
 }
 ```
+## Agent Loop — Single Source of Truth
+
+The agent execution loop lives in `packages/agent-loop-core`.
+
+**Rules:**
+- DO NOT copy loop logic into app-level adapters
+- DO NOT fix loop behavior in `apps/runner` or `apps/desktop` directly  
+- Any change to `runAgentLoop`, loop detection, or tool execution behavior
+  must go in `packages/agent-loop-core/src/loop.ts`
+- Both adapters (`maestroAdapter.ts` and `ReactAgentAdapter.ts`) stay as
+  thin wrappers that delegate to the shared loop
+- `apps/desktop/orca-tracer.ts` is intentionally exempt — see its header comment
+
+**Current state:** Desktop adapter retains inline loop as primary path pending
+full unification. See `packages/agent-loop-core/README.md` for roadmap.
 
 **Setup note — Desktop Commander**: run `npx @wonderwhy-er/desktop-commander setup` once before enabling.
 **Setup note — GitHub MCP**: requires Docker installed and running; PAT stored encrypted via `safeStorage`.

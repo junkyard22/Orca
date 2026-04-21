@@ -29,6 +29,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@clawde/agent-loop-core':
+        specifier: workspace:*
+        version: link:../../packages/agent-loop-core
       '@clawde/benson-core':
         specifier: workspace:*
         version: link:../../packages/benson-core
@@ -87,6 +90,9 @@ importers:
 
   apps/runner:
     dependencies:
+      '@clawde/agent-loop-core':
+        specifier: workspace:*
+        version: link:../../packages/agent-loop-core
       '@clawde/benson-core':
         specifier: workspace:*
         version: link:../../packages/benson-core
@@ -148,6 +154,22 @@ importers:
       vitest:
         specifier: ^4.0.0
         version: 4.1.1(@types/node@20.19.35)(vite@8.0.5(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@20.19.35)(esbuild@0.27.3)(jiti@2.6.1)(tsx@4.21.0))
+
+  packages/agent-loop-core:
+    dependencies:
+      '@clawde/miranda-core':
+        specifier: workspace:*
+        version: link:../miranda-core
+      '@clawde/orca-core':
+        specifier: workspace:*
+        version: link:../orca-core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.12.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
 
   packages/benson-core:
     devDependencies:
@@ -583,7 +605,7 @@ packages:
     resolution: {integrity: sha512-TsQLe4i2gvoTtrHje625ngThGBySOgSK3Xo2XRYOdqGN1teR8+I7vchQC46uLJi8OF62YTYA3AhSpumtkhsaKQ==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
-      hono: '>=4.12.12'
+      hono: '>=4.12.14'
 
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}

@@ -13,6 +13,20 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import path from "node:path";
 
+// ---------------------------------------------------------------------------
+// SELF-CONTAINED BOUNDARY — DO NOT REFACTOR WITHOUT READING THIS
+//
+// This file is a standalone tracing CLI. It intentionally implements its own
+// ReAct loop (TOOL_CALL_RE, runAgentLoop) rather than importing from
+// @clawde/agent-loop-core. This avoids a circular dependency between the
+// desktop app bundle and the tracer CLI, and keeps the tracer self-contained
+// for debugging use without a full app shell.
+//
+// When @clawde/agent-loop-core's loop contract is fully unified (see
+// packages/agent-loop-core/README.md roadmap), evaluate whether orca-tracer
+// can safely import from it. Until then, keep this file standalone.
+// ---------------------------------------------------------------------------
+
 // ── Load .env.tracer for plaintext key overrides ────────────────────────────
 // Electron encrypts API keys with safeStorage, which can't be decrypted
 // outside the Electron process. .env.tracer lets you provide plaintext keys

@@ -13,6 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@clawde/agent-loop-core": "workspace:*",
     "@clawde/benson-core": "workspace:*",
     "@clawde/dewey-core": "workspace:*",
     "@clawde/ext-docs": "workspace:*",
