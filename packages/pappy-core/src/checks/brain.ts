@@ -39,10 +39,17 @@ const DEPT_VALID_KEYS      = new Set(["head", "task", "subtask", "context"]);
 // ---------------------------------------------------------------------------
 
 function isBrainOutput(text: string): boolean {
-  // Fires when text contains a brain routing JSON object — even if prose
-  // surrounds it (narrative bleed).  Requiring the exact "routing" key
-  // prevents false-positives on ordinary outputs that happen to include braces.
-  return text.includes('"routing"') && text.includes('{');
+  // Prefer exact Brain routing decisions, but still activate for malformed
+  // Brain-shaped JSON so QC can flag invalid routing values. Requiring either
+  // a valid routing enum or another Brain-specific key avoids false-positives
+  // from unrelated JSON that happens to use "routing".
+  const hasObjectishShape = text.includes("{") && /"routing"\s*:/.test(text);
+  if (!hasObjectishShape) return false;
+
+  const hasValidRoutingValue = /"routing"\s*:\s*"(direct|decompose)"/.test(text);
+  const hasBrainCompanionKey = /"(role|departments|done_criteria|synthesis_hint)"\s*:/.test(text);
+
+  return hasValidRoutingValue || hasBrainCompanionKey;
 }
 
 // ---------------------------------------------------------------------------

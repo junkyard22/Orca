@@ -946,7 +946,12 @@ function appendPipelineBadge(summary) {
   applyDetailVisibility(true);
 
   messages.appendChild(div);
-  requestAnimationFrame(() => div.scrollIntoView({ block: "start" }));
+  // Scroll messages so the pipeline badge header appears at the top of the visible area.
+  // Using direct scrollTop math is more reliable than scrollIntoView across Electron versions.
+  requestAnimationFrame(() => {
+    const offset = div.getBoundingClientRect().top - messages.getBoundingClientRect().top;
+    messages.scrollTop += offset;
+  });
 }
 
 // ── Tool call card ────────────────────────────────────────────────────────

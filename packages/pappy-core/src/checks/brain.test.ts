@@ -27,6 +27,14 @@ describe("runBrainChecks — activation guard", () => {
     const issues = runBrainChecks({ task: "t", outputText: '{"answer":42}' });
     expect(issues).toHaveLength(0);
   });
+
+  it("returns no issues for JSON that has an unrelated routing value", () => {
+    const issues = runBrainChecks({
+      task: "t",
+      outputText: '{"routing":"round-robin","destinations":["a","b"]}',
+    });
+    expect(issues).toHaveLength(0);
+  });
 });
 
 // ── BRAIN_NARRATIVE_BLEED ────────────────────────────────────────────────────
@@ -125,6 +133,18 @@ describe("runBrainChecks — BRAIN_HALLUCINATED_FIELD", () => {
 describe("runBrainChecks — valid inputs (expect no issues)", () => {
   it("passes a clean direct routing response", () => {
     expect(runBrainChecks({ task: "t", outputText: direct("strong_model") })).toHaveLength(0);
+  });
+
+  it("passes a pretty-printed direct routing response", () => {
+    const issues = runBrainChecks({
+      task: "t",
+      outputText: `{
+  "routing":
+    "direct",
+  "role": "strong_model"
+}`,
+    });
+    expect(issues).toHaveLength(0);
   });
 
   it("passes all recognised roles for direct routing", () => {
