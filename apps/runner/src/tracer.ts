@@ -20,6 +20,7 @@ import "dotenv/config";
 
 import * as os from "os";
 import * as path from "path";
+import * as fs from "node:fs";
 import {
   OpenRouterAdapter,
   OllamaAdapter,
@@ -50,6 +51,39 @@ import { setTracerHook } from "./adapters/tracerHooks.js";
 import type { TracerEvent } from "./adapters/tracerHooks.js";
 
 const DEBUG = process.env["ORCA_DEBUG"] !== "false";
+
+// ── Profiling (ORCA_PROFILE=1) ────────────────────────────────────────────────
+const PROFILE = process.env["ORCA_PROFILE"] === "1";
+let _profileFile: string | null = null;
+let _profileT0 = 0;
+
+function _profileInit(): void {
+  if (!PROFILE) return;
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  _profileFile = path.join(
+    process.env["ORCA_PROFILE_DIR"] ?? path.join(process.cwd(), "profile-runs"),
+    `run-${ts}.jsonl`,
+  );
+  _profileT0 = performance.now();
+  try { fs.mkdirSync(path.dirname(_profileFile), { recursive: true }); } catch { /* exists */ }
+  (globalThis as Record<string, unknown>)["__orcaProfileEmit"] = _profileEmit;
+}
+
+function _profileEmit(event: Record<string, unknown>): void {
+  if (!_profileFile) return;
+  fs.appendFileSync(_profileFile, JSON.stringify({ ...event, _ts: performance.now() - _profileT0 }) + "\n");
+}
+
+function _profileStart(runId: string, prompt: string): void {
+  _profileEmit({ phase: "run:start", runId, prompt: prompt.slice(0, 300) });
+}
+
+function _profileEnd(runId: string, totalMs: number, status: string): void {
+  _profileEmit({ phase: "run:end", runId, totalMs, status });
+  if (_profileFile) {
+    process.stdout.write(`\n[Profile] JSONL written → ${_profileFile}\n`);
+  }
+}
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
 const C = {
@@ -135,6 +169,7 @@ function createTracingLLMService(adapter: LLMAdapter, modelId: string): OrcaLLMS
       line("duration", `${ms}ms`, C.yellow);
       line("response", `${result.text.length} chars`, C.white);
       if (DEBUG) detail(`response`, result.text);
+      if (PROFILE) _profileEmit({ phase: "llm_call_tracer", callIndex: n, model: modelId, method: "complete", durationMs: ms, chars: result.text.length });
 
       return result;
     },
@@ -161,6 +196,7 @@ function createTracingLLMService(adapter: LLMAdapter, modelId: string): OrcaLLMS
       line("duration", `${ms}ms`, C.yellow);
       line("response", `${result.text.length} chars`, C.white);
       if (DEBUG) detail(`response`, result.text);
+      if (PROFILE) _profileEmit({ phase: "llm_call_tracer", callIndex: n, model: modelId, method: "stream", durationMs: ms, chars: result.text.length });
 
       return result;
     },
@@ -280,6 +316,8 @@ function listenFor<T extends OrcaEventType>(
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
+  _profileInit();
+
   const userText = process.argv.slice(2).join(" ").trim() || "Write a greet function that takes a name and returns Hello, name";
 
   box(`ORCA TRACER${!DEBUG ? "  [COMPACT — set ORCA_DEBUG=false to disable]" : ""}`, C.magenta);
@@ -362,6 +400,7 @@ async function main(): Promise<void> {
     currentTaskId = e.taskId;
     box(`[orca]  task:start  ${e.taskId}`, C.blue);
     line("intent", e.intent, C.white);
+    if (PROFILE) _profileStart(e.taskId, e.intent);
   });
 
   listenFor(runtime, "maestro:start", (e) => {
@@ -399,6 +438,7 @@ async function main(): Promise<void> {
   listenFor(runtime, "task:done", (e) => {
     const color = e.status === "SUCCESS" ? C.green : C.red;
     box(`[orca]  task:done  status=${e.status}`, color);
+    if (PROFILE) _profileEnd(currentTaskId, Date.now() - T0, e.status);
   });
 
   listenFor(runtime, "maestro:agent_start", (e) => {

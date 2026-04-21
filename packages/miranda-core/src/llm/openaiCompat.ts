@@ -125,6 +125,18 @@ export class OpenAICompatAdapter implements LLMAdapter {
     const data = (await response.json()) as OpenAIChatResponse;
     const durationMs = Date.now() - startMs;
 
+    if (process.env["ORCA_PROFILE"] === "1") {
+      (globalThis as Record<string, unknown>)["__orcaProfileEmit"]?.({
+        phase: "llm_call",
+        method: "complete",
+        model: data.model ?? model,
+        durationMs,
+        promptTokens: data.usage?.prompt_tokens,
+        completionTokens: data.usage?.completion_tokens,
+        totalTokens: data.usage?.total_tokens,
+      });
+    }
+
     const firstChoice = data.choices[0];
     if (!firstChoice) {
       throw new Error("API returned no choices");
@@ -241,11 +253,22 @@ export class OpenAICompatAdapter implements LLMAdapter {
       reader.releaseLock();
     }
 
+      const streamDurationMs = Date.now() - startMs;
+      if (process.env["ORCA_PROFILE"] === "1") {
+        (globalThis as Record<string, unknown>)["__orcaProfileEmit"]?.({
+          phase: "llm_call",
+          method: "stream",
+          model: finalModel,
+          durationMs: streamDurationMs,
+          completionTokens,
+          totalTokens: completionTokens,
+        });
+      }
       return {
         content: fullContent,
         model: finalModel,
         usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
-        durationMs: Date.now() - startMs,
+        durationMs: streamDurationMs,
       };
     } finally {
       cleanup();

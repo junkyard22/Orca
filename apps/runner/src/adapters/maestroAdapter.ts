@@ -267,14 +267,20 @@ export function createMaestroAdapter(): MaestroPort {
       };
 
       let approvedPlan = candidatePlan;
-      let approved = false;
+      let approved = !routing.fromBrain;
       let attempts = 0;
       let lastConcerns: string[] = [];
       // Dewey suggestions collected across non-approved passes.
       // Threaded into the agent prompt as advisory notes (not plan mutation).
       const collectedSuggestions: string[] = [];
 
-      while (!approved && attempts < 3) {
+      if (!routing.fromBrain) {
+        ctx.recordTrace?.("dewey.reviewPlan.skipped", {
+          reason: "heuristic_routing_no_brain_call",
+        });
+      }
+
+      while (routing.fromBrain && !approved && attempts < 3) {
         const deweyReview = await dewey.reviewPlan(approvedPlan, task.originalUserMessage, brief);
         traceEvent({ type: "dewey:review", data: deweyReview });
 
@@ -827,6 +833,7 @@ interface MaestroDirectDecision {
   path: "direct";
   role: string;
   isFallback: boolean;
+  fromBrain: boolean;
   done_criteria?: string[];
   /** 'heuristic': selectRole() decided, no Brain LLM call.
    *  'brain':     Brain LLM called; Brain's role choice is used. */
@@ -836,6 +843,7 @@ interface MaestroDirectDecision {
 interface MaestroDecomposeDecision {
   path: "decompose";
   subtasks: DecomposedSubtask[];
+  fromBrain: boolean;
   done_criteria?: string[];
   synthesis_hint?: string;
 }
@@ -924,7 +932,13 @@ async function routeRequest(
 
   if (!isDecomposeCandidate) {
     // Heuristic direct decision — no Brain LLM call needed.
-    return { path: "direct", role: heuristicRole, isFallback, source: "heuristic" };
+    return {
+      path: "direct",
+      role: heuristicRole,
+      isFallback,
+      fromBrain: false,
+      source: "heuristic",
+    };
   }
 
   // Brain routing call — one LLM call decides direct vs. decompose.
@@ -942,6 +956,7 @@ async function routeRequest(
         path: "direct",
         role: decision.role,
         isFallback: false,
+        fromBrain: true,
         done_criteria: decision.done_criteria,
         source: "brain",
       };
@@ -951,13 +966,20 @@ async function routeRequest(
     return {
       path: "decompose",
       subtasks: mapDepartmentsToSubtasks(decision.departments),
+      fromBrain: true,
       done_criteria: decision.done_criteria,
       synthesis_hint: decision.synthesis_hint,
     };
   } catch {
     // Brain call failed — fall back to heuristic direct decision.
     traceEvent({ type: "brain:route_fallback", data: { reason: "brain_decision_failed", heuristicRole } });
-    return { path: "direct", role: heuristicRole, isFallback: true, source: "heuristic" };
+    return {
+      path: "direct",
+      role: heuristicRole,
+      isFallback: true,
+      fromBrain: false,
+      source: "heuristic",
+    };
   }
 }
 
@@ -1277,6 +1299,7 @@ async function runAgentLoop(
     `${systemPrompt}\n\n${tools.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
 
   let lastText = "";
+  let iterations = 0;
 
   // Dedup guard — skip any tool call with the exact same signature as one
   // already executed this run. Prevents the model from calling write_file
@@ -1310,6 +1333,7 @@ async function runAgentLoop(
       (chunk) => ctx.emit?.({ type: "stream:token", taskId: ctx.runId, chunk }),
     );
     lastText = text;
+    iterations = i + 1;
 
     const calls = parseToolCalls(text);
 
@@ -1320,12 +1344,18 @@ async function runAgentLoop(
 
     // Append this assistant turn to the conversation.
     conversation += `\n\nAssistant:\n${text}`;
+    const assistantText = text.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim();
+    const hasDanglingToolMarkup = /<\/?tool_call>/.test(
+      text.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, ""),
+    );
+    let turnAllToolsOk = true;
 
     // Execute each tool call and append results.
     for (const call of calls) {
       // Dedup: skip if we've already executed the exact same call this run.
       const callSig = `${call.tool}:${JSON.stringify(call.input)}`;
       if (executedCallSigs.has(callSig)) {
+        turnAllToolsOk = false;
         console.warn(`[MaestroAdapter] Skipping duplicate tool call: ${call.tool} (identical args already executed)`);
         conversation += formatToolResult(call.tool, false, "Duplicate call skipped — this exact call was already executed successfully.");
         continue;
@@ -1340,6 +1370,7 @@ async function runAgentLoop(
       const schema = (ctx.tools as ExtendedOrcaToolService | undefined)?.getSchema?.(call.tool);
       const beforeGate = ctx.gate?.beforeToolRun({ tool: call.tool, args: call.input, schema });
       if (beforeGate && !beforeGate.allowed) {
+        turnAllToolsOk = false;
         console.error(`[MaestroAdapter] gate blocked tool "${call.tool}": ${beforeGate.reason}`);
         toolEvents.push({
           tool: call.tool,
@@ -1359,6 +1390,7 @@ async function runAgentLoop(
       if (ctx.requestToolApproval) {
         const approved = await ctx.requestToolApproval(call.tool, call.input);
         if (!approved) {
+          turnAllToolsOk = false;
           console.error(`[MaestroAdapter] tool:denied  name=${call.tool}`);
           toolEvents.push({
             tool: call.tool,
@@ -1376,6 +1408,9 @@ async function runAgentLoop(
       const outputText = normalizeToolText(result.output);
       const errorText = result.error === undefined ? undefined : normalizeToolText(result.error);
       ctx.recordTrace?.("tool.result", { tool: call.tool, ok: result.ok, output: outputText, error: errorText });
+      if (!result.ok) {
+        turnAllToolsOk = false;
+      }
 
       // Miranda: after_tool_run gate
       ctx.gate?.afterToolRun({ tool: call.tool, args: call.input }, { ok: result.ok, output: outputText });
@@ -1417,12 +1452,30 @@ async function runAgentLoop(
         break; // exit inner tool loop; outer loop exits on loopComplete check
       }
     }
+
+    if (
+      !loopComplete &&
+      turnAllToolsOk &&
+      assistantText.length > 0 &&
+      !hasDanglingToolMarkup
+    ) {
+      ctx.recordTrace?.("agent_loop.early_exit", {
+        iteration: i + 1,
+        reason: "tools_complete",
+      });
+      loopComplete = true;
+    }
   }
 
   // Post-loop write rescue: if the task required writing a file but the model
   // never called write_file (e.g. it generated analysis as plain text without
   // using tools), make one final targeted call with the analysis as content.
-  if (writeTarget && filesChanged.length === 0 && lastText.trim().length > 0) {
+  if (writeTarget && filesChanged.length === 0 && iterations >= 4) {
+    ctx.recordTrace?.("agent_loop.rescue.skipped", {
+      reason: "loop_exhausted",
+      iterations,
+    });
+  } else if (writeTarget && filesChanged.length === 0 && lastText.trim().length > 0) {
     console.error(`[MaestroAdapter] write:rescue  target=${writeTarget}  analysisChars=${lastText.length}`);
     const rescuePrompt =
       conversation +

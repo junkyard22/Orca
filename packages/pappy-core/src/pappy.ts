@@ -393,6 +393,8 @@ function buildInternalSummary(verdict: Verdict, issues: Issue[]): string {
 // ---------------------------------------------------------------------------
 
 export function evaluateWithPappy(input: PappyInput): PappyResult {
+  const _profStart = process.env["ORCA_PROFILE"] === "1" ? Date.now() : 0;
+
   // Step 1: derive acceptance criteria
   const acceptance_criteria = deriveAcceptanceCriteria(input);
 
@@ -453,6 +455,17 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
   // Step 6: repair task (only when not PASS)
   const repair_task   = verdict !== "PASS" ? buildRepairTask(input.task, issues) : null;
   const repairTaskStr = repair_task ? repairTaskToString(repair_task) : undefined;
+
+  if (process.env["ORCA_PROFILE"] === "1") {
+    (globalThis as Record<string, unknown>)["__orcaProfileEmit"]?.({
+      phase: "pappy_eval",
+      durationMs: Date.now() - _profStart,
+      verdict,
+      issueCount: issues.length,
+      acCount: acceptance_criteria.length,
+      claimCount: claims.length,
+    });
+  }
 
   return {
     verdict,

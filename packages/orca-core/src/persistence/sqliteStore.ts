@@ -82,6 +82,8 @@ export class SqliteStore implements OrcaStore {
     await this.ensureInitialized();
     if (!this.db) return;
 
+    const _profStart = process.env["ORCA_PROFILE"] === "1" ? Date.now() : 0;
+
     try {
       // Start transaction
       this.db.run("BEGIN TRANSACTION");
@@ -159,9 +161,19 @@ export class SqliteStore implements OrcaStore {
 
         // Commit transaction
         this.db.run("COMMIT");
-        
+
         // Persist to disk
         this.persistToDisk();
+
+        if (process.env["ORCA_PROFILE"] === "1") {
+          (globalThis as Record<string, unknown>)["__orcaProfileEmit"]?.({
+            phase: "sqlite_save",
+            durationMs: Date.now() - _profStart,
+            thoughtCount: thoughts.length,
+            toolEventCount: toolEvents.length,
+            fileChangeCount: filesChanged.length,
+          });
+        }
       } catch (err) {
         // Rollback on error
         this.db.run("ROLLBACK");

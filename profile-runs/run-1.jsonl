@@ -1,0 +1,6 @@
+{"phase":"run:start","runId":"b0ec9611-a830-4865-8dc2-9d2cdd171300","prompt":"## Task\nRole: **brain**\n\n### Request\nWhat can you do?\n\n### Goals\n- What can you do?","source":"miranda_pipeline_log","note":"converted from orca-tracer.log (Miranda stage pipeline, not full Orca stack)","_ts":0}
+{"phase":"llm_call","stage":"plan","model":"deepseek/deepseek-chat-v3","durationMs":7157,"promptTokens":198,"completionTokens":217,"totalTokens":415,"attemptNumber":1,"validationPassed":true,"_ts":0}
+{"phase":"llm_call","stage":"answer","model":"qwen/qwen-2.5-72b-instruct","durationMs":20991,"promptTokens":null,"completionTokens":904,"totalTokens":904,"attemptNumber":1,"validationPassed":true,"_ts":7157}
+{"phase":"llm_call","stage":"critique","model":"deepseek/deepseek-chat-v3","durationMs":10977,"promptTokens":1121,"completionTokens":359,"totalTokens":1480,"attemptNumber":1,"validationPassed":true,"_ts":28148}
+{"phase":"llm_call","stage":"rewrite","model":"qwen/qwen-2.5-72b-instruct","durationMs":34387,"promptTokens":null,"completionTokens":1431,"totalTokens":1431,"attemptNumber":1,"validationPassed":true,"_ts":39125}
+{"phase":"run:end","runId":"b0ec9611-a830-4865-8dc2-9d2cdd171300","totalMs":73521,"status":"SUCCESS","source":"miranda_pipeline_log","_ts":73521}
