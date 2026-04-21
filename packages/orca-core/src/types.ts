@@ -146,10 +146,13 @@ export interface OrcaMaestroResult {
   /** Populated when Maestro decomposed the task into parallel subagents (Phase 2). */
   subagentRuns?: Array<{
     subagentId: string;
+    packetId?: string;
     role: string;
     task: string;
     status: "done" | "failed";
     outputText?: string;
+    filesChanged?: OrcaFileChange[];
+    toolEvents?: OrcaToolEvent[];
     error?: string;
   }>;
 }

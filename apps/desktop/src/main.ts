@@ -3,7 +3,7 @@ import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "el
 import { mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { Dewey } from "@clawde/dewey-core";
 import { createMirandaGate } from "@clawde/miranda-core";
@@ -85,6 +85,47 @@ type AgentTool = {
     },
   ) => Promise<{ ok: boolean; output: string; error?: string }>;
 };
+
+type DecomposeWorkerRun = {
+  role: RoleName;
+  subagentId: string;
+  objective: string;
+  result: AgentResult;
+  filesChanged: ReturnType<typeof deriveFilesChangedFromToolEvents>;
+  childPacket?: AHPPacket;
+};
+
+function absolutizeDesktopCommanderInput(
+  toolName: string,
+  input: Record<string, unknown>,
+  workspaceRoot: string,
+): Record<string, unknown> {
+  if (!toolName.startsWith("desktop-commander_")) return input;
+
+  const absolutize = (value: string): string => {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.startsWith("~") || /^[a-z]+:\/\//i.test(trimmed) || isAbsolute(trimmed)) {
+      return value;
+    }
+    return resolve(workspaceRoot, trimmed);
+  };
+
+  const normalized: Record<string, unknown> = { ...input };
+  for (const key of ["path", "cwd", "dir", "directory", "file_path", "source", "destination"]) {
+    const value = normalized[key];
+    if (typeof value === "string") {
+      normalized[key] = absolutize(value);
+    }
+  }
+
+  if (Array.isArray(normalized["paths"])) {
+    normalized["paths"] = normalized["paths"].map((value) =>
+      typeof value === "string" ? absolutize(value) : value,
+    );
+  }
+
+  return normalized;
+}
 
 type AppAuthStatus = LocalAuthView & {
   locked: boolean;
@@ -184,6 +225,31 @@ function deriveWorkerDoneCriteria(subtask: string): string[] {
   return criterion ? [criterion] : [subtask.slice(0, 120).replace(/:$/, '').trim()];
 }
 
+const SYNTHESIS_OUTPUT_CHAR_LIMIT = 1800;
+const FALLBACK_NOTE_CHAR_LIMIT = 320;
+const PRIMARY_FALLBACK_ROLE_PRIORITY: readonly RoleName[] = [
+  "strong_model",
+  "debugger",
+  "brain",
+  "utility",
+  "reader",
+  "cheap_model",
+  "vision",
+] as const;
+
+function clampWorkerOutput(text: string, maxChars: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  const sliceLength = Math.max(0, maxChars - 32);
+  return `${trimmed.slice(0, sliceLength).trimEnd()}\n\n[truncated]`;
+}
+
+function summarizeFallbackNote(text: string): string {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (normalized.length <= FALLBACK_NOTE_CHAR_LIMIT) return normalized;
+  return `${normalized.slice(0, FALLBACK_NOTE_CHAR_LIMIT - 3).trimEnd()}...`;
+}
+
 function isNonDeliverableOutput(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return true;
@@ -192,8 +258,72 @@ function isNonDeliverableOutput(text: string): boolean {
     /\[your complete response to the user here\b/i.test(trimmed) ||
     /\b(?:is still in progress|are still in progress)\b/i.test(trimmed) ||
     /\bOnce (?:the )?.{0,80}(?:complete|finish|done|available),?\s+I (?:will|can)\b/i.test(trimmed) ||
-    /\bPlease provide .{0,120}\bso (?:that )?I (?:can|will)\b/i.test(trimmed)
+    /\bPlease provide .{0,120}\bso (?:that )?I (?:can|will)\b/i.test(trimmed) ||
+    /\bUnable to (?:complete|perform|review|access|locate)\b/i.test(trimmed) ||
+    /\bNo (?:source(?:\s+code)?|implementation|API implementation|code) (?:was|were) found\b/i.test(trimmed) ||
+    /\bplease provide the correct path\b/i.test(trimmed) ||
+    /\bcannot review\b/i.test(trimmed)
   );
+}
+
+function isDeliverableWorkerRun(run: DecomposeWorkerRun): boolean {
+  return (
+    run.result.stoppedBecause === "done" &&
+    !!run.result.outputText?.trim() &&
+    !isNonDeliverableOutput(run.result.outputText)
+  );
+}
+
+function buildDeterministicSynthesisFallback(
+  workerRuns: DecomposeWorkerRun[],
+): {
+  outputText: string;
+  complete: boolean;
+  strategy: string;
+  primaryRole?: RoleName;
+  auxiliaryRoles: RoleName[];
+} {
+  const deliverableRuns = workerRuns.filter(isDeliverableWorkerRun);
+  if (deliverableRuns.length === 0) {
+    return { outputText: "", complete: false, strategy: "no_deliverable_workers", auxiliaryRoles: [] };
+  }
+
+  if (deliverableRuns.length === 1) {
+    return {
+      outputText: deliverableRuns[0]!.result.outputText.trim(),
+      complete: true,
+      strategy: "single_deliverable_worker",
+      primaryRole: deliverableRuns[0]!.role,
+      auxiliaryRoles: [],
+    };
+  }
+
+  const primaryRuns = deliverableRuns.filter((run) => PRIMARY_FALLBACK_ROLE_PRIORITY.includes(run.role));
+  if (primaryRuns.length !== 1) {
+    return {
+      outputText: "",
+      complete: false,
+      strategy: primaryRuns.length === 0 ? "no_primary_worker" : "multiple_primary_workers",
+      auxiliaryRoles: deliverableRuns.map((run) => run.role),
+    };
+  }
+
+  const primaryRun = primaryRuns[0]!;
+  const auxiliaryRuns = deliverableRuns.filter((run) => run !== primaryRun);
+  let outputText = primaryRun.result.outputText.trim();
+  if (auxiliaryRuns.length > 0) {
+    outputText += `\n\nAdditional notes:\n${auxiliaryRuns
+      .map((run) => `- ${run.role}: ${summarizeFallbackNote(run.result.outputText)}`)
+      .join("\n")}`;
+  }
+
+  return {
+    outputText,
+    complete: true,
+    strategy: auxiliaryRuns.length > 0 ? "primary_with_auxiliary_notes" : "single_primary_worker",
+    primaryRole: primaryRun.role,
+    auxiliaryRoles: auxiliaryRuns.map((run) => run.role),
+  };
 }
 
 function taskTextForRouting(task: OrcaTaskSpec): string {
@@ -562,14 +692,7 @@ function buildMaestroAdapter(
       streamTokens: boolean;
       subagent: boolean;
     },
-  ): Promise<{
-    role: RoleName;
-    subagentId: string;
-    objective: string;
-    result: AgentResult;
-    filesChanged: ReturnType<typeof deriveFilesChangedFromToolEvents>;
-    childPacket?: AHPPacket;
-  }> => {
+  ): Promise<DecomposeWorkerRun> => {
     throwIfAborted(ctx.abortSignal);
     const subagentId = `${ctx.runId}:${role}:${options.workerIndex}`;
     const childPacket = createWorkerPacket(
@@ -800,9 +923,14 @@ function buildMaestroAdapter(
             ? run.result.outputText
             : `[${run.role} stopped: ${run.result.stoppedBecause}${run.result.error ? `; ${run.result.error}` : ""}]`,
         }));
+        const departmentOutputsForSynthesis = departmentOutputs.map((output) => ({
+          head: output.head,
+          subtask: output.subtask,
+          output: clampWorkerOutput(output.output, SYNTHESIS_OUTPUT_CHAR_LIMIT),
+        }));
         const synthesisPrompt = buildSynthesisPrompt(
           task.originalUserMessage ?? task.intent,
-          departmentOutputs,
+          departmentOutputsForSynthesis,
           routing.synthesisHint,
         );
 
@@ -810,11 +938,14 @@ function buildMaestroAdapter(
         let synthesisProducedOutput = false;
         let usedDepartmentFallback = false;
         let synthesisError: string | undefined;
+        let fallbackStrategy: string | undefined;
+        let fallbackPrimaryRole: RoleName | undefined;
+        let fallbackAuxiliaryRoles: RoleName[] = [];
         try {
           ctx.emit?.({ type: "stream:reset", taskId: ctx.runId });
           const brainLLM = roleAdapters["brain"] ?? ctx.llm;
           const { text } = await brainLLM.complete(synthesisPrompt, {
-            maxTokens: 4096,
+            maxTokens: 2048,
             temperature: 0.2,
             abortSignal: ctx.abortSignal,
             onToken: (chunk: string) => {
@@ -834,9 +965,11 @@ function buildMaestroAdapter(
 
         if (!outputText) {
           usedDepartmentFallback = true;
-          outputText = departmentOutputs
-            .map((output) => `## ${output.head}\n${output.output}`)
-            .join("\n\n");
+          const fallback = buildDeterministicSynthesisFallback(workerRuns);
+          outputText = fallback.outputText;
+          fallbackStrategy = fallback.strategy;
+          fallbackPrimaryRole = fallback.primaryRole;
+          fallbackAuxiliaryRoles = fallback.auxiliaryRoles;
         }
 
         const toolEvents = workerRuns.flatMap((run) => run.result.toolsUsed);
@@ -853,28 +986,30 @@ function buildMaestroAdapter(
           !!run.result.outputText?.trim() &&
           !isNonDeliverableOutput(run.result.outputText),
         );
-        const fallbackIsComplete = usedDepartmentFallback && incompleteRuns.length === 0 && workerProducedOutput && !isNonDeliverableOutput(outputText);
+        const fallbackIsComplete = usedDepartmentFallback && incompleteRuns.length === 0 && workerProducedOutput && !!outputText.trim() && !isNonDeliverableOutput(outputText);
         const hasUserFacingOutput = synthesisProducedOutput || fallbackIsComplete;
-        const stoppedBecause = hasUserFacingOutput
-          ? "done"
-          : synthesisError
-            ? incompleteRuns.length > 0
-              ? "no_final_output"
-              : "error"
-            : incompleteRuns.length > 0
-              ? "no_final_output"
-              : "done";
+        const stoppedBecause = hasUserFacingOutput ? "done" : "no_final_output";
         const incompleteError = incompleteRuns
           .map((run) => `${run.role}: ${run.result.stoppedBecause}${run.result.error ? ` (${run.result.error})` : ""}`)
           .join("; ");
-        const errorMessage = synthesisError ?? (incompleteError || undefined);
+        const errorMessage = synthesisError
+          ?? (incompleteError || undefined)
+          ?? (usedDepartmentFallback ? `Deterministic fallback unavailable (${fallbackStrategy ?? "unknown"})` : undefined);
 
         ctx.recordTrace?.("maestro.decompose.synthesis", {
           workerCount: workerRuns.length,
           incompleteCount: incompleteRuns.length,
+          synthesisPromptChars: synthesisPrompt.length,
+          workerOutputChars: departmentOutputs.map((output) => ({
+            role: output.head,
+            chars: output.output.length,
+          })),
           synthesisError,
           synthesisProducedOutput,
           usedDepartmentFallback,
+          fallbackStrategy,
+          fallbackPrimaryRole,
+          fallbackAuxiliaryRoles,
           stoppedBecause,
           outputText,
         });
@@ -897,10 +1032,13 @@ function buildMaestroAdapter(
           ahpChildPackets: childPackets,
           subagentRuns: workerRuns.map((run) => ({
             subagentId: run.subagentId,
+            packetId: run.childPacket?.id,
             role: run.role,
             task: run.objective,
             status: run.result.stoppedBecause === "done" ? "done" : "failed",
             outputText: run.result.outputText,
+            filesChanged: run.filesChanged,
+            toolEvents: run.result.toolsUsed,
             error: run.result.error,
           })),
         };
@@ -1225,15 +1363,29 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       description: tool.description,
       schema: tool.schema,
       execute(input, context) {
-        return tool.execute(input, {
-          workspaceRoot: context.workspaceRoot ?? workspaceRoot,
-          runId: context.runId ?? '',
-          abortSignal: context.abortSignal,
-          requestApproval: context.requestApproval,
-        });
+        const effectiveWorkspaceRoot = context.workspaceRoot ?? workspaceRoot;
+        return tool.execute(
+          absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot),
+          {
+            workspaceRoot: effectiveWorkspaceRoot,
+            runId: context.runId ?? '',
+            abortSignal: context.abortSignal,
+            requestApproval: context.requestApproval,
+          },
+        );
       },
     }));
-    const toolService = bootstrap.toolService;
+    const toolService: OrcaToolService = {
+      execute(name, input) {
+        return bootstrap.toolService.execute(
+          name,
+          absolutizeDesktopCommanderInput(name, input, workspaceRoot),
+        );
+      },
+      formatForPrompt() {
+        return bootstrap.toolService.formatForPrompt();
+      },
+    };
 
     // Build per-role static tool allowlists from config
     const roleStaticAllowLists = new Map<RoleName, Set<string>>();

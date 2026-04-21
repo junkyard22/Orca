@@ -94,10 +94,13 @@ declare module '@clawde/orca-core' {
     doneCriteria?: string[];
     subagentRuns?: Array<{
       subagentId: string;
+      packetId?: string;
       role: string;
       task: string;
       status: "done" | "failed";
       outputText?: string;
+      filesChanged?: OrcaFileChange[];
+      toolEvents?: OrcaToolEvent[];
       error?: string;
     }>;
   }

@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOrcaRuntime } from "./runtime.js";
-import { AHPLifecycle, appendAHPTrace, createChildPacket } from "./ahp/types.js";
+import { AHPLifecycle, AHPVerdict, appendAHPTrace, createChildPacket } from "./ahp/types.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -251,6 +251,64 @@ describe("createOrcaRuntime", () => {
       const child = result.ahpChildPackets?.[0];
       expect(child?.verdict).toBeDefined();
       expect(child?.trace.some((entry) => entry.actor === "pappy")).toBe(true);
+    });
+
+    it("verifies child AHP packets against subagent artifacts instead of the parent synthesis output", async () => {
+      const pappy = {
+        evaluate: vi.fn(() => createMockPappyResult("PASS")),
+      } satisfies PappyPort;
+
+      const maestro: MaestroPort = {
+        run: async (_task, ctx) => {
+          if (!ctx.ahpRootPacket) {
+            throw new Error("missing root AHP packet");
+          }
+          const child = createChildPacket(ctx.ahpRootPacket.id, {
+            id: `${ctx.runId}_reviewer_0`,
+            objective: "Confirm audit result",
+            expectedOutput: {
+              schema: {},
+              acceptanceCriteria: ["Output mentions audit"],
+            },
+          });
+          child.lifecycle = AHPLifecycle.COMPLETE;
+          appendAHPTrace(child, {
+            timestamp: new Date().toISOString(),
+            state: AHPLifecycle.COMPLETE,
+            actor: "reviewer",
+            note: "review worker completed",
+          });
+
+          return {
+            outputText: "Merged summary without the required keyword.",
+            summary: "mock summary",
+            ahpChildPackets: [child],
+            subagentRuns: [{
+              subagentId: "reviewer-0",
+              packetId: child.id,
+              role: "reviewer",
+              task: "Confirm audit result",
+              status: "done",
+              outputText: "Output mentions audit.",
+            }],
+          };
+        },
+      };
+
+      const runtime = createOrcaRuntime({
+        maestro,
+        pappy,
+        llm: createMockLLM(),
+      });
+
+      const result = await runtime.executeTask(createTaskSpec({
+        originalUserMessage: "Audit the app",
+        goals: ["Output mentions audit"],
+      }));
+
+      const child = result.ahpChildPackets?.[0];
+      expect(child?.verdict).toBe(AHPVerdict.PASS);
+      expect(pappy.evaluate.mock.calls[0]?.[0]?.metadata?.ahpNonCompleteChildren).toBeUndefined();
     });
 
     it("binds tool workspace root to an explicit existing path in the task", async () => {

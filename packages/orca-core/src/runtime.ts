@@ -514,25 +514,48 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       } else {
         throwIfAborted(options?.abortSignal);
         const verifiedAHPIdsForQc = new Set<string>();
-        const verifyPacketForQc = (packet: AHPPacket, traceStage: string): void => {
+        const subagentRunsByPacketId = new Map(
+          (maestroResult.subagentRuns ?? [])
+            .filter((run) => typeof run.packetId === "string" && run.packetId.length > 0)
+            .map((run) => [run.packetId!, run] as const),
+        );
+        const verifyPacketForQc = (
+          packet: AHPPacket,
+          traceStage: string,
+          verificationInput: {
+            outputText?: string;
+            filesChanged?: typeof maestroResult.filesChanged;
+            artifactSource: "maestro" | "subagent";
+          },
+        ): void => {
           if (verifiedAHPIdsForQc.has(packet.id)) return;
           verifiedAHPIdsForQc.add(packet.id);
           verifyAHPPacket(packet, {
-            outputText: maestroResult.outputText,
-            filesChanged: maestroResult.filesChanged,
+            outputText: verificationInput.outputText,
+            filesChanged: verificationInput.filesChanged,
             workspaceRoot: effectiveWorkspaceRoot,
           });
           recordTrace(traceStage, {
             packet_id: packet.id,
             lifecycle: packet.lifecycle,
             verdict: packet.verdict,
+            artifactSource: verificationInput.artifactSource,
           });
         };
         if (maestroResult.ahpPacket) {
-          verifyPacketForQc(maestroResult.ahpPacket, "ahp.verify");
+          verifyPacketForQc(maestroResult.ahpPacket, "ahp.verify", {
+            outputText: maestroResult.outputText,
+            filesChanged: maestroResult.filesChanged,
+            artifactSource: "maestro",
+          });
         }
         for (const childPacket of maestroResult.ahpChildPackets ?? []) {
-          verifyPacketForQc(childPacket, "ahp.verify.child");
+          const childRun = subagentRunsByPacketId.get(childPacket.id);
+          verifyPacketForQc(childPacket, "ahp.verify.child", {
+            outputText: childRun?.outputText ?? maestroResult.outputText,
+            filesChanged: childRun?.filesChanged ?? maestroResult.filesChanged,
+            artifactSource: childRun ? "subagent" : "maestro",
+          });
         }
 
         const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult);
