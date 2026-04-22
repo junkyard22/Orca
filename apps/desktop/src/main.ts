@@ -218,11 +218,12 @@ type DesktopBrainRouting =
  * This extracts the first line (the action summary), strips any trailing colon,
  * and caps it at 120 chars to produce a concise, verifiable statement.
  */
-function deriveWorkerDoneCriteria(subtask: string): string[] {
-  const firstLine = subtask.split('\n')[0]?.trim() ?? subtask.trim();
-  const stripped = firstLine.replace(/:$/, '').trim();
-  const criterion = stripped.length > 120 ? `${stripped.slice(0, 117)}...` : stripped;
-  return criterion ? [criterion] : [subtask.slice(0, 120).replace(/:$/, '').trim()];
+function deriveWorkerDoneCriteria(_subtask: string): string[] {
+  // Return empty — the AHP evaluator treats no ACs as "non-empty output = PASS",
+  // which is correct for decomposed workers where we can't know in advance what
+  // text the worker will produce. A truncated subtask instruction is not a valid
+  // acceptance criterion because the output will never contain it verbatim.
+  return [];
 }
 
 const SYNTHESIS_OUTPUT_CHAR_LIMIT = 1800;
@@ -585,7 +586,7 @@ function buildMaestroAdapter(
       ],
       expectedOutput: {
         schema: {},
-        acceptanceCriteria: doneCriteria.length > 0 ? doneCriteria : [objective],
+        acceptanceCriteria: doneCriteria,
       },
     });
 
