@@ -23,16 +23,23 @@ class MockLLMAdapter implements LLMAdapter {
   }
   
   get name() { return "mock"; }
+
+  private snapshotRequest(request: LLMRequest): LLMRequest {
+    return {
+      ...request,
+      messages: request.messages.map((message) => ({ ...message })),
+    };
+  }
   
   async complete(request: LLMRequest): Promise<LLMResponse> {
-    this.requests.push(request);
+    this.requests.push(this.snapshotRequest(request));
     const response = this.responses[this.callCount] ?? "";
     this.callCount++;
     return { content: response, usage: { totalTokens: 100, promptTokens: 50, completionTokens: 50 } };
   }
   
   async stream(request: LLMRequest, onToken: (chunk: string) => void): Promise<LLMResponse> {
-    this.requests.push(request);
+    this.requests.push(this.snapshotRequest(request));
     const response = this.responses[this.callCount] ?? "";
     this.callCount++;
     onToken(response);
