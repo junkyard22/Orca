@@ -302,6 +302,7 @@ export async function handleRepairLoop(
         userFacingText: maestroResult.outputText,
         summary: nextQC.internalSummary,
         artifacts: maestroResult,
+        qcResult: nextQC,
       };
     }
 

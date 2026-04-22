@@ -44,6 +44,8 @@ export interface OrcaExecutionResult {
   userFacingText?: string;
   summary?: string;
   artifacts?: unknown;
+  /** Final QC verdict for this run when available (including repair-loop success). */
+  qcResult?: PappyResult;
   followUpQuestion?: string;
   /**
    * Root AHP packet for this run.

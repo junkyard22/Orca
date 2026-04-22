@@ -34,6 +34,7 @@ declare module '@clawde/orca-core' {
     userFacingText?: string;
     summary?: string;
     artifacts?: unknown;
+    qcResult?: PappyResult;
     followUpQuestion?: string;
   }
 

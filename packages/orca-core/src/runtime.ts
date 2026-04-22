@@ -669,7 +669,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           );
           if (result.artifacts) {
             persistedMaestroResult = normalizeMaestroResult(result.artifacts as OrcaMaestroResult);
-            persistedQcResult = pappy.evaluate(buildPappyInput(normalizedTaskSpec, persistedMaestroResult));
+            persistedQcResult = result.qcResult ?? pappy.evaluate(buildPappyInput(normalizedTaskSpec, persistedMaestroResult));
             recordTrace("repair.final_result", {
               result: persistedMaestroResult,
               qcVerdict: persistedQcResult.verdict,

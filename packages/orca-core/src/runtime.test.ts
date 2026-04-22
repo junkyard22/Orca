@@ -386,6 +386,7 @@ describe("createOrcaRuntime", () => {
 
       expect(result.status).toBe("SUCCESS");
       expect(maestro.run).toHaveBeenCalledTimes(2);
+      expect(pappy.evaluate).toHaveBeenCalledTimes(2);
       const repair = capturedRepairSpec?.context?.["repair"] as Record<string, unknown> | undefined;
       expect(repair?.["targetRole"]).toBe("reviewer");
       expect((repair?.["targetChildPacket"] as { id?: string } | undefined)?.id).toMatch(/_reviewer_0$/);
