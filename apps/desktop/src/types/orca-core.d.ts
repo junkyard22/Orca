@@ -50,6 +50,60 @@ declare module '@clawde/orca-core' {
     raw?: unknown;
   }
 
+  export interface AHPInput {
+    id: string;
+    type: string;
+    value: unknown;
+  }
+
+  export interface AHPConstraint {
+    rule: string;
+    enforcer: string;
+  }
+
+  export interface AHPExpectedOutput {
+    schema: Readonly<Record<string, unknown>>;
+    acceptanceCriteria: ReadonlyArray<string>;
+  }
+
+  export interface AHPTraceEntry {
+    timestamp: string;
+    state: string;
+    actor: string;
+    note?: string;
+  }
+
+  export interface AHPMeta {
+    ackRequired: boolean;
+    createdAt: string;
+    updatedAt: string;
+    startedAt?: string;
+    completedAt?: string;
+  }
+
+  export interface AHPEvalMeta {
+    taskType: string;
+    derivedAcceptanceCriteria: ReadonlyArray<string>;
+    mergedAcceptanceCriteria: ReadonlyArray<string>;
+  }
+
+  export interface AHPPacket {
+    id: string;
+    objective: string;
+    lifecycle: string;
+    inputs: ReadonlyArray<AHPInput>;
+    constraints: ReadonlyArray<AHPConstraint>;
+    expectedOutput: AHPExpectedOutput;
+    trace: AHPTraceEntry[];
+    meta: AHPMeta;
+    verdict?: string;
+    repairPrompt?: string;
+    evalMeta?: AHPEvalMeta;
+    role?: string;
+    parentPacketId?: string;
+    childPacketIds?: string[];
+  }
+
   export interface OrcaPipelineTraceEntry {
     at: string;
     stage: string;
@@ -81,10 +135,15 @@ declare module '@clawde/orca-core' {
     toolEvents?: OrcaToolEvent[];
     metadata?: {
       role?: string;
+      brainDecision?: string;
+      decomposition?: {
+        synthesisHint?: string;
+      };
       thoughts?: unknown[];
       iterationCount?: number;
       stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "error";
       loopEvidence?: { repeatedCall: string; occurrences: number };
+      errorMessage?: string;
       inputTokens?: number;
       outputTokens?: number;
       costUsd?: number;
@@ -92,6 +151,8 @@ declare module '@clawde/orca-core' {
       auditResult?: unknown;
     };
     doneCriteria?: string[];
+    ahpPacket?: AHPPacket;
+    ahpChildPackets?: AHPPacket[];
     subagentRuns?: Array<{
       subagentId: string;
       packetId?: string;
@@ -143,6 +204,8 @@ declare module '@clawde/orca-core' {
     subagentDepth?: number;
     workspaceContext?: unknown;
     gate?: MirandaGate;
+    ahpRootPacket?: AHPPacket;
+    ahpPacket?: AHPPacket;
     requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
     workspaceRoot?: string;
   }

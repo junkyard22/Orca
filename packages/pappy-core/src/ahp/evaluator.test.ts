@@ -18,6 +18,7 @@
 import { describe, it, expect } from "vitest";
 import {
   AHPLifecycle,
+  AHPPacketRole,
   AHPVerdict,
   appendAHPTrace,
   isTerminalAHPLifecycle,
@@ -186,6 +187,41 @@ describe("verifyAHPPacket — evalMeta", () => {
     verifyAHPPacket(packet, makeInput(""));
     expect(packet.verdict).toBe(AHPVerdict.INCONCLUSIVE);
     expect(packet.evalMeta).toBeUndefined();
+  });
+
+  it("passes a completed child packet with non-empty output when packet ACs are intentionally empty", () => {
+    const packet = makePacket({
+      expectedOutput: { schema: {}, acceptanceCriteria: [] },
+    });
+    packet.role = AHPPacketRole.Child;
+    packet.trace = [
+      {
+        timestamp: new Date().toISOString(),
+        state: AHPLifecycle.COMPLETE,
+        actor: "planner_deep",
+        note: "Agent stopped: done; iterations=3",
+      },
+    ];
+
+    verifyAHPPacket(packet, makeInput("Implemented the requested plan and reviewed the result."));
+
+    expect(packet.verdict).toBe(AHPVerdict.PASS);
+    expect(packet.evalMeta).toBeDefined();
+    expect(packet.evalMeta?.mergedAcceptanceCriteria).toHaveLength(0);
+  });
+
+  it("still derives default ACs for root packets with empty packet ACs", () => {
+    const packet = makePacket({
+      objective: "Write a binary search function",
+      expectedOutput: { schema: {}, acceptanceCriteria: [] },
+    });
+
+    verifyAHPPacket(
+      packet,
+      makeInput("function binary search compiles without errors and implements the described interface"),
+    );
+
+    expect(packet.evalMeta?.mergedAcceptanceCriteria.length ?? 0).toBeGreaterThan(0);
   });
 
   it("does NOT set evalMeta when VIOLATION guard fires", () => {

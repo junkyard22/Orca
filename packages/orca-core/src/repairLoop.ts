@@ -4,12 +4,92 @@ import type {
   OrcaRunCtx,
   MaestroPort,
   PappyPort,
+  OrcaMaestroResult,
 } from "./types.js";
 import type { AHPPacket } from "./ahp/types.js";
+import { verifyAHPPacket } from "@clawde/pappy-core";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
 import { throwIfAborted } from "./abort.js";
+
+type RepairSubagentRun = NonNullable<OrcaMaestroResult["subagentRuns"]>[number];
+
+const INFRASTRUCTURE_ACTORS = new Set(["brain", "miranda", "pappy"]);
+
+function selectRepairPacket(
+  artifacts: OrcaMaestroResult | undefined,
+  fallbackPacket?: AHPPacket,
+): AHPPacket | undefined {
+  const childCandidate = (artifacts?.ahpChildPackets ?? []).find((packet) =>
+    typeof packet.repairPrompt === "string" ||
+    packet.lifecycle !== "COMPLETE" ||
+    (packet.verdict !== undefined && packet.verdict !== "PASS")
+  );
+  return childCandidate ?? artifacts?.ahpPacket ?? fallbackPacket;
+}
+
+function deriveRepairRole(
+  packet: AHPPacket | undefined,
+  artifacts: OrcaMaestroResult | undefined,
+  fallbackRole?: string,
+): string | undefined {
+  if (!packet) return fallbackRole;
+  const subagentRole = artifacts?.subagentRuns?.find((run) => run.packetId === packet.id)?.role;
+  if (subagentRole) return subagentRole;
+  const workerTrace = [...packet.trace].reverse().find((entry) => !INFRASTRUCTURE_ACTORS.has(entry.actor));
+  return workerTrace?.actor ?? fallbackRole;
+}
+
+function verifyRepairPackets(
+  artifacts: OrcaMaestroResult,
+  ctx: OrcaRunCtx,
+): void {
+  const subagentRunsByPacketId = new Map<string, RepairSubagentRun>(
+    (artifacts.subagentRuns ?? [])
+      .filter((run): run is RepairSubagentRun & { packetId: string } => typeof run.packetId === "string" && run.packetId.length > 0)
+      .map((run) => [run.packetId, run]),
+  );
+
+  if (artifacts.ahpPacket) {
+    verifyAHPPacket(artifacts.ahpPacket, {
+      outputText: artifacts.outputText,
+      filesChanged: artifacts.filesChanged,
+      workspaceRoot: ctx.workspaceRoot,
+    });
+    ctx.recordTrace?.("repair.pass.ahp.verify", {
+      packet_id: artifacts.ahpPacket.id,
+      artifactSource: "maestro",
+      verdict: artifacts.ahpPacket.verdict,
+      lifecycle: artifacts.ahpPacket.lifecycle,
+    });
+  }
+
+  for (const packet of artifacts.ahpChildPackets ?? []) {
+    const childRun = subagentRunsByPacketId.get(packet.id);
+    if (!childRun && packet.verdict !== undefined) continue;
+    verifyAHPPacket(packet, {
+      outputText: childRun?.outputText ?? artifacts.outputText,
+      filesChanged: childRun?.filesChanged ?? artifacts.filesChanged,
+      workspaceRoot: ctx.workspaceRoot,
+    });
+    ctx.recordTrace?.("repair.pass.ahp.verify.child", {
+      packet_id: packet.id,
+      artifactSource: childRun ? "subagent" : "maestro",
+      verdict: packet.verdict,
+      lifecycle: packet.lifecycle,
+    });
+  }
+}
+
+function hasRepairPath(
+  qcResult: PappyResult,
+  artifacts: OrcaMaestroResult | undefined,
+  fallbackPacket?: AHPPacket,
+): boolean {
+  if (qcResult.repairTask) return true;
+  return typeof selectRepairPacket(artifacts, fallbackPacket)?.repairPrompt === "string";
+}
 
 /**
  * Called when Pappy returns FAIL on the initial generation pass.
@@ -39,11 +119,13 @@ export async function handleRepairLoop(
   initialErrorMessage?: string,
   initialGateBlockReason?: string,
   ahpPacket?: AHPPacket,
+  initialArtifacts?: OrcaMaestroResult,
 ): Promise<OrcaExecutionResult> {
   let currentQC = initialQCResult;
   // Seed with the initial output so we always have something to show
   let lastOutputText: string | undefined = initialOutputText;
   let spentUsd = spentSoFarUsd ?? 0;
+  let currentArtifacts = initialArtifacts;
 
   for (let pass = 1; pass <= maxPasses; pass++) {
     throwIfAborted(ctx.abortSignal);
@@ -70,10 +152,12 @@ export async function handleRepairLoop(
     
     // Preserve the original role in the repair task message so Brain routes
     // it back to the same role (e.g., reviewer) instead of a different one.
-    const roleHint = originalRole ? `\n\nOriginal role: ${originalRole}\nRe-run using the ${originalRole} role.` : '';
+    const repairPacket = selectRepairPacket(currentArtifacts, ahpPacket);
+    const repairRole = deriveRepairRole(repairPacket, currentArtifacts, originalRole);
+    const roleHint = repairRole ? `\n\nOriginal role: ${repairRole}\nRe-run using the ${repairRole} role.` : '';
     // Prefer the AHP-based targeted repair prompt (set by Pappy's verifyAHPPacket)
     // over the legacy generic repairTask string when available.
-    const repairInstruction = ahpPacket?.repairPrompt ?? currentQC.repairTask!;
+    const repairInstruction = repairPacket?.repairPrompt ?? ahpPacket?.repairPrompt ?? currentQC.repairTask!;
 
     // ── Tool-missing escalation ─────────────────────────────────────────────
     // If QC flagged TOOL_MISSING, the agent ran but never called tools.
@@ -129,6 +213,18 @@ export async function handleRepairLoop(
             message: originalTask.originalUserMessage,
             role: originalRole,
           },
+          ...(currentArtifacts?.ahpChildPackets?.length
+            ? {
+                targetRole: repairRole,
+                targetChildPacket: repairPacket,
+                priorSubagentRuns: currentArtifacts.subagentRuns ?? [],
+                priorChildPackets: currentArtifacts.ahpChildPackets ?? [],
+                synthesisHint: currentArtifacts.metadata?.decomposition?.synthesisHint,
+                doneCriteria: currentArtifacts.doneCriteria ?? originalTask.goals,
+                repairInstruction,
+                originalRequest: originalTask.originalUserMessage,
+              }
+            : {}),
           issues: currentQC.issues.map((i) => ({
             severity:    i.severity,
             code:        i.code,
@@ -142,11 +238,14 @@ export async function handleRepairLoop(
       pass,
       maxPasses,
       originalRole,
+      repairPacketId: repairPacket?.id,
+      repairRole,
       repairSpec,
     });
 
     emitter.emit({ type: "maestro:start", taskId: ctx.runId, attempt: pass, isRepair: true });
     const maestroResult = normalizeMaestroResult(await maestro.run(repairSpec, ctx));
+    currentArtifacts = maestroResult;
     lastOutputText = maestroResult.outputText ?? lastOutputText;
     spentUsd += maestroResult.metadata?.costUsd ?? 0;
     ctx.recordTrace?.("repair.pass.maestro_result", {
@@ -166,6 +265,7 @@ export async function handleRepairLoop(
     // Miranda: before_qc gate
     ctx.gate?.beforeQC({ taskId: ctx.runId, outputText: maestroResult.outputText ?? "" });
 
+    verifyRepairPackets(maestroResult, ctx);
     const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
     ctx.recordTrace?.("repair.pass.qc_result", {
       pass,
@@ -205,7 +305,7 @@ export async function handleRepairLoop(
       };
     }
 
-    if (!nextQC.repairTask) {
+    if (!hasRepairPath(nextQC, currentArtifacts, ahpPacket)) {
       ctx.recordTrace?.("repair.pass.stopped_no_repair_task", { pass });
       break;
     }

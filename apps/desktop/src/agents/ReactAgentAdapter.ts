@@ -1,5 +1,5 @@
 import type { LLMAdapter, LLMMessage, LLMRequest } from "@clawde/miranda-core";
-import type { OrcaLLMService, OrcaRunCtx, OrcaToolService } from "@clawde/orca-core";
+import type { AHPPacket, OrcaLLMService, OrcaRunCtx, OrcaToolService } from "@clawde/orca-core";
 import { formatToolResult as sharedFormatToolResult, runAgentLoop } from "@clawde/agent-loop-core";
 import type { AgentAdapter, AgentTask, AgentResult, ThoughtRecord, AgentRunContext } from "./AgentAdapter";
 import type { RoleName } from "maestro-core";
@@ -311,6 +311,145 @@ function buildSharedToolPrompt(tools: Tool[]): string {
     : "## Available Tools\nNo tools are available for this task. Work from the provided context only.";
 }
 
+type TaskPromptContract = {
+  intent: string;
+  goals: string[];
+  doneCriteria: string[];
+  constraints: string[];
+  repairDirective?: string;
+  promptSource: "agent_task" | "ahp_packet";
+  packetId?: string;
+};
+
+function stringifyPromptValue(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => stringifyPromptValue(entry))
+      .filter((entry) => entry.length > 0)
+      .join(", ");
+  }
+  if (value && typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function buildTaskPromptContract(task: AgentTask, packet?: AHPPacket): TaskPromptContract {
+  if (!packet) {
+    return {
+      intent: task.intent,
+      goals: task.goals,
+      doneCriteria: task.doneCriteria,
+      constraints: [],
+      promptSource: "agent_task",
+    };
+  }
+
+  const repairDirective = uniqueNonEmpty(
+    packet.inputs
+      .filter((input) => input.type === "repair_directive")
+      .map((input) => stringifyPromptValue(input.value)),
+  ).join("\n\n");
+  const objective = packet.objective.trim();
+  const goals = uniqueNonEmpty(
+    packet.inputs
+      .filter((input) => input.type !== "repair_directive")
+      .map((input) => stringifyPromptValue(input.value))
+      .filter((value) => value && value !== objective),
+  );
+  const constraints = uniqueNonEmpty(
+    packet.constraints.map((constraint) =>
+      constraint.enforcer && constraint.enforcer !== constraint.rule
+        ? `${constraint.rule} (${constraint.enforcer})`
+        : constraint.rule,
+    ),
+  );
+
+  return {
+    intent: objective || task.intent,
+    goals: goals.length > 0 ? goals : task.goals,
+    doneCriteria: [...packet.expectedOutput.acceptanceCriteria],
+    constraints,
+    repairDirective: repairDirective || undefined,
+    promptSource: "ahp_packet",
+    packetId: packet.id,
+  };
+}
+
+function renderTaskPrompt(
+  role: RoleName,
+  contract: TaskPromptContract,
+  toolPrompt: string,
+  fileWriteDirective: string,
+): string {
+  if (contract.promptSource === "ahp_packet") {
+    const lines: string[] = [
+      `${fileWriteDirective}## AHP Packet Assignment`,
+      `Role: **${role}**`,
+    ];
+
+    if (contract.packetId) {
+      lines.push(`Packet: ${contract.packetId}`);
+    }
+
+    lines.push("", "### Objective", contract.intent);
+
+    if (contract.goals.length > 0) {
+      lines.push("", "### Inputs", ...contract.goals.map((goal) => `- ${goal}`));
+    }
+
+    if (contract.constraints.length > 0) {
+      lines.push("", "### Constraints", ...contract.constraints.map((constraint) => `- ${constraint}`));
+    }
+
+    if (contract.repairDirective) {
+      lines.push("", "### Repair Directive", contract.repairDirective);
+    }
+
+    if (contract.doneCriteria.length > 0) {
+      lines.push("", "### Acceptance Criteria", ...contract.doneCriteria.map((criterion) => `- ${criterion}`));
+    }
+
+    lines.push("", toolPrompt);
+    return lines.join("\n");
+  }
+
+  const lines: string[] = [
+    `${fileWriteDirective}## Task Intent`,
+    contract.intent,
+    "",
+    "## Goals",
+    ...contract.goals.map((goal) => `- ${goal}`),
+  ];
+
+  if (contract.doneCriteria.length > 0) {
+    lines.push("", "## Done Criteria", ...contract.doneCriteria.map((criterion) => `- ${criterion}`));
+  }
+
+  lines.push("", toolPrompt);
+  return lines.join("\n");
+}
+
 function toSharedLLMService(
   adapter: LLMAdapter,
   defaults: { maxTokens: number; temperature: number },
@@ -414,6 +553,7 @@ function toSharedRunCtx(
     workspaceContext: ctx.workspaceContext,
     gate: ctx.gate,
     ahpRootPacket: ctx.ahpRootPacket,
+    ahpPacket: ctx.ahpPacket,
     workspaceRoot: ctx.workspaceRoot,
   };
 }
@@ -454,20 +594,19 @@ export class ReactAgentAdapter implements AgentAdapter {
       temperature: this.temperature,
     });
     const sharedCtx = toSharedRunCtx(ctx, llmService, toolService);
-    const taskPrompt = [
-      "## Task",
-      `Role: **${this.role}**`,
-      "",
-      "### Intent",
-      task.intent,
-      "",
-      "### Goals",
-      ...task.goals.map((goal) => `- ${goal}`),
-      "",
-      "### Done Criteria",
-      ...task.doneCriteria.map((criterion) => `- ${criterion}`),
-    ].join("\n");
-    const result = await runAgentLoop(this.systemPrompt, taskPrompt, toolService, sharedCtx, task.doneCriteria);
+    const contract = buildTaskPromptContract(task, ctx.ahpPacket);
+    const needsFileWrite = taskExplicitlyRequestsFileSave(
+      `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`,
+    );
+    const taskPrompt = renderTaskPrompt(
+      this.role,
+      contract,
+      buildSharedToolPrompt(tools),
+      needsFileWrite
+        ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline - use the tool.**\n\n"
+        : "",
+    );
+    const result = await runAgentLoop(this.systemPrompt, taskPrompt, toolService, sharedCtx, contract.doneCriteria);
     return {
       outputText: result.text,
       thoughts: [],
@@ -531,25 +670,13 @@ export class ReactAgentAdapter implements AgentAdapter {
       : "## Available Tools\nNo tools are available for this task. Work from the provided context only.";
 
     const conversationHistory = task.conversationHistory || [];
-    const goalText = task.goals.join(" ");
-    const intentAndGoals = `${task.intent} ${goalText}`;
+    const contract = buildTaskPromptContract(task, ctx.ahpPacket);
+    const intentAndGoals = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
     const needsFileWrite = taskExplicitlyRequestsFileSave(intentAndGoals);
     const fileWriteDirective = needsFileWrite
       ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline - use the tool.**\n\n"
       : "";
-
-    const taskContext = [
-      fileWriteDirective + "## Task Intent",
-      task.intent,
-      "",
-      "## Goals",
-      ...task.goals.map((g) => `- ${g}`),
-      "",
-      "## Done Criteria",
-      ...task.doneCriteria.map((c) => `- ${c}`),
-      "",
-      toolPrompt,
-    ].join("\n");
+    const taskContext = renderTaskPrompt(this.role, contract, toolPrompt, fileWriteDirective);
 
     const fullSystemPrompt = `${this.systemPrompt}${REACT_PROMPT_BLOCK}`;
 
@@ -569,6 +696,8 @@ export class ReactAgentAdapter implements AgentAdapter {
         schema: tool.schema,
       })),
       task,
+      promptSource: contract.promptSource,
+      packetId: contract.packetId,
       systemPrompt: fullSystemPrompt,
       taskContext,
     });
@@ -722,7 +851,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         const iterationsRemaining = this.maxIterations - iteration - 1;
         if (iterationsRemaining === 2 && iteration >= 1 && !toolLimitWarningInjected && !finalAnswerFound) {
           toolLimitWarningInjected = true;
-          const allTaskTextForWarn = `${task.intent} ${task.goals.join(" ")} ${task.doneCriteria.join(" ")}`;
+          const allTaskTextForWarn = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
           const taskImpliesFileSaveForWarn = taskExplicitlyRequestsFileSave(allTaskTextForWarn);
           const writeFileCalledForWarn = toolsUsed.some((e) => e.tool === "write_file");
           const writeFileReminder = taskImpliesFileSaveForWarn && !writeFileCalledForWarn
@@ -737,7 +866,7 @@ export class ReactAgentAdapter implements AgentAdapter {
 
         if (toolCalls.length === 0) {
           if (finalAnswer) {
-            const allTaskText = `${task.intent} ${task.goals.join(" ")}`;
+            const allTaskText = `${contract.intent} ${contract.goals.join(" ")}`;
             const taskImpliesToolUse = (
               /\b(analyz|investigat|examin|read|list|search|find|save|write|creat)\w*/i.test(allTaskText) ||
               /\b\w+\.\w{2,5}\b/.test(allTaskText)
@@ -1024,7 +1153,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         }
       }
 
-      const allTaskTextForRescue = `${task.intent} ${task.goals.join(" ")} ${task.doneCriteria.join(" ")}`;
+      const allTaskTextForRescue = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
       const taskImpliesFileSaveRescue = taskExplicitlyRequestsFileSave(allTaskTextForRescue);
       const writeFileCalledRescue = toolsUsed.some((e) => e.tool === "write_file");
 

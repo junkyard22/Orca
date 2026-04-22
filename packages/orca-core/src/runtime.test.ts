@@ -311,6 +311,88 @@ describe("createOrcaRuntime", () => {
       expect(pappy.evaluate.mock.calls[0]?.[0]?.metadata?.ahpNonCompleteChildren).toBeUndefined();
     });
 
+    it("enters repair when only a child AHP packet provides the repair prompt", async () => {
+      let attempt = 0;
+      let capturedRepairSpec: OrcaTaskSpec | undefined;
+      const maestro: MaestroPort = {
+        run: vi.fn(async (task, ctx) => {
+          attempt++;
+          if (attempt === 1) {
+            if (!ctx.ahpRootPacket) {
+              throw new Error("missing root AHP packet");
+            }
+            const child = createChildPacket(ctx.ahpRootPacket.id, {
+              id: `${ctx.runId}_reviewer_0`,
+              objective: "Confirm audit result",
+              expectedOutput: {
+                schema: {},
+                acceptanceCriteria: ["Output mentions audit"],
+              },
+            });
+            child.lifecycle = AHPLifecycle.COMPLETE;
+            appendAHPTrace(child, {
+              timestamp: new Date().toISOString(),
+              state: AHPLifecycle.COMPLETE,
+              actor: "reviewer",
+              note: "review worker completed",
+            });
+
+            return {
+              outputText: "Merged summary without the keyword.",
+              summary: "mock summary",
+              doneCriteria: ["Output mentions audit"],
+              metadata: {
+                role: "brain",
+                decomposition: {
+                  synthesisHint: "Keep the audit summary concise.",
+                },
+              },
+              ahpChildPackets: [child],
+              subagentRuns: [{
+                subagentId: "reviewer-0",
+                packetId: child.id,
+                role: "reviewer",
+                task: "Confirm audit result",
+                status: "done",
+                outputText: "This output never references the required audit keyword.",
+              }],
+            };
+          }
+
+          capturedRepairSpec = task;
+          return {
+            outputText: "Audit result verified.",
+            summary: "repair summary",
+          };
+        }),
+      };
+      const pappy = {
+        evaluate: vi.fn()
+          .mockReturnValueOnce(createMockPappyResult("FAIL"))
+          .mockReturnValueOnce(createMockPappyResult("PASS")),
+      } satisfies PappyPort;
+
+      const runtime = createOrcaRuntime({
+        maestro,
+        pappy,
+        llm: createMockLLM(),
+        maxRepairPasses: 1,
+      });
+
+      const result = await runtime.executeTask(createTaskSpec({
+        originalUserMessage: "Audit the app",
+        goals: ["Output mentions audit"],
+      }));
+
+      expect(result.status).toBe("SUCCESS");
+      expect(maestro.run).toHaveBeenCalledTimes(2);
+      const repair = capturedRepairSpec?.context?.["repair"] as Record<string, unknown> | undefined;
+      expect(repair?.["targetRole"]).toBe("reviewer");
+      expect((repair?.["targetChildPacket"] as { id?: string } | undefined)?.id).toMatch(/_reviewer_0$/);
+      expect(Array.isArray(repair?.["priorSubagentRuns"])).toBe(true);
+      expect((repair?.["repairInstruction"] as string | undefined)).toContain("Output mentions audit");
+    });
+
     it("binds tool workspace root to an explicit existing path in the task", async () => {
       const explicitRoot = mkdtempSync(join(tmpdir(), "orca-explicit-root-"));
       let seenWorkspaceRoot: string | undefined;

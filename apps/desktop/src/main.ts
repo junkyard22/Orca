@@ -95,6 +95,124 @@ type DecomposeWorkerRun = {
   childPacket?: AHPPacket;
 };
 
+type StoredSubagentRun = NonNullable<OrcaMaestroResult["subagentRuns"]>[number];
+
+type TargetedRepairContext = {
+  targetRole: RoleName;
+  targetPacket: AHPPacket;
+  priorSubagentRuns: StoredSubagentRun[];
+  priorChildPackets: AHPPacket[];
+  synthesisHint?: string;
+  doneCriteria: string[];
+  repairInstruction?: string;
+  originalRequest?: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringifyAHPPromptValue(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => stringifyAHPPromptValue(entry))
+      .filter((entry) => entry.length > 0)
+      .join(", ");
+  }
+  if (isRecord(value)) {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function isAHPPacketShape(value: unknown): value is AHPPacket {
+  return (
+    isRecord(value) &&
+    typeof value["id"] === "string" &&
+    typeof value["objective"] === "string" &&
+    Array.isArray(value["inputs"]) &&
+    Array.isArray(value["constraints"]) &&
+    isRecord(value["expectedOutput"])
+  );
+}
+
+function isStoredSubagentRun(value: unknown): value is StoredSubagentRun {
+  return (
+    isRecord(value) &&
+    typeof value["subagentId"] === "string" &&
+    typeof value["role"] === "string" &&
+    typeof value["task"] === "string" &&
+    (value["status"] === "done" || value["status"] === "failed")
+  );
+}
+
+function parseTargetedRepairContext(task: OrcaTaskSpec): TargetedRepairContext | null {
+  if (task.intent !== "repair") return null;
+  const repair = isRecord(task.context?.["repair"]) ? task.context["repair"] : null;
+  if (!repair) return null;
+
+  const targetRole = repair["targetRole"];
+  const targetPacket = repair["targetChildPacket"];
+  if (typeof targetRole !== "string" || !isAHPPacketShape(targetPacket)) {
+    return null;
+  }
+
+  const priorSubagentRuns = Array.isArray(repair["priorSubagentRuns"])
+    ? repair["priorSubagentRuns"].filter(isStoredSubagentRun)
+    : [];
+  const priorChildPackets = Array.isArray(repair["priorChildPackets"])
+    ? repair["priorChildPackets"].filter(isAHPPacketShape)
+    : [];
+  const doneCriteria = Array.isArray(repair["doneCriteria"])
+    ? repair["doneCriteria"].filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
+
+  return {
+    targetRole: targetRole as RoleName,
+    targetPacket,
+    priorSubagentRuns,
+    priorChildPackets,
+    synthesisHint: typeof repair["synthesisHint"] === "string" ? repair["synthesisHint"] : undefined,
+    doneCriteria,
+    repairInstruction: typeof repair["repairInstruction"] === "string" ? repair["repairInstruction"] : undefined,
+    originalRequest: typeof repair["originalRequest"] === "string" ? repair["originalRequest"] : undefined,
+  };
+}
+
+function toSyntheticWorkerRun(
+  run: StoredSubagentRun,
+  childPacket?: AHPPacket,
+): DecomposeWorkerRun {
+  const stoppedBecause: AgentResult["stoppedBecause"] = run.status === "done"
+    ? "done"
+    : run.error
+      ? "error"
+      : "no_final_output";
+
+  return {
+    role: run.role as RoleName,
+    subagentId: run.subagentId,
+    objective: run.task,
+    result: {
+      outputText: run.outputText ?? "",
+      thoughts: [],
+      toolsUsed: run.toolEvents ?? [],
+      filesChanged: run.filesChanged ?? [],
+      iterationCount: 0,
+      stoppedBecause,
+      error: run.error,
+    },
+    filesChanged: deriveFilesChangedFromToolEvents(run.toolEvents, run.filesChanged ?? []),
+    childPacket,
+  };
+}
+
 function absolutizeDesktopCommanderInput(
   toolName: string,
   input: Record<string, unknown>,
@@ -209,17 +327,17 @@ type DesktopBrainRouting =
 // ── Brain routing helper ───────────────────────────────────────────────────
 
 /**
- * Derive a short, output-focused done criterion for a worker from its subtask.
+ * Worker subtasks are instructions, not deliverable-shaped acceptance criteria.
  *
  * Subtask directives are written as instructions ("Audit X for:\n\n...") which
  * make poor AHP acceptance criteria — the AHP evaluator uses keyword matching
  * and a 100-word instruction paragraph requires too many keyword matches.
  *
- * This extracts the first line (the action summary), strips any trailing colon,
- * and caps it at 120 chars to produce a concise, verifiable statement.
+ * Leave worker packet ACs empty and let downstream QC evaluate the actual
+ * deliverable instead of matching against the instruction text itself.
  */
 function deriveWorkerDoneCriteria(_subtask: string): string[] {
-  // Return empty — the AHP evaluator treats no ACs as "non-empty output = PASS",
+  // Return empty - the AHP evaluator treats no ACs as "non-empty output = PASS",
   // which is correct for decomposed workers where we can't know in advance what
   // text the worker will produce. A truncated subtask instruction is not a valid
   // acceptance criterion because the output will never contain it verbatim.
@@ -557,36 +675,52 @@ function buildMaestroAdapter(
     doneCriteria: string[],
     workerIndex: number,
     objective: string,
+    sourcePacket?: AHPPacket,
+    repairInstruction?: string,
   ): AHPPacket | undefined => {
     if (!ctx.ahpRootPacket) return undefined;
     const safeRole = role.replace(/[^a-z0-9_-]/gi, "_");
+    const packetObjective = sourcePacket?.objective ?? objective;
+    const packetInputs = sourcePacket
+      ? [...sourcePacket.inputs]
+      : [
+          ...(task.goals ?? []).map((goal, index) => ({
+            id: `goal-${index}`,
+            type: "goal",
+            value: goal,
+          })),
+          {
+            id: "worker-objective",
+            type: "subtask",
+            value: objective,
+          },
+        ];
+    if (repairInstruction) {
+      packetInputs.push({
+        id: "repair-directive",
+        type: "repair_directive",
+        value: repairInstruction,
+      });
+    }
+    const packetConstraints = sourcePacket
+      ? [...sourcePacket.constraints]
+      : [
+          ...(isCommandExecutionObjective(objective)
+            ? [{ rule: "no_file_writes", enforcer: "miranda" }]
+            : []),
+          ...Object.entries(task.constraints ?? {}).map(([rule, value]) => ({
+            rule,
+            enforcer: String(value),
+          })),
+        ];
     const childPacket = createChildPacket(ctx.ahpRootPacket.id, {
-      id: `${ctx.runId}_${safeRole}_${workerIndex}_${Date.now().toString(36)}`,
-      objective,
-      inputs: [
-        ...(task.goals ?? []).map((goal, index) => ({
-          id: `goal-${index}`,
-          type: "goal",
-          value: goal,
-        })),
-        {
-          id: "worker-objective",
-          type: "subtask",
-          value: objective,
-        },
-      ],
-      constraints: [
-        ...(isCommandExecutionObjective(objective)
-          ? [{ rule: "no_file_writes", enforcer: "miranda" }]
-          : []),
-        ...Object.entries(task.constraints ?? {}).map(([rule, value]) => ({
-          rule,
-          enforcer: String(value),
-        })),
-      ],
+      id: sourcePacket?.id ?? `${ctx.runId}_${safeRole}_${workerIndex}_${Date.now().toString(36)}`,
+      objective: packetObjective,
+      inputs: packetInputs,
+      constraints: packetConstraints,
       expectedOutput: {
-        schema: {},
-        acceptanceCriteria: doneCriteria,
+        schema: sourcePacket?.expectedOutput.schema ?? {},
+        acceptanceCriteria: sourcePacket?.expectedOutput.acceptanceCriteria ?? doneCriteria,
       },
     });
 
@@ -613,6 +747,8 @@ function buildMaestroAdapter(
       role,
       workerIndex,
       acceptanceCriteria: childPacket.expectedOutput.acceptanceCriteria,
+      promptSource: sourcePacket ? "ahp_packet" : "agent_task",
+      sourcePacketId: sourcePacket?.id,
     });
     return childPacket;
   };
@@ -692,6 +828,8 @@ function buildMaestroAdapter(
       objective: string;
       streamTokens: boolean;
       subagent: boolean;
+      sourcePacket?: AHPPacket;
+      repairInstruction?: string;
     },
   ): Promise<DecomposeWorkerRun> => {
     throwIfAborted(ctx.abortSignal);
@@ -703,6 +841,8 @@ function buildMaestroAdapter(
       agentTask.doneCriteria,
       options.workerIndex,
       options.objective,
+      options.sourcePacket,
+      options.repairInstruction,
     );
     if (options.subagent) {
       ctx.emit?.({
@@ -758,6 +898,7 @@ function buildMaestroAdapter(
     const agentCtx: AgentRunContext = {
       ...ctx,
       gate: workerGate,
+      ahpPacket: childPacket,
       subagentDepth: options.subagent ? (ctx.subagentDepth ?? 0) + 1 : ctx.subagentDepth,
       workspaceRoot: ctx.workspaceRoot ?? workspaceRoot,
       onStreamToken: options.streamTokens
@@ -863,7 +1004,214 @@ function buildMaestroAdapter(
       for (const [role, adapter] of configuredAdapters) {
         roleAdapters[role] = createDirectLLMService(adapter, '', { maxTokens: 8192, temperature: 0.7 });
       }
-      
+
+      const synthesizeWorkerRuns = async (params: {
+        workerRuns: DecomposeWorkerRun[];
+        requestText: string;
+        doneCriteria: string[];
+        brainDecision?: string;
+        synthesisHint?: string;
+        summaryPrefix: string;
+      }): Promise<OrcaMaestroResult> => {
+        const departmentOutputs = params.workerRuns.map((run) => ({
+          head: run.role,
+          subtask: run.objective,
+          output: run.result.outputText?.trim()
+            ? run.result.outputText
+            : `[${run.role} stopped: ${run.result.stoppedBecause}${run.result.error ? `; ${run.result.error}` : ""}]`,
+        }));
+        const departmentOutputsForSynthesis = departmentOutputs.map((output) => ({
+          head: output.head,
+          subtask: output.subtask,
+          output: clampWorkerOutput(output.output, SYNTHESIS_OUTPUT_CHAR_LIMIT),
+        }));
+        const synthesisPrompt = buildSynthesisPrompt(
+          params.requestText,
+          departmentOutputsForSynthesis,
+          params.synthesisHint,
+        );
+
+        let outputText = "";
+        let synthesisProducedOutput = false;
+        let usedDepartmentFallback = false;
+        let synthesisError: string | undefined;
+        let fallbackStrategy: string | undefined;
+        let fallbackPrimaryRole: RoleName | undefined;
+        let fallbackAuxiliaryRoles: RoleName[] = [];
+        try {
+          ctx.emit?.({ type: "stream:reset", taskId: ctx.runId });
+          const brainLLM = roleAdapters["brain"] ?? ctx.llm;
+          const { text } = await brainLLM.complete(synthesisPrompt, {
+            maxTokens: 2048,
+            temperature: 0.2,
+            abortSignal: ctx.abortSignal,
+            onToken: (chunk: string) => {
+              ctx.emit?.({
+                type: "stream:token",
+                taskId: ctx.runId,
+                chunk,
+              });
+            },
+          });
+          outputText = text.trim();
+          synthesisProducedOutput = outputText.length > 0 && !isNonDeliverableOutput(outputText);
+        } catch (err) {
+          if (isAbortError(err)) throw err;
+          synthesisError = err instanceof Error ? err.message : String(err);
+        }
+
+        if (!outputText) {
+          usedDepartmentFallback = true;
+          const fallback = buildDeterministicSynthesisFallback(params.workerRuns);
+          outputText = fallback.outputText;
+          fallbackStrategy = fallback.strategy;
+          fallbackPrimaryRole = fallback.primaryRole;
+          fallbackAuxiliaryRoles = fallback.auxiliaryRoles;
+        }
+
+        const toolEvents = params.workerRuns.flatMap((run) => run.result.toolsUsed);
+        const filesChanged = deriveFilesChangedFromToolEvents(
+          toolEvents,
+          params.workerRuns.flatMap((run) => run.result.filesChanged),
+        );
+        const childPackets = params.workerRuns
+          .map((run) => run.childPacket)
+          .filter((packet): packet is AHPPacket => packet !== undefined);
+        const incompleteRuns = params.workerRuns.filter((run) => run.result.stoppedBecause !== "done");
+        const workerProducedOutput = params.workerRuns.some((run) =>
+          run.result.stoppedBecause === "done" &&
+          !!run.result.outputText?.trim() &&
+          !isNonDeliverableOutput(run.result.outputText),
+        );
+        const fallbackIsComplete = usedDepartmentFallback
+          && incompleteRuns.length === 0
+          && workerProducedOutput
+          && !!outputText.trim()
+          && !isNonDeliverableOutput(outputText);
+        const hasUserFacingOutput = synthesisProducedOutput || fallbackIsComplete;
+        const stoppedBecause = hasUserFacingOutput ? "done" : "no_final_output";
+        const incompleteError = incompleteRuns
+          .map((run) => `${run.role}: ${run.result.stoppedBecause}${run.result.error ? ` (${run.result.error})` : ""}`)
+          .join("; ");
+        const errorMessage = synthesisError
+          ?? (incompleteError || undefined)
+          ?? (usedDepartmentFallback ? `Deterministic fallback unavailable (${fallbackStrategy ?? "unknown"})` : undefined);
+
+        ctx.recordTrace?.("maestro.decompose.synthesis", {
+          workerCount: params.workerRuns.length,
+          incompleteCount: incompleteRuns.length,
+          synthesisPromptChars: synthesisPrompt.length,
+          workerOutputChars: departmentOutputs.map((output) => ({
+            role: output.head,
+            chars: output.output.length,
+          })),
+          synthesisError,
+          synthesisProducedOutput,
+          usedDepartmentFallback,
+          fallbackStrategy,
+          fallbackPrimaryRole,
+          fallbackAuxiliaryRoles,
+          stoppedBecause,
+          outputText,
+        });
+
+        return {
+          outputText,
+          summary: `${params.summaryPrefix} ${params.workerRuns.length} worker(s) - stopped: ${stoppedBecause}`,
+          toolEvents,
+          filesChanged,
+          doneCriteria: params.doneCriteria,
+          metadata: {
+            role: "brain",
+            brainDecision: params.brainDecision,
+            decomposition: {
+              synthesisHint: params.synthesisHint,
+            },
+            thoughts: params.workerRuns.flatMap((run) => run.result.thoughts),
+            iterationCount: params.workerRuns.reduce((sum, run) => sum + run.result.iterationCount, 0),
+            stoppedBecause,
+            errorMessage,
+            filesChanged,
+          },
+          ahpChildPackets: childPackets,
+          subagentRuns: params.workerRuns.map((run) => ({
+            subagentId: run.subagentId,
+            packetId: run.childPacket?.id,
+            role: run.role,
+            task: run.objective,
+            status: run.result.stoppedBecause === "done" ? "done" : "failed",
+            outputText: run.result.outputText,
+            filesChanged: run.filesChanged,
+            toolEvents: run.result.toolsUsed,
+            error: run.result.error,
+          })),
+        };
+      };
+
+      const targetedRepair = parseTargetedRepairContext(task);
+      if (targetedRepair) {
+        const targetIndex = targetedRepair.priorSubagentRuns.findIndex(
+          (run) => run.packetId === targetedRepair.targetPacket.id,
+        );
+        const workerIndex = targetIndex >= 0 ? targetIndex : 0;
+        ctx.recordTrace?.("maestro.repair.targeted_child", {
+          targetRole: targetedRepair.targetRole,
+          targetPacketId: targetedRepair.targetPacket.id,
+          priorWorkerCount: targetedRepair.priorSubagentRuns.length,
+          priorChildPacketCount: targetedRepair.priorChildPackets.length,
+        });
+
+        const agentTask: AgentTask = {
+          intent: targetedRepair.targetPacket.objective,
+          goals: targetedRepair.targetPacket.inputs
+            .filter((input) => input.type !== "repair_directive")
+            .map((input) => stringifyAHPPromptValue(input.value))
+            .filter((value) => value.length > 0),
+          doneCriteria: [...targetedRepair.targetPacket.expectedOutput.acceptanceCriteria],
+          conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
+        };
+        const repairedWorker = await runRoleWorker(task, ctx, targetedRepair.targetRole, agentTask, {
+          workerIndex,
+          objective: targetedRepair.targetPacket.objective,
+          streamTokens: false,
+          subagent: true,
+          sourcePacket: targetedRepair.targetPacket,
+          repairInstruction: targetedRepair.repairInstruction,
+        });
+
+        const priorChildPacketsById = new Map(
+          targetedRepair.priorChildPackets.map((packet) => [packet.id, packet] as const),
+        );
+        const combinedWorkerRuns: DecomposeWorkerRun[] = [];
+        let replacedTarget = false;
+        for (const priorRun of targetedRepair.priorSubagentRuns) {
+          if (priorRun.packetId === targetedRepair.targetPacket.id) {
+            combinedWorkerRuns.push(repairedWorker);
+            replacedTarget = true;
+            continue;
+          }
+          combinedWorkerRuns.push(
+            toSyntheticWorkerRun(
+              priorRun,
+              priorRun.packetId ? priorChildPacketsById.get(priorRun.packetId) : undefined,
+            ),
+          );
+        }
+        if (!replacedTarget) {
+          combinedWorkerRuns.push(repairedWorker);
+        }
+
+        return synthesizeWorkerRuns({
+          workerRuns: combinedWorkerRuns,
+          requestText: targetedRepair.originalRequest ?? task.originalUserMessage ?? task.intent,
+          doneCriteria: targetedRepair.doneCriteria.length > 0
+            ? targetedRepair.doneCriteria
+            : (task.goals ?? []),
+          synthesisHint: targetedRepair.synthesisHint,
+          summaryPrefix: "brain repaired and synthesized",
+        });
+      }
+
       throwIfAborted(ctx.abortSignal);
       const routing = await brainRoute(task, ctx, roleAdapters);
 
@@ -917,134 +1265,15 @@ function buildMaestroAdapter(
           });
         }));
 
-        const departmentOutputs = workerRuns.map((run) => ({
-          head: run.role,
-          subtask: run.objective,
-          output: run.result.outputText?.trim()
-            ? run.result.outputText
-            : `[${run.role} stopped: ${run.result.stoppedBecause}${run.result.error ? `; ${run.result.error}` : ""}]`,
-        }));
-        const departmentOutputsForSynthesis = departmentOutputs.map((output) => ({
-          head: output.head,
-          subtask: output.subtask,
-          output: clampWorkerOutput(output.output, SYNTHESIS_OUTPUT_CHAR_LIMIT),
-        }));
-        const synthesisPrompt = buildSynthesisPrompt(
-          task.originalUserMessage ?? task.intent,
-          departmentOutputsForSynthesis,
-          routing.synthesisHint,
-        );
-
-        let outputText = "";
-        let synthesisProducedOutput = false;
-        let usedDepartmentFallback = false;
-        let synthesisError: string | undefined;
-        let fallbackStrategy: string | undefined;
-        let fallbackPrimaryRole: RoleName | undefined;
-        let fallbackAuxiliaryRoles: RoleName[] = [];
-        try {
-          ctx.emit?.({ type: "stream:reset", taskId: ctx.runId });
-          const brainLLM = roleAdapters["brain"] ?? ctx.llm;
-          const { text } = await brainLLM.complete(synthesisPrompt, {
-            maxTokens: 2048,
-            temperature: 0.2,
-            abortSignal: ctx.abortSignal,
-            onToken: (chunk: string) => {
-              ctx.emit?.({
-                type: "stream:token",
-                taskId: ctx.runId,
-                chunk,
-              });
-            },
-          });
-          outputText = text.trim();
-          synthesisProducedOutput = outputText.length > 0 && !isNonDeliverableOutput(outputText);
-        } catch (err) {
-          if (isAbortError(err)) throw err;
-          synthesisError = err instanceof Error ? err.message : String(err);
-        }
-
-        if (!outputText) {
-          usedDepartmentFallback = true;
-          const fallback = buildDeterministicSynthesisFallback(workerRuns);
-          outputText = fallback.outputText;
-          fallbackStrategy = fallback.strategy;
-          fallbackPrimaryRole = fallback.primaryRole;
-          fallbackAuxiliaryRoles = fallback.auxiliaryRoles;
-        }
-
-        const toolEvents = workerRuns.flatMap((run) => run.result.toolsUsed);
-        const filesChanged = deriveFilesChangedFromToolEvents(
-          toolEvents,
-          workerRuns.flatMap((run) => run.result.filesChanged),
-        );
-        const childPackets = workerRuns
-          .map((run) => run.childPacket)
-          .filter((packet): packet is AHPPacket => packet !== undefined);
-        const incompleteRuns = workerRuns.filter((run) => run.result.stoppedBecause !== "done");
-        const workerProducedOutput = workerRuns.some((run) =>
-          run.result.stoppedBecause === "done" &&
-          !!run.result.outputText?.trim() &&
-          !isNonDeliverableOutput(run.result.outputText),
-        );
-        const fallbackIsComplete = usedDepartmentFallback && incompleteRuns.length === 0 && workerProducedOutput && !!outputText.trim() && !isNonDeliverableOutput(outputText);
-        const hasUserFacingOutput = synthesisProducedOutput || fallbackIsComplete;
-        const stoppedBecause = hasUserFacingOutput ? "done" : "no_final_output";
-        const incompleteError = incompleteRuns
-          .map((run) => `${run.role}: ${run.result.stoppedBecause}${run.result.error ? ` (${run.result.error})` : ""}`)
-          .join("; ");
-        const errorMessage = synthesisError
-          ?? (incompleteError || undefined)
-          ?? (usedDepartmentFallback ? `Deterministic fallback unavailable (${fallbackStrategy ?? "unknown"})` : undefined);
-
-        ctx.recordTrace?.("maestro.decompose.synthesis", {
-          workerCount: workerRuns.length,
-          incompleteCount: incompleteRuns.length,
-          synthesisPromptChars: synthesisPrompt.length,
-          workerOutputChars: departmentOutputs.map((output) => ({
-            role: output.head,
-            chars: output.output.length,
-          })),
-          synthesisError,
-          synthesisProducedOutput,
-          usedDepartmentFallback,
-          fallbackStrategy,
-          fallbackPrimaryRole,
-          fallbackAuxiliaryRoles,
-          stoppedBecause,
-          outputText,
-        });
-
-        return {
-          outputText,
-          summary: `brain decomposed to ${workerRuns.length} worker(s) — stopped: ${stoppedBecause}`,
-          toolEvents,
-          filesChanged,
+        return synthesizeWorkerRuns({
+          workerRuns,
+          requestText: task.originalUserMessage ?? task.intent,
           doneCriteria: routing.doneCriteria,
-          metadata: {
-            role: "brain",
-            brainDecision: routing.brainDecision,
-            thoughts: workerRuns.flatMap((run) => run.result.thoughts),
-            iterationCount: workerRuns.reduce((sum, run) => sum + run.result.iterationCount, 0),
-            stoppedBecause,
-            errorMessage,
-            filesChanged,
-          },
-          ahpChildPackets: childPackets,
-          subagentRuns: workerRuns.map((run) => ({
-            subagentId: run.subagentId,
-            packetId: run.childPacket?.id,
-            role: run.role,
-            task: run.objective,
-            status: run.result.stoppedBecause === "done" ? "done" : "failed",
-            outputText: run.result.outputText,
-            filesChanged: run.filesChanged,
-            toolEvents: run.result.toolsUsed,
-            error: run.result.error,
-          })),
-        };
+          brainDecision: routing.brainDecision,
+          synthesisHint: routing.synthesisHint,
+          summaryPrefix: "brain decomposed to",
+        });
       }
-
       const agentTask: AgentTask = {
         intent: task.intent,
         goals: task.goals ?? [],
@@ -2044,3 +2273,5 @@ app.on("before-quit", () => {
 app.on("will-quit", () => {
   mcpDispose?.().catch(console.error);
 });
+
+

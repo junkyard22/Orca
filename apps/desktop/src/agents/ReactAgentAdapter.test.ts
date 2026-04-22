@@ -70,10 +70,38 @@ function createTask(overrides: Partial<AgentTask> = {}): AgentTask {
 }
 
 // Helper to create run context
-function createCtx(): OrcaRunCtx {
+ function createCtx(overrides: Partial<OrcaRunCtx> = {}): OrcaRunCtx {
   return {
     llm: {} as any,
-    runId: "test-run-id"
+    runId: "test-run-id",
+    ...overrides,
+  };
+}
+
+function createAHPPacket(
+  overrides: Partial<NonNullable<OrcaRunCtx["ahpPacket"]>> = {},
+): NonNullable<OrcaRunCtx["ahpPacket"]> {
+  return {
+    id: "packet-1",
+    objective: "Review the release checklist",
+    lifecycle: "RUNNING",
+    inputs: [
+      { id: "goal-0", type: "goal", value: "Inspect apps/desktop/package.json only" },
+      { id: "goal-1", type: "goal", value: "Focus on Windows packaging blockers" },
+    ],
+    constraints: [{ rule: "no_file_writes", enforcer: "miranda" }],
+    expectedOutput: {
+      schema: {},
+      acceptanceCriteria: ["State the packaging blocker"],
+    },
+    trace: [],
+    meta: {
+      ackRequired: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    role: "Child",
+    ...overrides,
   };
 }
 
@@ -640,6 +668,43 @@ Ship readiness is yellow. Package metadata and README were reviewed, but source 
 
     const taskContext = mockAdapter.requests[0]?.messages.at(-1)?.content ?? "";
     expect(taskContext).not.toContain("ACTION REQUIRED: Call write_file");
+  });
+
+  it("prefers the active AHP packet over the loose AgentTask when building the worker prompt", async () => {
+    const responses = [
+      `<tool_call>{"tool": "read_file", "path": "apps/desktop/package.json"}</tool_call>`,
+      `FINAL ANSWER:\nPackaging blocker found.`,
+    ];
+    const mockAdapter = new MockLLMAdapter(responses);
+    const adapter = new ReactAgentAdapter(
+      mockAdapter,
+      "You are a helpful assistant.",
+      "reviewer" as RoleName,
+      3,
+    );
+
+    await adapter.run(
+      createTask({
+        intent: "Ignore this legacy task intent",
+        goals: ["Ignore this legacy goal"],
+        doneCriteria: ["Ignore this legacy done criterion"],
+      }),
+      [createMockTool("read_file", "file content") as any],
+      createCtx({
+        ahpPacket: createAHPPacket(),
+      }),
+    );
+
+    const taskContext = mockAdapter.requests[0]?.messages.at(-1)?.content ?? "";
+    expect(taskContext).toContain("## AHP Packet Assignment");
+    expect(taskContext).toContain("Review the release checklist");
+    expect(taskContext).toContain("Inspect apps/desktop/package.json only");
+    expect(taskContext).toContain("Focus on Windows packaging blockers");
+    expect(taskContext).toContain("no_file_writes");
+    expect(taskContext).toContain("State the packaging blocker");
+    expect(taskContext).not.toContain("Ignore this legacy task intent");
+    expect(taskContext).not.toContain("Ignore this legacy goal");
+    expect(taskContext).not.toContain("Ignore this legacy done criterion");
   });
 
   it("does not treat final-turn tool narration as a completed answer", async () => {

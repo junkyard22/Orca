@@ -113,6 +113,9 @@ export interface OrcaMaestroResult {
      * Populated only when Brain made a successful LLM routing call.
      * Used by exportTrainingData to emit Moonshiner examples tagged role:"brain". */
     brainDecision?: string;
+    decomposition?: {
+      synthesisHint?: string;
+    };
     thoughts?: ThoughtRecord[];
     iterationCount?: number;
     stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "error";
@@ -276,6 +279,12 @@ export interface OrcaRunCtx {
    * those belong on child packets.
    */
   ahpRootPacket?: AHPPacket;
+  /**
+   * Active AHP packet for the current worker branch.
+   * For decomposed runs this is the child packet that carries the worker's
+   * actual assignment, constraints, and acceptance criteria.
+   */
+  ahpPacket?: AHPPacket;
   /**
    * Optional approval hook — when set, the agent loop calls this before
    * executing each tool. Return false to deny the call.

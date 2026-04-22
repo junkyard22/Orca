@@ -15,7 +15,7 @@
  */
 
 import type { AHPPacket, AHPEvalMeta } from "@clawde/miranda-core";
-import { AHPLifecycle, AHPVerdict, appendAHPTrace } from "@clawde/miranda-core";
+import { AHPLifecycle, AHPPacketRole, AHPVerdict, appendAHPTrace } from "@clawde/miranda-core";
 import { transitionAHPLifecycle } from "@clawde/miranda-core";
 import {
   classifyTaskType,
@@ -279,7 +279,9 @@ export function verifyAHPPacket(
 
   // ── Step 3b: Derive and merge task-aware ACs ────────────────────────────────
   const taskType   = classifyTaskType(packet);
-  const derived    = deriveDefaultACs(taskType);
+  const derived = packet.role === AHPPacketRole.Child && packet.expectedOutput.acceptanceCriteria.length === 0
+    ? []
+    : deriveDefaultACs(taskType);
   const effectiveACs = mergeAcceptanceCriteria(
     packet.expectedOutput.acceptanceCriteria,
     derived,
