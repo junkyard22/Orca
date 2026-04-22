@@ -336,6 +336,13 @@ describe("createOrcaRuntime", () => {
               actor: "reviewer",
               note: "review worker completed",
             });
+            child.repairPrompt = [
+              "Your previous response did not fully satisfy all acceptance criteria for:",
+              '  "Confirm audit result"',
+              "",
+              '[PAC1: Output mentions audit] FAILED - explicit child repair path for runtime test.',
+              '  -> Specifically address: "Output mentions audit".',
+            ].join("\n");
 
             return {
               outputText: "Merged summary without the keyword.",
