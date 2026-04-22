@@ -136,6 +136,106 @@ function throwIfAborted(signal?: AbortSignal): void {
   throw error;
 }
 
+// Maps known tool names → their positional parameter names, in order.
+// Used to parse function-call-syntax tool invocations that models sometimes
+// emit inside markdown code blocks instead of <tool_call> XML.
+const TOOL_POSITIONAL_PARAMS: Readonly<Record<string, string[]>> = {
+  write_file:     ["path", "content"],
+  read_file:      ["path"],
+  list_directory: ["path"],
+  run_command:    ["command"],
+  search_files:   ["query", "path"],
+  delete_file:    ["path"],
+  move_file:      ["source", "destination"],
+  copy_file:      ["source", "destination"],
+};
+
+/**
+ * Parse Python/JS-style function call syntax: `toolName("arg1", "arg2")`.
+ * Returns null when the tool is unknown or args cannot be unambiguously parsed.
+ */
+function parseFunctionCallSyntax(text: string): { tool: string; input: Record<string, unknown> } | null {
+  const trimmed = text.trim();
+  const fnMatch = /^([\w-]+)\s*\(/.exec(trimmed);
+  if (!fnMatch) return null;
+  const tool = fnMatch[1]!;
+  const paramNames = TOOL_POSITIONAL_PARAMS[tool];
+  if (!paramNames) return null;
+
+  const parenStart = trimmed.indexOf("(");
+  const parenEnd = trimmed.lastIndexOf(")");
+  if (parenStart === -1 || parenEnd <= parenStart) return null;
+
+  const argsStr = trimmed.slice(parenStart + 1, parenEnd).trim();
+  if (!argsStr) return { tool, input: {} };
+
+  // Split on top-level commas, respecting string literals and nested parens.
+  const args: string[] = [];
+  let depth = 0;
+  let inStr = false;
+  let strChar = "";
+  let escaped = false;
+  let current = "";
+  for (const ch of argsStr) {
+    if (escaped) { current += ch; escaped = false; continue; }
+    if (ch === "\\" && inStr) { escaped = true; current += ch; continue; }
+    if (!inStr && (ch === '"' || ch === "'")) { inStr = true; strChar = ch; current += ch; continue; }
+    if (inStr && ch === strChar) { inStr = false; current += ch; continue; }
+    if (!inStr && ch === "(") { depth++; current += ch; continue; }
+    if (!inStr && ch === ")") { depth--; current += ch; continue; }
+    if (!inStr && ch === "," && depth === 0) { args.push(current.trim()); current = ""; continue; }
+    current += ch;
+  }
+  if (current.trim()) args.push(current.trim());
+
+  function unquoteArg(s: string): string {
+    const t = s.trim();
+    if (t.startsWith('"') && t.endsWith('"')) {
+      try { return JSON.parse(t) as string; } catch { return t.slice(1, -1); }
+    }
+    if (t.startsWith("'") && t.endsWith("'")) {
+      try {
+        return JSON.parse('"' + t.slice(1, -1).replace(/"/g, '\\"').replace(/\\'/g, "'") + '"') as string;
+      } catch {
+        return t.slice(1, -1).replace(/\\'/g, "'");
+      }
+    }
+    return t;
+  }
+
+  const input: Record<string, unknown> = {};
+  args.forEach((arg, idx) => {
+    const name = paramNames[idx] ?? `arg${idx + 1}`;
+    input[name] = unquoteArg(arg);
+  });
+  return { tool, input };
+}
+
+/**
+ * Scan markdown fenced code blocks and attempt to extract tool calls from
+ * their contents. Handles both JSON-format (`{"tool":"name",...}`) and
+ * function-call-format (`write_file("path","content")`).
+ * Called as a last-resort fallback when no <tool_call> blocks are present.
+ */
+function parseCodeBlockToolCalls(
+  text: string,
+): Array<{ tool: string; input: Record<string, unknown> }> {
+  const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+  const codeBlockRe = /(?:```|~~~)[\w]*[ \t]*\n([\s\S]*?)(?:```|~~~)/g;
+  let match: RegExpExecArray | null;
+  while ((match = codeBlockRe.exec(text)) !== null) {
+    const body = match[1]!.trim();
+    if (!body || body.length < 3) continue;
+    // Try JSON-format first: {"tool": "name", ...}
+    const jsonCall = parseToolCallBody(body);
+    if (jsonCall) { calls.push(jsonCall); continue; }
+    // Try function-call-format: toolName("arg1", "arg2")
+    const fnCall = parseFunctionCallSyntax(body);
+    if (fnCall) calls.push(fnCall);
+  }
+  return calls;
+}
+
 function parseToolCalls(text: string): {
   calls: Array<{ tool: string; input: Record<string, unknown> }>;
   malformedCount: number;
@@ -188,6 +288,21 @@ function parseToolCalls(text: string): {
           );
         }
       }
+    }
+  }
+
+  // Fallback: if no <tool_call> tags were found at all, scan for tool calls
+  // wrapped in markdown code fences. Some models emit tool calls as code
+  // blocks instead of the required XML format — we recover silently here so
+  // the run still makes progress rather than burning all iterations retrying.
+  if (calls.length === 0 && malformedCount === 0) {
+    const codeBlockCalls = parseCodeBlockToolCalls(text);
+    if (codeBlockCalls.length > 0) {
+      console.log(
+        `[ReactAgent] Recovered ${codeBlockCalls.length} tool call(s) from markdown code block(s). ` +
+        `Model should use <tool_call>{"tool":"NAME",...}</tool_call> format instead.`,
+      );
+      calls.push(...codeBlockCalls);
     }
   }
 
