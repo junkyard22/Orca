@@ -1212,13 +1212,34 @@ function buildMaestroAdapter(
         });
       }
 
+      // For non-decomposed repair tasks, skip Brain re-routing — the original
+      // role is already known in context.repair.original.role. Re-calling
+      // brainRoute() wastes one LLM call and risks Brain flipping the role.
       throwIfAborted(ctx.abortSignal);
-      const routing = await brainRoute(task, ctx, roleAdapters);
+      const repairOriginalRole = (() => {
+        if (task.intent !== "repair") return undefined;
+        const repairCtx = task.context?.["repair"];
+        if (!isRecord(repairCtx)) return undefined;
+        const original = repairCtx["original"];
+        if (!isRecord(original)) return undefined;
+        const role = original["role"];
+        // "brain" means the task was decomposed — it must go back through brainRoute().
+        return typeof role === "string" && role.length > 0 && role !== "brain" ? role as RoleName : undefined;
+      })();
+      const routing: DesktopBrainRouting = repairOriginalRole
+        ? {
+            path: "direct",
+            role: repairOriginalRole,
+            doneCriteria: task.goals ?? [],
+            brainDecision: undefined,
+            decision: { routing: "direct", role: repairOriginalRole },
+          }
+        : await brainRoute(task, ctx, roleAdapters);
 
       // Dewey brief — inject user context into the pipeline event stream.
-      // Non-critical: a Dewey failure must never abort the task.
+      // Skip on repair passes: tone preferences don't change between attempts.
       throwIfAborted(ctx.abortSignal);
-      if (dewey) {
+      if (dewey && task.intent !== "repair") {
         try {
           const brief = await dewey.brief(task.intent);
           ctx.emit?.({

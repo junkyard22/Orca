@@ -288,6 +288,8 @@ orca.onOrcaEvent((e) => {
     "maestro:done":  e.isRepair ? `repair pass ${e.attempt} done` : "reviewing\u2026",
     "qc:result":     e.verdict === "PASS" ? "QC passed \u2713" : `QC found ${e.issueCount} issue(s)`,
     "repair:start":  `starting repair pass ${e.pass}/${e.maxPasses}\u2026`,
+    "maestro:agent_start": `${e.role} agent generating\u2026`,
+    "maestro:agent_done":  e.stoppedBecause === "done" ? `${e.role} done (${e.iterations} iter)` : `${e.role} stopped: ${e.stoppedBecause}`,
     "subagent:spawned": `worker ${e.role} started\u2026`,
     "subagent:done": e.ok ? `worker ${e.role} done; synthesizing\u2026` : `worker ${e.role} incomplete; synthesizing\u2026`,
     "subagent:failed": `worker ${e.role} failed; synthesizing\u2026`,
