@@ -5,6 +5,9 @@
  * Uses mock LLM and mock tool executor — no real API calls.
  */
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ReactAgentAdapter } from "./ReactAgentAdapter";
 import type { AgentTask } from "./AgentAdapter";
@@ -831,5 +834,93 @@ Ship readiness is yellow. Package metadata and README were reviewed, but source 
       glob: "*.log",
     });
     expect(result.toolsUsed[0]?.tool).toBe("search_files");
+  });
+
+  it("captures diff content for files written via run_command metadata", async () => {
+    const root = mkdtempSync(join(tmpdir(), "react-agent-run-command-"));
+    try {
+      const targetDir = join(root, "tmp-test", "orca-sandbox-check");
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(join(targetDir, "tasks.json"), "{\n  \"tasks\": []\n}\n", "utf8");
+
+      const responses = [
+        `<tool_call>{"tool": "run_command", "command": "echo done"}</tool_call>`,
+        `FINAL ANSWER:\nShell work complete.`,
+      ];
+      const tool = {
+        name: "run_command",
+        description: "Run shell command",
+        execute: async () => ({
+          ok: true,
+          output: `done\n\n<!-- Files changed: [{"path":"tmp-test/orca-sandbox-check/tasks.json","changeType":"M"}] -->`,
+        }),
+      };
+
+      const adapter = new ReactAgentAdapter(
+        new MockLLMAdapter(responses),
+        "You are a helpful assistant.",
+        "brain" as RoleName,
+        3,
+      );
+
+      const result = await adapter.run(createTask(), [tool as any], createCtx({ workspaceRoot: root }));
+
+      expect(result.stoppedBecause).toBe("done");
+      expect(result.filesChanged).toEqual([
+        {
+          path: "tmp-test/orca-sandbox-check/tasks.json",
+          changeType: "M",
+          diff: "{\n  \"tasks\": []\n}\n",
+        },
+      ]);
+      expect(result.toolsUsed[0]?.raw).toMatchObject({
+        _filesChangedForDiff: [
+          {
+            path: "tmp-test/orca-sandbox-check/tasks.json",
+            changeType: "M",
+            diff: "{\n  \"tasks\": []\n}\n",
+          },
+        ],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("captures diff content for desktop commander write_file events", async () => {
+    const responses = [
+      `<tool_call>{"tool": "desktop-commander_write_file", "path": "./tmp-test/orca-sandbox-check/task-report.js", "content": "console.log('done');\\n"}</tool_call>`,
+      `FINAL ANSWER:\nDesktop Commander work complete.`,
+    ];
+    const tool = {
+      name: "desktop-commander_write_file",
+      description: "Write a file through Desktop Commander",
+      execute: async () => ({
+        ok: true,
+        output: "File written successfully.",
+      }),
+    };
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(createTask(), [tool as any], createCtx());
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.filesChanged).toEqual([
+      {
+        path: "./tmp-test/orca-sandbox-check/task-report.js",
+        changeType: "M",
+        diff: "console.log('done');\n",
+      },
+    ]);
+    expect(result.toolsUsed[0]?.raw).toMatchObject({
+      path: "./tmp-test/orca-sandbox-check/task-report.js",
+      _contentForDiff: "console.log('done');\n",
+    });
   });
 });

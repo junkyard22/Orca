@@ -1080,5 +1080,13 @@ describe("event ordering across repair cycle", () => {
     expect(qcEvents).toHaveLength(2);
     expect(qcEvents[0]?.isRepair).toBe(false);
     expect(qcEvents[1]?.isRepair).toBe(true);
+    expect(qcEvents[0]?.issues).toEqual([
+      {
+        severity: "HIGH",
+        code: "STRESS_FAIL",
+        description: "stress fail",
+      },
+    ]);
+    expect(qcEvents[1]?.issues).toEqual([]);
   });
 });

@@ -1,6 +1,11 @@
 // Runtime factory
 export { createOrcaRuntime } from "./runtime.js";
-export { buildPappyInput, deriveFilesChangedFromToolEvents, normalizeMaestroResult } from "./helpers.js";
+export {
+  buildPappyInput,
+  deriveFilesChangedFromToolEvents,
+  extractFilesChangedFromCommandOutput,
+  normalizeMaestroResult,
+} from "./helpers.js";
 export { extractAuditTargetPath, formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 
 // Concrete adapter factories (convenience — can be swapped for custom impls)

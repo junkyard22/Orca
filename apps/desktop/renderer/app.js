@@ -378,6 +378,44 @@ function scrollToBottom() {
   messages.scrollTop = messages.scrollHeight;
 }
 
+function normalizePipelineIssues(issues) {
+  if (!Array.isArray(issues)) return [];
+  return issues
+    .filter((issue) => issue && typeof issue === "object")
+    .map((issue) => ({
+      severity: typeof issue.severity === "string" ? issue.severity : "LOW",
+      code: typeof issue.code === "string" ? issue.code : "UNKNOWN_ISSUE",
+      description: typeof issue.description === "string" ? issue.description : "",
+    }));
+}
+
+function summarizePipelineIssues(issues, maxIssues = 1) {
+  const normalized = normalizePipelineIssues(issues);
+  if (!normalized.length) return "";
+  const preview = normalized
+    .slice(0, maxIssues)
+    .map((issue) => `${issue.code}: ${issue.description}`.trim())
+    .join("; ");
+  const remaining = normalized.length - maxIssues;
+  return remaining > 0 ? `${preview}; +${remaining} more` : preview;
+}
+
+function renderPipelineIssueList(issues) {
+  return normalizePipelineIssues(issues).map((issue) =>
+    `<div class="pb-issue">
+      <div class="pb-issue-header">
+        <span class="pb-severity ${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)}</span>
+        <span class="pb-issue-code">${escapeHtml(issue.code)}</span>
+      </div>
+      <div class="pb-issue-desc">${escapeHtml(issue.description)}</div>
+    </div>`
+  ).join("");
+}
+
+function describeQCAttempt(event) {
+  return event?.isRepair ? `Repair pass ${event.attempt}` : "Initial QC";
+}
+
 function buildPipelineSummaryFromEvents(result) {
   const qcEvent = [...pipelineEventLog].reverse().find((e) => e.type === "qc:result");
   
@@ -396,7 +434,7 @@ function buildPipelineSummaryFromEvents(result) {
       verdict: qcEvent.verdict,
       confidence: qcEvent.verdict === "PASS" ? 1 : qcEvent.verdict === "WARN" ? 0.8 : 0.5,
       issueCount: qcEvent.issueCount ?? 0,
-      issues: [],
+      issues: normalizePipelineIssues(qcEvent.issues),
       acceptanceCriteria: [],
       durationMs,
       repairPasses,
@@ -686,6 +724,15 @@ function appendPipelineBadge(summary) {
     : "";
 
   // ── Error message ────────────────────────────────────────────────────────
+  const currentIssues = normalizePipelineIssues(summary.issues);
+  const qcHistory = (summary._eventLog ?? [])
+    .filter((event) => event?.type === "qc:result")
+    .map((event) => ({ ...event, issues: normalizePipelineIssues(event.issues) }));
+  const nonPassQcEvents = qcHistory.filter((event) =>
+    event.verdict !== "PASS" && ((event.issueCount ?? 0) > 0 || event.issues.length > 0)
+  );
+  const repairedQcEvents = summary.verdict === "PASS" ? nonPassQcEvents : nonPassQcEvents.slice(0, -1);
+
   const errorHtml = summary.errorMessage
     ? `<div class="pb-error-row"><span class="pb-error-label">Error</span><span class="pb-error-text">${escapeHtml(summary.errorMessage)}</span></div>`
     : "";
@@ -758,15 +805,42 @@ function appendPipelineBadge(summary) {
   }).join("");
 
   // ── Issues ───────────────────────────────────────────────────────────────
-  const issuesHtml = (summary.issues ?? []).map((issue) =>
-    `<div class="pb-issue">
-      <div class="pb-issue-header">
-        <span class="pb-severity ${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)}</span>
-        <span class="pb-issue-code">${escapeHtml(issue.code)}</span>
-      </div>
-      <div class="pb-issue-desc">${escapeHtml(issue.description)}</div>
-    </div>`
-  ).join("");
+  const issuesHtml = renderPipelineIssueList(currentIssues);
+  const issuesSectionTitle = summary.verdict === "FAIL"
+    ? "Why it failed"
+    : summary.verdict === "WARN"
+      ? "Open issues"
+      : "Issues";
+  const repairedBannerHtml = summary.verdict === "PASS" && repairedQcEvents.length > 0
+    ? `<div class="pb-resolution-row">
+        <span class="pb-resolution-label">Repaired</span>
+        <span class="pb-resolution-text">This run passed after ${summary.repairPasses ?? repairedQcEvents.length} repair pass${(summary.repairPasses ?? repairedQcEvents.length) !== 1 ? "es" : ""}. Earlier QC failures are listed below.</span>
+      </div>`
+    : "";
+  const repairedIssuesHtml = repairedQcEvents.length > 0
+    ? `<div>
+        <div class="pb-section-title">Repaired issues</div>
+        <div class="pb-repair-list">
+          ${repairedQcEvents.map((event) => {
+            const issues = event.issues.length > 0
+              ? event.issues
+              : [{
+                  severity: event.verdict === "FAIL" ? "HIGH" : "MEDIUM",
+                  code: `QC_${event.verdict}`,
+                  description: `${describeQCAttempt(event)} reported ${event.issueCount} issue${event.issueCount !== 1 ? "s" : ""}, but no detailed reason was captured.`,
+                }];
+            return `<div class="pb-repair-card">
+              <div class="pb-repair-header">
+                <span class="pb-repair-phase">${escapeHtml(describeQCAttempt(event))}</span>
+                <span class="pb-repair-status ${event.verdict === "FAIL" ? "fail" : "warn"}">${escapeHtml(event.verdict)}</span>
+                <span class="pb-repair-note">resolved later</span>
+              </div>
+              <div class="pb-issues-list">${renderPipelineIssueList(issues)}</div>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>`
+    : "";
 
   // ── Audit detail (project_audit runs only) ───────────────────────────────
   let auditDetailHtml = "";
@@ -855,6 +929,11 @@ function appendPipelineBadge(summary) {
       if (e.type === "subagent:spawned")  label = `worker ${e.role} started`;
       if (e.type === "subagent:done")     label = `worker ${e.role} done (${e.ok ? "ok" : "incomplete"})`;
       if (e.type === "subagent:failed")   label = `worker ${e.role} failed`;
+      if (e.type === "qc:result") {
+        const issueSummary = summarizePipelineIssues(e.issues);
+        if (issueSummary) label += ` â€” ${issueSummary}`;
+      }
+      if (e.type === "qc:result") label = label.replace(/ [^\x00-\x7F]+ /g, " - ");
       const cls = e.type === "qc:result" && e.verdict === "FAIL" ? " log-fail"
                 : e.type === "qc:result" && e.verdict === "WARN" ? " log-warn"
                 : e.type === "subagent:failed" ? " log-fail"
@@ -897,7 +976,7 @@ function appendPipelineBadge(summary) {
   div.className = "pipeline-badge";
   div.style.display = "flex";
   div.style.flexDirection = "column";
-  div.style.alignSelf = "flex-start";
+  div.style.alignSelf = "stretch";
   div.style.overflow = "visible";
   div.innerHTML = `
     <div class="pipeline-badge-header">
@@ -910,11 +989,13 @@ function appendPipelineBadge(summary) {
     <div class="pipeline-badge-detail">
       ${outcomeHtml}
       ${errorHtml}
+      ${repairedBannerHtml}
       ${auditDetailHtml}
       ${deweyHtml}
       ${mirandaHtml}
+      ${repairedIssuesHtml}
       ${criteriaHtml ? `<div><div class="pb-section-title">Acceptance criteria</div><div class="pb-criteria-list">${criteriaHtml}</div></div>` : ""}
-      ${issuesHtml   ? `<div><div class="pb-section-title">Issues</div><div class="pb-issues-list">${issuesHtml}</div></div>` : ""}
+      ${issuesHtml   ? `<div><div class="pb-section-title">${issuesSectionTitle}</div><div class="pb-issues-list">${issuesHtml}</div></div>` : ""}
       ${logHtml}
       <div class="pb-footer-row">${durationSec}s total · ${summary.repairPasses ?? 0} repair pass${(summary.repairPasses ?? 0) !== 1 ? "es" : ""}</div>
     </div>`;
@@ -923,11 +1004,13 @@ function appendPipelineBadge(summary) {
   const detailMarkup = `
       ${outcomeHtml}
       ${errorHtml}
+      ${repairedBannerHtml}
       ${auditDetailHtml}
       ${deweyHtml}
       ${mirandaHtml}
+      ${repairedIssuesHtml}
       ${criteriaHtml ? `<div><div class="pb-section-title">Acceptance criteria</div><div class="pb-criteria-list">${criteriaHtml}</div></div>` : ""}
-      ${issuesHtml   ? `<div><div class="pb-section-title">Issues</div><div class="pb-issues-list">${issuesHtml}</div></div>` : ""}
+      ${issuesHtml   ? `<div><div class="pb-section-title">${issuesSectionTitle}</div><div class="pb-issues-list">${issuesHtml}</div></div>` : ""}
       ${logHtml}
       <div class="pb-footer-row">${durationSec}s total · ${summary.repairPasses ?? 0} repair pass${(summary.repairPasses ?? 0) !== 1 ? "es" : ""}</div>
     `;
@@ -945,18 +1028,19 @@ function appendPipelineBadge(summary) {
   detail.className = "pipeline-badge-detail";
   detail.style.display = "block";
   detail.style.boxSizing = "border-box";
-  detail.style.padding = "10px 12px 24px";
+  detail.style.padding = "14px 16px 40px";
   detail.style.borderTop = "1px solid var(--border-faint)";
-  detail.style.maxHeight = "min(560px, 72vh)";
+  detail.style.maxHeight = "min(820px, 86vh)";
   detail.style.overflowY = "auto";
   detail.style.overflowX = "hidden";
-  detail.style.minHeight = "84px";
+  detail.style.minHeight = "280px";
   detail.style.width = "100%";
   const detailContent = document.createElement("div");
   detailContent.className = "pipeline-badge-content";
   detailContent.style.display = "flex";
   detailContent.style.flexDirection = "column";
-  detailContent.style.gap = "10px";
+  detailContent.style.minHeight = "240px";
+  detailContent.style.gap = "12px";
   detailContent.innerHTML = detailMarkup;
   detail.appendChild(detailContent);
   if (!detail.textContent.trim()) {
@@ -972,9 +1056,9 @@ function appendPipelineBadge(summary) {
   const applyDetailVisibility = (expanded) => {
     if (!detail) return;
     detail.style.display = expanded ? "block" : "none";
-    detail.style.padding = expanded ? "10px 12px 24px" : "0 12px";
+    detail.style.padding = expanded ? "14px 16px 40px" : "0 12px";
     detail.style.borderTop = expanded ? "1px solid var(--border-faint)" : "0";
-    detail.style.minHeight = expanded ? "84px" : "0";
+    detail.style.minHeight = expanded ? "280px" : "0";
   };
   const setExpanded = (expanded) => {
     div.classList.toggle("expanded", expanded);

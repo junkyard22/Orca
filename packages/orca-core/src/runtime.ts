@@ -446,6 +446,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             isRepair: false,
             verdict: qcResult.verdict,
             issueCount: qcResult.issues.length,
+            issues: qcResult.issues.map((issue) => ({
+              severity: issue.severity,
+              code: issue.code,
+              description: issue.description,
+            })),
           });
           recordTrace("qc.run.result", {
             attempt: 0,
@@ -600,6 +605,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           isRepair: false,
           verdict: qcResult.verdict,
           issueCount: qcResult.issues.length,
+          issues: qcResult.issues.map((issue) => ({
+            severity: issue.severity,
+            code: issue.code,
+            description: issue.description,
+          })),
         });
         recordTrace("qc.run.result", {
           attempt: 0,

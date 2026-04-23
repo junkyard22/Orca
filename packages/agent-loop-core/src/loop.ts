@@ -1,4 +1,10 @@
-import type { OrcaFileChange, OrcaMaestroResult, OrcaRunCtx, OrcaToolService } from "@clawde/orca-core";
+import {
+  extractFilesChangedFromCommandOutput,
+  type OrcaFileChange,
+  type OrcaMaestroResult,
+  type OrcaRunCtx,
+  type OrcaToolService,
+} from "@clawde/orca-core";
 import type { AgentLoopResult, ParsedCall } from "./types.js";
 
 const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
@@ -56,6 +62,21 @@ function extractWriteTarget(criteria: string[]): string | undefined {
     if (m) return m[1];
   }
   return undefined;
+}
+
+function recordFileChange(filesChanged: OrcaFileChange[], next: OrcaFileChange): void {
+  const existing = filesChanged.find((file) => file.path === next.path);
+  if (!existing) {
+    filesChanged.push(next);
+    return;
+  }
+
+  if (existing.changeType !== "A" && next.changeType === "A") {
+    existing.changeType = "A";
+  }
+  if (next.diff) {
+    existing.diff = next.diff;
+  }
 }
 
 export async function runAgentLoop(
@@ -189,6 +210,12 @@ export async function runAgentLoop(
       const result = await tools.execute(call.tool, call.input);
       const outputText = normalizeToolText(result.output);
       const errorText = result.error === undefined ? undefined : normalizeToolText(result.error);
+      const commandFileChanges = result.ok
+        ? extractFilesChangedFromCommandOutput(outputText, {
+            workspaceRoot: ctx.workspaceRoot,
+            cwd: typeof call.input["cwd"] === "string" ? call.input["cwd"] : undefined,
+          })
+        : [];
       ctx.recordTrace?.("tool.result", { tool: call.tool, ok: result.ok, output: outputText, error: errorText });
       if (!result.ok) {
         turnAllToolsOk = false;
@@ -197,13 +224,21 @@ export async function runAgentLoop(
       // Miranda: after_tool_run gate
       ctx.gate?.afterToolRun({ tool: call.tool, args: call.input }, { ok: result.ok, output: outputText });
 
+      const enrichedRaw = { ...call.input } as Record<string, unknown>;
+      if (commandFileChanges.length > 0) {
+        enrichedRaw["_filesChangedForDiff"] = commandFileChanges;
+      }
+      if (call.tool === "write_file" && result.ok && typeof call.input["content"] === "string") {
+        enrichedRaw["_contentForDiff"] = call.input["content"];
+      }
+
       toolEvents.push({
         tool: call.tool,
         ok: result.ok,
         summary: result.ok
           ? `${call.tool}: ok (${outputText.length} chars)`
           : `${call.tool}: failed — ${result.error ?? "unknown"}`,
-        raw: call.input,
+        raw: enrichedRaw,
       });
 
       // Capture written content so Pappy can verify the diff.
@@ -211,8 +246,11 @@ export async function runAgentLoop(
         const filePath = typeof call.input["path"] === "string" ? call.input["path"] : "";
         const content = typeof call.input["content"] === "string" ? call.input["content"] : undefined;
         if (filePath) {
-          filesChanged.push({ path: filePath, changeType: "A", diff: content });
+          recordFileChange(filesChanged, { path: filePath, changeType: "A", diff: content });
         }
+      }
+      for (const file of commandFileChanges) {
+        recordFileChange(filesChanged, file);
       }
 
       console.error(
@@ -280,12 +318,14 @@ export async function runAgentLoop(
         summary: result.ok
           ? `${call.tool}: ok (${outputText.length} chars)`
           : `${call.tool}: failed — ${result.error ?? "unknown"}`,
-        raw: call.input,
+        raw: typeof call.input["content"] === "string"
+          ? { ...call.input, _contentForDiff: call.input["content"] }
+          : call.input,
       });
       if (result.ok) {
         const filePath = typeof call.input["path"] === "string" ? call.input["path"] : "";
         const content = typeof call.input["content"] === "string" ? call.input["content"] : undefined;
-        if (filePath) filesChanged.push({ path: filePath, changeType: "A", diff: content });
+        if (filePath) recordFileChange(filesChanged, { path: filePath, changeType: "A", diff: content });
         if (content) lastText = content;
       }
       break;

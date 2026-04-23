@@ -67,6 +67,7 @@ import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
+import { getRepairOriginalRole, getRepairRoutingSourceTask } from "./repairRouting";
 
 type AgentTool = {
   name: string;
@@ -1212,29 +1213,22 @@ function buildMaestroAdapter(
         });
       }
 
-      // For non-decomposed repair tasks, skip Brain re-routing — the original
-      // role is already known in context.repair.original.role. Re-calling
-      // brainRoute() wastes one LLM call and risks Brain flipping the role.
+      // For non-decomposed repair tasks, preserve the original role when it is
+      // known. Re-calling brainRoute() on the repair instruction wastes an LLM
+      // call and can poison done_criteria with QC defect text instead of the
+      // original task outcomes.
       throwIfAborted(ctx.abortSignal);
-      const repairOriginalRole = (() => {
-        if (task.intent !== "repair") return undefined;
-        const repairCtx = task.context?.["repair"];
-        if (!isRecord(repairCtx)) return undefined;
-        const original = repairCtx["original"];
-        if (!isRecord(original)) return undefined;
-        const role = original["role"];
-        // "brain" means the task was decomposed — it must go back through brainRoute().
-        return typeof role === "string" && role.length > 0 && role !== "brain" ? role as RoleName : undefined;
-      })();
+      const repairOriginalRole = getRepairOriginalRole(task);
+      const routingSourceTask = getRepairRoutingSourceTask(task);
       const routing: DesktopBrainRouting = repairOriginalRole
         ? {
             path: "direct",
             role: repairOriginalRole,
-            doneCriteria: task.goals ?? [],
+            doneCriteria: routingSourceTask.goals ?? [],
             brainDecision: undefined,
             decision: { routing: "direct", role: repairOriginalRole },
           }
-        : await brainRoute(task, ctx, roleAdapters);
+        : await brainRoute(routingSourceTask, ctx, roleAdapters);
 
       // Dewey brief — inject user context into the pipeline event stream.
       // Skip on repair passes: tone preferences don't change between attempts.

@@ -403,13 +403,21 @@ export type OrcaEvent =
    *
    * Doctor query examples:
    *   "Which models fail most on PLAN stage?" → group maestro:done by model
-   *   "Average repairs per task?"             → count repair:start per taskId
-   *   "Did issue X get fixed?"                → track issueId across qc:result events
-   */
+  *   "Average repairs per task?"             → count repair:start per taskId
+  *   "Did issue X get fixed?"                → track issueId across qc:result events
+  */
   | { type: "task:start";         taskId: string; intent: string }
   | { type: "maestro:start";      taskId: string; attempt: number; isRepair: boolean }
   | { type: "maestro:done";       taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean }
-  | { type: "qc:result";          taskId: string; attempt: number; isRepair: boolean; verdict: "PASS" | "WARN" | "FAIL"; issueCount: number }
+  | {
+      type: "qc:result";
+      taskId: string;
+      attempt: number;
+      isRepair: boolean;
+      verdict: "PASS" | "WARN" | "FAIL";
+      issueCount: number;
+      issues?: Array<{ severity: string; code: string; description: string }>;
+    }
   | { type: "repair:start";       taskId: string; pass: number; maxPasses: number }
   | { type: "task:done";          taskId: string; status: "SUCCESS" | "WARN" | "FAIL" }
   | { type: "stream:token";       taskId: string; chunk: string }

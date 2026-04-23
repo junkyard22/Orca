@@ -283,6 +283,11 @@ export async function handleRepairLoop(
       isRepair: true,
       verdict: nextQC.verdict,
       issueCount: nextQC.issues.length,
+      issues: nextQC.issues.map((issue) => ({
+        severity: issue.severity,
+        code: issue.code,
+        description: issue.description,
+      })),
     });
 
     if (nextQC.verdict !== "FAIL") {

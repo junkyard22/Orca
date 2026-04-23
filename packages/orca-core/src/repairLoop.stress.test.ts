@@ -787,6 +787,14 @@ describe("event emission", () => {
     for (const e of qcEvents) {
       expect(e.isRepair).toBe(true);
     }
+    expect(qcEvents[0]?.issues).toEqual([
+      {
+        severity: "HIGH",
+        code: "STRESS_HIGH",
+        description: "critical issue",
+      },
+    ]);
+    expect(qcEvents[1]?.issues).toEqual([]);
   });
 });
 

@@ -256,7 +256,15 @@ declare module '@clawde/orca-core' {
     | { type: "task:start"; taskId: string; intent: string }
     | { type: "maestro:start"; taskId: string; attempt: number; isRepair: boolean }
     | { type: "maestro:done"; taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean }
-    | { type: "qc:result"; taskId: string; attempt: number; isRepair: boolean; verdict: "PASS" | "WARN" | "FAIL"; issueCount: number }
+    | {
+        type: "qc:result";
+        taskId: string;
+        attempt: number;
+        isRepair: boolean;
+        verdict: "PASS" | "WARN" | "FAIL";
+        issueCount: number;
+        issues?: Array<{ severity: string; code: string; description: string }>;
+      }
     | { type: "repair:start"; taskId: string; pass: number; maxPasses: number }
     | { type: "task:done"; taskId: string; status: "SUCCESS" | "FAIL" }
     | { type: "stream:token"; taskId: string; chunk: string }
@@ -306,6 +314,10 @@ declare module '@clawde/orca-core' {
   export function deriveFilesChangedFromToolEvents(
     toolEvents: OrcaToolEvent[],
     filesChanged?: OrcaFileChange[]
+  ): OrcaFileChange[];
+  export function extractFilesChangedFromCommandOutput(
+    output: string,
+    options?: { workspaceRoot?: string; cwd?: string }
   ): OrcaFileChange[];
 
   export class SqliteStore {

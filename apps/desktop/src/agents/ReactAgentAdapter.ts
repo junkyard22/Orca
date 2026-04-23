@@ -1,5 +1,11 @@
 import type { LLMAdapter, LLMMessage, LLMRequest } from "@clawde/miranda-core";
-import type { AHPPacket, OrcaLLMService, OrcaRunCtx, OrcaToolService } from "@clawde/orca-core";
+import {
+  extractFilesChangedFromCommandOutput,
+  type AHPPacket,
+  type OrcaLLMService,
+  type OrcaRunCtx,
+  type OrcaToolService,
+} from "@clawde/orca-core";
 import { formatToolResult as sharedFormatToolResult, runAgentLoop } from "@clawde/agent-loop-core";
 import type { AgentAdapter, AgentTask, AgentResult, ThoughtRecord, AgentRunContext } from "./AgentAdapter";
 import type { RoleName } from "maestro-core";
@@ -18,6 +24,46 @@ type FileChange = { path: string; changeType: "A" | "M" | "D"; diff?: string };
 
 const OPEN_TOOL_CALL_TAG = "<tool_call>";
 const PROMPT_SEPARATOR = "\n\n---\n\n";
+
+function normalizeFileMutationToolName(toolName: string): string {
+  return toolName.startsWith("desktop-commander_")
+    ? toolName.slice("desktop-commander_".length)
+    : toolName;
+}
+
+function isWriteToolName(toolName: string): boolean {
+  return normalizeFileMutationToolName(toolName) === "write_file";
+}
+
+function fileChangeTypeForTool(toolName: string): FileChange["changeType"] | undefined {
+  switch (normalizeFileMutationToolName(toolName)) {
+    case "create_file":
+      return "A";
+    case "delete_file":
+      return "D";
+    case "write_file":
+    case "modify_file":
+    case "edit_block":
+      return "M";
+    default:
+      return undefined;
+  }
+}
+
+function recordFileChange(filesChanged: FileChange[], next: FileChange): void {
+  const existing = filesChanged.find((file) => file.path === next.path);
+  if (!existing) {
+    filesChanged.push(next);
+    return;
+  }
+
+  if (existing.changeType !== "A" && next.changeType === "A") {
+    existing.changeType = "A";
+  }
+  if (next.diff) {
+    existing.diff = next.diff;
+  }
+}
 
 function extractFirstJsonObject(text: string): string | null {
   const start = text.indexOf("{");
@@ -141,6 +187,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 // emit inside markdown code blocks instead of <tool_call> XML.
 const TOOL_POSITIONAL_PARAMS: Readonly<Record<string, string[]>> = {
   write_file:     ["path", "content"],
+  "desktop-commander_write_file": ["path", "content"],
   read_file:      ["path"],
   list_directory: ["path"],
   run_command:    ["command"],
@@ -968,7 +1015,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           toolLimitWarningInjected = true;
           const allTaskTextForWarn = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
           const taskImpliesFileSaveForWarn = taskExplicitlyRequestsFileSave(allTaskTextForWarn);
-          const writeFileCalledForWarn = toolsUsed.some((e) => e.tool === "write_file");
+          const writeFileCalledForWarn = toolsUsed.some((e) => isWriteToolName(e.tool));
           const writeFileReminder = taskImpliesFileSaveForWarn && !writeFileCalledForWarn
             ? "\n\nCRITICAL: Your task requires saving a file. You MUST call write_file with the complete file content in your NEXT response - before writing your final answer."
             : "";
@@ -999,7 +1046,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               continue;
             }
             const taskImpliesFileSave = taskExplicitlyRequestsFileSave(allTaskText);
-            const writeFileCalled = toolsUsed.some((e) => e.tool === "write_file");
+            const writeFileCalled = toolsUsed.some((e) => isWriteToolName(e.tool));
             if (taskImpliesFileSave && !writeFileCalled) {
               lastRejectedFinalAnswer = finalAnswer;
               messages.push({
@@ -1092,7 +1139,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             continue;
           }
 
-          if (toolName === "write_file" && typeof toolInput.content !== "string") {
+          if (isWriteToolName(toolName) && typeof toolInput.content !== "string") {
             console.log("[ReactAgent] BLOCKED: write_file requires \"content\" string parameter");
             const errorResult = sharedFormatToolResult(toolName, false, "", 'write_file requires a "content" string parameter');
             messages.push({ role: "user", content: errorResult });
@@ -1131,6 +1178,12 @@ export class ReactAgentAdapter implements AgentAdapter {
           const result = await tool.execute(toolInput, toolContext);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
+          const commandFileChanges = result.ok
+            ? extractFilesChangedFromCommandOutput(result.output, {
+                workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
+                cwd: typeof toolInput.cwd === "string" ? toolInput.cwd : undefined,
+              })
+            : [];
           ctx.recordTrace?.("agent.tool.result", {
             role: this.role,
             iteration: iterationCount,
@@ -1145,26 +1198,38 @@ export class ReactAgentAdapter implements AgentAdapter {
           const toolResult = sharedFormatToolResult(toolName, result.ok, result.output, result.error);
           messages.push({ role: "user", content: toolResult });
 
+          const enrichedRaw = { ...toolInput } as Record<string, unknown>;
+          if (commandFileChanges.length > 0) {
+            enrichedRaw["_filesChangedForDiff"] = commandFileChanges;
+          }
+          if (result.ok && isWriteToolName(toolName) && typeof toolInput.content === "string") {
+            enrichedRaw["_contentForDiff"] = toolInput.content;
+          }
+
           toolsUsed.push({
             tool: toolName,
             ok: result.ok,
             summary: result.ok
               ? `${toolName}: ok (${result.output.length} chars)`
               : `${toolName}: failed - ${result.error ?? "unknown"}`,
-            raw: toolInput,
+            raw: enrichedRaw,
           });
 
-          if (result.ok && ["write_file", "create_file", "delete_file", "modify_file"].includes(toolName)) {
+          const fileChangeType = result.ok ? fileChangeTypeForTool(toolName) : undefined;
+          if (fileChangeType) {
             const filePath = typeof toolInput.path === "string" ? toolInput.path : "";
             if (filePath) {
               const content = typeof toolInput.content === "string" ? toolInput.content : undefined;
               const diff = content ? content.slice(0, 2000) : undefined;
-              filesChanged.push({
+              recordFileChange(filesChanged, {
                 path: filePath,
-                changeType: toolName === "delete_file" ? "D" : toolName === "create_file" ? "A" : "M",
+                changeType: fileChangeType,
                 diff,
               });
             }
+          }
+          for (const file of commandFileChanges) {
+            recordFileChange(filesChanged, file);
           }
 
           const callSig = `${toolName}:${JSON.stringify(toolInput)}`;
@@ -1270,7 +1335,7 @@ export class ReactAgentAdapter implements AgentAdapter {
 
       const allTaskTextForRescue = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
       const taskImpliesFileSaveRescue = taskExplicitlyRequestsFileSave(allTaskTextForRescue);
-      const writeFileCalledRescue = toolsUsed.some((e) => e.tool === "write_file");
+      const writeFileCalledRescue = toolsUsed.some((e) => isWriteToolName(e.tool));
 
       if (
         taskImpliesFileSaveRescue &&
@@ -1281,7 +1346,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         const pathMatch =
           allTaskTextForRescue.match(/\b([\w.\-/]+\.(?:md|txt|ts|js|json|yaml|yml|py|sh|csv))\b/i);
         const targetPath = pathMatch?.[1] ?? "";
-        const writeTool = availableTools.find((t) => t.name === "write_file");
+        const writeTool = availableTools.find((t) => isWriteToolName(t.name));
         if (targetPath && writeTool) {
           try {
             ctx.recordTrace?.("agent.postloop_write_rescue", { targetPath, contentLength: lastRejectedFinalAnswer.length });
@@ -1290,12 +1355,17 @@ export class ReactAgentAdapter implements AgentAdapter {
               { workspaceRoot: ctx.workspaceRoot },
             );
             toolsUsed.push({
-              tool: "write_file",
+              tool: writeTool.name,
               ok: writeResult.ok,
               summary: writeResult.ok ? `Rescued: wrote ${targetPath}` : writeResult.error ?? "write failed",
+              raw: { path: targetPath, _contentForDiff: lastRejectedFinalAnswer },
             });
             if (writeResult.ok) {
-              filesChanged.push({ path: targetPath, changeType: "A" });
+              recordFileChange(filesChanged, {
+                path: targetPath,
+                changeType: "A",
+                diff: lastRejectedFinalAnswer.slice(0, 2000),
+              });
               currentOutputText = lastRejectedFinalAnswer;
             }
           } catch (rescueErr) {

@@ -1,5 +1,13 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildPappyInput, deriveFilesChangedFromToolEvents, normalizeTaskSpec } from "./helpers.js";
+import {
+  buildPappyInput,
+  deriveFilesChangedFromToolEvents,
+  extractFilesChangedFromCommandOutput,
+  normalizeTaskSpec,
+} from "./helpers.js";
 import { AHPLifecycle, AHPVerdict, createChildPacket } from "./ahp/types.js";
 
 describe("normalizeTaskSpec", () => {
@@ -145,5 +153,86 @@ describe("buildPappyInput", () => {
         diff: undefined,
       },
     ]);
+  });
+
+  it("derives shell-created files with embedded diff metadata", () => {
+    const filesChanged = deriveFilesChangedFromToolEvents([
+      {
+        tool: "run_command",
+        ok: true,
+        summary: "shell wrote task-report.js",
+        raw: {
+          command: "node write.js",
+          _filesChangedForDiff: [
+            {
+              path: "tmp-test/orca-sandbox-check/task-report.js",
+              changeType: "A",
+              diff: "console.log('done');",
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(filesChanged).toEqual([
+      {
+        path: "tmp-test/orca-sandbox-check/task-report.js",
+        changeType: "A",
+        diff: "console.log('done');",
+      },
+    ]);
+  });
+
+  it("extracts file changes from run_command output and reads text diffs from disk", () => {
+    const root = mkdtempSync(join(tmpdir(), "orca-core-helper-"));
+    try {
+      const targetDir = join(root, "tmp-test", "orca-sandbox-check");
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(join(targetDir, "task-report.js"), "console.log('done');\n", "utf8");
+
+      const filesChanged = extractFilesChangedFromCommandOutput(
+        "created files\n\n<!-- Files changed: [{\"path\":\"task-report.js\",\"changeType\":\"A\"}] -->",
+        {
+          workspaceRoot: root,
+          cwd: "tmp-test/orca-sandbox-check",
+        },
+      );
+
+      expect(filesChanged).toEqual([
+        {
+          path: "tmp-test/orca-sandbox-check/task-report.js",
+          changeType: "A",
+          diff: "console.log('done');\n",
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("maps leading-slash workspace paths on Windows back into the workspace", () => {
+    if (process.platform !== "win32") return;
+
+    const root = mkdtempSync(join(tmpdir(), "orca-core-helper-win-"));
+    try {
+      const targetDir = join(root, "tmp-test", "orca-sandbox-check");
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(join(targetDir, "tasks.json"), "{\n  \"ok\": true\n}\n", "utf8");
+
+      const filesChanged = extractFilesChangedFromCommandOutput(
+        "created files\n\n<!-- Files changed: [{\"path\":\"/tmp-test/orca-sandbox-check/tasks.json\",\"changeType\":\"M\"}] -->",
+        { workspaceRoot: root },
+      );
+
+      expect(filesChanged).toEqual([
+        {
+          path: "tmp-test/orca-sandbox-check/tasks.json",
+          changeType: "M",
+          diff: "{\n  \"ok\": true\n}\n",
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
