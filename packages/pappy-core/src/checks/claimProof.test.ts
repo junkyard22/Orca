@@ -149,6 +149,112 @@ describe("runClaimProofChecks — test command claims", () => {
     expect(claims.some((claim) => /execute/i.test(claim.text))).toBe(false);
     expect(issues.filter((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toHaveLength(0);
   });
+
+  it("proves generic 'ran successfully' meta-claims with any successful execution event", () => {
+    // "ran successfully and produced the expected output" — all content words
+    // are stopwords, so claimTokens is empty. Any run_command event should prove it.
+    const { issues } = runClaimProofChecks({
+      task: "Run check.js and show the exact output.",
+      outputText: [
+        "The task has been completed successfully.",
+        "The script ran successfully and produced the expected output.",
+      ].join("\n"),
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: true,
+          summary: "run_command: ok (20 chars)",
+          raw: {
+            command: "node ./tmp-test/orca-transparency-pass/check.js",
+            _outputForProof: "Hello from check.js!",
+          },
+        },
+      ],
+    });
+
+    expect(issues.filter((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toHaveLength(0);
+  });
+
+  it("proves generic script-output claims when output is on the next line (colon-newline split)", () => {
+    // The claim "ran the script which produced the exact output:" ends with a
+    // colon+newline, so the capture group stops before "Hello from check.js!".
+    // All remaining tokens are stopwords. Any execution event proves it.
+    const { issues } = runClaimProofChecks({
+      task: "Run check.js and show the exact output.",
+      outputText: [
+        "The task has been completed successfully.",
+        "I ran the script which produced the exact output:",
+        "Hello from check.js!",
+      ].join("\n"),
+      toolEvents: [
+        {
+          tool: "write_file",
+          ok: true,
+          summary: "write_file: ok",
+          raw: { path: "./tmp-test/orca-transparency-pass/check.js" },
+        },
+        {
+          tool: "run_command",
+          ok: true,
+          summary: "run_command: ok (20 chars)",
+          raw: {
+            command: "node ./tmp-test/orca-transparency-pass/check.js",
+            _outputForProof: "Hello from check.js!",
+          },
+        },
+      ],
+    });
+
+    expect(issues.filter((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toHaveLength(0);
+  });
+
+  it("proves script output claims when a successful run_command captured the matching stdout", () => {
+    const { issues } = runClaimProofChecks({
+      task: "Run check.js and show the exact output.",
+      outputText: [
+        "The task has been completed successfully.",
+        "I ran the script which produced the expected output.",
+        "The script ran successfully and displayed: Hello from check.js!",
+      ].join("\n"),
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: true,
+          summary: "run_command: ok (20 chars)",
+          raw: {
+            command: "node ./tmp-test/orca-transparency-pass/check.js",
+            _outputForProof: "Hello from check.js!",
+          },
+        },
+      ],
+    });
+
+    expect(issues.filter((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toHaveLength(0);
+  });
+
+  it("ignores echoed QC issue lines when extracting claims", () => {
+    const { issues, claims } = runClaimProofChecks({
+      task: "Run check.js and show the exact output.",
+      outputText: [
+        "The task has been completed successfully.",
+        "PROOF_CLAIM_UNVERIFIED: tool_event matching \"the script which produced the expected output.\"",
+      ].join("\n"),
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: true,
+          summary: "run_command: ok (20 chars)",
+          raw: {
+            command: "node ./tmp-test/orca-transparency-pass/check.js",
+            _outputForProof: "Hello from check.js!",
+          },
+        },
+      ],
+    });
+
+    expect(claims.some((claim) => claim.text.includes("produced the expected output"))).toBe(false);
+    expect(issues.filter((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -244,5 +350,38 @@ describe("runClaimProofChecks — claim extraction", () => {
       ],
     });
     expect(claims.every((c) => c.requires_proof)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Source verification claim — "according to"
+// ---------------------------------------------------------------------------
+
+describe("runClaimProofChecks — according to", () => {
+  it("does NOT flag 'according to the task requirements' as a citation claim", () => {
+    const { issues } = runClaimProofChecks({
+      task: "Create check.js and run it.",
+      outputText: [
+        "According to the task requirements, I created the file.",
+        "According to your instructions, the script was run.",
+        "According to the description, the output matches.",
+      ].join("\n"),
+      toolEvents: [
+        { tool: "write_file", ok: true, summary: "written", raw: { path: "check.js" } },
+        { tool: "run_command", ok: true, summary: "run_command: ok", raw: { command: "node check.js" } },
+      ],
+      filesChanged: [{ path: "check.js", changeType: "A", diff: "console.log('hi');" }],
+    });
+    const unverified = issues.filter((i) => i.code === "PROOF_CLAIM_UNVERIFIED");
+    expect(unverified).toHaveLength(0);
+  });
+
+  it("DOES flag 'according to external source' without a web fetch event", () => {
+    const { issues } = runClaimProofChecks({
+      task: "Research something.",
+      outputText: "According to the MDN documentation, this API is deprecated.",
+    });
+    const unverified = issues.filter((i) => i.code === "PROOF_CLAIM_UNVERIFIED");
+    expect(unverified.length).toBeGreaterThan(0);
   });
 });

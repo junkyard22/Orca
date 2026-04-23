@@ -34,6 +34,59 @@ function extractToolCommand(raw: unknown): string | null {
   return typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : null;
 }
 
+function extractToolOutput(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const record = raw as Record<string, unknown>;
+  const candidate = record["_outputForProof"] ?? record["output"] ?? record["stdout"];
+  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : null;
+}
+
+function normalizeForMatch(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[`"'“”‘’]/g, " ")
+    .replace(/[^\w./:-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function summarizeToolEvidence(raw: unknown): string {
+  const command = extractToolCommand(raw);
+  const output = extractToolOutput(raw);
+  const outputPreview = output ? output.slice(0, 120) : null;
+  return [command ? `command="${command}"` : null, outputPreview ? `output="${outputPreview}"` : null]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function getExecutionEvents(input: PappyInput) {
+  return (input.toolEvents ?? []).filter((entry) => {
+    if (!entry.ok) return false;
+    return Boolean(extractToolCommand(entry.raw) || extractToolOutput(entry.raw) || /run_command|start_process|execute/i.test(entry.tool));
+  });
+}
+
+function extractQuotedPhrases(text: string): string[] {
+  const phrases: string[] = [];
+  const regex = /[`"']([^`"'\n]{2,120})[`"']/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    const phrase = match[1]?.trim();
+    if (phrase) phrases.push(phrase);
+  }
+
+  return phrases;
+}
+
+function stripMachineIssueLines(outputText: string): string {
+  return outputText
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(?:PROOF|TOOL|COMPLETENESS|CONSISTENCY|SATISFACTION|ROUTING|CORE)_[A-Z_]+:/.test(line))
+    .join("\n");
+}
+
 function findSuccessfulFileToolEvent(
   input: PappyInput,
   filePath: string,
@@ -77,6 +130,96 @@ function isForwardLookingActionContext(contextBefore: string): boolean {
 
 function isNegatedActionContext(contextBefore: string): boolean {
   return /\b(did\s+not|didn't|do\s+not|don't|does\s+not|doesn't|were\s+not|was\s+not|wasn't|not|never|no)\s*$/i.test(contextBefore);
+}
+
+const COMMAND_CLAIM_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "displayed",
+  "exact",
+  "exactly",
+  "expected",
+  "executed",
+  "invoked",
+  "it",
+  "output",
+  "printed",
+  "produced",
+  "ran",
+  "returned",
+  "script",
+  "showed",
+  "successfully",
+  "the",
+  "which",
+]);
+
+function findProofForCommandExecutionClaim(match: RegExpMatchArray, input: PappyInput): string | null {
+  const claimText = (match[1] ?? "").trim();
+  const normalizedClaim = normalizeForMatch(claimText);
+  const quotedPhrases = extractQuotedPhrases(claimText).map(normalizeForMatch).filter(Boolean);
+  const events = getExecutionEvents(input);
+
+  for (const event of events) {
+    const haystack = normalizeForMatch(
+      [event.summary, extractToolCommand(event.raw) ?? "", extractToolOutput(event.raw) ?? ""].join(" "),
+    );
+    if (quotedPhrases.some((phrase) => haystack.includes(phrase))) {
+      const evidence = summarizeToolEvidence(event.raw);
+      return evidence
+        ? `toolEvent: tool=${event.tool} ok=true ${evidence}`
+        : `toolEvent: tool=${event.tool} ok=true summary="${event.summary}"`;
+    }
+    if (normalizedClaim.length > 0 && haystack.includes(normalizedClaim)) {
+      const evidence = summarizeToolEvidence(event.raw);
+      return evidence
+        ? `toolEvent: tool=${event.tool} ok=true ${evidence}`
+        : `toolEvent: tool=${event.tool} ok=true summary="${event.summary}"`;
+    }
+  }
+
+  const claimTokens = normalizedClaim
+    .split(/\s+/)
+    .map((token) => token.replace(/^\W+|\W+$/g, ""))
+    .filter((token) => token.length >= 3 && !COMMAND_CLAIM_STOPWORDS.has(token));
+
+  for (const event of events) {
+    const haystack = normalizeForMatch(
+      [event.summary, extractToolCommand(event.raw) ?? "", extractToolOutput(event.raw) ?? ""].join(" "),
+    );
+    const tokenMatches = claimTokens.filter((token) => haystack.includes(token));
+    if (tokenMatches.length >= Math.min(2, claimTokens.length) && tokenMatches.length > 0) {
+      const evidence = summarizeToolEvidence(event.raw);
+      return evidence
+        ? `toolEvent: tool=${event.tool} ok=true ${evidence}`
+        : `toolEvent: tool=${event.tool} ok=true summary="${event.summary}"`;
+    }
+  }
+
+  // When the claim is entirely composed of stopwords / meta-words (e.g.
+  // "ran successfully and produced the expected output", or "ran the script
+  // which produced the exact output:" where a newline cuts off the content),
+  // there are no content tokens to match. Also handles single-token noise:
+  // adverbs like "exactly", or regex-truncation fragments like "expec". Any
+  // successful execution event is sufficient proof for such generic claims.
+  if (claimTokens.length <= 1 && events.length > 0) {
+    const event = events[0]!;
+    const evidence = summarizeToolEvidence(event.raw);
+    return evidence
+      ? `toolEvent: tool=${event.tool} ok=true ${evidence}`
+      : `toolEvent: tool=${event.tool} ok=true summary="${event.summary}"`;
+  }
+
+  if (events.length === 1 && /\b(?:script|command|program|app)\b/i.test(claimText)) {
+    const event = events[0]!;
+    const evidence = summarizeToolEvidence(event.raw);
+    return evidence
+      ? `toolEvent: tool=${event.tool} ok=true ${evidence}`
+      : `toolEvent: tool=${event.tool} ok=true summary="${event.summary}"`;
+  }
+
+  return null;
 }
 
 const CLAIM_PATTERNS: ClaimPattern[] = [
@@ -157,15 +300,7 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
     label: "command execution claim",
     receiptType: "tool_event",
     findProof(match, input) {
-      const cmd = (match[1] ?? "").toLowerCase().trim();
-      const event = (input.toolEvents ?? []).find((e) =>
-        `${e.summary} ${extractToolCommand(e.raw) ?? ""}`.toLowerCase().includes(cmd.split(/\s+/)[0] ?? cmd),
-      );
-      if (!event) return null;
-      const command = extractToolCommand(event.raw);
-      return command
-        ? `toolEvent: tool=${event.tool} ok=${event.ok} command="${command}"`
-        : `toolEvent: tool=${event.tool} ok=${event.ok} summary="${event.summary}"`;
+      return findProofForCommandExecutionClaim(match, input);
     },
     receiptDetails(match) {
       return `tool_event matching "${match[1] ?? "command"}"`;
@@ -190,8 +325,11 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
   },
 
   // "based on sources" / "I verified / confirmed"
+  // Note: "according to" is excluded when followed by task-internal references
+  // (task/requirements/prompt/instructions/spec/description/your/this/above/below)
+  // to avoid false positives on "According to the task requirements…"
   {
-    pattern: /\b(?:based\s+on\s+(?:source|research)|i\s+verified|i\s+confirmed|according\s+to)\b/gi,
+    pattern: /\b(?:based\s+on\s+(?:source|research)|i\s+verified|i\s+confirmed|according\s+to(?!\s+(?:the\s+)?(?:task|requirement|prompt|instruction|spec|description|your|this|our|above|below)))\b/gi,
     label: "source verification claim",
     receiptType: "citations",
     findProof(_match, input) {
@@ -222,17 +360,18 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
 
 /** Extract all claims from the output text. */
 export function extractClaims(outputText: string): Claim[] {
+  const cleanedOutput = stripMachineIssueLines(outputText);
   const claims: Claim[] = [];
   let claimIndex = 0;
 
   for (const def of CLAIM_PATTERNS) {
     const regex = new RegExp(def.pattern.source, def.pattern.flags);
     let match: RegExpMatchArray | null;
-    while ((match = regex.exec(outputText)) !== null) {
+    while ((match = regex.exec(cleanedOutput)) !== null) {
       // Skip forward-looking / intent phrasing: "I'll modify X", "will update X", "Let me edit X".
       // These are plans, not accomplished actions — no receipt should be required.
       const matchStart = match.index ?? 0;
-      const contextBefore = outputText.slice(Math.max(0, matchStart - 35), matchStart);
+      const contextBefore = cleanedOutput.slice(Math.max(0, matchStart - 35), matchStart);
       if (isForwardLookingActionContext(contextBefore) || isNegatedActionContext(contextBefore)) {
         continue;
       }
@@ -260,7 +399,7 @@ export function runClaimProofChecks(
   const ledger: ReceiptEntry[] = [];
   const claims: Claim[] = [];
 
-  const outputText = input.outputText ?? "";
+  const outputText = stripMachineIssueLines(input.outputText ?? "");
   const hasAnyTrace =
     (input.toolEvents?.length ?? 0) > 0 ||
     (input.filesChanged?.length ?? 0) > 0;
