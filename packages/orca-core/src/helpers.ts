@@ -74,13 +74,18 @@ function extractToolPath(raw: unknown): string | undefined {
 }
 
 function changeTypeForTool(tool: string): OrcaFileChange["changeType"] | undefined {
-  switch (tool) {
+  const normalizedTool = tool.startsWith("desktop-commander_")
+    ? tool.slice("desktop-commander_".length)
+    : tool;
+
+  switch (normalizedTool) {
     case "create_file":
       return "A";
     case "delete_file":
       return "D";
     case "write_file":
     case "modify_file":
+    case "edit_block":
       return "M";
     default:
       return undefined;

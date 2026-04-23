@@ -63,6 +63,25 @@ function detectExpectedTools(
   return expected;
 }
 
+function toolAliases(tool: string): string[] {
+  switch (tool) {
+    case "write_file":
+      return ["write_file", "desktop-commander_write_file", "desktop-commander_edit_block"];
+    case "read_file":
+      return ["read_file", "desktop-commander_read_file", "desktop-commander_read_multiple_files", "docs_read"];
+    case "list_directory":
+      return ["list_directory", "desktop-commander_list_directory", "docs_list"];
+    case "search_files":
+      return ["search_files", "desktop-commander_start_search"];
+    default:
+      return [tool];
+  }
+}
+
+function hasToolOrAlias(actualTools: Set<string>, expectedTool: string): boolean {
+  return toolAliases(expectedTool).some((tool) => actualTools.has(tool));
+}
+
 export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[] {
   const issues: Omit<Issue, "issueId">[] = [];
 
@@ -113,7 +132,7 @@ export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[]
   const hasFilesChanged = (input.filesChanged?.length ?? 0) > 0;
 
   for (const expected of expectedTools) {
-    const toolWasCalled = actualTools.has(expected.tool);
+    const toolWasCalled = hasToolOrAlias(actualTools, expected.tool);
     const satisfiedByFiles = expected.satisfiedByFilesChanged === true && hasFilesChanged;
 
     if (!toolWasCalled && !satisfiedByFiles) {

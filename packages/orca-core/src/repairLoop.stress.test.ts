@@ -20,6 +20,7 @@ import { describe, it, expect, vi } from "vitest";
 import { handleRepairLoop } from "./repairLoop.js";
 import type { OrcaTaskSpec, OrcaRunCtx, MaestroPort, PappyPort } from "./types.js";
 import type { PappyResult } from "@clawde/pappy-core";
+import { createChildPacket } from "./ahp/types.js";
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -512,7 +513,7 @@ describe("repair spec correctness", () => {
     }
   });
 
-  it("merges original goals into repair spec goals", async () => {
+  it("preserves original goals in repair spec goals", async () => {
     const capturedSpecs: OrcaTaskSpec[] = [];
     const maestro: MaestroPort = {
       run: vi.fn(async (task) => {
@@ -529,8 +530,45 @@ describe("repair spec correctness", () => {
     const repairGoals = capturedSpecs[0]?.goals ?? [];
     expect(repairGoals).toContain("produce output");
     expect(repairGoals).toContain("satisfy requirements");
-    // Also has the repair-specific goal
-    expect(repairGoals.some((g) => g.includes("Fix all issues"))).toBe(true);
+    expect(repairGoals).toHaveLength(2);
+  });
+
+  it("prefers the latest QC repairTask over prior AHP repair prompts", async () => {
+    const capturedSpecs: OrcaTaskSpec[] = [];
+    const maestro: MaestroPort = {
+      run: vi.fn(async (task) => {
+        capturedSpecs.push(task);
+        return { outputText: "still bad" };
+      }),
+    };
+    const pappy: PappyPort = { evaluate: vi.fn(() => makeFailResult()) };
+
+    const poisonedPacket = createChildPacket("root", {
+      id: "repair-child",
+      objective: "Repair prior attempt",
+      expectedOutput: { schema: {}, acceptanceCriteria: [] },
+    });
+    poisonedPacket.repairPrompt = "POISONED_REPAIR_PROMPT";
+
+    await handleRepairLoop(
+      makeTask(),
+      makeFailResult("LATEST_QC_REPAIR_TASK"),
+      makeCtx(),
+      maestro,
+      pappy,
+      makeEmitter(),
+      1,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      poisonedPacket,
+    );
+
+    expect(capturedSpecs[0]?.originalUserMessage).toContain("LATEST_QC_REPAIR_TASK");
+    expect(capturedSpecs[0]?.originalUserMessage).not.toContain("POISONED_REPAIR_PROMPT");
   });
 
   it("includes role hint in originalUserMessage when originalRole is given", async () => {

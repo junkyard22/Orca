@@ -155,9 +155,14 @@ export async function handleRepairLoop(
     const repairPacket = selectRepairPacket(currentArtifacts, ahpPacket);
     const repairRole = deriveRepairRole(repairPacket, currentArtifacts, originalRole);
     const roleHint = repairRole ? `\n\nOriginal role: ${repairRole}\nRe-run using the ${repairRole} role.` : '';
-    // Prefer the AHP-based targeted repair prompt (set by Pappy's verifyAHPPacket)
-    // over the legacy generic repairTask string when available.
-    const repairInstruction = repairPacket?.repairPrompt ?? ahpPacket?.repairPrompt ?? currentQC.repairTask!;
+    // Always anchor repair instructions to the latest QC result for the ORIGINAL
+    // task. Reusing a repair packet's own repairPrompt causes recursive prompt
+    // contamination where later passes start repairing prior repair instructions.
+    const repairInstruction =
+      currentQC.repairTask ??
+      repairPacket?.repairPrompt ??
+      ahpPacket?.repairPrompt ??
+      "Fix the issues identified in the quality check.";
 
     // ── Tool-missing escalation ─────────────────────────────────────────────
     // If QC flagged TOOL_MISSING, the agent ran but never called tools.
@@ -186,19 +191,7 @@ export async function handleRepairLoop(
     const repairSpec: OrcaTaskSpec = {
       originalUserMessage: `${repairInstruction}${roleHint}${toolNudge}`,
       intent: "repair",
-      goals: [
-        ...originalTask.goals,
-        "Fix all issues identified in the quality check — produce the corrected output, not a description of fixes",
-        // Surface the tool nudge in goals so the specialist agent sees it directly
-        // (originalUserMessage is only used for brain routing, not passed to the agent).
-        ...(hasWriteFileMissing ? [
-          "CRITICAL: Your ONLY valid next action is to call write_file. " +
-          "Do NOT read files, do NOT analyze, do NOT explain. Call write_file immediately.",
-        ] : hasToolMissing ? [
-          "CRITICAL: You MUST call write_file and any other required tools. " +
-          "Do NOT describe what you would do — use <tool_call> blocks to actually call the tools.",
-        ] : []),
-      ],
+      goals: [...originalTask.goals],
       constraints: originalTask.constraints,
       permissions: originalTask.permissions,
       outputFormat: originalTask.outputFormat,

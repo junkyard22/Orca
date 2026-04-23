@@ -84,6 +84,16 @@ describe("runToolResultChecks — tool correlation", () => {
     expect(missing).toHaveLength(0);
   });
 
+  it("does NOT flag write_file missing when a desktop commander write tool was called", () => {
+    const issues = runToolResultChecks({
+      task: "Create a new component file.",
+      toolEvents: [{ tool: "desktop-commander_write_file", ok: true, summary: "Button.tsx written" }],
+    });
+
+    const missing = issues.filter((i) => i.code === "TOOL_MISSING");
+    expect(missing).toHaveLength(0);
+  });
+
   it("flags MEDIUM when task implies command but no run_command event exists", () => {
     const issues = runToolResultChecks({
       task: "Run the tests with npm test.",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPappyInput, normalizeTaskSpec } from "./helpers.js";
+import { buildPappyInput, deriveFilesChangedFromToolEvents, normalizeTaskSpec } from "./helpers.js";
 import { AHPLifecycle, AHPVerdict, createChildPacket } from "./ahp/types.js";
 
 describe("normalizeTaskSpec", () => {
@@ -124,6 +124,25 @@ describe("buildPappyInput", () => {
         lifecycle: "COMPLETE",
         verdict: "INCONCLUSIVE",
         objective: "Inspect release readiness",
+      },
+    ]);
+  });
+
+  it("derives filesChanged from desktop commander write events", () => {
+    const filesChanged = deriveFilesChangedFromToolEvents([
+      {
+        tool: "desktop-commander_write_file",
+        ok: true,
+        summary: "wrote file",
+        raw: { path: "tmp-test/orca-sandbox-check/task-report.js" },
+      },
+    ]);
+
+    expect(filesChanged).toEqual([
+      {
+        path: "tmp-test/orca-sandbox-check/task-report.js",
+        changeType: "M",
+        diff: undefined,
       },
     ]);
   });

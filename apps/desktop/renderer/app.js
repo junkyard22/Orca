@@ -209,8 +209,6 @@ function handleInitStatus(s) {
     }
     if (s.warnings?.length) {
       s.warnings.forEach((w) => appendSys(w, "warn"));
-      welcome.style.display  = "none";
-      messages.style.display = "";
     } else if (!messages.hasChildNodes()) {
       welcome.style.display  = "";
       messages.style.display = "none";
@@ -678,6 +676,7 @@ function appendDiffCards(filesChanged) {
 
 function appendPipelineBadge(summary) {
   if (!summary) return;
+  showMessages();
 
   const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : "fail";
   const confidencePct = Math.round((summary.confidence ?? 1) * 100);
@@ -896,6 +895,10 @@ function appendPipelineBadge(summary) {
   // ── Assemble ─────────────────────────────────────────────────────────────
   const div = document.createElement("div");
   div.className = "pipeline-badge";
+  div.style.display = "flex";
+  div.style.flexDirection = "column";
+  div.style.alignSelf = "flex-start";
+  div.style.overflow = "visible";
   div.innerHTML = `
     <div class="pipeline-badge-header">
       <span class="pb-role">${escapeHtml(String(summary.role ?? "unknown"))}</span>
@@ -917,18 +920,61 @@ function appendPipelineBadge(summary) {
     </div>`;
 
   div.classList.add("expanded");
-  const header = div.querySelector(".pipeline-badge-header");
-  const detail = div.querySelector(".pipeline-badge-detail");
-  const detailsBtn = div.querySelector(".pb-details-btn");
+  const detailMarkup = `
+      ${outcomeHtml}
+      ${errorHtml}
+      ${auditDetailHtml}
+      ${deweyHtml}
+      ${mirandaHtml}
+      ${criteriaHtml ? `<div><div class="pb-section-title">Acceptance criteria</div><div class="pb-criteria-list">${criteriaHtml}</div></div>` : ""}
+      ${issuesHtml   ? `<div><div class="pb-section-title">Issues</div><div class="pb-issues-list">${issuesHtml}</div></div>` : ""}
+      ${logHtml}
+      <div class="pb-footer-row">${durationSec}s total · ${summary.repairPasses ?? 0} repair pass${(summary.repairPasses ?? 0) !== 1 ? "es" : ""}</div>
+    `;
+  const header = document.createElement("div");
+  header.className = "pipeline-badge-header";
+  header.innerHTML = `
+      <span class="pb-role">${escapeHtml(String(summary.role ?? "unknown"))}</span>
+      <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
+      <span class="pb-confidence">${confidencePct}%</span>
+      <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
+      <button class="pb-details-btn" type="button" aria-expanded="true">Hide <span class="pb-chevron">›</span></button>
+    `;
+
+  let detail = document.createElement("div");
+  detail.className = "pipeline-badge-detail";
+  detail.style.display = "block";
+  detail.style.boxSizing = "border-box";
+  detail.style.padding = "10px 12px 24px";
+  detail.style.borderTop = "1px solid var(--border-faint)";
+  detail.style.maxHeight = "min(560px, 72vh)";
+  detail.style.overflowY = "auto";
+  detail.style.overflowX = "hidden";
+  detail.style.minHeight = "84px";
+  detail.style.width = "100%";
+  const detailContent = document.createElement("div");
+  detailContent.className = "pipeline-badge-content";
+  detailContent.style.display = "flex";
+  detailContent.style.flexDirection = "column";
+  detailContent.style.gap = "10px";
+  detailContent.innerHTML = detailMarkup;
+  detail.appendChild(detailContent);
+  if (!detail.textContent.trim()) {
+    detailContent.innerHTML = `
+      <div>
+        <div class="pb-section-title">Outcome</div>
+        <div class="pb-empty-detail">Pipeline summary was present, but the detail view rendered empty. The header summary above is still valid.</div>
+      </div>`;
+  }
+
+  div.replaceChildren(header, detail);
+  const detailsBtn = header.querySelector(".pb-details-btn");
   const applyDetailVisibility = (expanded) => {
     if (!detail) return;
-    detail.style.display = expanded ? "flex" : "none";
-    detail.style.flexDirection = "column";
-    detail.style.gap = "10px";
-    detail.style.maxHeight = "";
-    detail.style.overflowY = "visible";
+    detail.style.display = expanded ? "block" : "none";
     detail.style.padding = expanded ? "10px 12px 24px" : "0 12px";
     detail.style.borderTop = expanded ? "1px solid var(--border-faint)" : "0";
+    detail.style.minHeight = expanded ? "84px" : "0";
   };
   const setExpanded = (expanded) => {
     div.classList.toggle("expanded", expanded);
@@ -948,11 +994,11 @@ function appendPipelineBadge(summary) {
   applyDetailVisibility(true);
 
   messages.appendChild(div);
-  // Scroll messages so the pipeline badge header appears at the top of the visible area.
-  // Using direct scrollTop math is more reliable than scrollIntoView across Electron versions.
   requestAnimationFrame(() => {
-    const offset = div.getBoundingClientRect().top - messages.getBoundingClientRect().top;
-    messages.scrollTop += offset;
+    messages.scrollTo({
+      top: Math.max(0, div.offsetTop - 12),
+      behavior: "smooth",
+    });
   });
 }
 
@@ -963,16 +1009,47 @@ function appendToolCard(id, tool, args) {
   const div = document.createElement("div");
   div.className = "tool-card pending";
   div.dataset.approvalId = id;
+  div.style.display = "flex";
+  div.style.flexDirection = "column";
+  div.style.alignSelf = "stretch";
+  div.style.overflow = "visible";
+
+  const header = document.createElement("div");
+  header.className = "tool-card-header";
+
+  const icon = document.createElement("span");
+  icon.className = "tool-card-icon";
+  icon.innerHTML = "&#9881;";
+
+  const name = document.createElement("span");
+  name.className = "tool-card-name";
+  name.textContent = String(tool);
+
+  const status = document.createElement("span");
+  status.className = "tool-card-status";
+  status.textContent = "awaiting approval…";
+
   const argsStr = typeof args === "object" && args !== null
     ? JSON.stringify(args, null, 2)
     : String(args ?? "");
-  div.innerHTML = `
-    <div class="tool-card-header">
-      <span class="tool-card-icon">&#9881;</span>
-      <span class="tool-card-name">${escapeHtml(String(tool))}</span>
-      <span class="tool-card-status">awaiting approval…</span>
-    </div>
-    <pre class="tool-card-args">${escapeHtml(argsStr)}</pre>`;
+
+  const argsEl = document.createElement("div");
+  argsEl.className = "tool-card-args";
+  argsEl.textContent = argsStr.trim() ? argsStr : "(no args)";
+  argsEl.style.display = "block";
+  argsEl.style.padding = "6px 12px";
+  argsEl.style.margin = "0";
+  argsEl.style.borderTop = "1px solid var(--border)";
+  argsEl.style.maxHeight = "120px";
+  argsEl.style.overflowY = "auto";
+  argsEl.style.overflowX = "auto";
+  argsEl.style.whiteSpace = "pre-wrap";
+  argsEl.style.wordBreak = "break-word";
+  argsEl.style.fontFamily = "var(--font-mono)";
+  argsEl.style.fontSize = "11px";
+
+  header.append(icon, name, status);
+  div.append(header, argsEl);
   messages.appendChild(div);
   scrollToBottom();
   return div;
