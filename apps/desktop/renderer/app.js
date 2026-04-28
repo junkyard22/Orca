@@ -1753,9 +1753,8 @@ const MCP_TEMPLATES = {
     id:        "github-mcp",
     name:      "GitHub MCP",
     transport: "stdio",
-    command:   "docker",
-    args:      ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-                "ghcr.io/github/github-mcp-server"],
+    command:   "npx",
+    args:      ["-y", "@modelcontextprotocol/server-github"],
   },
 };
 

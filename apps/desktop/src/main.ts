@@ -68,6 +68,7 @@ import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairOriginalRole, getRepairRoutingSourceTask } from "./repairRouting";
+import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
 
 type AgentTool = {
   name: string;
@@ -1582,8 +1583,12 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     // Inject GITHUB_TOKEN for the ext-github static extension (github_clone_repo, etc.).
     // Primary source: settings.githubToken (dedicated field, always visible in Settings).
     // Fallback: GitHub MCP server PAT (for users who configured it there first).
-    const ghMcpServer = s.mcpServers?.find((srv) => srv.id === "github-mcp");
-    const ghToken = s.githubToken || ghMcpServer?.env?.["GITHUB_PERSONAL_ACCESS_TOKEN"];
+    const mcpServers = normalizeMcpServersForRuntime(s);
+    const ghMcpServer = mcpServers.find((srv) => srv.id === "github-mcp");
+    const ghToken =
+      s.githubToken ||
+      ghMcpServer?.env?.["GITHUB_TOKEN"] ||
+      ghMcpServer?.env?.["GITHUB_PERSONAL_ACCESS_TOKEN"];
     if (ghToken) {
       process.env["GITHUB_TOKEN"] = ghToken;
     } else {
@@ -1593,7 +1598,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     // Build unified tool stack: core workbench + ext-* + MCP servers
     const bootstrap = await buildToolBootstrap({
       workspaceRoot,
-      mcpServers: s.mcpServers ?? [],
+      mcpServers,
       log: (msg) => console.log(msg),
     });
     mcpDispose = bootstrap.dispose;
