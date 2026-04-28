@@ -1,6 +1,14 @@
 # Orca Agent Instructions
 
+> **Architectural invariants** are defined in [docs/ORCA_UNIVERSAL_TRUTHS.md](docs/ORCA_UNIVERSAL_TRUTHS.md). Instructions here must not contradict them. When they appear to conflict, the Universal Truths win.
+>
+> **Whole-program contract** — component authority boundaries, runtime order, side-effect rules, and change-control requirements — are defined in [docs/ORCA_SYSTEM_CONTRACT.md](docs/ORCA_SYSTEM_CONTRACT.md).
+
 ## Miranda Architecture Lock
+
+Miranda is the compliance officer of the team. She enforces rules at checkpoints; she does not run the team. Miranda can approve, warn, block, or require confirmation. She cannot plan, execute work, judge output quality, or become the user-facing voice. She does not replace Brain, Pappy, Benson, Maestro, or any worker.
+
+Miranda enforces boundaries; she does not perform the work inside the boundary.
 
 Miranda is Orca's compliance gate layer, not a response pipeline.
 

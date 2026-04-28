@@ -1,5 +1,9 @@
 # Orca — Architecture Reference
 
+> **Architectural invariants** — the permanent constraints that govern every component's authority — are defined in [docs/ORCA_UNIVERSAL_TRUTHS.md](docs/ORCA_UNIVERSAL_TRUTHS.md). That file sits above this one. When the two conflict, the Universal Truths win.
+>
+> **Whole-program contract** — component relationships, authority boundaries, runtime order, and change-control rules — are defined in [docs/ORCA_SYSTEM_CONTRACT.md](docs/ORCA_SYSTEM_CONTRACT.md). This file describes the pipeline structure; the System Contract describes the authority rules that govern it.
+
 ## Pipeline
 
 ```
