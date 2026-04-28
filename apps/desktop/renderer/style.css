@@ -2140,6 +2140,27 @@ body.hide-pipeline .live-trace-panel { display: none; }
 }
 .ltp-toggle:hover { color: var(--text); background: var(--surface-2); }
 
+.ltp-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  transition: color 0.15s, background 0.15s;
+}
+.ltp-close:hover { color: var(--text); background: var(--surface-2); }
+
 .ltp-chevron {
   font-size: 13px;
   line-height: 1;
@@ -2168,6 +2189,9 @@ body.hide-pipeline .live-trace-panel { display: none; }
   gap: 8px;
   font-size: 11px;
   line-height: 1.5;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-left: 2px solid transparent;
 }
 .ltp-row-icon {
   font-family: var(--font-mono);
@@ -2180,6 +2204,25 @@ body.hide-pipeline .live-trace-panel { display: none; }
 .ltp-status-fail    .ltp-row-icon { color: var(--danger, #d44); }
 .ltp-status-blocked .ltp-row-icon { color: var(--warn-text, #d90); }
 .ltp-status-running .ltp-row-icon { color: var(--accent, #4d8); }
+
+/* Visual distinction for non-OK statuses — matches .pb-severity tints. */
+.ltp-status-warn {
+  background: rgba(224, 168, 72, 0.10);
+  border-left-color: var(--warn-text, #d90);
+}
+.ltp-status-warn .ltp-row-summary { color: var(--warn-text, #d90); }
+
+.ltp-status-blocked {
+  background: rgba(224, 168, 72, 0.10);
+  border-left-color: var(--warn-text, #d90);
+}
+.ltp-status-blocked .ltp-row-summary { color: var(--warn-text, #d90); }
+
+.ltp-status-fail {
+  background: rgba(204, 68, 102, 0.12);
+  border-left-color: var(--danger, #d44);
+}
+.ltp-status-fail .ltp-row-summary { color: var(--danger, #d44); font-weight: 600; }
 
 .ltp-row-component {
   font-family: var(--font-mono);

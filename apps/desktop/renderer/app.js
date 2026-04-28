@@ -84,10 +84,13 @@ function applyPipelineVisibility(show) {
 
 let livePanel = null;
 let livePanelSeq = 0;
+const LIVE_PANEL_STICKY_MS = 6000;
 
 function startLiveTracePanel(runId) {
   // PipelineTrace is loaded via <script src="pipeline-trace.js"> before app.js.
   if (!window.PipelineTrace || !window.PipelineTrace.createLiveTracePanel) return null;
+  // Clear any sticky panel from a prior run before opening a new one.
+  destroyLiveTracePanel();
   livePanelSeq = 0;
   livePanel = window.PipelineTrace.createLiveTracePanel({
     messagesEl: messages,
@@ -105,9 +108,17 @@ function pushLiveTraceEvent(e) {
   if (row) livePanel.pushRow(row);
 }
 
+/**
+ * Mark the live panel done and schedule its automatic removal.
+ * If the user has expanded the panel, the controller holds the timer until
+ * they collapse it (or click the explicit close button).
+ */
 function finishLiveTracePanel(finalLabel) {
   if (!livePanel) return;
   livePanel.finish(finalLabel || "");
+  if (livePanel.scheduleRemoval) {
+    livePanel.scheduleRemoval(LIVE_PANEL_STICKY_MS);
+  }
 }
 
 function destroyLiveTracePanel() {
@@ -1282,9 +1293,10 @@ async function sendMessage() {
     pendingPipelineSummary = null;   // discard if not yet rendered (abort / error path)
     finalReplyRendered = false;
     streamText   = "";              // clear fallback accumulator for next task
-    // Remove the live trace panel — the post-run pipeline summary badge
-    // takes over for finished runs (and is independently gated by hide-pipeline).
-    destroyLiveTracePanel();
+    // The live trace panel manages its own sticky removal once finished
+    // (see finishLiveTracePanel). Don't tear it down here — the user may
+    // still be reading it. startLiveTracePanel() clears any leftover panel
+    // when the next run begins.
     busy = false;          // clear busy FIRST so late events won't override status
     syncIdleStatus();
     syncComposerState();
