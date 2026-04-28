@@ -3,6 +3,8 @@
 > **Architectural invariants** — the permanent constraints that govern every component's authority — are defined in [docs/ORCA_UNIVERSAL_TRUTHS.md](docs/ORCA_UNIVERSAL_TRUTHS.md). That file sits above this one. When the two conflict, the Universal Truths win.
 >
 > **Whole-program contract** — component relationships, authority boundaries, runtime order, and change-control rules — are defined in [docs/ORCA_SYSTEM_CONTRACT.md](docs/ORCA_SYSTEM_CONTRACT.md). This file describes the pipeline structure; the System Contract describes the authority rules that govern it.
+>
+> **Development-time contract check** — a fast checklist and automation guide for verifying that proposed changes respect authority boundaries — is defined in [docs/ORCA_CONTRACT_CHECK.md](docs/ORCA_CONTRACT_CHECK.md). Run before coding tasks that touch orchestration, LLM paths, gates, QC, or role contracts.
 
 ## Pipeline
 

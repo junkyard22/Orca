@@ -3,6 +3,8 @@
 > **Architectural invariants** are defined in [docs/ORCA_UNIVERSAL_TRUTHS.md](docs/ORCA_UNIVERSAL_TRUTHS.md). Instructions here must not contradict them. When they appear to conflict, the Universal Truths win.
 >
 > **Whole-program contract** — component authority boundaries, runtime order, side-effect rules, and change-control requirements — are defined in [docs/ORCA_SYSTEM_CONTRACT.md](docs/ORCA_SYSTEM_CONTRACT.md).
+>
+> **Development-time contract check** — before starting a coding task that touches orchestration, LLM call paths, tool execution, Miranda gates, Pappy QC, or role contracts, run the checklist in [docs/ORCA_CONTRACT_CHECK.md](docs/ORCA_CONTRACT_CHECK.md).
 
 ## Miranda Architecture Lock
 
