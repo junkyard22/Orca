@@ -1,161 +1,74 @@
 # Miranda Core
 
-**Behavior enforcement runtime for LLMs** — an invisible compliance officer that wraps prompts with contracts, validates outputs, runs repair loops, and escalates to fallback models when needed.
+Miranda is Orca's compliance gate layer. In the live Orca runtime, Miranda validates whether calls may proceed and records diagnostics. Miranda is not the response pipeline and is not the quality verifier.
 
-Miranda never talks directly to the user. It sits between your application and the LLM, ensuring the Worker model produces well-structured, high-quality output.
+## Architecture Lock
 
-## Architecture
+Rules:
 
-```
-User Prompt → Miranda Pipeline → Worker LLM → Validation → Output
-                                      ↑               ↓
-                                  Repair Loop ←── Invalid?
-                                      ↑
-                                  Escalation (fallback model)
-```
+- Miranda is a gate, not a pipeline.
+- Miranda does not plan, answer, critique, rewrite, synthesize, or judge output quality.
+- The deprecated Miranda multi-stage PLAN -> ANSWER -> CRITIQUE -> REWRITE pipeline is legacy. Do not extend it for live Orca behavior.
+- Live LLM calls must pass through `beforeLLMCall`.
+- Tool execution must pass through `beforeToolRun` and `afterToolRun`.
+- Pappy QC must pass through `afterQC` for diagnostics and checkpointing.
+- Pappy remains Orca's quality verifier. Miranda must not downgrade Pappy `FAIL` verdicts, skip repair loops, or change final QC behavior unless a future explicit design doc authorizes that change.
+- `gate_blocked` is an internal controlled-stop reason. Do not expose it as a user-facing failure phrase.
+- Neutral `budgetUsed: 0` / `budgetLimit: Infinity` placeholders are not real budget enforcement. Treat them as neutral metadata until live cost accounting is wired into the gate context.
 
-### Pipeline Stages (Sequential)
+Gate verdict meanings:
 
-| Stage        | Format   | Purpose                                                 |
-| ------------ | -------- | ------------------------------------------------------- |
-| **PLAN**     | JSON     | Structured approach plan with assumptions, steps, risks |
-| **ANSWER**   | Markdown | Full answer with required headings                      |
-| **CRITIQUE** | JSON     | Self-critique with issues, fixes, missing items         |
-| **REWRITE**  | Markdown | Improved answer incorporating critique                  |
+| Verdict | Meaning |
+|---------|---------|
+| `PASS` | Continue |
+| `WARN` | Continue with diagnostic warning |
+| `BLOCK` | Stop safely |
+| `CONFIRM_REQUIRED` | Pause until user approval; reserved until wired |
 
-## Installation
+## Where Miranda Is Wired Today
 
-```bash
-pnpm add @clawde/miranda-core
-```
+Live LLM call stages:
 
-## Quick Start
+- `agent_loop_main_stream`
+- `agent_loop_rescue_stream`
+- `maestro_no_tools_stream`
+- `maestro_brain_route_complete`
+- `maestro_synthesis_complete`
 
-```typescript
-import {
-  runPipeline,
-  createDefaultConfig,
-  OpenRouterAdapter,
-} from "@clawde/miranda-core";
+Tool gates:
 
-const adapter = new OpenRouterAdapter({
-  apiKey: process.env.OPENROUTER_API_KEY!,
-});
-const config = createDefaultConfig({ verbose: true });
+- `beforeToolRun`
+- `afterToolRun`
 
-const { record, summary } = await runPipeline(
-  "Explain binary search",
-  adapter,
-  config,
-);
+QC diagnostics:
 
-console.log(summary);
-```
+- `afterQC`
+- Trace stage: `miranda.after_qc`
 
-## Configuration
+## Live Gate API
 
-Pass a `MirandaConfig` object to `runPipeline()` or use `createDefaultConfig()` with overrides:
+Use `createMirandaGate()` for live Orca runtime wiring.
 
-```typescript
-const config = createDefaultConfig({
-  // Budget per request in USD
-  budgetUsd: 0.1,
+Checkpoint methods:
 
-  // Verbose logging to stderr
-  verbose: true,
+- `beforeLLMCall(ctx)` checks the LLM call context before the provider call.
+- `afterLLMCall(ctx, output, validation)` is available for output-shape validation where explicitly wired.
+- `beforeToolRun(ctx)` validates tool allowlists and arguments before execution.
+- `afterToolRun(ctx, result)` records/validates tool receipts after execution.
+- `beforeQC(ctx)` validates that output is present before Pappy QC.
+- `afterQC(ctx, verdict, issueCount)` records diagnostics after Pappy returns its verdict.
 
-  // JSONL log file path
-  logPath: "miranda-runs.jsonl",
+`afterQC` is diagnostic-only in the current architecture. It must not override Pappy, downgrade `FAIL`, skip repair, or change final verdict logic.
 
-  // Custom stage configs
-  stages: {
-    plan: {
-      models: [
-        { id: "deepseek/deepseek-chat", label: "DeepSeek" },
-        { id: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
-      ],
-      maxRetriesPerModel: 3,
-      maxTotalAttempts: 6,
-      baseTemperature: 0.4,
-      maxTokens: 2048,
-      timeoutMs: 60000,
-    },
-    // ... answer, critique, rewrite
-  },
+## Legacy Pipeline
 
-  // Custom pricing table
-  pricing: {
-    "deepseek/deepseek-chat": { inputPer1M: 0.14, outputPer1M: 0.28 },
-  },
+This package still contains older pipeline modules and exports such as `runPipeline()`, `createDefaultConfig()`, stage contracts, model routing helpers, and cost utilities. Those exist for compatibility and tests. They are not the live Orca task path.
 
-  // Circuit breaker settings
-  circuitBreaker: {
-    failureThreshold: 3,
-    windowMs: 300000,
-    cooldownMs: 120000,
-  },
-});
-```
+Do not add new live behavior to the legacy pipeline. New compliance, permission, checkpoint, or budget-gate work belongs in the gate path, primarily `src/gate/mirandaGate.ts` and the runtime call sites that supply gate context.
 
-## How Repair & Escalation Works
+## Development Guardrails
 
-### Repair Loop (per model)
-
-1. **Attempt 1**: Normal prompt at base temperature
-2. **Attempt 2**: Stricter prompt + schema + example at 50% temperature
-3. **Attempt 3**: Maximum strictness ("ONLY JSON. NO OTHER TEXT.") at temperature 0
-
-### Model Escalation
-
-If a model fails all retry attempts, Miranda moves to the next model in the fallback ladder:
-
-- **Primary** → cheap model (DeepSeek, Qwen)
-- **Secondary** → mid-tier (GPT-4o Mini, Gemini Flash)
-- **Last resort** → reliable (Claude Haiku, GPT-4o)
-
-### Circuit Breaker
-
-If a model exceeds the failure threshold within a time window, it's disabled for a cooldown period. This prevents wasting budget on broken providers.
-
-### Budget Controls
-
-- Cost is tracked per stage using token counts and a pricing table
-- If the budget is exceeded before CRITIQUE/REWRITE, those stages are skipped (lite mode)
-- The CLI displays a warning when this happens
-
-## Embedding in Your Application
-
-```typescript
-import {
-  runPipeline,
-  createDefaultConfig,
-  type LLMAdapter,
-  type LLMRequest,
-  type LLMResponse,
-} from "@clawde/miranda-core";
-
-// Option 1: Use the built-in OpenRouter adapter
-import { OpenRouterAdapter } from "@clawde/miranda-core";
-const adapter = new OpenRouterAdapter({ apiKey: "..." });
-
-// Option 2: Implement your own adapter
-class MyAdapter implements LLMAdapter {
-  readonly name = "my-provider";
-  async complete(request: LLMRequest): Promise<LLMResponse> {
-    // Call your LLM provider here
-  }
-}
-
-const config = createDefaultConfig();
-const result = await runPipeline("user prompt", adapter, config);
-```
-
-## Exports
-
-- `runPipeline()` — main pipeline orchestrator
-- `createDefaultConfig()` — config factory with sensible defaults
-- `OpenRouterAdapter` — OpenRouter LLM adapter
-- `validateJson()` / `validateTextSections()` — standalone validators
-- `Router` / `CircuitBreaker` / `HealthTracker` — routing utilities
-- `calculateCost()` / `formatCost()` — cost utilities
-- Schemas: `PlanSchema`, `CritiqueSchema`, contracts, and types
+- If adding a live LLM call, add a distinct `beforeLLMCall` stage label.
+- If adding a live tool path, route it through `beforeToolRun` and `afterToolRun`.
+- If adding QC observability, route it through `afterQC` and keep Pappy in charge of quality verdicts.
+- If adding real budget enforcement, first wire live cost accounting into gate context. Do not treat neutral placeholder values as enforcement.

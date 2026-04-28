@@ -95,7 +95,7 @@ describe("no-tools beforeLLMCall gate", () => {
     expect(result.outputText).toBe("No-tools response.");
     expect(result.metadata?.stoppedBecause).toBeUndefined();
     expect(gate.beforeLLMCall).toHaveBeenCalledWith({
-      stage: "maestro_no_tools",
+      stage: "maestro_no_tools_stream",
       model: "test-model",
       budgetUsed: 0,
       budgetLimit: Infinity,

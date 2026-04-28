@@ -262,6 +262,136 @@ describe("Miranda gate blocking", () => {
       expect(typeof c.allowed).toBe("boolean");
     }
   });
+
+  it("passes Pappy metadata to afterQC and records the GateResult diagnostically", async () => {
+    const gate = {
+      beforeQC: vi.fn(() => ({ allowed: true, reason: "before ok", verdict: "PASS" })),
+      afterQC: vi.fn(() => ({ allowed: true, reason: "after ok", verdict: "PASS" })),
+    };
+    const writeTrace = vi.fn();
+    const maestro = makeMaestro("done", 0, "reviewer");
+    const pappy: PappyPort = {
+      evaluate: vi.fn(() =>
+        makePappyResult("FAIL", {
+          confidence: 0.42,
+          repair_task: null,
+          repairTask: undefined,
+        }),
+      ),
+    };
+
+    await createOrcaRuntime(
+      makeBasicDeps(maestro, pappy, { gate: gate as any, writeTrace }),
+    ).executeTask(makeTaskSpec());
+
+    expect(gate.afterQC).toHaveBeenCalledWith(
+      expect.objectContaining({
+        qcStage: "initial",
+        attempt: 0,
+        pappyVerdict: "FAIL",
+        issueCodes: ["STRESS_FAIL"],
+        issueTypes: ["Completeness"],
+        confidence: 0.42,
+      }),
+      "FAIL",
+      1,
+    );
+
+    const trace = writeTrace.mock.calls[0]?.[0] as any;
+    const afterQcTrace = trace.entries.find((entry: any) => entry.stage === "miranda.after_qc");
+    expect(afterQcTrace?.detail).toMatchObject({
+      allowed: true,
+      gateVerdict: "PASS",
+      reason: "after ok",
+      qcStage: "initial",
+      attempt: 0,
+      pappyVerdict: "FAIL",
+      issueCodes: ["STRESS_FAIL"],
+      issueTypes: ["Completeness"],
+      confidence: 0.42,
+    });
+  });
+
+  it("does not let afterQC BLOCK change Pappy PASS completion", async () => {
+    const gate = {
+      beforeQC: vi.fn(() => ({ allowed: true, reason: "before ok", verdict: "PASS" })),
+      afterQC: vi.fn(() => ({ allowed: false, reason: "diagnostic block", verdict: "BLOCK" })),
+    };
+    const maestro = makeMaestro("clean output");
+    const pappy: PappyPort = { evaluate: vi.fn(() => makePappyResult("PASS")) };
+    const runtime = createOrcaRuntime(makeBasicDeps(maestro, pappy, { gate: gate as any }));
+
+    const result = await runtime.executeTask(makeTaskSpec());
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.userFacingText).toBe("clean output");
+    expect(pappy.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let afterQC BLOCK skip repair after Pappy FAIL", async () => {
+    let maestroCalls = 0;
+    const maestro: MaestroPort = {
+      run: vi.fn(async () => {
+        maestroCalls++;
+        return {
+          outputText: maestroCalls === 1 ? "bad output" : "fixed output",
+          metadata: { role: "coder", costUsd: 0 },
+        };
+      }),
+    };
+    const pappy: PappyPort = {
+      evaluate: vi.fn()
+        .mockReturnValueOnce(makePappyResult("FAIL"))
+        .mockReturnValueOnce(makePappyResult("PASS"))
+        .mockReturnValueOnce(makePappyResult("PASS")),
+    };
+    const gate = {
+      beforeQC: vi.fn(() => ({ allowed: true, reason: "before ok", verdict: "PASS" })),
+      afterQC: vi.fn(() => ({ allowed: false, reason: "diagnostic block", verdict: "BLOCK" })),
+    };
+
+    const result = await createOrcaRuntime(
+      makeBasicDeps(maestro, pappy, { gate: gate as any }),
+    ).executeTask(makeTaskSpec());
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.userFacingText).toBe("fixed output");
+    expect(maestro.run).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [{ allowed: true, reason: "diagnostic pass", verdict: "PASS" }],
+    [{ allowed: true, reason: "diagnostic warn", verdict: "WARN" }],
+    [{ allowed: false, reason: "diagnostic block", verdict: "BLOCK" }],
+  ])("keeps repair behavior unchanged for afterQC %s", async (afterQcResult) => {
+    let maestroCalls = 0;
+    const maestro: MaestroPort = {
+      run: vi.fn(async () => {
+        maestroCalls++;
+        return {
+          outputText: maestroCalls === 1 ? "bad output" : "fixed output",
+          metadata: { role: "coder", costUsd: 0 },
+        };
+      }),
+    };
+    const pappy: PappyPort = {
+      evaluate: vi.fn()
+        .mockReturnValueOnce(makePappyResult("FAIL"))
+        .mockReturnValueOnce(makePappyResult("PASS"))
+        .mockReturnValueOnce(makePappyResult("PASS")),
+    };
+    const gate = {
+      beforeQC: vi.fn(() => ({ allowed: true, reason: "before ok", verdict: "PASS" })),
+      afterQC: vi.fn(() => afterQcResult),
+    };
+
+    const result = await createOrcaRuntime(
+      makeBasicDeps(maestro, pappy, { gate: gate as any }),
+    ).executeTask(makeTaskSpec());
+
+    expect(result.status).toBe("SUCCESS");
+    expect(maestro.run).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ===========================================================================

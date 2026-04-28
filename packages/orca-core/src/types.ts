@@ -435,7 +435,7 @@ export type OrcaEvent =
   | { type: "stream:token";       taskId: string; chunk: string }
   | { type: "stream:reset";       taskId: string }
   | { type: "dewey:brief";        taskId: string; userName: string; suggestedTone: string; relevantPreferences: string[]; relevantContext: string[] }
-  | { type: "miranda:checkpoint"; taskId: string; gate: "before_qc" | "after_qc"; allowed: boolean; reason: string }
+  | { type: "miranda:checkpoint"; taskId: string; gate: "before_qc" | "after_qc"; allowed: boolean; reason: string; verdict?: string }
   | { type: "subagent:spawned";   taskId: string; subagentId: string; role: string; task: string }
   | { type: "subagent:done";      taskId: string; subagentId: string; role: string; ok: boolean }
   | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string }

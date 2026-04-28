@@ -29,7 +29,7 @@ User input
 | `@clawde/orca-core` | `packages/orca-core` | Runtime, task lifecycle, event bus, tool service interface |
 | `@clawde/maestro-core` | `packages/maestro-core` | Role selection, agent loop, model fallback pool |
 | `@clawde/pappy-core` | `packages/pappy-core` | QC evaluation — structured PASS/WARN/FAIL verdicts |
-| `@clawde/miranda-core` | `packages/miranda-core` | 6-gate compliance layer (budget, model/tool allowlists, arg validation) |
+| `@clawde/miranda-core` | `packages/miranda-core` | Compliance gate layer (model/tool allowlists, arg validation, QC diagnostics) |
 | `@clawde/dewey-core` | `packages/dewey-core` | Context store, plan review |
 | `@clawde/tool-bootstrap` | `packages/tool-bootstrap` | Unified tool loader — core + static ext + MCP |
 | `@clawde/mcp-client` | `packages/mcp-client` | MCP stdio client, tool discovery, arg coercion |
@@ -154,12 +154,56 @@ MCP server `env` values (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN`) are encrypted at r
 
 | Gate | When | Checks |
 |------|------|--------|
-| `before_llm_call` | Before each LLM invocation | Budget, model allowlist |
+| `before_llm_call` | Before each live LLM invocation | Model allowlist; budget fields are neutral unless live cost accounting is wired |
 | `after_llm_call` | After each LLM response | Output shape validation |
 | `before_tool_run` | Before each tool execution | **Tool allowlist**, null args, required fields, types |
 | `after_tool_run` | After each tool execution | Non-empty receipt |
 | `before_qc` | Before Pappy evaluation | Non-empty output |
-| `after_qc` | After Pappy verdict | Recognized verdict (PASS/WARN/FAIL) |
+| `after_qc` | After Pappy verdict | Diagnostic checkpointing only; Pappy remains the quality verifier |
+
+## Miranda Architecture Lock
+
+Miranda is a compliance gate, not a response pipeline.
+
+Rules:
+
+- Miranda does not plan, answer, critique, rewrite, synthesize, or judge output quality.
+- The old Miranda multi-stage PLAN -> ANSWER -> CRITIQUE -> REWRITE pipeline is legacy. Do not extend it for live Orca behavior.
+- Live LLM calls must pass through `beforeLLMCall`.
+- Tool execution must pass through `beforeToolRun` and `afterToolRun`.
+- Pappy QC must pass through `afterQC` for diagnostics and checkpointing.
+- Pappy remains Orca's quality verifier. Miranda must not downgrade Pappy `FAIL` verdicts, skip repair loops, or change final QC behavior unless a future explicit design doc authorizes that change.
+- `gate_blocked` is an internal controlled-stop reason. Do not expose it as a user-facing failure phrase.
+- Neutral `budgetUsed: 0` / `budgetLimit: Infinity` placeholders are not real budget enforcement. Treat them as neutral metadata until live cost accounting is wired into the gate context.
+
+Gate verdict meanings:
+
+| Verdict | Meaning |
+|---------|---------|
+| `PASS` | Continue |
+| `WARN` | Continue with diagnostic warning |
+| `BLOCK` | Stop safely |
+| `CONFIRM_REQUIRED` | Pause until user approval; reserved until wired |
+
+### Where Miranda is wired today
+
+LLM call stages:
+
+- `agent_loop_main_stream`
+- `agent_loop_rescue_stream`
+- `maestro_no_tools_stream`
+- `maestro_brain_route_complete`
+- `maestro_synthesis_complete`
+
+Tool gates:
+
+- `beforeToolRun`
+- `afterToolRun`
+
+QC diagnostics:
+
+- `afterQC`
+- Trace stage: `miranda.after_qc`
 
 ## Configuration file
 
@@ -170,7 +214,7 @@ CLI runner):
 OrcaSettings {
   providers[]    — LLM API sources (type, baseUrl, encrypted apiKey)
   roles{}        — Maps role names to providers + models + optional toolsAllowed
-  budgetUsd      — USD spend cap per request (Miranda enforces)
+  budgetUsd      — USD spend cap per request (runtime/repair-loop guard; not Miranda gate enforcement until live cost accounting is wired)
   maxRepairPasses— Repair loop iteration limit (Pappy FAIL → Maestro retry)
   verbose        — Write LLM call log to miranda-runs.jsonl
   workspaceRoot  — Root directory for tool execution

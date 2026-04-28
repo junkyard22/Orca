@@ -871,4 +871,69 @@ describe("recordTrace calls", () => {
     );
     expect(successCall).toBeDefined();
   });
+
+  it("records repair afterQC diagnostics without changing pass success", async () => {
+    const recordTrace = vi.fn();
+    const gate = {
+      beforeQC: vi.fn(() => ({ allowed: true, reason: "before ok", verdict: "PASS" })),
+      afterQC: vi.fn(() => ({ allowed: false, reason: "diagnostic block", verdict: "BLOCK" })),
+    };
+    const ctx = makeCtx({ recordTrace, gate: gate as any });
+    const emitter = makeEmitter();
+    const maestro: MaestroPort = {
+      run: vi.fn(async () => ({
+        outputText: "fixed",
+        metadata: { role: "coder", stoppedBecause: "done" },
+      })),
+    };
+    const pappy: PappyPort = {
+      evaluate: vi.fn(() => makePassResult()),
+    };
+
+    const result = await handleRepairLoop(
+      makeTask(),
+      makeFailResult(),
+      ctx,
+      maestro,
+      pappy,
+      emitter,
+      1,
+      "bad",
+    );
+
+    expect(result.status).toBe("SUCCESS");
+    expect(gate.afterQC).toHaveBeenCalledWith(
+      expect.objectContaining({
+        qcStage: "repair",
+        attempt: 1,
+        pappyVerdict: "PASS",
+        issueCodes: [],
+        issueTypes: [],
+        confidence: 1.0,
+        stoppedBecause: "done",
+      }),
+      "PASS",
+      0,
+    );
+    const afterQcTrace = recordTrace.mock.calls.find(
+      (call) => call[0] === "miranda.after_qc",
+    );
+    expect(afterQcTrace?.[1]).toMatchObject({
+      allowed: false,
+      gateVerdict: "BLOCK",
+      reason: "diagnostic block",
+      qcStage: "repair",
+      attempt: 1,
+      pappyVerdict: "PASS",
+      stoppedBecause: "done",
+    });
+    const checkpointEmit = (emitter.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: any[]) => call[0]?.type === "miranda:checkpoint" && call[0]?.gate === "after_qc",
+    );
+    expect(checkpointEmit?.[0]).toMatchObject({
+      allowed: false,
+      verdict: "BLOCK",
+      reason: "diagnostic block",
+    });
+  });
 });

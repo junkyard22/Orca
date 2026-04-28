@@ -12,6 +12,7 @@ import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
 import { throwIfAborted } from "./abort.js";
+import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
 
 type RepairSubagentRun = NonNullable<OrcaMaestroResult["subagentRuns"]>[number];
 
@@ -269,12 +270,31 @@ export async function handleRepairLoop(
       internalSummary: nextQC.internalSummary,
     });
 
-    // Miranda: after_qc gate
-    ctx.gate?.afterQC(
-      { taskId: ctx.runId, outputText: maestroResult.outputText ?? "" },
+    // Miranda: after_qc gate diagnostics only. Pappy remains the quality verifier.
+    const afterQcContext = buildQCGateContext({
+      taskId: ctx.runId,
+      outputText: maestroResult.outputText ?? "",
+      qcResult: nextQC,
+      qcStage: "repair",
+      attempt: pass,
+      maestroResult,
+    });
+    const afterQcGate = ctx.gate?.afterQC(
+      afterQcContext,
       nextQC.verdict,
       nextQC.issues.length,
     );
+    if (afterQcGate) {
+      recordAfterQCGateDiagnostic(ctx, afterQcGate, afterQcContext);
+      emitter.emit({
+        type: "miranda:checkpoint",
+        taskId: ctx.runId,
+        gate: "after_qc",
+        allowed: afterQcGate.allowed,
+        verdict: afterQcGate.verdict,
+        reason: afterQcGate.reason,
+      });
+    }
 
     emitter.emit({
       type: "qc:result",

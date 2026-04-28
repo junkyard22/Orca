@@ -23,6 +23,7 @@ import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from ".
 import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
 import { isAbortError, throwIfAborted } from "./abort.js";
+import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
 import {
   createRootPacket,
   registerChildOnRoot,
@@ -583,17 +584,27 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         const qcResult = pappy.evaluate(qcInput);
         persistedQcResult = qcResult;
 
+        const afterQcContext = buildQCGateContext({
+          taskId,
+          outputText: maestroResult.outputText ?? "",
+          qcResult,
+          qcStage: "initial",
+          attempt: 0,
+          maestroResult,
+        });
         const afterQcGate = ctx.gate?.afterQC(
-          { taskId, outputText: maestroResult.outputText ?? "" },
+          afterQcContext,
           qcResult.verdict,
           qcResult.issues.length,
         );
         if (afterQcGate) {
+          recordAfterQCGateDiagnostic(ctx, afterQcGate, afterQcContext);
           emitter.emit({
             type: "miranda:checkpoint",
             taskId,
             gate: "after_qc",
             allowed: afterQcGate.allowed,
+            verdict: afterQcGate.verdict,
             reason: afterQcGate.reason,
           });
         }

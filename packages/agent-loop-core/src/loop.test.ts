@@ -123,7 +123,7 @@ describe("beforeLLMCall PASS", () => {
     await runAgentLoop("system", "task", makeTools(), ctx);
 
     expect(captured).toHaveLength(1);
-    expect(captured[0]!.stage).toBe("agent_loop");
+    expect(captured[0]!.stage).toBe("agent_loop_main_stream");
     expect(captured[0]!.model).toBe("deepseek/deepseek-chat");
     expect(captured[0]!.budgetUsed).toBe(0);
     expect(captured[0]!.budgetLimit).toBe(Infinity);

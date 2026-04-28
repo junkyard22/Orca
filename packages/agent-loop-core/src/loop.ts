@@ -14,6 +14,12 @@ function isGateStop(gateResult: GateResult): boolean {
   return !gateResult.allowed || gateResult.verdict === "CONFIRM_REQUIRED";
 }
 
+// Neutral placeholders until live per-call cost accounting is threaded here.
+const NEUTRAL_LLM_BUDGET_CONTEXT = {
+  budgetUsed: 0,
+  budgetLimit: Infinity,
+} as const;
+
 export function parseToolCalls(text: string): ParsedCall[] {
   const calls: ParsedCall[] = [];
   // Reset lastIndex before each use since the regex has the /g flag.
@@ -133,10 +139,9 @@ export async function runAgentLoop(
     // ── Miranda: before_llm_call gate ──────────────────────────────────────
     if (ctx.gate) {
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
-        stage: "agent_loop",
+        stage: "agent_loop_main_stream",
         model: ctx.model ?? "unknown",
-        budgetUsed: 0,
-        budgetLimit: Infinity,
+        ...NEUTRAL_LLM_BUDGET_CONTEXT,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,
@@ -340,10 +345,9 @@ export async function runAgentLoop(
     // ── Miranda: before_llm_call gate (rescue path) ─────────────────────────
     if (ctx.gate) {
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
-        stage: "agent_loop_rescue",
+        stage: "agent_loop_rescue_stream",
         model: ctx.model ?? "unknown",
-        budgetUsed: 0,
-        budgetLimit: Infinity,
+        ...NEUTRAL_LLM_BUDGET_CONTEXT,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,

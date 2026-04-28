@@ -367,6 +367,12 @@ function isGateStop(gateResult: GateResult): boolean {
   return !gateResult.allowed || gateResult.verdict === "CONFIRM_REQUIRED";
 }
 
+// Neutral placeholders until live per-call cost accounting is threaded here.
+const NEUTRAL_LLM_BUDGET_CONTEXT = {
+  budgetUsed: 0,
+  budgetLimit: Infinity,
+} as const;
+
 function createGateBlockedResult(
   orch: OrchestrationResult,
   role: string,
@@ -772,10 +778,9 @@ async function runSingleAgent(
     // Miranda before_llm_call gate for the no-tools live LLM path.
     if (ctx.gate) {
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
-        stage: "maestro_no_tools",
+        stage: "maestro_no_tools_stream",
         model: ctx.model ?? "unknown",
-        budgetUsed: 0,
-        budgetLimit: Infinity,
+        ...NEUTRAL_LLM_BUDGET_CONTEXT,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,
@@ -1009,10 +1014,9 @@ async function routeRequest(
     // ── Miranda: before_llm_call gate ──────────────────────────────────────
     if (ctx.gate) {
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
-        stage: "maestro_brain_route",
+        stage: "maestro_brain_route_complete",
         model: ctx.model ?? "unknown",
-        budgetUsed: 0,
-        budgetLimit: Infinity,
+        ...NEUTRAL_LLM_BUDGET_CONTEXT,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,
@@ -1242,10 +1246,9 @@ async function runSubagentPool(
   } else {
     if (ctx.gate) {
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
-        stage: "maestro_synthesis",
+        stage: "maestro_synthesis_complete",
         model: ctx.model ?? "unknown",
-        budgetUsed: 0,
-        budgetLimit: Infinity,
+        ...NEUTRAL_LLM_BUDGET_CONTEXT,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,

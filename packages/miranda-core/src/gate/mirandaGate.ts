@@ -125,6 +125,20 @@ export interface QCGateContext {
   taskId: string;
   /** Text that Pappy will (or just did) evaluate */
   outputText: string;
+  /** QC pass kind. Undefined for older callers. */
+  qcStage?: "initial" | "repair";
+  /** Runtime attempt number: 0 for initial QC, 1..n for repair QC. */
+  attempt?: number;
+  /** Pappy's quality verdict for after_qc diagnostics. */
+  pappyVerdict?: string;
+  /** Stable Pappy issue codes observed for this QC pass. */
+  issueCodes?: string[];
+  /** Pappy issue categories/types observed for this QC pass. */
+  issueTypes?: string[];
+  /** Pappy confidence score for this QC pass, when available. */
+  confidence?: number;
+  /** Agent stop reason associated with the output under QC, when available. */
+  stoppedBecause?: string;
 }
 
 export type GateName =
