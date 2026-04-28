@@ -77,6 +77,45 @@ function applyPipelineVisibility(show) {
   document.body.classList.toggle("hide-pipeline", !show);
 }
 
+// ── Live pipeline trace panel ─────────────────────────────────────────────
+// Created at task start, fed sanitized rows from PipelineTrace.mapOrcaEventToTraceRow,
+// and torn down when sendMessage resolves. Hidden via CSS when the
+// "Show pipeline" setting is off (body.hide-pipeline).
+
+let livePanel = null;
+let livePanelSeq = 0;
+
+function startLiveTracePanel(runId) {
+  // PipelineTrace is loaded via <script src="pipeline-trace.js"> before app.js.
+  if (!window.PipelineTrace || !window.PipelineTrace.createLiveTracePanel) return null;
+  livePanelSeq = 0;
+  livePanel = window.PipelineTrace.createLiveTracePanel({
+    messagesEl: messages,
+    runId: runId || "",
+  });
+  showMessages();
+  scrollToBottom();
+  return livePanel;
+}
+
+function pushLiveTraceEvent(e) {
+  if (!livePanel || livePanel.isFinished()) return;
+  if (!window.PipelineTrace || !window.PipelineTrace.mapOrcaEventToTraceRow) return;
+  const row = window.PipelineTrace.mapOrcaEventToTraceRow(e, { seq: livePanelSeq++ });
+  if (row) livePanel.pushRow(row);
+}
+
+function finishLiveTracePanel(finalLabel) {
+  if (!livePanel) return;
+  livePanel.finish(finalLabel || "");
+}
+
+function destroyLiveTracePanel() {
+  if (!livePanel) return;
+  livePanel.destroy();
+  livePanel = null;
+}
+
 // ── Pending file attachments ───────────────────────────────────────────────
 // Each entry: { name, type, content, dataUrl?, isImage }
 const pendingAttachments = [];
@@ -248,10 +287,18 @@ orca.onOrcaEvent((e) => {
       const lbl = thinkingEl.querySelector(".msg-label");
       if (lbl) lbl.innerHTML = `Orca <span class="role-badge-inline${e.isFallback ? " fallback" : ""}">${escapeHtml(String(e.role))}</span>`;
     }
+    if (livePanel && livePanel.setRole) {
+      livePanel.setRole(String(e.role), !!e.isFallback);
+    }
     return;
   }
   // Token/cost estimate — saved and rendered below the completed reply.
   if (e.type === "run:stats") { pendingStats = e; return; }
+
+  // Phase 1 live pipeline visibility — sanitized rows only.
+  // The mapper drops chain-of-thought / token / scratchpad events at the
+  // privacy boundary, so we never expose raw model output here.
+  pushLiveTraceEvent(e);
 
   // Pipeline summary — store for rendering after the response bubble is finalised.
   // The event arrives before sendMessage resolves, so we buffer it here.
@@ -1178,12 +1225,17 @@ async function sendMessage() {
   appendUserMsg(text, snapshotAttachments);
   if (text) setTopbarTitle(text);
   appendThinking();
+  // Phase 1 live pipeline trace — compact "Orca is working…" panel.
+  // Hidden via CSS when Show Pipeline is off; otherwise it streams safe
+  // progress rows from runtime events while the task is active.
+  startLiveTracePanel("");
   setStatus("planning…", true);
 
   let finalStatus = "ready";
   try {
     const result = await orca.sendMessage(fullText);
     removeThinking();
+    finishLiveTracePanel("done");
 
     if (streamBubble) {
       // Attach role badge before finalising (element still accessible here).
@@ -1221,6 +1273,7 @@ async function sendMessage() {
     if (!result.ok) finalStatus = "error";
   } catch (err) {
     removeThinking();
+    finishLiveTracePanel("error");
     if (streamBubble) { streamBubble.remove(); streamBubble = null; streamText = ""; }
     appendSys(String(err), "error");
     finalStatus = "error";
@@ -1229,6 +1282,9 @@ async function sendMessage() {
     pendingPipelineSummary = null;   // discard if not yet rendered (abort / error path)
     finalReplyRendered = false;
     streamText   = "";              // clear fallback accumulator for next task
+    // Remove the live trace panel — the post-run pipeline summary badge
+    // takes over for finished runs (and is independently gated by hide-pipeline).
+    destroyLiveTracePanel();
     busy = false;          // clear busy FIRST so late events won't override status
     syncIdleStatus();
     syncComposerState();
