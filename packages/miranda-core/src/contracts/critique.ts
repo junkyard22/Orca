@@ -1,5 +1,13 @@
 /**
- * Miranda Core — CRITIQUE Contract
+ * @deprecated LEGACY MULTI-STAGE PIPELINE — DO NOT EXTEND.
+ *
+ * Architectural boundary:
+ *   Miranda is a compliance gate, not a response pipeline.
+ *   The live Orca path uses createDirectLLMService + agent-loop-core.
+ *   Do not extend the Miranda plan/answer/critique/rewrite pipeline.
+ *   Future Miranda work must be gate-shaped: PASS / WARN / BLOCK / CONFIRM_REQUIRED.
+ *
+ * Miranda Core — CRITIQUE Contract (legacy)
  * Zod schema and system prompt for the CRITIQUE stage.
  */
 

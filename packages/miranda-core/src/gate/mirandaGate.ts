@@ -55,13 +55,46 @@ export function transitionAHPLifecycle(from: AHPLifecycle, to: AHPLifecycle): vo
 }
 
 // ---------------------------------------------------------------------------
-// Result & context shapes
+// Verdict & result shapes
 // ---------------------------------------------------------------------------
+
+/**
+ * Explicit gate verdict for future runtime discrimination.
+ *
+ * - PASS             — gate allows the action unconditionally
+ * - WARN             — gate allows the action but flags a concern
+ * - BLOCK            — gate denies the action
+ * - CONFIRM_REQUIRED — (reserved) action needs human confirmation before proceeding
+ *
+ * `verdict` is always derivable from `allowed`, but the explicit enum gives
+ * future code a richer signal without breaking the boolean contract.
+ */
+export type GateVerdict =
+  | "PASS"
+  | "WARN"
+  | "BLOCK"
+  | "CONFIRM_REQUIRED";
 
 export interface GateResult {
   allowed: boolean;
   reason: string;
   violations?: string[];
+  /**
+   * Explicit verdict enriching the boolean `allowed` field.
+   * Present on every result produced by `createMirandaGate`.
+   * Callers should continue to use `allowed` for control flow;
+   * `verdict` is informational until the runtime is updated.
+   */
+  verdict?: GateVerdict;
+}
+
+/**
+ * Derive a GateVerdict from the existing boolean + optional violations.
+ * This is used internally by the gate factory to populate `verdict`
+ * on every GateResult without changing any decision logic.
+ */
+function deriveVerdict(allowed: boolean, _violations?: string[]): GateVerdict {
+  return allowed ? "PASS" : "BLOCK";
 }
 
 export interface LLMCallGateContext {
@@ -252,6 +285,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           allowed: false,
           reason: violations.join(" | "),
           violations,
+          verdict: deriveVerdict(false, violations),
         };
         log(`before_llm_call BLOCKED  stage=${ctx.stage}  ${result.reason}`);
         return report("before_llm_call", result, ctx);
@@ -260,6 +294,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
       const result: GateResult = {
         allowed: true,
         reason: `stage=${ctx.stage}  model=${ctx.model}  budget=$${ctx.budgetUsed.toFixed(4)}/$${ctx.budgetLimit}`,
+        verdict: deriveVerdict(true),
       };
       log(`before_llm_call OK  ${result.reason}`);
       return report("before_llm_call", result, ctx);
@@ -272,6 +307,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           allowed: false,
           reason: `stage=${ctx.stage} output failed validation`,
           violations,
+          verdict: deriveVerdict(false, violations),
         };
         log(
           `after_llm_call VIOLATIONS  stage=${ctx.stage}  ${violations.join("; ")}`,
@@ -282,6 +318,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
       const result: GateResult = {
         allowed: true,
         reason: `stage=${ctx.stage} output shape valid`,
+        verdict: deriveVerdict(true),
       };
       log(`after_llm_call OK  ${result.reason}`);
       return report("after_llm_call", result, ctx);
@@ -299,6 +336,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           allowed: false,
           reason: `AHP lifecycle gate: tool execution requires lifecycle=RUNNING, got ${ahpPacket.lifecycle}`,
           violations: [`AHP lifecycle is ${ahpPacket.lifecycle} — tool execution not permitted`],
+          verdict: deriveVerdict(false),
         };
         log(`before_tool_run BLOCKED (AHP lifecycle)  tool=${ctx.tool}  lifecycle=${ahpPacket.lifecycle}`);
         return report("before_tool_run", result, ctx);
@@ -314,12 +352,14 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
         if (violated.length > 0) {
           const ruleList = violated.map((c) => `"${c.rule}" (enforcer: ${c.enforcer})`).join(", ");
           onViolation?.(ahpPacket, violated);
+          const violationDetails = violated.map((c) =>
+            `VIOLATION — rule: ${c.rule}  enforcer: ${c.enforcer} (verdict set to ${AHPVerdict.VIOLATION})`,
+          );
           const result: GateResult = {
             allowed: false,
             reason: `AHP constraint violation: ${ruleList}`,
-            violations: violated.map((c) =>
-              `VIOLATION — rule: ${c.rule}  enforcer: ${c.enforcer} (verdict set to ${AHPVerdict.VIOLATION})`,
-            ),
+            violations: violationDetails,
+            verdict: deriveVerdict(false, violationDetails),
           };
           log(`before_tool_run BLOCKED (AHP constraint)  tool=${ctx.tool}  rules=${ruleList}`);
           return report("before_tool_run", result, ctx);
@@ -378,6 +418,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           allowed: false,
           reason: violations.join(" | "),
           violations,
+          verdict: deriveVerdict(false, violations),
         };
         log(`before_tool_run BLOCKED  tool=${ctx.tool}  ${result.reason}`);
         return report("before_tool_run", result, ctx);
@@ -386,6 +427,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
       const result: GateResult = {
         allowed: true,
         reason: `tool="${ctx.tool}" allowed`,
+        verdict: deriveVerdict(true),
       };
       log(`before_tool_run OK  ${result.reason}`);
       return report("before_tool_run", result, ctx);
@@ -397,8 +439,9 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           allowed: false,
           reason: `tool="${ctx.tool}" failed — no valid receipt`,
           violations: [`Tool error: ${toolResult.output.slice(0, 200)}`],
+          verdict: deriveVerdict(false),
         };
-        log(`after_tool_run WARN  ${result.reason}`);
+        log(`after_tool_run BLOCKED  ${result.reason}`);
         return report("after_tool_run", result, ctx);
       }
 
@@ -407,14 +450,16 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           allowed: false,
           reason: `tool="${ctx.tool}" returned empty output — receipt missing`,
           violations: ["Empty tool output"],
+          verdict: deriveVerdict(false),
         };
-        log(`after_tool_run WARN  ${result.reason}`);
+        log(`after_tool_run BLOCKED  ${result.reason}`);
         return report("after_tool_run", result, ctx);
       }
 
       const result: GateResult = {
         allowed: true,
         reason: `tool="${ctx.tool}" receipt captured (${toolResult.output.length} chars)`,
+        verdict: deriveVerdict(true),
       };
       log(`after_tool_run OK  ${result.reason}`);
       return report("after_tool_run", result, ctx);
@@ -428,6 +473,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           allowed: false,
           reason: "QC blocked — output text is empty",
           violations: ["No output to evaluate"],
+          verdict: deriveVerdict(false),
         };
         log(`before_qc BLOCKED  taskId=${ctx.taskId}`);
         return report("before_qc", result, ctx);
@@ -436,6 +482,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
       const result: GateResult = {
         allowed: true,
         reason: `output ready for QC  taskId=${ctx.taskId}  length=${ctx.outputText.length}`,
+        verdict: deriveVerdict(true),
       };
       log(`before_qc OK  ${result.reason}`);
       return report("before_qc", result, ctx);
@@ -452,6 +499,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           allowed: false,
           reason: `QC produced unrecognized verdict: "${verdict}"`,
           violations: [`Unknown verdict: ${verdict}`],
+          verdict: deriveVerdict(false),
         };
         log(`after_qc ERROR  ${result.reason}`);
         return report("after_qc", result, ctx);
@@ -460,6 +508,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
       const result: GateResult = {
         allowed: true,
         reason: `verdict=${verdict}  issues=${issueCount}  taskId=${ctx.taskId}`,
+        verdict: deriveVerdict(true),
       };
       log(`after_qc OK  ${result.reason}`);
       return report("after_qc", result, ctx);

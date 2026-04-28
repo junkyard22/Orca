@@ -1205,6 +1205,9 @@ export class ReactAgentAdapter implements AgentAdapter {
           if (result.ok && isWriteToolName(toolName) && typeof toolInput.content === "string") {
             enrichedRaw["_contentForDiff"] = toolInput.content;
           }
+          if (result.ok && result.output.trim().length > 0) {
+            enrichedRaw["_outputForProof"] = result.output.slice(0, 4000);
+          }
 
           toolsUsed.push({
             tool: toolName,

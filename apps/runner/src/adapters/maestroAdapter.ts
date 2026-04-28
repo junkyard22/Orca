@@ -25,7 +25,7 @@ import type {
   OrcaLLMService,
   WorkspaceContext,
 } from "@clawde/orca-core";
-import type { AHPPacket } from "@clawde/miranda-core";
+import type { AHPPacket, GateResult } from "@clawde/miranda-core";
 import { runAgentLoop } from "@clawde/agent-loop-core";
 export { formatToolResult, normalizeToolText, parseToolCalls } from "@clawde/agent-loop-core";
 import { AHPLifecycle, transitionAHPLifecycle } from "@clawde/miranda-core";
@@ -198,6 +198,10 @@ export function createMaestroAdapter(): MaestroPort {
       const routing = await routeRequest(task, orch, ctx, settings);
       traceEvent({ type: "brain:route", data: routing });
 
+      if (routing.path === "blocked") {
+        return createGateBlockedResult(orch, "brain", routing.reason);
+      }
+
       // ── AHP packet flow ──────────────────────────────────────────────────
       // Brain creates the packet (PENDING) immediately after the routing
       // decision.  Miranda then authorises execution (PENDING → RUNNING).
@@ -356,6 +360,34 @@ export function createMaestroAdapter(): MaestroPort {
 
       return { ...result, ahpPacket };
     },
+  };
+}
+
+function isGateStop(gateResult: GateResult): boolean {
+  return !gateResult.allowed || gateResult.verdict === "CONFIRM_REQUIRED";
+}
+
+function createGateBlockedResult(
+  orch: OrchestrationResult,
+  role: string,
+  reason: string,
+): OrcaMaestroResult {
+  return {
+    outputText: "",
+    toolEvents: [],
+    filesChanged: [],
+    metadata: {
+      role,
+      iterationCount: 0,
+      stoppedBecause: "gate_blocked",
+      filesChanged: [],
+    },
+    summary: [
+      `run_id=${orch.run_id}`,
+      `role=${role}`,
+      `stoppedBecause=gate_blocked`,
+      `reason=${reason}`,
+    ].join(" "),
   };
 }
 
@@ -713,6 +745,9 @@ async function runSingleAgent(
   let outputText: string;
   let toolEvents: OrcaMaestroResult["toolEvents"] = [];
   let filesChanged: OrcaFileChange[] = [];
+  let metadata: OrcaMaestroResult["metadata"] = {
+    role: effectiveRole,
+  };
 
   if (ctx.tools) {
     const writeHints = doneCriteria ?? task.goals;
@@ -720,7 +755,39 @@ async function runSingleAgent(
     outputText = result.text;
     toolEvents = result.toolEvents;
     filesChanged = result.filesChanged;
+    metadata = {
+      ...metadata,
+      iterationCount: result.iterationCount,
+      stoppedBecause: result.stoppedBecause,
+      loopEvidence: result.loopEvidence
+        ? {
+            repeatedCall: result.loopEvidence.repeatedCall,
+            occurrences: result.loopEvidence.occurrences,
+          }
+        : undefined,
+      filesChanged: result.filesChanged,
+    };
   } else {
+    // ── Miranda: before_llm_call gate ──────────────────────────────────────
+    // Miranda before_llm_call gate for the no-tools live LLM path.
+    if (ctx.gate) {
+      const gateResult: GateResult = ctx.gate.beforeLLMCall({
+        stage: "maestro_no_tools",
+        model: ctx.model ?? "unknown",
+        budgetUsed: 0,
+        budgetLimit: Infinity,
+      });
+      ctx.recordTrace?.("miranda.before_llm_call", {
+        allowed: gateResult.allowed,
+        verdict: gateResult.verdict,
+        reason: gateResult.reason,
+      });
+      if (isGateStop(gateResult)) {
+        console.error(`[MaestroAdapter] before_llm_call gate BLOCKED (no tools): ${gateResult.reason}`);
+        return createGateBlockedResult(orch, effectiveRole, gateResult.reason);
+      }
+    }
+
     const { text } = await ctx.llm.stream(
       `${systemPrompt}\n\n---\n\n${taskPrompt}`,
       { maxTokens: 4096 },
@@ -739,6 +806,7 @@ async function runSingleAgent(
     outputText,
     toolEvents,
     filesChanged,
+    metadata,
     summary: [
       `run_id=${orch.run_id}`,
       `role=${effectiveRole}${isFallback ? "(fallback)" : ""}`,
@@ -834,8 +902,16 @@ interface MaestroDecomposeDecision {
   synthesis_hint?: string;
 }
 
-/** Union of the two possible routing decisions returned by routeRequest(). */
-export type MaestroRoutingDecision = MaestroDirectDecision | MaestroDecomposeDecision;
+interface MaestroBlockedDecision {
+  path: "blocked";
+  reason: string;
+}
+
+/** Union of routing decisions returned by routeRequest(). */
+export type MaestroRoutingDecision =
+  | MaestroDirectDecision
+  | MaestroDecomposeDecision
+  | MaestroBlockedDecision;
 
 // ---------------------------------------------------------------------------
 // Department → Subtask mapping with sibling coordination context
@@ -930,6 +1006,29 @@ async function routeRequest(
   // Brain routing call — one LLM call decides direct vs. decompose.
   // Brain's role choice (direct path) takes precedence over the heuristic role.
   try {
+    // ── Miranda: before_llm_call gate ──────────────────────────────────────
+    if (ctx.gate) {
+      const gateResult: GateResult = ctx.gate.beforeLLMCall({
+        stage: "maestro_brain_route",
+        model: ctx.model ?? "unknown",
+        budgetUsed: 0,
+        budgetLimit: Infinity,
+      });
+      ctx.recordTrace?.("miranda.before_llm_call", {
+        allowed: gateResult.allowed,
+        verdict: gateResult.verdict,
+        reason: gateResult.reason,
+        path: "brain_route",
+      });
+      if (isGateStop(gateResult)) {
+        console.error(`[MaestroAdapter] before_llm_call gate BLOCKED brain route: ${gateResult.reason}`);
+        return {
+          path: "blocked",
+          reason: gateResult.reason,
+        };
+      }
+    }
+
     const { text } = await ctx.llm.complete(
       `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${task.originalUserMessage}`,
       { maxTokens: 1024, simple: true },
@@ -1141,6 +1240,28 @@ async function runSubagentPool(
   } else if (successful.length === 1) {
     finalText = successful[0]!.outputText;
   } else {
+    if (ctx.gate) {
+      const gateResult: GateResult = ctx.gate.beforeLLMCall({
+        stage: "maestro_synthesis",
+        model: ctx.model ?? "unknown",
+        budgetUsed: 0,
+        budgetLimit: Infinity,
+      });
+      ctx.recordTrace?.("miranda.before_llm_call", {
+        allowed: gateResult.allowed,
+        verdict: gateResult.verdict,
+        reason: gateResult.reason,
+        path: "synthesis",
+      });
+      if (isGateStop(gateResult)) {
+        console.error(`[MaestroAdapter] before_llm_call gate BLOCKED synthesis: ${gateResult.reason}`);
+        return {
+          ...createGateBlockedResult(orch, "brain", gateResult.reason),
+          toolEvents: allToolEvents,
+          subagentRuns,
+        };
+      }
+    }
     finalText = await synthesizeResults(task.originalUserMessage, successful, ctx.llm);
   }
 

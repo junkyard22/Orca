@@ -304,6 +304,7 @@ async function main(): Promise<void> {
     tools,
     store,
     gate,
+    model: modelId,
     getWorkspaceContext: () => getWorkspaceContext(workspaceRoot),
     writeTrace: (trace) => analysisWriter.writeTrace(trace),
   });

@@ -1,6 +1,15 @@
 /**
- * Miranda Core — Router
+ * @deprecated LEGACY MULTI-STAGE PIPELINE — DO NOT EXTEND.
+ *
+ * Architectural boundary:
+ *   Miranda is a compliance gate, not a response pipeline.
+ *   The live Orca path uses createDirectLLMService + agent-loop-core.
+ *   Do not extend the Miranda plan/answer/critique/rewrite pipeline.
+ *   Future Miranda work must be gate-shaped: PASS / WARN / BLOCK / CONFIRM_REQUIRED.
+ *
+ * Miranda Core — Router (legacy)
  * Selects models for stages respecting circuit breaker state and fallback ladder.
+ * Used only by the legacy stage executor.
  */
 
 import type { StageKind, StageConfig, ModelSpec } from "../pipeline/types.js";

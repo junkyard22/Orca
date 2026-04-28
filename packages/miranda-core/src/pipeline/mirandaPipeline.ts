@@ -1,5 +1,17 @@
 /**
- * Miranda Core — Miranda Pipeline
+ * @deprecated LEGACY MULTI-STAGE PIPELINE — DO NOT EXTEND.
+ *
+ * Architectural boundary:
+ *   Miranda is a compliance gate, not a response pipeline.
+ *   The live Orca path uses createDirectLLMService + agent-loop-core.
+ *   Do not extend the Miranda plan/answer/critique/rewrite pipeline.
+ *   Future Miranda work must be gate-shaped: PASS / WARN / BLOCK / CONFIRM_REQUIRED.
+ *
+ * This file is preserved for reference and existing tests only. It is not on
+ * the live Orca task path. New compliance/budget/permission logic belongs in
+ * `gate/mirandaGate.ts`, not here.
+ *
+ * Miranda Core — Miranda Pipeline (legacy)
  * Sequential orchestrator: PLAN → ANSWER → CRITIQUE → REWRITE
  * with budget controls and JSONL logging.
  */

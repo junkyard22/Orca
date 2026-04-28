@@ -120,7 +120,7 @@ export interface OrcaMaestroResult {
     };
     thoughts?: ThoughtRecord[];
     iterationCount?: number;
-    stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "error";
+    stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "gate_blocked" | "error";
     loopEvidence?: { repeatedCall: string; occurrences: number };
     /** Exception message captured when stoppedBecause === 'error'. */
     errorMessage?: string;
@@ -273,6 +273,12 @@ export interface OrcaRunCtx {
    */
   gate?: MirandaGate;
   /**
+   * Model ID the LLM service is targeting (e.g. "deepseek/deepseek-chat").
+   * Used by the agent loop to populate LLMCallGateContext for before_llm_call.
+   * Set by the runtime when creating the run context.
+   */
+  model?: string;
+  /**
    * Root AHP packet for the current run.
    * Populated by the runtime before invoking Maestro so that adapters,
    * workers, and the repair loop can reference the orchestration-level packet
@@ -378,6 +384,12 @@ export interface OrcaRuntimeDeps {
    * Inject requestToolApproval from apps/desktop/src/main.ts for the UI dialog.
    */
   requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+  /**
+   * Model ID the LLM service is targeting (e.g. "deepseek/deepseek-chat").
+   * Flowed through OrcaRunCtx so the agent loop can populate
+   * LLMCallGateContext.model for Miranda's before_llm_call gate.
+   */
+  model?: string;
 }
 
 export interface OrcaRuntime {
@@ -429,7 +441,7 @@ export type OrcaEvent =
   | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string }
   | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
   | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
-  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }
+  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'gate_blocked' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }
   /**
    * Emitted once per task after task:done, summarising the final pipeline outcome.
    * Carries everything the UI needs to render the collapsed pipeline-summary badge

@@ -1,6 +1,35 @@
-import { describe, expect, it } from "vitest";
-import type { OrcaTaskSpec } from "@clawde/orca-core";
+import { describe, expect, it, vi } from "vitest";
+import type { OrcaRunCtx, OrcaTaskSpec } from "@clawde/orca-core";
+import type { GateResult, MirandaGate } from "@clawde/miranda-core";
+
+vi.mock("@clawde/dewey-core", () => ({
+  Dewey: class {
+    async startSession() {
+      return undefined;
+    }
+    async brief() {
+      return {
+        userName: "Test User",
+        suggestedTone: "neutral",
+        relevantPreferences: [],
+        relevantContext: [],
+      };
+    }
+    async reviewPlan() {
+      return {
+        approved: true,
+        concerns: [],
+        suggestions: [],
+      };
+    }
+    async observe() {
+      return undefined;
+    }
+  },
+}));
+
 import {
+  createMaestroAdapter,
   deriveDeweySignals,
   normalizeConversationHistory,
   normalizeToolText,
@@ -8,6 +37,103 @@ import {
   parseToolCalls,
   formatToolResult,
 } from "./maestroAdapter.js";
+
+function makeTask(message = "Say hello."): OrcaTaskSpec {
+  return {
+    originalUserMessage: message,
+    intent: "answer",
+    goals: ["Answer the user"],
+    permissions: {
+      fileRead: false,
+      fileWrite: false,
+      shellExec: false,
+      toolsAllowed: [],
+    },
+  };
+}
+
+function makeGate(result: GateResult): MirandaGate {
+  const pass: GateResult = {
+    allowed: true,
+    reason: "pass",
+    verdict: "PASS",
+  };
+  return {
+    beforeLLMCall: vi.fn(() => result),
+    afterLLMCall: vi.fn(() => pass),
+    beforeToolRun: vi.fn(() => pass),
+    afterToolRun: vi.fn(() => pass),
+    beforeQC: vi.fn(() => pass),
+    afterQC: vi.fn(() => pass),
+  };
+}
+
+function makeRunCtx(overrides: Partial<OrcaRunCtx> = {}): OrcaRunCtx {
+  return {
+    runId: "maestro-test-run",
+    model: "test-model",
+    llm: {
+      complete: vi.fn(async () => ({ text: "brain" })),
+      stream: vi.fn(async (_prompt, _options, onChunk) => {
+        onChunk("No-tools response.");
+        return { text: "No-tools response." };
+      }),
+    },
+    ...overrides,
+  };
+}
+
+describe("no-tools beforeLLMCall gate", () => {
+  it("allows PASS through the live ctx.llm.stream path", async () => {
+    const adapter = createMaestroAdapter();
+    const gate = makeGate({ allowed: true, reason: "ok", verdict: "PASS" });
+    const ctx = makeRunCtx({ gate });
+
+    const result = await adapter.run(makeTask(), ctx);
+
+    expect(ctx.llm.stream).toHaveBeenCalledTimes(1);
+    expect(result.outputText).toBe("No-tools response.");
+    expect(result.metadata?.stoppedBecause).toBeUndefined();
+    expect(gate.beforeLLMCall).toHaveBeenCalledWith({
+      stage: "maestro_no_tools",
+      model: "test-model",
+      budgetUsed: 0,
+      budgetLimit: Infinity,
+    });
+  });
+
+  it("returns a controlled gate_blocked result for BLOCK", async () => {
+    const adapter = createMaestroAdapter();
+    const gate = makeGate({
+      allowed: false,
+      reason: "model not allowed",
+      verdict: "BLOCK",
+    });
+    const ctx = makeRunCtx({ gate });
+
+    const result = await adapter.run(makeTask(), ctx);
+
+    expect(ctx.llm.stream).not.toHaveBeenCalled();
+    expect(result.outputText).toBe("");
+    expect(result.metadata?.stoppedBecause).toBe("gate_blocked");
+    expect(result.summary).toContain("stoppedBecause=gate_blocked");
+  });
+
+  it("treats CONFIRM_REQUIRED as a controlled block", async () => {
+    const adapter = createMaestroAdapter();
+    const gate = makeGate({
+      allowed: true,
+      reason: "confirmation needed",
+      verdict: "CONFIRM_REQUIRED",
+    });
+    const ctx = makeRunCtx({ gate });
+
+    const result = await adapter.run(makeTask(), ctx);
+
+    expect(ctx.llm.stream).not.toHaveBeenCalled();
+    expect(result.metadata?.stoppedBecause).toBe("gate_blocked");
+  });
+});
 
 describe("shouldAttemptSubagentDecomposition", () => {
   it("does not decompose read-only informational tasks", () => {

@@ -5,9 +5,14 @@ import {
   type OrcaRunCtx,
   type OrcaToolService,
 } from "@clawde/orca-core";
+import type { GateResult } from "@clawde/miranda-core";
 import type { AgentLoopResult, ParsedCall } from "./types.js";
 
 const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+
+function isGateStop(gateResult: GateResult): boolean {
+  return !gateResult.allowed || gateResult.verdict === "CONFIRM_REQUIRED";
+}
 
 export function parseToolCalls(text: string): ParsedCall[] {
   const calls: ParsedCall[] = [];
@@ -125,6 +130,33 @@ export async function runAgentLoop(
       ? conversation + `\n\nSystem: FINAL TURNS REMAINING. You MUST call write_file now to write the output to "${writeTarget}". Stop reading files. Compile everything you have learned and call write_file immediately.`
       : conversation;
 
+    // ── Miranda: before_llm_call gate ──────────────────────────────────────
+    if (ctx.gate) {
+      const gateResult: GateResult = ctx.gate.beforeLLMCall({
+        stage: "agent_loop",
+        model: ctx.model ?? "unknown",
+        budgetUsed: 0,
+        budgetLimit: Infinity,
+      });
+      ctx.recordTrace?.("miranda.before_llm_call", {
+        allowed: gateResult.allowed,
+        verdict: gateResult.verdict,
+        reason: gateResult.reason,
+      });
+      if (isGateStop(gateResult)) {
+        console.error(`[MaestroAdapter] before_llm_call gate BLOCKED: ${gateResult.reason}`);
+        return {
+          text: "",
+          toolEvents,
+          filesChanged,
+          thoughts: [],
+          iterationCount: iterations,
+          stoppedBecause: "gate_blocked",
+          error: `Miranda gate blocked LLM call: ${gateResult.reason}`,
+        };
+      }
+    }
+
     const { text } = await ctx.llm.stream(
       activeConversation,
       { maxTokens: 4096, simple: true },
@@ -231,6 +263,9 @@ export async function runAgentLoop(
       if (call.tool === "write_file" && result.ok && typeof call.input["content"] === "string") {
         enrichedRaw["_contentForDiff"] = call.input["content"];
       }
+      if (result.ok && outputText.trim().length > 0) {
+        enrichedRaw["_outputForProof"] = outputText.slice(0, 4000);
+      }
 
       toolEvents.push({
         tool: call.tool,
@@ -302,6 +337,33 @@ export async function runAgentLoop(
       `\n\nSystem: Your analysis is complete. You MUST now call write_file to save it.\n` +
       `Call write_file with path="${writeTarget}" and content=<your full analysis above>.\n` +
       `Do not output anything else. Only the write_file tool call.`;
+    // ── Miranda: before_llm_call gate (rescue path) ─────────────────────────
+    if (ctx.gate) {
+      const gateResult: GateResult = ctx.gate.beforeLLMCall({
+        stage: "agent_loop_rescue",
+        model: ctx.model ?? "unknown",
+        budgetUsed: 0,
+        budgetLimit: Infinity,
+      });
+      ctx.recordTrace?.("miranda.before_llm_call", {
+        allowed: gateResult.allowed,
+        verdict: gateResult.verdict,
+        reason: gateResult.reason,
+        path: "rescue",
+      });
+      if (isGateStop(gateResult)) {
+        console.error(`[MaestroAdapter] before_llm_call gate BLOCKED rescue: ${gateResult.reason}`);
+        return {
+          text: lastText.trim(),
+          toolEvents,
+          filesChanged,
+          thoughts: [],
+          iterationCount: iterations,
+          stoppedBecause: "gate_blocked",
+          error: `Miranda gate blocked LLM call: ${gateResult.reason}`,
+        };
+      }
+    }
     const { text: rescueText } = await ctx.llm.stream(
       rescuePrompt,
       { maxTokens: 8192, simple: true },

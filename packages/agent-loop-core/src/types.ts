@@ -24,6 +24,7 @@ export type AgentLoopStopReason =
   | "loop_detected"
   | "parse_failure_loop"
   | "no_final_output"
+  | "gate_blocked"
   | "error";
 
 export interface AgentLoopResult {

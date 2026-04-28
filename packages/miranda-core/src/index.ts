@@ -67,6 +67,7 @@ export {
 export type {
   MirandaGate,
   MirandaGateConfig,
+  GateVerdict,
   GateResult,
   GateName,
   LLMCallGateContext,

@@ -923,4 +923,34 @@ Ship readiness is yellow. Package metadata and README were reviewed, but source 
       _contentForDiff: "console.log('done');\n",
     });
   });
+
+  it("captures command output for proof checks on successful run_command events", async () => {
+    const responses = [
+      `<tool_call>{"tool": "run_command", "command": "node ./tmp-test/orca-transparency-pass/check.js", "cwd": "."}</tool_call>`,
+      `FINAL ANSWER:\nCommand ran successfully.`,
+    ];
+    const tool = {
+      name: "run_command",
+      description: "Execute a shell command",
+      execute: async () => ({
+        ok: true,
+        output: "Hello from check.js!\n",
+      }),
+    };
+
+    const adapter = new ReactAgentAdapter(
+      new MockLLMAdapter(responses),
+      "You are a helpful assistant.",
+      "brain" as RoleName,
+      3,
+    );
+
+    const result = await adapter.run(createTask(), [tool as any], createCtx());
+
+    expect(result.stoppedBecause).toBe("done");
+    expect(result.toolsUsed[0]?.raw).toMatchObject({
+      command: "node ./tmp-test/orca-transparency-pass/check.js",
+      _outputForProof: "Hello from check.js!\n",
+    });
+  });
 });
