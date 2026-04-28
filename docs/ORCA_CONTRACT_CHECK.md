@@ -89,6 +89,33 @@ This script should be runnable as a pre-task hook for coding agents and as a CI 
 
 ---
 
+## Modes
+
+### Default mode (local / warning-only)
+
+```
+pnpm contract:check
+```
+
+- All statuses (`CLEAR`, `REVIEW REQUIRED`, `BLOCKED`) exit 0.
+- Agents must read the printed `Status:` line and act accordingly — the exit code is not the signal.
+- Use for local development and pre-task checks by coding agents.
+
+### Strict mode (CI / release gates)
+
+```
+pnpm contract:check:strict
+```
+
+- `CLEAR` exits 0.
+- `REVIEW REQUIRED` exits 0. It still requires a human to pause and approve before continuing — automation cannot substitute for that judgment.
+- `BLOCKED` exits 1. The check fails. The CI job or release gate must not proceed.
+- When `BLOCKED` fires in strict mode, the script prints: `Strict mode: BLOCKED findings fail this check.`
+
+Use strict mode in CI pipelines and release gates on PRs that touch the risk zones listed above. Do not enable strict mode on every PR until the false-positive rate has been validated locally.
+
+---
+
 ## Non-Goals
 
 Contract Check is explicitly not:

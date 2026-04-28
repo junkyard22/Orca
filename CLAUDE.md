@@ -6,6 +6,29 @@
 >
 > **Development-time contract check** — before starting a coding task that touches orchestration, LLM call paths, tool execution, Miranda gates, Pappy QC, or role contracts, run the checklist in [docs/ORCA_CONTRACT_CHECK.md](docs/ORCA_CONTRACT_CHECK.md).
 
+## Contract Check
+
+`pnpm contract:check` is the development-time approval gate for architecture-sensitive changes. Run it before beginning any coding task that touches orchestration, LLM call paths, tool execution, Miranda gates, Pappy QC, Benson output, role contracts, or system contract documents.
+
+**Status meanings — the printed status is the authoritative signal:**
+
+| Status | Required action |
+|--------|----------------|
+| `CLEAR` | No findings. Continue automatically. |
+| `REVIEW REQUIRED` | Pause. Summarise the findings for the user and wait for explicit approval before continuing. |
+| `BLOCKED` | Stop. Fix the issue or request an explicit user override. Do not proceed with the coding task. |
+
+**Modes:**
+
+| Command | When to use | BLOCKED exit code |
+|---------|-------------|-------------------|
+| `pnpm contract:check` | Local development, pre-task agent checks | 0 (warning-only) |
+| `pnpm contract:check:strict` | CI pipelines, release gates | 1 (fails the check) |
+
+**Exit-code rule:** In default mode all statuses exit 0 — read the printed `Status:` line, not the exit code. In strict mode `BLOCKED` exits 1; `REVIEW REQUIRED` exits 0 in both modes because it requires human judgment that automation cannot substitute.
+
+Contract Check is development-time approval control, not runtime enforcement. It does not run on normal Orca requests and has no effect on the production pipeline. Miranda handles runtime gate enforcement; Contract Check protects architecture boundaries before code is written or merged.
+
 ## Miranda Architecture Lock
 
 Miranda is the compliance officer of the team. She enforces rules at checkpoints; she does not run the team. Miranda can approve, warn, block, or require confirmation. She cannot plan, execute work, judge output quality, or become the user-facing voice. She does not replace Brain, Pappy, Benson, Maestro, or any worker.

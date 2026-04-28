@@ -9,7 +9,9 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "contract:check": "tsx scripts/contract-check.ts",
+    "contract:check:strict": "tsx scripts/contract-check.ts --strict"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "node-gyp": "^12.2.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }
