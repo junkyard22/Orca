@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractAuditTargetPath, formatProjectAuditResult, runProjectAudit } from "./pipeline.js";
+import { extractAuditTargetPath, formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./pipeline.js";
 import type { OrcaTaskSpec } from "../types.js";
 
 function tempRoot(): string {
@@ -131,6 +131,26 @@ describe("project audit pipeline", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("does not activate project audit when the task explicitly asks to run verification commands", () => {
+    const spec: OrcaTaskSpec = {
+      originalUserMessage: [
+        "In C:\\Orca\\Orca, actually run the verification commands for production readiness:",
+        "pnpm contract:check",
+        "pnpm --filter @clawde/desktop test",
+        "pnpm --filter @clawde/desktop build",
+        "",
+        "Report exact pass/fail results and any errors. Do not do a read-only project audit.",
+      ].join("\n"),
+      intent: "run verification commands",
+      goals: ["Report exact pass/fail results"],
+      mode: "project_audit",
+      permissions: { fileRead: true, fileWrite: false, shellExec: true },
+      context: { auditPath: "C:\\Orca\\Orca" },
+    };
+
+    expect(isProjectAuditTask(spec)).toBe(false);
   });
 
   it("blocks command execution when the stack is unknown", () => {

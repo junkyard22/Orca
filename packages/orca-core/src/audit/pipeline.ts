@@ -66,6 +66,8 @@ const APPROVED_RECIPES: Partial<Record<ProjectCategory, string[]>> = {
 };
 
 export function isProjectAuditTask(taskSpec: OrcaTaskSpec): boolean {
+  if (asksForRuntimeVerification(taskSpec)) return false;
+
   if (taskSpec.mode === "project_audit") return true;
 
   const text = [taskSpec.originalUserMessage, taskSpec.intent, ...(taskSpec.goals ?? [])].join(" ");
@@ -76,6 +78,15 @@ export function isProjectAuditTask(taskSpec: OrcaTaskSpec): boolean {
     /\bready\s+for\s+(production|prod|release|ship|shipping)\b/i.test(text);
 
   return asksForAudit && !!extractAuditTargetPath(taskSpec, undefined);
+}
+
+function asksForRuntimeVerification(taskSpec: OrcaTaskSpec): boolean {
+  const text = [taskSpec.originalUserMessage, taskSpec.intent, ...(taskSpec.goals ?? [])].join(" ");
+  return (
+    /\b(?:actually\s+)?run\b.{0,120}\b(?:commands?|tests?|build|lint|verification|contract:check)\b/i.test(text) ||
+    /\bdo\s+not\s+do\s+a\s+read[-\s]?only\s+(?:project\s+)?audit\b/i.test(text) ||
+    /\b(?:pnpm|npm|yarn|bun|cargo|go|pytest|python)\s+(?:run\s+)?[\w:.-]+/i.test(text)
+  );
 }
 
 function cleanPathCandidate(value: string): string {
