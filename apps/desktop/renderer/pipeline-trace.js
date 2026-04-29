@@ -435,6 +435,7 @@
     let finished        = false;
     let expanded        = false;
     let role            = null;
+    let traceLinkFn     = null;
 
     const wrap = document.createElement("div");
     wrap.className = "live-trace-panel";
@@ -449,6 +450,7 @@
       +   '<button class="ltp-toggle" type="button" aria-expanded="false">'
       +     'Details <span class="ltp-chevron" aria-hidden="true">›</span>'
       +   '</button>'
+      +   '<button class="ltp-view-trace" type="button" aria-label="Jump to full pipeline summary" hidden>Full trace ↓</button>'
       +   '<button class="ltp-close" type="button" aria-label="Dismiss pipeline trace" hidden>✕</button>'
       + '</div>'
       + '<div class="ltp-detail" data-detail role="region" aria-label="Pipeline progress" hidden>'
@@ -460,9 +462,10 @@
     const currentEl = wrap.querySelector("[data-current]");
     const elapsedEl = wrap.querySelector("[data-elapsed]");
     const toggleBtn = wrap.querySelector(".ltp-toggle");
-    const closeBtn  = wrap.querySelector(".ltp-close");
-    const detailEl  = wrap.querySelector("[data-detail]");
-    const rowsEl    = wrap.querySelector("[data-rows]");
+    const closeBtn      = wrap.querySelector(".ltp-close");
+    const viewTraceBtn  = wrap.querySelector(".ltp-view-trace");
+    const detailEl      = wrap.querySelector("[data-detail]");
+    const rowsEl        = wrap.querySelector("[data-rows]");
 
     function tickElapsed() {
       const sec = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -560,6 +563,7 @@
       if (finalLabel) currentEl.textContent = finalLabel;
       // Reveal the explicit dismiss control alongside the existing toggle.
       if (closeBtn) closeBtn.hidden = false;
+      if (viewTraceBtn && traceLinkFn) viewTraceBtn.hidden = false;
     }
 
     /**
@@ -572,6 +576,24 @@
       stickyDelayMs = Math.max(0, Number(delayMs) || 0);
       pendingRemoval = true;
       armStickyTimer();
+    }
+
+    /**
+     * Register a callback that scrolls/expands the full pipeline summary badge.
+     * Must be called after finish(); calling before finish() is a no-op for
+     * button visibility (the button stays hidden until the panel is done).
+     * Safe to call multiple times — last call wins.
+     */
+    function setTraceLink(fn) {
+      if (!fn) return;
+      traceLinkFn = fn;
+      if (viewTraceBtn) {
+        viewTraceBtn.onclick = function (ev) {
+          ev.stopPropagation();
+          fn();
+        };
+        if (finished) viewTraceBtn.hidden = false;
+      }
     }
 
     function destroy() {
@@ -611,6 +633,7 @@
       setRole:           setRole,
       finish:            finish,
       scheduleRemoval:   scheduleRemoval,
+      setTraceLink:      setTraceLink,
       destroy:           destroy,
       isFinished:        function () { return finished; },
       isExpanded:        function () { return expanded; },

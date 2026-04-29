@@ -843,3 +843,25 @@ describe("mapOrcaEventToTraceRow — row shape", () => {
     expect(row?.id).toContain("task:start");
   });
 });
+
+// ── Phase 3: "View full trace" link ──────────────────────────────────────
+// createLiveTracePanel builds a live DOM panel and requires a browser document
+// object; it cannot be exercised in the Node/Vitest environment used here.
+// The tests below verify what is testable without DOM:
+//   - The function is exported from the module API.
+//   - The controller shape contract (setTraceLink) is documented.
+// Full integration is verified by running the desktop app and confirming the
+// "Full trace ↓" button appears on the live panel after a run completes.
+
+describe("createLiveTracePanel — Phase 3 API surface", () => {
+  it("exports createLiveTracePanel as a function", () => {
+    expect(typeof PipelineTrace.createLiveTracePanel).toBe("function");
+  });
+
+  it("does not expose a setTraceLink on the module itself (only on controller)", () => {
+    // setTraceLink lives on the object returned by createLiveTracePanel,
+    // not on the module-level API, so no raw callback surface is accessible
+    // without first creating a panel.
+    expect((PipelineTrace as any).setTraceLink).toBeUndefined();
+  });
+});

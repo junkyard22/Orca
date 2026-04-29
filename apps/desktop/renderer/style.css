@@ -2161,6 +2161,22 @@ body.hide-pipeline .live-trace-panel { display: none; }
 }
 .ltp-close:hover { color: var(--text); background: var(--surface-2); }
 
+.ltp-view-trace {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: none;
+  border: 1px solid var(--border-faint);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.ltp-view-trace:hover { color: var(--text); border-color: var(--border); background: var(--surface-2); }
+
 .ltp-chevron {
   font-size: 13px;
   line-height: 1;

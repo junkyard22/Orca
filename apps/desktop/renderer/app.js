@@ -530,12 +530,12 @@ function buildPipelineSummaryFromEvents(result) {
 // ── Safe markdown renderer ────────────────────────────────────────────────
 
 function renderPipelineSummaryBadge(summary) {
-  if (!summary || pipelineBadgeRendered) return false;
+  if (!summary || pipelineBadgeRendered) return null;
   summary._eventLog = pipelineEventLog.slice();
-  appendPipelineBadge(summary);
+  const badgeEl = appendPipelineBadge(summary);
   pendingPipelineSummary = null;
   pipelineBadgeRendered = true;
-  return true;
+  return badgeEl || null;
 }
 
 function escapeHtml(str) {
@@ -1142,6 +1142,7 @@ function appendPipelineBadge(summary) {
       behavior: "smooth",
     });
   });
+  return div;
 }
 
 // ── Tool call card ────────────────────────────────────────────────────────
@@ -1279,7 +1280,16 @@ async function sendMessage() {
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
     const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary ?? buildPipelineSummaryFromEvents(result);
-    renderPipelineSummaryBadge(summaryToRender);
+    const badgeEl = renderPipelineSummaryBadge(summaryToRender);
+    if (badgeEl && livePanel && livePanel.setTraceLink) {
+      livePanel.setTraceLink(function () {
+        if (!badgeEl.classList.contains("expanded")) {
+          badgeEl.querySelector(".pb-details-btn")?.click();
+        } else {
+          badgeEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      });
+    }
 
     if (!result.ok) finalStatus = "error";
   } catch (err) {
