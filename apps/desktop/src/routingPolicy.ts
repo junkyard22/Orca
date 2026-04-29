@@ -42,14 +42,14 @@ export function normalizeDesktopRoutingForExecution(
     const requestedCommands = extractRequestedCommands(task);
     const commandCriteria = requestedCommands.length > 0
       ? [
-          ...requestedCommands.map((command) => `Output states the completion status for command: ${command}`),
-          "Output states the overall verification result",
-          "Output includes command output details for any non-zero command exit",
+          ...requestedCommands.map((command) => `Reported completion status for command: ${command}`),
+          "Reported overall verification result",
+          "Command output details are included for any non-zero command exit",
         ]
       : [
-          "Output states the completion status for each requested command",
-          "Output states the overall verification result",
-          "Output includes command output details for any non-zero command exit",
+          "Reported completion status for each requested command",
+          "Reported overall verification result",
+          "Command output details are included for any non-zero command exit",
         ];
 
     return {

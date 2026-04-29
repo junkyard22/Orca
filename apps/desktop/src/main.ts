@@ -70,6 +70,7 @@ import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdap
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
+import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
 
 type AgentTool = {
   name: string;
@@ -1318,9 +1319,18 @@ function buildMaestroAdapter(
         subagent: false,
       });
       const { result, filesChanged, childPacket } = worker;
+      const outputText = isCommandVerificationCriteria(routing.doneCriteria)
+        ? buildCommandVerificationSummary({
+            doneCriteria: routing.doneCriteria,
+            toolEvents: result.toolsUsed,
+            agentOutputText: result.outputText,
+            stoppedBecause: result.stoppedBecause,
+            errorMessage: result.error,
+          })
+        : result.outputText;
 
       return {
-        outputText: result.outputText,
+        outputText,
         summary: `${routing.role} agent — ${result.iterationCount} iterations — stopped: ${result.stoppedBecause}`,
         toolEvents: result.toolsUsed,
         filesChanged,

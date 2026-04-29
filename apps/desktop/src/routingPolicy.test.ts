@@ -113,11 +113,11 @@ describe("normalizeDesktopRoutingForExecution", () => {
       routing: "direct",
       role: "debugger",
       done_criteria: [
-        "Output states the completion status for command: pnpm contract:check",
-        "Output states the completion status for command: pnpm --filter @clawde/desktop test",
-        "Output states the completion status for command: pnpm --filter @clawde/desktop build",
-        "Output states the overall verification result",
-        "Output includes command output details for any non-zero command exit",
+        "Reported completion status for command: pnpm contract:check",
+        "Reported completion status for command: pnpm --filter @clawde/desktop test",
+        "Reported completion status for command: pnpm --filter @clawde/desktop build",
+        "Reported overall verification result",
+        "Command output details are included for any non-zero command exit",
       ],
     });
     expect(result.remappedBrainExecution).toBe(true);
