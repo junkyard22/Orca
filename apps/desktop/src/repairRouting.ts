@@ -18,6 +18,14 @@ export function getRepairOriginalRole(task: OrcaTaskSpec): RoleName | undefined 
   return typeof role === "string" && role.trim().length > 0 ? role as RoleName : undefined;
 }
 
+export function getRepairExecutionRole(task: OrcaTaskSpec): RoleName | undefined {
+  const originalRole = getRepairOriginalRole(task);
+  if (originalRole === "utility" && hasSpecialistRepairIssue(task)) {
+    return "debugger";
+  }
+  return originalRole;
+}
+
 export function getRepairRoutingSourceTask(task: OrcaTaskSpec): OrcaTaskSpec {
   const original = getRepairOriginalRecord(task);
   if (!original) return task;
@@ -44,4 +52,18 @@ export function getRepairRoutingSourceTask(task: OrcaTaskSpec): OrcaTaskSpec {
     outputFormat: task.outputFormat,
     context: context && Object.keys(context).length > 0 ? context : undefined,
   };
+}
+
+function hasSpecialistRepairIssue(task: OrcaTaskSpec): boolean {
+  const repair = isRecord(task.context?.["repair"]) ? task.context["repair"] : null;
+  const issues = Array.isArray(repair?.["issues"]) ? repair["issues"] : [];
+  return issues.some((issue) => {
+    if (!isRecord(issue)) return false;
+    const code = typeof issue["code"] === "string" ? issue["code"] : "";
+    const message = typeof issue["message"] === "string" ? issue["message"] : "";
+    return (
+      /^(CORE_GOAL_MISSING|ROUTING_CRITERIA_MISMATCH|PROOF_CLAIM_UNVERIFIED|COMPLETENESS_GOAL_COVERAGE)$/.test(code) ||
+      /\b(core goal|criteria|proof|claim|completion|missing)\b/i.test(message)
+    );
+  });
 }

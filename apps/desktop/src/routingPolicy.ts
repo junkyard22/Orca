@@ -2,6 +2,7 @@ import type { OrcaTaskSpec } from "@clawde/orca-core";
 import type { DecomposeDecision, DepartmentTask, RoleName } from "maestro-core";
 
 export const DEFAULT_EXECUTION_ROLE: RoleName = "narrator";
+const COMMAND_VERIFICATION_ROLE: RoleName = "debugger";
 
 export type RoutingPolicyResult = {
   decision: DecomposeDecision;
@@ -38,19 +39,26 @@ export function normalizeDesktopRoutingForExecution(
   auditFallback: DecomposeDecision | null,
 ): RoutingPolicyResult {
   if (asksForCommandVerification(task)) {
+    const requestedCommands = extractRequestedCommands(task);
+    const commandCriteria = requestedCommands.length > 0
+      ? [
+          ...requestedCommands.map((command) => `Output states the completion status for command: ${command}`),
+          "Output states the overall verification result",
+          "Output includes command output details for any non-zero command exit",
+        ]
+      : [
+          "Output states the completion status for each requested command",
+          "Output states the overall verification result",
+          "Output includes command output details for any non-zero command exit",
+        ];
+
     return {
       decision: {
         routing: "direct",
-        role: "utility",
-        done_criteria: decision?.done_criteria
-          ?? (task.goals?.length
-            ? task.goals
-            : [
-                "Output reports pass/fail for each requested command",
-                "Output includes any command errors",
-              ]),
+        role: COMMAND_VERIFICATION_ROLE,
+        done_criteria: commandCriteria,
       },
-      remappedBrainExecution: decision?.routing !== "direct" || decision.role !== "utility",
+      remappedBrainExecution: decision?.routing !== "direct" || decision.role !== COMMAND_VERIFICATION_ROLE,
       remapReason: "command_verification",
     };
   }
@@ -113,4 +121,16 @@ function asksForCommandVerification(task: OrcaTaskSpec): boolean {
     /\bdo\s+not\s+do\s+a\s+read[-\s]?only\s+(?:project\s+)?audit\b/i.test(text) ||
     /\b(?:pnpm|npm|yarn|bun|cargo|go|pytest|python)\s+(?:run\s+)?[\w:.-]+/i.test(text)
   );
+}
+
+function extractRequestedCommands(task: OrcaTaskSpec): string[] {
+  const text = [task.originalUserMessage, ...(task.goals ?? [])].join("\n");
+  const commands = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .map((line) => line.replace(/^[-*]\s+/, "").replace(/^[`'"]|[`'"]$/g, ""))
+    .filter((line) => /^(?:pnpm|npm|yarn|bun|cargo|go|pytest|python)\b/i.test(line))
+    .map((line) => line.replace(/[.;]\s*$/, ""));
+
+  return [...new Set(commands)];
 }

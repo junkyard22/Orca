@@ -1153,6 +1153,43 @@ function appendPipelineBadge(summary) {
 
 // ── Tool call card ────────────────────────────────────────────────────────
 
+function redactToolText(value) {
+  return String(value ?? "")
+    .replace(/\b(sk-[a-z0-9_-]{12,})\b/gi, "[redacted]")
+    .replace(/\b(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*["']?[^"'\s,;]+/gi, "$1=[redacted]");
+}
+
+function formatToolRequestSummary(tool, args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    const text = redactToolText(args).trim();
+    return text || "No visible parameters";
+  }
+
+  const lines = [];
+  const command = typeof args.command === "string" ? redactToolText(args.command).trim() : "";
+  const cwd = typeof args.cwd === "string" ? redactToolText(args.cwd).trim() : "";
+  if (/run_command|execute_command|shell/i.test(String(tool)) && command) {
+    lines.push(`Command: ${command}`);
+    if (cwd) lines.push(`Working directory: ${cwd}`);
+    return lines.join("\n");
+  }
+
+  for (const key of ["path", "file", "filename", "url", "query", "pattern"]) {
+    if (typeof args[key] === "string" && args[key].trim()) {
+      lines.push(`${key}: ${redactToolText(args[key]).trim()}`);
+    }
+  }
+
+  if (lines.length > 0) return lines.join("\n");
+
+  const visibleKeys = Object.keys(args)
+    .filter((key) => !/(api[_-]?key|token|secret|password|authorization|schema)/i.test(key))
+    .slice(0, 6);
+  return visibleKeys.length > 0
+    ? `Parameters: ${visibleKeys.join(", ")}`
+    : "Parameters hidden";
+}
+
 function appendToolCard(id, tool, args) {
   showMessages();
   const div = document.createElement("div");
@@ -1179,13 +1216,9 @@ function appendToolCard(id, tool, args) {
   status.className = "tool-card-status";
   status.textContent = "awaiting approval…";
 
-  const argsStr = typeof args === "object" && args !== null
-    ? JSON.stringify(args, null, 2)
-    : String(args ?? "");
-
   const argsEl = document.createElement("div");
   argsEl.className = "tool-card-args";
-  argsEl.textContent = argsStr.trim() ? argsStr : "(no args)";
+  argsEl.textContent = formatToolRequestSummary(tool, args);
   argsEl.style.display = "block";
   argsEl.style.padding = "6px 12px";
   argsEl.style.margin = "0";
@@ -2179,10 +2212,7 @@ orca.onToolRequest((id, tool, args) => {
   const dialog = document.getElementById("tool-approval-dialog");
   document.getElementById("approval-tool-name").textContent  = tool;
   document.getElementById("approval-tool-name-2").textContent = tool;
-  document.getElementById("approval-args").textContent =
-    typeof args === "object" && args !== null
-      ? JSON.stringify(args, null, 2)
-      : String(args);
+  document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
   dialog.dataset.approvalId = id;
   dialog.style.display      = "flex";
 

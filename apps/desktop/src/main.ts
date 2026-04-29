@@ -67,7 +67,7 @@ import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
-import { getRepairOriginalRole, getRepairRoutingSourceTask } from "./repairRouting";
+import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
 
@@ -1234,7 +1234,7 @@ function buildMaestroAdapter(
       // call and can poison done_criteria with QC defect text instead of the
       // original task outcomes.
       throwIfAborted(ctx.abortSignal);
-      const repairOriginalRole = getRepairOriginalRole(task);
+      const repairOriginalRole = getRepairExecutionRole(task);
       const routingSourceTask = getRepairRoutingSourceTask(task);
       const routing: DesktopBrainRouting = repairOriginalRole
         ? {

@@ -85,7 +85,7 @@ describe("normalizeDesktopRoutingForExecution", () => {
     expect(result.remapReason).toBe("missing_decision");
   });
 
-  it("routes explicit command verification to one utility worker instead of decomposing", () => {
+  it("routes explicit command verification to one debugger worker instead of decomposing", () => {
     const result = normalizeDesktopRoutingForExecution(
       {
         ...task(),
@@ -111,10 +111,13 @@ describe("normalizeDesktopRoutingForExecution", () => {
 
     expect(result.decision).toEqual({
       routing: "direct",
-      role: "utility",
+      role: "debugger",
       done_criteria: [
-        "Output reports pass/fail for each requested command",
-        "Output includes any command errors",
+        "Output states the completion status for command: pnpm contract:check",
+        "Output states the completion status for command: pnpm --filter @clawde/desktop test",
+        "Output states the completion status for command: pnpm --filter @clawde/desktop build",
+        "Output states the overall verification result",
+        "Output includes command output details for any non-zero command exit",
       ],
     });
     expect(result.remappedBrainExecution).toBe(true);
