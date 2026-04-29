@@ -47,6 +47,7 @@ const MARKER_PATHS: Array<{ name: string; path: string; kind: "file" | "director
 
 const CONFIG_PREFIXES = ["vite.config.", "webpack.config."];
 const IGNORED_TREE_DIRS = new Set([".git", "node_modules", "dist", "build", "release", "coverage", ".next", ".turbo"]);
+const CHILD_REPO_MARKERS = [".git", "package.json", "pnpm-workspace.yaml", "pyproject.toml", "Cargo.toml", "go.mod"];
 const SOURCE_ROOTS = ["src", "app", "frontend", "backend", "lib", "server", "client"];
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".cs", ".css"]);
 const MAX_SOURCE_FILES = 120;
@@ -709,10 +710,35 @@ function buildCommandPolicy(preflight: AuditPreflight, classification: ProjectCl
   };
 }
 
+/**
+ * Scan the immediate children of `root` for directories that look like a
+ * project repository (have a .git folder or a key root-level marker file).
+ * Only goes one level deep — no recursive walk — so it's cheap and safe.
+ */
+function findChildRepos(root: string): string[] {
+  return safeReadDir(root)
+    .map((entry) => join(root, entry))
+    .filter((child) => {
+      try {
+        if (!lstatSync(child).isDirectory()) return false;
+      } catch {
+        return false;
+      }
+      return CHILD_REPO_MARKERS.some((marker) => existsSync(join(child, marker)));
+    });
+}
+
 function collectFailures(preflight: AuditPreflight, classification: ProjectClassification, probes: AuditProbeResult[], commandPolicy: AuditCommandPolicy): AuditFailure[] {
   const failures = [...preflight.failures];
   if (preflight.exists && preflight.readable && preflight.kind === "directory" && preflight.markers.length === 0) {
-    failures.push(failure("no_relevant_files", "No common project marker files or folders were found.", "Confirm this is the project root or provide a more specific path."));
+    const childRepos = findChildRepos(preflight.targetPath);
+    const suggestedNextAction =
+      childRepos.length === 1
+        ? `Possible repo found at ${childRepos[0]}. Try auditing that path instead.`
+        : childRepos.length > 1
+          ? `Possible repos found one level down: ${childRepos.slice(0, 3).join(", ")}. Try auditing one of those paths instead.`
+          : "Confirm this is the project root or provide a more specific path.";
+    failures.push(failure("no_relevant_files", "No common project marker files or folders were found.", suggestedNextAction));
   }
   if (classification.primary === "unknown") {
     failures.push(failure("unsupported_stack", "Project stack could not be classified from marker files.", "Provide stack details or add recognizable project files."));

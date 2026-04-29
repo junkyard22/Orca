@@ -197,4 +197,28 @@ describe("settings", () => {
     expect(loaded.maxRepairPasses).toBe(4);
     expect(loaded.verbose).toBe(true);
   });
+
+  it("preserves workspaceRoot through legacy settings migration", async () => {
+    writeFileSync(
+      join(userDataDir, "orca-settings.json"),
+      JSON.stringify({
+        provider: "openrouter",
+        apiKey: "legacy-key",
+        workspaceRoot: "C:\\projects\\myapp",
+      }),
+      "utf-8",
+    );
+
+    const loaded = await loadSettings();
+
+    expect(loaded.workspaceRoot).toBe("C:\\projects\\myapp");
+  });
+
+  it("preserves workspaceRoot through normal (non-legacy) settings round-trip", async () => {
+    await saveSettings({ ...baseSettings, workspaceRoot: "C:\\Orca\\Orca" });
+
+    const loaded = await loadSettings();
+
+    expect(loaded.workspaceRoot).toBe("C:\\Orca\\Orca");
+  });
 });

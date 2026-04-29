@@ -226,3 +226,87 @@ describe("project audit pipeline", () => {
     }
   });
 });
+
+describe("audit parent-directory repo hint", () => {
+  it("emits a path hint when exactly one child directory looks like a repo", () => {
+    const parent = tempRoot();
+    const child = join(parent, "MyRepo");
+    mkdirSync(child);
+    writeJson(join(child, "package.json"), { name: "my-repo" });
+
+    try {
+      const result = runProjectAudit({ taskSpec: task(parent) });
+      const noMarkers = result.failures.find((f) => f.category === "no_relevant_files");
+      expect(noMarkers).toBeTruthy();
+      expect(noMarkers?.suggestedNextAction).toContain(child);
+      expect(noMarkers?.suggestedNextAction).toContain("Try auditing that path instead");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("detects a git repository as a child repo even without package.json", () => {
+    const parent = tempRoot();
+    const child = join(parent, "GitRepo");
+    mkdirSync(join(child, ".git"), { recursive: true });
+
+    try {
+      const result = runProjectAudit({ taskSpec: task(parent) });
+      const noMarkers = result.failures.find((f) => f.category === "no_relevant_files");
+      expect(noMarkers?.suggestedNextAction).toContain(child);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("mentions multiple paths when more than one child looks like a repo", () => {
+    const parent = tempRoot();
+    const child1 = join(parent, "RepoA");
+    const child2 = join(parent, "RepoB");
+    mkdirSync(child1);
+    mkdirSync(child2);
+    writeJson(join(child1, "package.json"), { name: "repo-a" });
+    writeJson(join(child2, "package.json"), { name: "repo-b" });
+
+    try {
+      const result = runProjectAudit({ taskSpec: task(parent) });
+      const noMarkers = result.failures.find((f) => f.category === "no_relevant_files");
+      expect(noMarkers?.suggestedNextAction).toContain(child1);
+      expect(noMarkers?.suggestedNextAction).toContain("Try auditing one of those paths instead");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the generic message when no child repos are found", () => {
+    const parent = tempRoot();
+    writeFileSync(join(parent, "notes.txt"), "not a project\n");
+
+    try {
+      const result = runProjectAudit({ taskSpec: task(parent) });
+      const noMarkers = result.failures.find((f) => f.category === "no_relevant_files");
+      expect(noMarkers).toBeTruthy();
+      expect(noMarkers?.suggestedNextAction).toBe("Confirm this is the project root or provide a more specific path.");
+      expect(noMarkers?.suggestedNextAction).not.toContain("Possible repo");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("does not trigger the hint when the target directory already has markers", () => {
+    const root = tempRoot();
+    writeJson(join(root, "package.json"), { name: "real-root" });
+    const child = join(root, "sub");
+    mkdirSync(child);
+    writeJson(join(child, "package.json"), { name: "sub-package" });
+
+    try {
+      const result = runProjectAudit({ taskSpec: task(root) });
+      const noMarkers = result.failures.find((f) => f.category === "no_relevant_files");
+      // Root has markers, so no_relevant_files failure should not be present
+      expect(noMarkers).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
