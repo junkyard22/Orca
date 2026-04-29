@@ -1877,12 +1877,16 @@ ipcMain.on("win:close",    () => {
 // When the desktop app runs tools (agent-loop mode), each call sends a
 // "tool:request" event to the renderer and blocks until the user responds.
 const pendingApprovals = new Map<string, (approved: boolean) => void>();
+let approvalQueue: Promise<void> = Promise.resolve();
+let approvalEpoch = 0;
 
 function resolvePendingApprovals(approved: boolean): void {
+  approvalEpoch++;
   for (const resolve of pendingApprovals.values()) {
     resolve(approved);
   }
   pendingApprovals.clear();
+  approvalQueue = Promise.resolve();
 }
 
 function lockApp(): AppAuthStatus {
@@ -1920,6 +1924,26 @@ export function requestToolApproval(
   args: Record<string, unknown>,
 ): Promise<boolean> {
   if (isAppLocked()) {
+    return Promise.resolve(false);
+  }
+
+  const epoch = approvalEpoch;
+  const queued = approvalQueue.then(
+    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
+    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
+  );
+  approvalQueue = queued.then(
+    () => undefined,
+    () => undefined,
+  );
+  return queued;
+}
+
+function requestSingleToolApproval(
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<boolean> {
+  if (!win || win.isDestroyed()) {
     return Promise.resolve(false);
   }
 

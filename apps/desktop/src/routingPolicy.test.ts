@@ -84,4 +84,40 @@ describe("normalizeDesktopRoutingForExecution", () => {
     expect(result.remappedBrainExecution).toBe(true);
     expect(result.remapReason).toBe("missing_decision");
   });
+
+  it("routes explicit command verification to one utility worker instead of decomposing", () => {
+    const result = normalizeDesktopRoutingForExecution(
+      {
+        ...task(),
+        originalUserMessage: [
+          "In C:\\Orca\\Orca, actually run the verification commands for production readiness:",
+          "pnpm contract:check",
+          "pnpm --filter @clawde/desktop test",
+          "pnpm --filter @clawde/desktop build",
+          "",
+          "Report exact pass/fail results and any errors. Do not do a read-only project audit.",
+        ].join("\n"),
+      },
+      {
+        routing: "decompose",
+        departments: [
+          { head: "reviewer", subtask: "Review readiness" },
+          { head: "debugger", subtask: "Run commands" },
+          { head: "narrator", subtask: "Report results" },
+        ],
+      },
+      null,
+    );
+
+    expect(result.decision).toEqual({
+      routing: "direct",
+      role: "utility",
+      done_criteria: [
+        "Output reports pass/fail for each requested command",
+        "Output includes any command errors",
+      ],
+    });
+    expect(result.remappedBrainExecution).toBe(true);
+    expect(result.remapReason).toBe("command_verification");
+  });
 });
