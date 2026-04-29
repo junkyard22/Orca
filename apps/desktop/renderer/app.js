@@ -1161,6 +1161,7 @@ function appendToolCard(id, tool, args) {
   div.style.display = "flex";
   div.style.flexDirection = "column";
   div.style.alignSelf = "stretch";
+  div.style.flexShrink = "0";
   div.style.overflow = "visible";
 
   const header = document.createElement("div");
@@ -1189,7 +1190,8 @@ function appendToolCard(id, tool, args) {
   argsEl.style.padding = "6px 12px";
   argsEl.style.margin = "0";
   argsEl.style.borderTop = "1px solid var(--border)";
-  argsEl.style.maxHeight = "120px";
+  argsEl.style.maxHeight = "220px";
+  argsEl.style.minHeight = "34px";
   argsEl.style.overflowY = "auto";
   argsEl.style.overflowX = "auto";
   argsEl.style.whiteSpace = "pre-wrap";
