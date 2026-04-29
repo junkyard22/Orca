@@ -380,6 +380,48 @@
     }
   }
 
+  // ── Badge role label ─────────────────────────────────────────────────────
+
+  /**
+   * Map a pipeline summary's raw role string to a user-facing badge label.
+   *
+   * "brain" is the planning/routing/synthesis layer — not a worker agent.
+   * When the role is "brain", we derive a more meaningful label from the
+   * event log so the overall badge reflects what kind of work actually ran.
+   *
+   * Non-brain roles (coder, debugger, project_audit, …) are returned as-is.
+   */
+  function badgeRoleLabel(summary) {
+    const raw = summary && summary.role;
+
+    // Known non-brain roles are meaningful as-is.
+    if (!raw || raw === "unknown") return raw || "unknown";
+    if (raw !== "brain") return raw;
+
+    // "brain" is the planning/routing/synthesis layer — map to a task label.
+    const eventLog = Array.isArray(summary._eventLog) ? summary._eventLog : [];
+
+    // Audit detail present → a project_audit result wrapped in a brain summary.
+    if (summary.auditDetail) return "project_audit";
+
+    // Subagents were spawned → Brain orchestrated specialist workers.
+    if (eventLog.some(function (e) { return e && e.type === "subagent:spawned"; })) {
+      return "orchestration";
+    }
+
+    // Multiple agent dispatches → multi-worker orchestration.
+    const agentStarts = eventLog.filter(function (e) { return e && e.type === "maestro:agent_start"; });
+    if (agentStarts.length > 1) return "orchestration";
+
+    // Single dispatch to a non-brain worker → surface that worker's role.
+    if (agentStarts.length === 1 && agentStarts[0].role && agentStarts[0].role !== "brain") {
+      return agentStarts[0].role;
+    }
+
+    // Brain answered directly with no specialist delegation.
+    return "analysis";
+  }
+
   // ── Live trace panel (DOM controller) ────────────────────────────────────
 
   function escapeHtml(s) {
@@ -651,6 +693,7 @@
     formatIssueSummary:     formatIssueSummary,
     statusIcon:             statusIcon,
     shouldAutoRemove:       shouldAutoRemove,
+    badgeRoleLabel:         badgeRoleLabel,
     createLiveTracePanel:   createLiveTracePanel,
   };
 

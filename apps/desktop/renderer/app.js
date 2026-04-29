@@ -774,6 +774,12 @@ function appendPipelineBadge(summary) {
   if (!summary) return;
   showMessages();
 
+  // Map the raw role to a user-facing label. "brain" is the planning/routing
+  // layer and should not appear as the overall run executor in the badge.
+  const displayRole = (window.PipelineTrace && window.PipelineTrace.badgeRoleLabel)
+    ? window.PipelineTrace.badgeRoleLabel(summary)
+    : String(summary.role ?? "unknown");
+
   const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : "fail";
   const confidencePct = Math.round((summary.confidence ?? 1) * 100);
   const durationSec   = ((summary.durationMs ?? 0) / 1000).toFixed(2);
@@ -797,7 +803,7 @@ function appendPipelineBadge(summary) {
 
   // ── Outcome summary ─────────────────────────────────────────────────────
   const outcomeRows = [
-    ["Role", summary.role ?? "unknown"],
+    ["Role", displayRole],
     ["Verdict", summary.verdict ?? "unknown"],
     ["Confidence", `${confidencePct}%`],
     ["Issues", String(summary.issueCount ?? 0)],
@@ -1038,7 +1044,7 @@ function appendPipelineBadge(summary) {
   div.style.overflow = "visible";
   div.innerHTML = `
     <div class="pipeline-badge-header">
-      <span class="pb-role">${escapeHtml(String(summary.role ?? "unknown"))}</span>
+      <span class="pb-role">${escapeHtml(displayRole)}</span>
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
       <span class="pb-confidence">${confidencePct}%</span>
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
@@ -1075,7 +1081,7 @@ function appendPipelineBadge(summary) {
   const header = document.createElement("div");
   header.className = "pipeline-badge-header";
   header.innerHTML = `
-      <span class="pb-role">${escapeHtml(String(summary.role ?? "unknown"))}</span>
+      <span class="pb-role">${escapeHtml(displayRole)}</span>
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
       <span class="pb-confidence">${confidencePct}%</span>
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>

@@ -21,6 +21,7 @@ const {
   formatIssueSummary,
   statusIcon,
   shouldAutoRemove,
+  badgeRoleLabel,
 } = PipelineTrace;
 
 describe("safeString", () => {
@@ -863,5 +864,97 @@ describe("createLiveTracePanel — Phase 3 API surface", () => {
     // not on the module-level API, so no raw callback surface is accessible
     // without first creating a panel.
     expect((PipelineTrace as any).setTraceLink).toBeUndefined();
+  });
+});
+
+// ── badgeRoleLabel — overall badge header role mapping ───────────────────
+// Brain is the planning/routing/synthesis layer, not a worker agent.
+// The overall run badge must never show "brain" as if Brain executed the work.
+
+describe("badgeRoleLabel — overall badge header role mapping", () => {
+  it("passes non-brain specialist roles through unchanged", () => {
+    expect(badgeRoleLabel({ role: "coder" })).toBe("coder");
+    expect(badgeRoleLabel({ role: "debugger" })).toBe("debugger");
+    expect(badgeRoleLabel({ role: "reviewer" })).toBe("reviewer");
+  });
+
+  it("passes project_audit through unchanged", () => {
+    expect(badgeRoleLabel({ role: "project_audit" })).toBe("project_audit");
+  });
+
+  it("passes 'unknown' through unchanged", () => {
+    expect(badgeRoleLabel({ role: "unknown" })).toBe("unknown");
+  });
+
+  it("returns 'unknown' for null, undefined, or empty role", () => {
+    expect(badgeRoleLabel({ role: null as any })).toBe("unknown");
+    expect(badgeRoleLabel({ role: "" as any })).toBe("unknown");
+    expect(badgeRoleLabel({} as any)).toBe("unknown");
+    expect(badgeRoleLabel(null as any)).toBe("unknown");
+  });
+
+  it("maps brain + auditDetail → project_audit (audit wrapped in brain metadata)", () => {
+    expect(badgeRoleLabel({ role: "brain", auditDetail: { readiness: "ready" } })).toBe("project_audit");
+  });
+
+  it("maps brain + subagent:spawned events → orchestration", () => {
+    expect(badgeRoleLabel({
+      role: "brain",
+      _eventLog: [
+        { type: "task:start" },
+        { type: "subagent:spawned", role: "coder" },
+        { type: "subagent:spawned", role: "debugger" },
+      ],
+    })).toBe("orchestration");
+  });
+
+  it("maps brain + multiple maestro:agent_start events → orchestration", () => {
+    expect(badgeRoleLabel({
+      role: "brain",
+      _eventLog: [
+        { type: "maestro:agent_start", role: "coder" },
+        { type: "maestro:agent_start", role: "debugger" },
+      ],
+    })).toBe("orchestration");
+  });
+
+  it("maps brain + single non-brain agent_start → that worker's role", () => {
+    expect(badgeRoleLabel({
+      role: "brain",
+      _eventLog: [{ type: "maestro:agent_start", role: "coder" }],
+    })).toBe("coder");
+  });
+
+  it("maps brain + single brain agent_start (routed to itself) → analysis", () => {
+    expect(badgeRoleLabel({
+      role: "brain",
+      _eventLog: [{ type: "maestro:agent_start", role: "brain" }],
+    })).toBe("analysis");
+  });
+
+  it("maps brain with empty or absent event log → analysis (direct answer)", () => {
+    expect(badgeRoleLabel({ role: "brain", _eventLog: [] })).toBe("analysis");
+    expect(badgeRoleLabel({ role: "brain" })).toBe("analysis");
+  });
+
+  it("does not leak 'brain' as the overall label when workers did the actual work", () => {
+    const result = badgeRoleLabel({
+      role: "brain",
+      _eventLog: [
+        { type: "subagent:spawned", role: "coder" },
+        { type: "subagent:done", role: "coder", ok: true },
+      ],
+    });
+    expect(result).not.toBe("brain");
+    expect(result).toBe("orchestration");
+  });
+
+  it("Brain planning events on live trace rows are unaffected (separate from badge label)", () => {
+    // mapOrcaEventToTraceRow still renders Brain planning events as rows;
+    // badgeRoleLabel only controls the overall badge header label.
+    const row = mapOrcaEventToTraceRow({ type: "task:start", taskId: "t1", intent: "plan" });
+    expect(row?.component).toBe("Benson");
+    // badgeRoleLabel itself never touches row-level component names
+    expect(badgeRoleLabel({ role: "brain" })).toBe("analysis");
   });
 });
