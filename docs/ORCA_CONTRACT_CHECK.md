@@ -70,9 +70,17 @@ Answer these questions before submitting or approving a change in the areas abov
 
 ---
 
-## Recommended Automation
+## CI Automation
 
-A future `scripts/contract-check.ts` could automate the static portion of this checklist. Suggested implementation:
+GitHub Actions runs strict Contract Check in CI and release workflows after dependency installation and before builds:
+
+```
+pnpm contract:check:strict
+```
+
+In strict mode, `BLOCKED` architecture findings fail the workflow. `REVIEW REQUIRED` still exits 0 because it requires human judgment and should not fail CI yet.
+
+The `scripts/contract-check.ts` script automates the static portion of this checklist:
 
 ```
 scripts/contract-check.ts

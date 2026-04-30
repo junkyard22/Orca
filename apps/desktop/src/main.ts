@@ -67,8 +67,10 @@ import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
-import { getRepairOriginalRole, getRepairRoutingSourceTask } from "./repairRouting";
+import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
+import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
+import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
 
 type AgentTool = {
   name: string;
@@ -351,7 +353,6 @@ const FALLBACK_NOTE_CHAR_LIMIT = 320;
 const PRIMARY_FALLBACK_ROLE_PRIORITY: readonly RoleName[] = [
   "strong_model",
   "debugger",
-  "brain",
   "utility",
   "reader",
   "cheap_model",
@@ -459,7 +460,7 @@ function taskTextForRouting(task: OrcaTaskSpec): string {
 
 function auditDecomposeFallback(task: OrcaTaskSpec): DecomposeDecision | null {
   const text = taskTextForRouting(task);
-  if (!/\b(full\s+audit|ship[-\s]?readiness|release[-\s]?readiness|ready\s+to\s+ship|ship\s+ready)\b/i.test(text)) {
+  if (!/\b(full\s+audit|production[-\s]?readiness|prod[-\s]?readiness|ship[-\s]?readiness|release[-\s]?readiness|ready\s+to\s+ship|ship\s+ready)\b/i.test(text)) {
     return null;
   }
 
@@ -542,17 +543,19 @@ async function brainRoute(
   }
 
   const fallbackDecision = auditDecomposeFallback(task);
-  // Only apply the audit fallback when brain failed to return a valid decision
-  // (timeout, validation error, or network failure). When brain successfully
-  // returned "direct", that is a deliberate routing choice and we must respect
-  // it — overriding it would triple LLM cost for every audit-keyword task even
-  // when brain correctly judged that a single specialist is sufficient.
-  let resolved: DecomposeDecision = decision ?? fallbackDecision ?? { routing: 'direct', role: 'brain' };
+  const routingPolicy = normalizeDesktopRoutingForExecution(task, decision, fallbackDecision);
+  let resolved: DecomposeDecision = routingPolicy.decision;
   if (!decision) {
     ctx.recordTrace?.("brain.route.fallback", {
       reason: fallbackDecision
         ? "brain routing did not yield a valid decision; using deterministic audit decomposition"
-        : "brain routing did not yield a valid decision; defaulting to direct brain",
+        : "brain routing did not yield a valid decision; defaulting to non-brain execution role",
+    });
+  }
+  if (routingPolicy.remappedBrainExecution) {
+    ctx.recordTrace?.("brain.route.execution_role_remap", {
+      reason: routingPolicy.remapReason,
+      resolved,
     });
   }
   const doneCriteria = resolved.done_criteria ?? [];
@@ -790,7 +793,20 @@ function buildMaestroAdapter(
     ctx: OrcaRunCtx,
   ): { agent: RoleAgentAdapter; selectedModelId: string } => {
     let selectedModelId = `${role}_primary`;
-    let agent = roleAgents.get(role) ?? roleAgents.get("brain");
+    let agent = roleAgents.get(role);
+    if (!agent) {
+      const brainAdapter = configuredAdapters.get("brain");
+      if (brainAdapter) {
+        const rs = roleSettings?.get(role);
+        agent = new RoleAgentAdapter(role, brainAdapter, undefined, rs?.maxTokens, rs?.temperature);
+        selectedModelId = "brain_primary";
+        ctx.recordTrace?.("maestro.role_model_fallback", {
+          requestedRole: role,
+          modelSourceRole: "brain",
+          workerRole: role,
+        });
+      }
+    }
     if (!agent) {
       throw new Error(`No LLM adapter configured for role ${role} or brain`);
     }
@@ -1219,7 +1235,7 @@ function buildMaestroAdapter(
       // call and can poison done_criteria with QC defect text instead of the
       // original task outcomes.
       throwIfAborted(ctx.abortSignal);
-      const repairOriginalRole = getRepairOriginalRole(task);
+      const repairOriginalRole = getRepairExecutionRole(task);
       const routingSourceTask = getRepairRoutingSourceTask(task);
       const routing: DesktopBrainRouting = repairOriginalRole
         ? {
@@ -1303,9 +1319,18 @@ function buildMaestroAdapter(
         subagent: false,
       });
       const { result, filesChanged, childPacket } = worker;
+      const outputText = isCommandVerificationCriteria(routing.doneCriteria)
+        ? buildCommandVerificationSummary({
+            doneCriteria: routing.doneCriteria,
+            toolEvents: result.toolsUsed,
+            agentOutputText: result.outputText,
+            stoppedBecause: result.stoppedBecause,
+            errorMessage: result.error,
+          })
+        : result.outputText;
 
       return {
-        outputText: result.outputText,
+        outputText,
         summary: `${routing.role} agent — ${result.iterationCount} iterations — stopped: ${result.stoppedBecause}`,
         toolEvents: result.toolsUsed,
         filesChanged,
@@ -1607,6 +1632,8 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       _initWarnings.push(warning);
     }
 
+    const gate = createMirandaGate({ verbose: s.verbose === true });
+
     // Map BootstrappedTool[] → AgentTool[], threading abort + approval through
     const availableTools: AgentTool[] = bootstrap.allTools.map((tool: BootstrappedTool) => ({
       name: tool.name,
@@ -1626,11 +1653,25 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       },
     }));
     const toolService: OrcaToolService = {
-      execute(name, input) {
-        return bootstrap.toolService.execute(
-          name,
-          absolutizeDesktopCommanderInput(name, input, workspaceRoot),
-        );
+      async execute(name, input) {
+        const normalizedInput = absolutizeDesktopCommanderInput(name, input, workspaceRoot);
+        const toolSchema = bootstrap.allTools.find((tool) => tool.name === name)?.schema;
+        const gateCtx = { tool: name, args: normalizedInput, schema: toolSchema };
+        const beforeGate = gate.beforeToolRun(gateCtx);
+        if (!beforeGate.allowed) {
+          return {
+            ok: false,
+            output: "",
+            error: beforeGate.reason || `Tool "${name}" blocked by Miranda`,
+          };
+        }
+
+        const result = await bootstrap.toolService.execute(name, normalizedInput);
+        gate.afterToolRun(gateCtx, {
+          ok: result.ok,
+          output: result.output || result.error || "",
+        });
+        return result;
       },
       formatForPrompt() {
         return bootstrap.toolService.formatForPrompt();
@@ -1663,7 +1704,6 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     );
     const pappy   = createPappyPort();
 
-    const gate = createMirandaGate({ verbose: s.verbose === true });
     runtime = createOrcaRuntime({
       maestro,
       pappy,
@@ -1847,12 +1887,16 @@ ipcMain.on("win:close",    () => {
 // When the desktop app runs tools (agent-loop mode), each call sends a
 // "tool:request" event to the renderer and blocks until the user responds.
 const pendingApprovals = new Map<string, (approved: boolean) => void>();
+let approvalQueue: Promise<void> = Promise.resolve();
+let approvalEpoch = 0;
 
 function resolvePendingApprovals(approved: boolean): void {
+  approvalEpoch++;
   for (const resolve of pendingApprovals.values()) {
     resolve(approved);
   }
   pendingApprovals.clear();
+  approvalQueue = Promise.resolve();
 }
 
 function lockApp(): AppAuthStatus {
@@ -1890,6 +1934,26 @@ export function requestToolApproval(
   args: Record<string, unknown>,
 ): Promise<boolean> {
   if (isAppLocked()) {
+    return Promise.resolve(false);
+  }
+
+  const epoch = approvalEpoch;
+  const queued = approvalQueue.then(
+    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
+    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
+  );
+  approvalQueue = queued.then(
+    () => undefined,
+    () => undefined,
+  );
+  return queued;
+}
+
+function requestSingleToolApproval(
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<boolean> {
+  if (!win || win.isDestroyed()) {
     return Promise.resolve(false);
   }
 

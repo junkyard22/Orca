@@ -294,10 +294,10 @@ function migrateFromLegacy(raw: Record<string, unknown>): Partial<OrcaSettings> 
   return decryptSettings({
     providers,
     roles,
-    budgetUsd:       (raw["budgetUsd"]      as number)  ?? 0.10,
-    maxRepairPasses: (raw["maxRepairPasses"] as number)  ?? 2,
-    verbose:         (raw["verbose"]         as boolean) ?? false,
-    workspaceRoot:   "",
+    budgetUsd:       (raw["budgetUsd"]      as number)          ?? 0.10,
+    maxRepairPasses: (raw["maxRepairPasses"] as number)          ?? 2,
+    verbose:         (raw["verbose"]         as boolean)         ?? false,
+    workspaceRoot:   (raw["workspaceRoot"]   as string | undefined) ?? "",
   });
 }
 

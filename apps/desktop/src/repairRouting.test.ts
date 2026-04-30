@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OrcaTaskSpec } from "@clawde/orca-core";
-import { getRepairOriginalRole, getRepairRoutingSourceTask } from "./repairRouting";
+import { getRepairExecutionRole, getRepairOriginalRole, getRepairRoutingSourceTask } from "./repairRouting";
 
 function makeRepairTask(): OrcaTaskSpec {
   return {
@@ -36,6 +36,29 @@ function makeRepairTask(): OrcaTaskSpec {
 describe("repairRouting", () => {
   it("preserves original brain role for non-targeted repair tasks", () => {
     expect(getRepairOriginalRole(makeRepairTask())).toBe("brain");
+    expect(getRepairExecutionRole(makeRepairTask())).toBe("brain");
+  });
+
+  it("escalates failed utility repairs to debugger for specialist recovery", () => {
+    const repairTask = makeRepairTask();
+    repairTask.context = {
+      ...repairTask.context,
+      repair: {
+        ...(repairTask.context?.repair as Record<string, unknown>),
+        original: {
+          intent: "Run requested commands",
+          goals: ["Output states the completion status for each requested command"],
+          message: "Actually run pnpm contract:check",
+          role: "utility",
+        },
+        issues: [
+          { code: "CORE_GOAL_MISSING", message: "The core task goal was not achieved." },
+        ],
+      },
+    };
+
+    expect(getRepairOriginalRole(repairTask)).toBe("utility");
+    expect(getRepairExecutionRole(repairTask)).toBe("debugger");
   });
 
   it("routes repairs using the original task instead of the repair directive", () => {

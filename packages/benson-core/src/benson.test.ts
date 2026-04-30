@@ -177,6 +177,24 @@ describe("createBenson", () => {
         expect(reply.text).toContain("commands were not executed automatically");
       });
 
+      it("does not force read-only project audit when the user explicitly asks to run verification commands", async () => {
+        const executeTask = vi.fn().mockResolvedValue(createSuccessResult("Commands completed"));
+        const benson = createBenson({ executeTask });
+
+        await benson.handleUserMessage([
+          "In C:\\Orca\\Orca, actually run the verification commands for production readiness:",
+          "pnpm contract:check",
+          "pnpm --filter @clawde/desktop test",
+          "pnpm --filter @clawde/desktop build",
+          "",
+          "Report exact pass/fail results and any errors. Do not do a read-only project audit.",
+        ].join("\n"));
+        const spec = executeTask.mock.calls[0]?.[0] as TaskSpec | undefined;
+
+        expect(spec?.mode).toBe("default");
+        expect(spec?.permissions).toContain("shell");
+      });
+
       it("keeps consecutive messages separated and preserves the exact current turn text", async () => {
         const executeTask = vi.fn().mockResolvedValue(createSuccessResult("ok"));
         const benson = createBenson({ executeTask });

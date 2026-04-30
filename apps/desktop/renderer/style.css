@@ -258,6 +258,10 @@ body.light .welcome-logo {
   padding: 24px 24px 12px;
 }
 
+#messages > * {
+  flex-shrink: 0;
+}
+
 #messages::-webkit-scrollbar      { width: 4px; }
 #messages::-webkit-scrollbar-track{ background: transparent; }
 #messages::-webkit-scrollbar-thumb{ background: var(--border); border-radius: 2px; }
@@ -1433,6 +1437,7 @@ body.light .auth-card {
   display: flex;
   flex-direction: column;
   align-self: stretch;
+  flex: 0 0 auto;
   min-height: 42px;
   margin: 4px 10px;
   border: 1px solid var(--border);
@@ -1484,7 +1489,8 @@ body.light .auth-card {
   background: var(--bg);
   border-top: 1px solid var(--border);
   overflow-x: auto;
-  max-height: 120px;
+  max-height: 220px;
+  min-height: 34px;
   overflow-y: auto;
   user-select: text;
   color: var(--text-muted);
@@ -2160,6 +2166,22 @@ body.hide-pipeline .live-trace-panel { display: none; }
   transition: color 0.15s, background 0.15s;
 }
 .ltp-close:hover { color: var(--text); background: var(--surface-2); }
+
+.ltp-view-trace {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: none;
+  border: 1px solid var(--border-faint);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.ltp-view-trace:hover { color: var(--text); border-color: var(--border); background: var(--surface-2); }
 
 .ltp-chevron {
   font-size: 13px;

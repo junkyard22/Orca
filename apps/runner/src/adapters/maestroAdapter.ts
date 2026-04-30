@@ -55,15 +55,10 @@ import { traceEvent } from "./tracerHooks.js";
 // injected by the app shell — not Miranda's stage pipeline.
 // ---------------------------------------------------------------------------
 
-// All optional roles are treated as available in the adapter layer.
-// When the settings panel (Phase 6) is wired in, this set will be derived
-// from the user's configured model slots instead.
-const ALL_OPTIONAL_ROLES = new Set<OptionalRoleName>([
-  "planner_deep",
-  "debugger",
-  "reader",
-  "vision",
-]);
+function getConfiguredOptionalRoles(settings: OrcaSettings): Set<OptionalRoleName> {
+  const optionalRoles: OptionalRoleName[] = ["planner_deep", "debugger", "reader", "vision"];
+  return new Set(optionalRoles.filter((r) => Boolean(settings.roles[r])));
+}
 
 // ---------------------------------------------------------------------------
 // Role Settings Loader
@@ -978,7 +973,7 @@ async function routeRequest(
   const coreRole = pickCoreRole(task, settings);
   const { role: heuristicRole, isFallback, warning } = selectRole(
     roleCtx,
-    ALL_OPTIONAL_ROLES,
+    getConfiguredOptionalRoles(settings),
     coreRole,
   );
   if (warning) {

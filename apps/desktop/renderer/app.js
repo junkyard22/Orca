@@ -530,12 +530,12 @@ function buildPipelineSummaryFromEvents(result) {
 // ── Safe markdown renderer ────────────────────────────────────────────────
 
 function renderPipelineSummaryBadge(summary) {
-  if (!summary || pipelineBadgeRendered) return false;
+  if (!summary || pipelineBadgeRendered) return null;
   summary._eventLog = pipelineEventLog.slice();
-  appendPipelineBadge(summary);
+  const badgeEl = appendPipelineBadge(summary);
   pendingPipelineSummary = null;
   pipelineBadgeRendered = true;
-  return true;
+  return badgeEl || null;
 }
 
 function escapeHtml(str) {
@@ -774,6 +774,12 @@ function appendPipelineBadge(summary) {
   if (!summary) return;
   showMessages();
 
+  // Map the raw role to a user-facing label. "brain" is the planning/routing
+  // layer and should not appear as the overall run executor in the badge.
+  const displayRole = (window.PipelineTrace && window.PipelineTrace.badgeRoleLabel)
+    ? window.PipelineTrace.badgeRoleLabel(summary)
+    : String(summary.role ?? "unknown");
+
   const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : "fail";
   const confidencePct = Math.round((summary.confidence ?? 1) * 100);
   const durationSec   = ((summary.durationMs ?? 0) / 1000).toFixed(2);
@@ -797,7 +803,7 @@ function appendPipelineBadge(summary) {
 
   // ── Outcome summary ─────────────────────────────────────────────────────
   const outcomeRows = [
-    ["Role", summary.role ?? "unknown"],
+    ["Role", displayRole],
     ["Verdict", summary.verdict ?? "unknown"],
     ["Confidence", `${confidencePct}%`],
     ["Issues", String(summary.issueCount ?? 0)],
@@ -1038,7 +1044,7 @@ function appendPipelineBadge(summary) {
   div.style.overflow = "visible";
   div.innerHTML = `
     <div class="pipeline-badge-header">
-      <span class="pb-role">${escapeHtml(String(summary.role ?? "unknown"))}</span>
+      <span class="pb-role">${escapeHtml(displayRole)}</span>
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
       <span class="pb-confidence">${confidencePct}%</span>
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
@@ -1075,7 +1081,7 @@ function appendPipelineBadge(summary) {
   const header = document.createElement("div");
   header.className = "pipeline-badge-header";
   header.innerHTML = `
-      <span class="pb-role">${escapeHtml(String(summary.role ?? "unknown"))}</span>
+      <span class="pb-role">${escapeHtml(displayRole)}</span>
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
       <span class="pb-confidence">${confidencePct}%</span>
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
@@ -1142,9 +1148,47 @@ function appendPipelineBadge(summary) {
       behavior: "smooth",
     });
   });
+  return div;
 }
 
 // ── Tool call card ────────────────────────────────────────────────────────
+
+function redactToolText(value) {
+  return String(value ?? "")
+    .replace(/\b(sk-[a-z0-9_-]{12,})\b/gi, "[redacted]")
+    .replace(/\b(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*["']?[^"'\s,;]+/gi, "$1=[redacted]");
+}
+
+function formatToolRequestSummary(tool, args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    const text = redactToolText(args).trim();
+    return text || "No visible parameters";
+  }
+
+  const lines = [];
+  const command = typeof args.command === "string" ? redactToolText(args.command).trim() : "";
+  const cwd = typeof args.cwd === "string" ? redactToolText(args.cwd).trim() : "";
+  if (/run_command|execute_command|shell/i.test(String(tool)) && command) {
+    lines.push(`Command: ${command}`);
+    if (cwd) lines.push(`Working directory: ${cwd}`);
+    return lines.join("\n");
+  }
+
+  for (const key of ["path", "file", "filename", "url", "query", "pattern"]) {
+    if (typeof args[key] === "string" && args[key].trim()) {
+      lines.push(`${key}: ${redactToolText(args[key]).trim()}`);
+    }
+  }
+
+  if (lines.length > 0) return lines.join("\n");
+
+  const visibleKeys = Object.keys(args)
+    .filter((key) => !/(api[_-]?key|token|secret|password|authorization|schema)/i.test(key))
+    .slice(0, 6);
+  return visibleKeys.length > 0
+    ? `Parameters: ${visibleKeys.join(", ")}`
+    : "Parameters hidden";
+}
 
 function appendToolCard(id, tool, args) {
   showMessages();
@@ -1154,6 +1198,7 @@ function appendToolCard(id, tool, args) {
   div.style.display = "flex";
   div.style.flexDirection = "column";
   div.style.alignSelf = "stretch";
+  div.style.flexShrink = "0";
   div.style.overflow = "visible";
 
   const header = document.createElement("div");
@@ -1171,18 +1216,15 @@ function appendToolCard(id, tool, args) {
   status.className = "tool-card-status";
   status.textContent = "awaiting approval…";
 
-  const argsStr = typeof args === "object" && args !== null
-    ? JSON.stringify(args, null, 2)
-    : String(args ?? "");
-
   const argsEl = document.createElement("div");
   argsEl.className = "tool-card-args";
-  argsEl.textContent = argsStr.trim() ? argsStr : "(no args)";
+  argsEl.textContent = formatToolRequestSummary(tool, args);
   argsEl.style.display = "block";
   argsEl.style.padding = "6px 12px";
   argsEl.style.margin = "0";
   argsEl.style.borderTop = "1px solid var(--border)";
-  argsEl.style.maxHeight = "120px";
+  argsEl.style.maxHeight = "220px";
+  argsEl.style.minHeight = "34px";
   argsEl.style.overflowY = "auto";
   argsEl.style.overflowX = "auto";
   argsEl.style.whiteSpace = "pre-wrap";
@@ -1279,7 +1321,16 @@ async function sendMessage() {
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
     const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary ?? buildPipelineSummaryFromEvents(result);
-    renderPipelineSummaryBadge(summaryToRender);
+    const badgeEl = renderPipelineSummaryBadge(summaryToRender);
+    if (badgeEl && livePanel && livePanel.setTraceLink) {
+      livePanel.setTraceLink(function () {
+        if (!badgeEl.classList.contains("expanded")) {
+          badgeEl.querySelector(".pb-details-btn")?.click();
+        } else {
+          badgeEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      });
+    }
 
     if (!result.ok) finalStatus = "error";
   } catch (err) {
@@ -2161,10 +2212,7 @@ orca.onToolRequest((id, tool, args) => {
   const dialog = document.getElementById("tool-approval-dialog");
   document.getElementById("approval-tool-name").textContent  = tool;
   document.getElementById("approval-tool-name-2").textContent = tool;
-  document.getElementById("approval-args").textContent =
-    typeof args === "object" && args !== null
-      ? JSON.stringify(args, null, 2)
-      : String(args);
+  document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
   dialog.dataset.approvalId = id;
   dialog.style.display      = "flex";
 

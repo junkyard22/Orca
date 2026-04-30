@@ -100,6 +100,8 @@ function extractLocalPath(message: string): string | undefined {
 }
 
 function isProjectAuditRequest(message: string): boolean {
+  if (asksForRuntimeVerification(message)) return false;
+
   const hasPath = !!extractLocalPath(message);
   const auditLanguage =
     /\b(check|review|audit|inspect|assess|evaluate)\b.{0,80}\b(app|repo|repository|project|codebase|code base)\b/i.test(message) ||
@@ -107,6 +109,14 @@ function isProjectAuditRequest(message: string): boolean {
     /\b(production|prod|ship|release)\s+read(?:y|iness)\b/i.test(message) ||
     /\bready\s+for\s+(production|prod|release|ship|shipping)\b/i.test(message);
   return auditLanguage && (hasPath || /\b(this|the|my)\s+(app|repo|repository|project|codebase|code base)\b/i.test(message));
+}
+
+function asksForRuntimeVerification(message: string): boolean {
+  return (
+    /\b(?:actually\s+)?run\b.{0,120}\b(?:commands?|tests?|build|lint|verification|contract:check)\b/i.test(message) ||
+    /\bdo\s+not\s+do\s+a\s+read[-\s]?only\s+(?:project\s+)?audit\b/i.test(message) ||
+    /\b(?:pnpm|npm|yarn|bun|cargo|go|pytest|python)\s+(?:run\s+)?[\w:.-]+/i.test(message)
+  );
 }
 
 function extractLeadingVerb(message: string): string | null {

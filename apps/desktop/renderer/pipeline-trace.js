@@ -380,6 +380,48 @@
     }
   }
 
+  // ── Badge role label ─────────────────────────────────────────────────────
+
+  /**
+   * Map a pipeline summary's raw role string to a user-facing badge label.
+   *
+   * "brain" is the planning/routing/synthesis layer — not a worker agent.
+   * When the role is "brain", we derive a more meaningful label from the
+   * event log so the overall badge reflects what kind of work actually ran.
+   *
+   * Non-brain roles (coder, debugger, project_audit, …) are returned as-is.
+   */
+  function badgeRoleLabel(summary) {
+    const raw = summary && summary.role;
+
+    // Known non-brain roles are meaningful as-is.
+    if (!raw || raw === "unknown") return raw || "unknown";
+    if (raw !== "brain") return raw;
+
+    // "brain" is the planning/routing/synthesis layer — map to a task label.
+    const eventLog = Array.isArray(summary._eventLog) ? summary._eventLog : [];
+
+    // Audit detail present → a project_audit result wrapped in a brain summary.
+    if (summary.auditDetail) return "project_audit";
+
+    // Subagents were spawned → Brain orchestrated specialist workers.
+    if (eventLog.some(function (e) { return e && e.type === "subagent:spawned"; })) {
+      return "orchestration";
+    }
+
+    // Multiple agent dispatches → multi-worker orchestration.
+    const agentStarts = eventLog.filter(function (e) { return e && e.type === "maestro:agent_start"; });
+    if (agentStarts.length > 1) return "orchestration";
+
+    // Single dispatch to a non-brain worker → surface that worker's role.
+    if (agentStarts.length === 1 && agentStarts[0].role && agentStarts[0].role !== "brain") {
+      return agentStarts[0].role;
+    }
+
+    // Brain answered directly with no specialist delegation.
+    return "analysis";
+  }
+
   // ── Live trace panel (DOM controller) ────────────────────────────────────
 
   function escapeHtml(s) {
@@ -435,6 +477,7 @@
     let finished        = false;
     let expanded        = false;
     let role            = null;
+    let traceLinkFn     = null;
 
     const wrap = document.createElement("div");
     wrap.className = "live-trace-panel";
@@ -449,6 +492,7 @@
       +   '<button class="ltp-toggle" type="button" aria-expanded="false">'
       +     'Details <span class="ltp-chevron" aria-hidden="true">›</span>'
       +   '</button>'
+      +   '<button class="ltp-view-trace" type="button" aria-label="Jump to full pipeline summary" hidden>Full trace ↓</button>'
       +   '<button class="ltp-close" type="button" aria-label="Dismiss pipeline trace" hidden>✕</button>'
       + '</div>'
       + '<div class="ltp-detail" data-detail role="region" aria-label="Pipeline progress" hidden>'
@@ -460,9 +504,10 @@
     const currentEl = wrap.querySelector("[data-current]");
     const elapsedEl = wrap.querySelector("[data-elapsed]");
     const toggleBtn = wrap.querySelector(".ltp-toggle");
-    const closeBtn  = wrap.querySelector(".ltp-close");
-    const detailEl  = wrap.querySelector("[data-detail]");
-    const rowsEl    = wrap.querySelector("[data-rows]");
+    const closeBtn      = wrap.querySelector(".ltp-close");
+    const viewTraceBtn  = wrap.querySelector(".ltp-view-trace");
+    const detailEl      = wrap.querySelector("[data-detail]");
+    const rowsEl        = wrap.querySelector("[data-rows]");
 
     function tickElapsed() {
       const sec = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -560,6 +605,7 @@
       if (finalLabel) currentEl.textContent = finalLabel;
       // Reveal the explicit dismiss control alongside the existing toggle.
       if (closeBtn) closeBtn.hidden = false;
+      if (viewTraceBtn && traceLinkFn) viewTraceBtn.hidden = false;
     }
 
     /**
@@ -572,6 +618,24 @@
       stickyDelayMs = Math.max(0, Number(delayMs) || 0);
       pendingRemoval = true;
       armStickyTimer();
+    }
+
+    /**
+     * Register a callback that scrolls/expands the full pipeline summary badge.
+     * Must be called after finish(); calling before finish() is a no-op for
+     * button visibility (the button stays hidden until the panel is done).
+     * Safe to call multiple times — last call wins.
+     */
+    function setTraceLink(fn) {
+      if (!fn) return;
+      traceLinkFn = fn;
+      if (viewTraceBtn) {
+        viewTraceBtn.onclick = function (ev) {
+          ev.stopPropagation();
+          fn();
+        };
+        if (finished) viewTraceBtn.hidden = false;
+      }
     }
 
     function destroy() {
@@ -611,6 +675,7 @@
       setRole:           setRole,
       finish:            finish,
       scheduleRemoval:   scheduleRemoval,
+      setTraceLink:      setTraceLink,
       destroy:           destroy,
       isFinished:        function () { return finished; },
       isExpanded:        function () { return expanded; },
@@ -628,6 +693,7 @@
     formatIssueSummary:     formatIssueSummary,
     statusIcon:             statusIcon,
     shouldAutoRemove:       shouldAutoRemove,
+    badgeRoleLabel:         badgeRoleLabel,
     createLiveTracePanel:   createLiveTracePanel,
   };
 
