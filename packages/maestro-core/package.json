@@ -4,7 +4,7 @@
   "description": "Portable orchestration logic layer for Maestro — Orca pod member",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/YakStacks/maestro"
