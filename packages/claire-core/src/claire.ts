@@ -9,7 +9,7 @@ import type {
   TaskSpec,
 } from "./types.js";
 import {
-  CLAIRE_SYSTEM_PROMPT,
+  buildClaireMessages,
   buildFailurePrompt,
   buildPresentPrompt,
 } from "./voice.js";
@@ -59,8 +59,7 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
   const history: ConversationTurn[] = [];
 
   // ── EXECUTABLE — result presentation ──────────────────────────────────────
-  // Pipeline ran. Claire re-voices the result via a direct LLM call.
-  // This is the ONLY path that calls deps.complete().
+  // Pipeline ran. Claire re-voices the result.
 
   async function presentResult(
     originalMessage: string,
@@ -74,30 +73,19 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
       return result.followUpQuestion;
     }
 
+    const chat = historyToMessages(history);
+
     if (result.status === "FAIL") {
       const summary = result.summary ?? result.userFacingText ?? "Something went wrong.";
-      const messages: ClaireMessage[] = [
-        { role: "system", content: CLAIRE_SYSTEM_PROMPT },
-        ...historyToMessages(history),
-        { role: "user", content: buildFailurePrompt(originalMessage, summary) },
-      ];
-      return deps.complete(messages);
+      return deps.complete(buildClaireMessages(buildFailurePrompt(originalMessage, summary), chat));
     }
 
-    // SUCCESS or WARN — build raw pipeline text then re-voice through Claire.
     const rawOutput = buildRawOutput(result, spec);
-    const messages: ClaireMessage[] = [
-      { role: "system", content: CLAIRE_SYSTEM_PROMPT },
-      ...historyToMessages(history),
-      { role: "user", content: buildPresentPrompt(originalMessage, rawOutput) },
-    ];
-    return deps.complete(messages);
+    return deps.complete(buildClaireMessages(buildPresentPrompt(originalMessage, rawOutput), chat));
   }
 
   function buildRawOutput(result: ExecutionResult, _spec: TaskSpec): string {
-    if (result.userFacingText?.trim()) {
-      return result.userFacingText.trim();
-    }
+    if (result.userFacingText?.trim()) return result.userFacingText.trim();
     const arts = result.artifacts as { filesChanged?: Array<{ path?: string }> } | undefined;
     if (arts?.filesChanged && arts.filesChanged.length > 0) {
       return arts.filesChanged.map((f) => `- ${f.path ?? "(unknown)"}`).join("\n");
@@ -124,25 +112,27 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
       const msgHistory = historyToClassifyMessages(history);
       const classification = classifyIntent(normalized, msgHistory);
 
-      // ── CONVERSATIONAL — instant, no LLM call ─────────────────────────────
-      // cannedResponse is always present for known patterns. If somehow absent
-      // (future extensibility), fall back to a safe default rather than calling
-      // the LLM — keeping conversational paths latency-free.
+      // ── CONVERSATIONAL — Narrator call, no pipeline ───────────────────────
       if (classification.kind === "CONVERSATIONAL") {
-        const reply = classification.cannedResponse ?? "Got it.";
+        const reply = await deps.complete(
+          buildClaireMessages(normalized, historyToMessages(history)),
+        );
         pushHistory(normalized, reply);
         return reply;
       }
 
-      // ── NEEDS_CLARIFICATION — instant, no LLM call ────────────────────────
-      // classifyIntent already produced a naturally-phrased question.
-      // Don't call the LLM to rephrase it — that's the latency killer.
+      // ── NEEDS_CLARIFICATION — Narrator call, no pipeline ─────────────────
+      // The system prompt instructs Claire to ask one clear question when
+      // the intent is underspecified. The LLM generates the right question
+      // from the message + history context — no hardcoded question strings.
+      // Clarify exchanges are not pushed to history (navigational noise).
       if (classification.kind === "NEEDS_CLARIFICATION") {
-        // Don't add clarify exchanges to history — they're navigational noise.
-        return classification.question;
+        return deps.complete(
+          buildClaireMessages(normalized, historyToMessages(history)),
+        );
       }
 
-      // ── EXECUTABLE — pipeline + LLM re-voice ──────────────────────────────
+      // ── EXECUTABLE — full pipeline + re-voice ─────────────────────────────
       const { spec } = classification;
       throwIfAborted(signal);
 
