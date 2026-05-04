@@ -1720,10 +1720,14 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       gate,
     });
     analysisWriter.attachRuntime(runtime);
+    // Narrator handles all of Claire's LLM calls (conversational replies and
+    // result re-voicing). Falls back to Brain if narrator isn't configured.
+    const narratorAdapter = adapterMap.get('narrator') ?? brainAdapter;
+    const narratorModel = s.roles?.['narrator']?.model ?? model;
     claire = createClaire({
       complete: async (messages: ClaireMessage[]) => {
-        const resp = await brainAdapter.complete({
-          model,
+        const resp = await narratorAdapter.complete({
+          model: narratorModel,
           messages,
           temperature: 0.9,
           maxTokens: 1024,
