@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Core runtime foundation for building tool-execution apps",
   "author": "YakStacks",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/junkyard22/workbench-core.git"

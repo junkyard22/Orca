@@ -183,4 +183,6 @@ pnpm dev export-training-data \
 
 ## License
 
-Apache 2.0
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue)](https://polyformproject.org/licenses/noncommercial/1.0.0)
+
+PolyForm Noncommercial 1.0.0 — free for noncommercial use. See [LICENSE](LICENSE) for details.
