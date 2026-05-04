@@ -31,6 +31,14 @@ const CONVERSATIONAL_PATTERNS: RegExp[] = [
   /^that'?s (right|correct|great|perfect|good|fine|nice|helpful)\s*[!.]?\s*$/i,
   /^(sounds? (right|good|great|perfect|correct)|that'?s what i (wanted|needed|meant))\s*[!.]?\s*$/i,
   /^(wow|amazing|impressive|love it|love that)\s*[!.]?\s*$/i,
+  // Opinion / discussion questions — no task, just curiosity or chat
+  /^what do you think (of|about)\b/i,
+  /^what('?s| is) your (opinion|take|view|thought|thoughts) (on|about)\b/i,
+  /^do you (think|believe|feel|reckon)\b/i,
+  /^(can|could) you explain\b/i,
+  /^tell me (about|more about)\b/i,
+  /^(how|why) do(es)? (that|it|this)\b/i,
+  /^(what|how|why) (is|are|was|were)\b(?!.*(creat|build|writ|generat|implement|add|fix|chang|updat|remov|delet|refactor|deploy|set up|run|execut))/i,
 ];
 
 function isConversational(trimmed: string): boolean {
