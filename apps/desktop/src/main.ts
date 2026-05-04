@@ -37,7 +37,8 @@ import type {
 } from "@clawde/orca-core";
 import { buildToolBootstrap } from "@clawde/tool-bootstrap";
 import type { BootstrappedTool } from "@clawde/tool-bootstrap";
-import { createBenson } from "@clawde/benson-core";
+import { createClaire } from "@clawde/claire-core";
+import type { ClaireMessage } from "@clawde/claire-core";
 import {
   createMaestroCore,
   getRolePrompt,
@@ -1402,10 +1403,10 @@ function buildTaskPrompt(task: OrcaTaskSpec, role?: string): string {
 
 // ── Orca pod ───────────────────────────────────────────────────────────────
 
-type BensonHandle = ReturnType<typeof createBenson>;
+type ClaireHandle = ReturnType<typeof createClaire>;
 
 let runtime: OrcaRuntime | null = null;
-let benson: BensonHandle | null = null;
+let claire: ClaireHandle | null = null;
 let store: SqliteStore | null = null;
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 let dewey: InstanceType<typeof Dewey> | null = null;
@@ -1526,7 +1527,7 @@ function initOrca(s: OrcaSettings): Promise<string | null> {
 
 async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
   runtime = null;
-  benson  = null;
+  claire  = null;
   fallbackPoolManager = null;
   _initWarnings = [];
 
@@ -1571,8 +1572,9 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
 
     // Brain is the fallback LLM used by ctx.llm for any role without a
     // dedicated entry in roleAdapters.
+    const brainAdapter = buildAdapterForProvider(provider, model);
     const llm = createDirectLLMService(
-      buildAdapterForProvider(provider, model),
+      brainAdapter,
       model,
       { maxTokens: 8192, temperature: 0.7 },
     );
@@ -1718,7 +1720,18 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       gate,
     });
     analysisWriter.attachRuntime(runtime);
-    benson  = createBenson({ executeTask: runtime.executeTask.bind(runtime) });
+    claire = createClaire({
+      complete: async (messages: ClaireMessage[]) => {
+        const resp = await brainAdapter.complete({
+          model,
+          messages,
+          temperature: 0.9,
+          maxTokens: 1024,
+        });
+        return resp.content;
+      },
+      executeTask: runtime.executeTask.bind(runtime),
+    });
     return null;
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
@@ -2137,21 +2150,21 @@ ipcMain.handle("session:delete", async (_ev, id: string) => {
   }
 });
 
-// ── Session resume — restore Benson's conversation history ─────────────────
+// ── Session resume — restore Claire's conversation history ──────────────────
 // The renderer passes the turns it already has in its chat view so that
 // subsequent messages pick up context from the previous session.
 ipcMain.handle(
   "session:resume",
   (_ev, turns: Array<{ user: string; assistant: string }>) => {
     if (isAppLocked()) return { ok: false, error: lockedError() };
-    if (!benson) return { ok: false, error: "Orca is not initialized." };
+    if (!claire) return { ok: false, error: "Orca is not initialized." };
     if (!Array.isArray(turns)) return { ok: false, error: "turns must be an array." };
     const MAX_TURN_LEN = 32_768;
     const safe = turns
       .filter((t) => typeof t?.user === "string" && typeof t?.assistant === "string")
       .slice(0, 500)
       .map((t) => ({ user: t.user.slice(0, MAX_TURN_LEN), assistant: t.assistant.slice(0, MAX_TURN_LEN) }));
-    benson.setHistory(safe);
+    claire.setHistory(safe);
     return { ok: true, count: safe.length };
   },
 );
@@ -2182,7 +2195,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   const stillInitializing = _initOrcaChain.then(() => null).catch(() => null);
   await stillInitializing;
 
-  if (!benson || !runtime)
+  if (!claire || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
   const normalizedText = String(text ?? "").slice(0, 200_000).replace(/\r\n?/g, "\n").trim();
@@ -2277,10 +2290,10 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   );
 
   try {
-    const taskPromise = benson.handleUserMessage(normalizedText, {
+    const taskPromise = claire.handleUserMessage(normalizedText, {
       abortSignal: abortController.signal,
     })
-      .then((reply) => ({ ok: true as const, reply }))
+      .then((text) => ({ ok: true as const, reply: { text } }))
       .catch((err) => {
         if (isAbortError(err)) {
           return { ok: false as const, error: err.message || "Stopped." };

@@ -39,6 +39,9 @@ importers:
       '@clawde/benson-core':
         specifier: workspace:*
         version: link:../../packages/benson-core
+      '@clawde/claire-core':
+        specifier: workspace:*
+        version: link:../../packages/claire-core
       '@clawde/dewey-core':
         specifier: workspace:*
         version: link:../../packages/dewey-core
@@ -192,6 +195,22 @@ importers:
       vitest:
         specifier: ^4.0.0
         version: 4.1.1(@types/node@22.19.13)(vite@8.0.5(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@22.19.13)(esbuild@0.27.3)(jiti@2.6.1)(tsx@4.21.0))
+
+  packages/claire-core:
+    dependencies:
+      '@clawde/benson-core':
+        specifier: workspace:*
+        version: link:../benson-core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.12.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.0
+        version: 4.1.1(@types/node@22.19.17)(vite@8.0.5(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@22.19.17)(esbuild@0.27.3)(jiti@2.6.1)(tsx@4.21.0))
 
   packages/dewey-core:
     devDependencies:

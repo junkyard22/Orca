@@ -15,6 +15,7 @@
   "dependencies": {
     "@clawde/agent-loop-core": "workspace:*",
     "@clawde/benson-core": "workspace:*",
+    "@clawde/claire-core": "workspace:*",
     "@clawde/dewey-core": "workspace:*",
     "@clawde/ext-docs": "workspace:*",
     "@clawde/ext-github": "workspace:*",
