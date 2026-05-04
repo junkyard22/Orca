@@ -10,4 +10,4 @@ export type {
   TaskSpec,
   ExecuteTaskOptions,
 } from "./types.js";
-export { CLAIRE_SYSTEM_PROMPT, buildClarifyPrompt, buildPresentPrompt, buildFailurePrompt } from "./voice.js";
+export { CLAIRE_SYSTEM_PROMPT, buildPresentPrompt, buildFailurePrompt } from "./voice.js";

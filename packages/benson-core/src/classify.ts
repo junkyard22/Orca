@@ -8,36 +8,93 @@ import { parseIntent } from "./intent.js";
 export type IntentClass = "CONVERSATIONAL" | "NEEDS_CLARIFICATION" | "EXECUTABLE";
 
 export type ClassificationResult =
-  | { kind: "CONVERSATIONAL" }
+  | {
+      kind: "CONVERSATIONAL";
+      /**
+       * Pre-crafted reply in Claire's voice. Always present for patterns defined
+       * in CONVERSATIONAL_RULES. Undefined only for future free-form matches
+       * where Claire should fall back to an LLM call.
+       */
+      cannedResponse?: string;
+    }
   | { kind: "NEEDS_CLARIFICATION"; question: string }
   | { kind: "EXECUTABLE"; spec: TaskSpec };
 
 // ---------------------------------------------------------------------------
-// Conversational detection — no pipeline action needed
+// Conversational detection — each pattern carries its canned response.
+// No LLM call here or anywhere downstream for these cases.
 // ---------------------------------------------------------------------------
 
-const CONVERSATIONAL_PATTERNS: RegExp[] = [
-  /^(hi|hey|hello|howdy|yo|hiya)\s*[!.]?\s*$/i,
-  /^how (are you|are things|is it going|'?s it going|are you doing)\s*[?!.]?\s*$/i,
-  /^(thanks?|thank you|ty|thx|cheers|appreciate (it|that)|much appreciated)\s*[!.]?\s*$/i,
-  /^(great|nice|cool|awesome|perfect|excellent|sounds? good|good job|well done)\s*[!.]?\s*$/i,
-  /^what can you (do|help with|help me with)\s*[?.]?\s*$/i,
-  /^what(('?s)|( is)) (your )?(name|purpose|function|role)\s*[?.]?\s*$/i,
-  /^who are you\s*[?.]?\s*$/i,
-  /^(good )(morning|afternoon|evening|night)\s*[!.]?\s*$/i,
-  /^(ok|okay|got it|makes sense|understood|sure thing|sounds good)\s*[!.]?\s*$/i,
-  /^that (works?|looks? (right|good|correct)|is (right|correct|great|perfect))\s*[!.]?\s*$/i,
-  /^that'?s (right|correct|great|perfect|good|fine|nice|helpful)\s*[!.]?\s*$/i,
-  /^(sounds? (right|good|great|perfect|correct)|that'?s what i (wanted|needed|meant))\s*[!.]?\s*$/i,
-  /^(wow|amazing|impressive|love it|love that)\s*[!.]?\s*$/i,
+interface ConversationalRule {
+  pattern: RegExp;
+  canned: string;
+}
+
+const CONVERSATIONAL_RULES: ConversationalRule[] = [
+  {
+    pattern: /^(hi|hey|hello|howdy|yo|hiya)\s*[!.]?\s*$/i,
+    canned: "Hey! What are you working on?",
+  },
+  {
+    pattern: /^how (are you|are things|is it going|'?s it going|are you doing)\s*[?!.]?\s*$/i,
+    canned: "Doing well. What do you need?",
+  },
+  {
+    pattern: /^(thanks?|thank you|ty|thx|cheers|appreciate (it|that)|much appreciated)\s*[!.]?\s*$/i,
+    canned: "Anytime.",
+  },
+  {
+    pattern: /^(great|nice|cool|awesome|perfect|excellent|sounds? good|good job|well done)\s*[!.]?\s*$/i,
+    canned: "Glad to hear it.",
+  },
+  {
+    pattern: /^what can you (do|help with|help me with)\s*[?.]?\s*$/i,
+    canned: "I can write and fix code, run commands, search your codebase, explain things — pretty much anything dev-related. What do you need?",
+  },
+  {
+    pattern: /^what(('?s)|( is)) (your )?(name|purpose|function|role)\s*[?.]?\s*$/i,
+    canned: "I'm Claire. What are you working on?",
+  },
+  {
+    pattern: /^who are you\s*[?.]?\s*$/i,
+    canned: "I'm Claire. I help you build and fix things. What are you working on?",
+  },
+  {
+    pattern: /^(good )(morning|afternoon|evening|night)\s*[!.]?\s*$/i,
+    canned: "Hey! What are you working on?",
+  },
+  {
+    pattern: /^(ok|okay|got it|makes sense|understood|sure thing|sounds good)\s*[!.]?\s*$/i,
+    canned: "Got it.",
+  },
+  {
+    pattern: /^that (works?|looks? (right|good|correct)|is (right|correct|great|perfect))\s*[!.]?\s*$/i,
+    canned: "Great.",
+  },
+  {
+    pattern: /^that'?s (right|correct|great|perfect|good|fine|nice|helpful)\s*[!.]?\s*$/i,
+    canned: "Glad that worked.",
+  },
+  {
+    pattern: /^(sounds? (right|good|great|perfect|correct)|that'?s what i (wanted|needed|meant))\s*[!.]?\s*$/i,
+    canned: "Perfect.",
+  },
+  {
+    pattern: /^(wow|amazing|impressive|love it|love that)\s*[!.]?\s*$/i,
+    canned: "Happy to help.",
+  },
 ];
 
-function isConversational(trimmed: string): boolean {
-  return CONVERSATIONAL_PATTERNS.some((p) => p.test(trimmed));
+function matchConversational(trimmed: string): string | null {
+  for (const rule of CONVERSATIONAL_RULES) {
+    if (rule.pattern.test(trimmed)) return rule.canned;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
-// Needs-clarification detection — task implied but target is missing
+// Needs-clarification detection — task implied but target is missing.
+// Questions are already naturally phrased — no LLM rephrasing needed.
 // Only fires when there is no prior history to give context.
 // ---------------------------------------------------------------------------
 
@@ -74,14 +131,11 @@ const CLARIFY_RULES: ClarifyRule[] = [
 ];
 
 function getNeedsClarificationQuestion(trimmed: string, history?: Message[]): string | null {
-  // If there is prior conversation history, these vague references (e.g. "fix it")
-  // can be resolved from context — don't ask again, route to EXECUTABLE instead.
+  // Vague references ("fix it") are answerable from context if history exists.
   if (history && history.length > 0) return null;
 
   for (const rule of CLARIFY_RULES) {
-    if (rule.pattern.test(trimmed)) {
-      return rule.question;
-    }
+    if (rule.pattern.test(trimmed)) return rule.question;
   }
   return null;
 }
@@ -93,9 +147,11 @@ function getNeedsClarificationQuestion(trimmed: string, history?: Message[]): st
 /**
  * Classify a user message into one of three buckets:
  *
- * - CONVERSATIONAL  — no pipeline action needed; Claire responds directly
- * - NEEDS_CLARIFICATION — task intent present but underspecified; Claire asks one question
+ * - CONVERSATIONAL  — no pipeline action needed; return cannedResponse directly
+ * - NEEDS_CLARIFICATION — task intent present but underspecified; return question directly
  * - EXECUTABLE      — full task spec ready; route to the Brain/pipeline
+ *
+ * This function never makes an LLM call.
  */
 export function classifyIntent(message: string, history?: Message[]): ClassificationResult {
   const trimmed = message.trim();
@@ -104,8 +160,9 @@ export function classifyIntent(message: string, history?: Message[]): Classifica
     return { kind: "NEEDS_CLARIFICATION", question: "What's on your mind?" };
   }
 
-  if (isConversational(trimmed)) {
-    return { kind: "CONVERSATIONAL" };
+  const canned = matchConversational(trimmed);
+  if (canned !== null) {
+    return { kind: "CONVERSATIONAL", cannedResponse: canned };
   }
 
   const clarifyQ = getNeedsClarificationQuestion(trimmed, history);

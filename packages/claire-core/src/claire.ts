@@ -10,7 +10,6 @@ import type {
 } from "./types.js";
 import {
   CLAIRE_SYSTEM_PROMPT,
-  buildClarifyPrompt,
   buildFailurePrompt,
   buildPresentPrompt,
 } from "./voice.js";
@@ -51,12 +50,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-// Whether a pipeline result contains code blocks or is long enough that
-// Claire should pass it through rather than re-voice the whole thing.
-function isLongOrStructured(text: string): boolean {
-  return text.includes("```") || text.length > 400;
-}
-
 // ---------------------------------------------------------------------------
 // Claire factory
 // ---------------------------------------------------------------------------
@@ -65,39 +58,9 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
   const maxTurns = deps.maxHistoryTurns ?? 8;
   const history: ConversationTurn[] = [];
 
-  // ── CONVERSATIONAL ─────────────────────────────────────────────────────────
-  // Claire responds directly using her character voice + full conversation context.
-
-  async function handleConversational(
-    message: string,
-    signal?: AbortSignal,
-  ): Promise<string> {
-    throwIfAborted(signal);
-    const messages: ClaireMessage[] = [
-      { role: "system", content: CLAIRE_SYSTEM_PROMPT },
-      ...historyToMessages(history),
-      { role: "user", content: message },
-    ];
-    return deps.complete(messages);
-  }
-
-  // ── NEEDS_CLARIFICATION ────────────────────────────────────────────────────
-  // Claire asks one targeted question in her own voice.
-
-  async function handleClarification(
-    question: string,
-    signal?: AbortSignal,
-  ): Promise<string> {
-    throwIfAborted(signal);
-    const messages: ClaireMessage[] = [
-      { role: "system", content: CLAIRE_SYSTEM_PROMPT },
-      { role: "user", content: buildClarifyPrompt(question) },
-    ];
-    return deps.complete(messages);
-  }
-
   // ── EXECUTABLE — result presentation ──────────────────────────────────────
-  // Pipeline ran. Claire delivers the result in her voice.
+  // Pipeline ran. Claire re-voices the result via a direct LLM call.
+  // This is the ONLY path that calls deps.complete().
 
   async function presentResult(
     originalMessage: string,
@@ -107,7 +70,6 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
   ): Promise<string> {
     throwIfAborted(signal);
 
-    // Surface any follow-up question from the executor first.
     if (result.followUpQuestion) {
       return result.followUpQuestion;
     }
@@ -122,20 +84,8 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
       return deps.complete(messages);
     }
 
-    // SUCCESS or WARN — build raw pipeline text first.
+    // SUCCESS or WARN — build raw pipeline text then re-voice through Claire.
     const rawOutput = buildRawOutput(result, spec);
-
-    // Pass through structured/long content unchanged but with a brief intro from Claire.
-    if (isLongOrStructured(rawOutput)) {
-      const messages: ClaireMessage[] = [
-        { role: "system", content: CLAIRE_SYSTEM_PROMPT },
-        ...historyToMessages(history),
-        { role: "user", content: buildPresentPrompt(originalMessage, rawOutput) },
-      ];
-      return deps.complete(messages);
-    }
-
-    // Short plain-text result — re-voice fully.
     const messages: ClaireMessage[] = [
       { role: "system", content: CLAIRE_SYSTEM_PROMPT },
       ...historyToMessages(history),
@@ -144,25 +94,16 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
     return deps.complete(messages);
   }
 
-  // Build raw pipeline output for presentation (mirrors benson-core presenter logic
-  // but without the mechanical template wrappers — Claire will voice it herself).
   function buildRawOutput(result: ExecutionResult, _spec: TaskSpec): string {
     if (result.userFacingText?.trim()) {
       return result.userFacingText.trim();
     }
-
     const arts = result.artifacts as { filesChanged?: Array<{ path?: string }> } | undefined;
     if (arts?.filesChanged && arts.filesChanged.length > 0) {
-      const fileList = arts.filesChanged
-        .map((f) => `- ${f.path ?? "(unknown)"}`)
-        .join("\n");
-      return `Created or updated:\n${fileList}`;
+      return arts.filesChanged.map((f) => `- ${f.path ?? "(unknown)"}`).join("\n");
     }
-
     return result.summary ?? "Task completed.";
   }
-
-  // ── Push to history ────────────────────────────────────────────────────────
 
   function pushHistory(user: string, assistant: string): void {
     history.push({ user, assistant });
@@ -183,18 +124,25 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
       const msgHistory = historyToClassifyMessages(history);
       const classification = classifyIntent(normalized, msgHistory);
 
+      // ── CONVERSATIONAL — instant, no LLM call ─────────────────────────────
+      // cannedResponse is always present for known patterns. If somehow absent
+      // (future extensibility), fall back to a safe default rather than calling
+      // the LLM — keeping conversational paths latency-free.
       if (classification.kind === "CONVERSATIONAL") {
-        const reply = await handleConversational(normalized, signal);
+        const reply = classification.cannedResponse ?? "Got it.";
         pushHistory(normalized, reply);
         return reply;
       }
 
+      // ── NEEDS_CLARIFICATION — instant, no LLM call ────────────────────────
+      // classifyIntent already produced a naturally-phrased question.
+      // Don't call the LLM to rephrase it — that's the latency killer.
       if (classification.kind === "NEEDS_CLARIFICATION") {
-        // Don't add clarify exchanges to history — they're noise.
-        return handleClarification(classification.question, signal);
+        // Don't add clarify exchanges to history — they're navigational noise.
+        return classification.question;
       }
 
-      // EXECUTABLE — run the pipeline, then present via Claire's voice.
+      // ── EXECUTABLE — pipeline + LLM re-voice ──────────────────────────────
       const { spec } = classification;
       throwIfAborted(signal);
 

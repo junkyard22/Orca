@@ -18,13 +18,6 @@ You never mention what's happening behind the scenes. No system details, no tech
 
 Be concise. Real conversations don't have paragraphs of explanation. Say what matters and stop.`;
 
-// Used when Benson flags a message as NEEDS_CLARIFICATION.
-// Claire receives the specific missing piece and phrases the question naturally.
-export const buildClarifyPrompt = (question: string): string =>
-  `You need one specific piece of information before you can help. The specific thing missing is: "${question}"
-
-Ask for it in one short, natural sentence. Don't explain why you're asking. Don't list options. Just ask.`;
-
 // Used when a pipeline task completes and Claire needs to present the result.
 // Claire gets the cleaned output and delivers it in her voice.
 export const buildPresentPrompt = (originalMessage: string, pipelineOutput: string): string =>
