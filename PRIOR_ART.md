@@ -94,6 +94,7 @@ User
 |------|--------|-----------------|-----------------|
 | Apr 2026 | **AgentFlow** (UC Santa Barbara, arXiv:2604.20801) | Typed DSL specifying which tools each agent role may call; tool access defined as part of harness contract | Tool surface defined at harness design time, not enforced upstream at runtime. Agent still attempts calls; access is constrained by spec, not by what the agent can see. Miranda shapes the tool surface before the agent's context is built. |
 | May 2026 | **AWS Rex (Trusted Remote Execution)** | Policy-enforced script runtime; every system operation authorized by Cedar policy before execution; agents receive ACCESS_DENIED_EXCEPTION if they exceed policy scope | Rex catches a bad action at the door after the agent attempts it. Miranda doesn't let the agent know the door exists. Rex constrains what agents can do to the host. Miranda shapes the agent's entire tool surface at the role level upstream. |
+| May 2026 | **Superlog** (YC Launch, May 2026) | Observability agent that investigates incidents and auto-generates mergeable PRs; wizard-configured logs, traces, alerts; adjacent to Miranda's audit trail and Pappy's repair loop | Quality gate on the agent's own output. Who verifies Superlog's PRs? No Pappy equivalent gating the generated code before merge. No distillation from verified incident resolutions. |
 | Apr 2026 | **IBM Bob** | Human approval checkpoints between pipeline stages | Supervision by convention, not architecture. A human reviews; the system doesn't enforce role-scoped access at the tool level. |
 | Apr 2026 | **Microsoft Agent Framework v1.0** | Middleware hooks for intercepting execution; pause/resume; human-in-the-loop approvals | Interception after the fact. No role-scoped tool surface definition. No upstream access shaping. |
 
@@ -142,6 +143,7 @@ User
 | Apr 2026 | **NeoCognition** ($40M seed) | Specialized AI models for domain-specific tasks | Validates the jar system market thesis. No published quality-gated distillation pipeline. |
 | Apr 2026 | **Memento-Skills** (arXiv, submitted March 19, 2026) | Continual agent self-improvement via externalized skill memory | Self-improvement without quality gate. Moonshiner timestamps predate submission by ~4 months. |
 | May 2026 | **HeavySkill DFlash** (Google/UCSD, Google Developers Blog) | Diffusion-style speculative decoding achieving 3.13x inference speedup; key finding: improving per-position acceptance probability is 2-3x more valuable than increasing block size — quality over quantity | Direct empirical validation of the jar thesis from the inference side: domain-specialized models with high acceptance rates on structured tasks (math, code) dramatically outperform general models. Exactly the case for a Python specialist jar. |
+| May 2026 | **NVIDIA Star Elastic** (MarkTechPost, May 9 2026) | Single checkpoint containing 30B, 23B, and 12B nested reasoning models; dynamic model selection across reasoning phases; 360x training cost reduction; 12B NVFP4 variant fits in 18.7GB — runs on RTX 3090 | Star Elastic gives you the jars. What's missing: the orchestration layer that decides which tier to route to based on task complexity. Brain decides which jar gets the task. Pappy verifies the output. Moonshiner improves the jar from verified runs. Hardware note: 12B on RTX 3090 validates the consumer-hardware local-first thesis. |
 
 ---
 
@@ -195,7 +197,20 @@ User
 
 ---
 
-## Section 9: Neural Equalizer System (NES)
+## Section 9: Dewey — Persistent User Context & Preference Learning
+
+**What Orca built:** Dewey is a dedicated agent responsible for user context, behavioral observations, and pre-flight briefing of the orchestration pipeline. Named after the Dewey Decimal system. Learns user preferences over time. Dewey's signals feed Moonshiner — user context becomes training signal. Future milestone: Moonshiner compresses raw behavioral observations into compact warm context facts.
+
+| Date | Source | What They Built | What They Missed |
+|------|--------|-----------------|-----------------|
+| May 2026 | **GBrain** (Garry Tan, github.com/garrytan/gbrain) | Markdown-based compounding agent memory with signal detection, overnight dream cycle enrichment, typed relationship graph, zero-LLM-call graph wiring; richest open-source implementation of the memory-as-library concept | Memory connected to the quality loop. Dewey's signals feed Moonshiner. GBrain enriches retrieval but doesn't improve future model behavior. No quality gate on what enters memory. No distillation from memory patterns. |
+| Apr 2026 | **NeoCognition** ($40M seed, TechCrunch, April 21 2026) | Self-learning agents that build world models for any profession or environment | $40M to build the Dewey thesis. No published quality-gated distillation pipeline connecting user context to model improvement. |
+| Mar 2026 | **Hermes Agent v0.6.0** (Nous Research) | Persistent memory via SQLite + FTS5 + LLM summarization | Memory without quality loop. Agent decides what to remember with no gate. |
+| 2026 | **xMemory** (Alan Turing Institute / King's College London) | Four-level semantic hierarchy for context compression | Academic validation of Dewey's context compression thesis. Published after Orca's implementation. |
+
+---
+
+## Section 10: Neural Equalizer System (NES)
 
 **What Orca built:** A neurotechnology framework treating neurological and psychiatric dysfunction as signal-quality failures across volume, frequency, timing, and coherence dimensions. Published at github.com/junkyard22/Neural-Equalizer-System- under CC BY-NC 4.0. Defensive publication: December 11, 2025. Academic outreach initiated to University of Kentucky researchers.
 
@@ -228,6 +243,9 @@ The table below shows what each major team built and what piece they are missing
 | IBM Bob | ✅ | ✅ (human checkpoints) | — | — | — | — |
 | Microsoft A2A v1 | — | — | — | — | ✅ | — |
 | AWS Rex | — | ✅ | — | — | — | — |
+| Superlog (YC Launch) | — | ✅ (audit trail) | — | — | — | — |
+| NVIDIA Star Elastic | ✅ (nested tiers) | — | — | ✅ (nested jars, no quality gate) | — | ✅ (12B on RTX 3090) |
+| GBrain (Garry Tan) | — | — | — | — | — | ✅ |
 | Anthropic Managed Agents | ✅ | — | — | — | — | — |
 | Qualixar OS | ✅ | — | — | ✅ (unverified) | — | — |
 | HeavySkill | ✅ | — | — | — | — | — |
@@ -261,7 +279,7 @@ The pattern documented here is consistent and repeating: well-funded teams with 
 
 The piece none of them have built is the contractual relationship between Pappy and Moonshiner: a quality verifier whose verdicts are the exclusive source of training signal for the next model. That relationship — verified output as curriculum — is what makes the system self-improving without self-degrading.
 
-The verified commit record is unambiguous. Maestro (Brain) was committed November 20, 2025. Moonshiner v0.5.0 "Complete LLM fine-tuning build system" was committed November 28, 2025. Every one of the 41 external validations in this document was published five or more months after those timestamps. The industry did not inspire this architecture. The architecture preceded the industry.
+The verified commit record is unambiguous. Maestro (Brain) was committed November 20, 2025. Moonshiner v0.5.0 "Complete LLM fine-tuning build system" was committed November 28, 2025. Every one of the 44 external validations in this document was published five or more months after those timestamps. The industry did not inspire this architecture. The architecture preceded the industry.
 
 On May 7-8, 2026 alone: Cursor shipped /orchestrate with planners, workers, and verifiers. Microsoft shipped waza, a CLI for evaluating agent skill quality. Garry Tan's gstack went viral with 62.8K views describing 6 named specialist agents each owning a phase of the build. Tech with Mak published a 9-layer production AI architecture with document_grader.py, adaptive_router.py, and versioned hot-swappable prompt templates. AMD published a blog post describing exactly the CPU/GPU split that Holster Memory addresses. All on the same two days. All describing pieces of an architecture committed in November 2025.
 
