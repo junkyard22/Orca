@@ -83,6 +83,7 @@ User
 | May 2026 | **OpenAI Symphony** (OpenAI, May 12 2026) | Every open task gets a dedicated Codex agent; overnight autonomous PR merging from a Linear ticket queue; task decomposition into parallel agent workstreams | Brain-style task decomposition with dedicated agents per task. Gap: no quality gate before merge. No Pappy equivalent. No verification that the output is correct before it lands in production. No training signal from outcomes. Autonomous agents merging PRs overnight without human review is exactly the failure mode Miranda and Pappy exist to prevent. |
 | May 2026 | **Claude Code Agent View** (Anthropic, May 12 2026) | Dispatch multiple agent sessions at once; each keeps running without taking up a terminal tab; see what's running, waiting, and done at a glance; reply inline to unblock sessions; jump in and out without losing place; available on all paid plans | Pipeline visibility with human-in-the-loop unblocking is Orca's pipeline view plus Miranda's approval checkpoint described as a Claude Code feature. Gap: paid plans only. No local execution. No Pappy quality gate. No distillation. Orca has had a pipeline view showing agent sessions, verdicts, and waiting states since v1.0.0 -- free, local, no subscription. |
 | May 2026 | **Anthropic Managed Agents: Dreaming, Outcomes, Multiagent** (Anthropic, May 6 2026) | Lead agent decomposes work and delegates to specialist subagents with their own model, prompt, and tools running in parallel; specialists contribute to lead agent's overall context; full trace visibility in Claude Console | Cloud-locked. No local execution. No model training from verified signal. No jar system. Multiagent orchestration validates Brain + AHP architecture; specialists with role-specific models validates the jar routing thesis. |
+| May 2026 | **Cursor / Bennett Brownlow** (@burkeho, May 14 2026) | Subagent delegation keeping main agent context clean; routing to capable submodels by task type; improving /multitask so the orchestrator stays uncluttered while specialist subagents handle scoped work | No quality gate on subagent output before it returns to the orchestrator. Validates Brain's routing-by-complexity and context-isolation thesis. The gap: subagent outputs enter the main context unverified. |
 
 ---
 
@@ -97,6 +98,7 @@ User
 | May 2026 | **Superlog** (YC Launch, May 2026) | Observability agent that investigates incidents and auto-generates mergeable PRs; wizard-configured logs, traces, alerts; adjacent to Miranda's audit trail and Pappy's repair loop | Quality gate on the agent's own output. Who verifies Superlog's PRs? No Pappy equivalent gating the generated code before merge. No distillation from verified incident resolutions. |
 | Apr 2026 | **IBM Bob** | Human approval checkpoints between pipeline stages | Supervision by convention, not architecture. A human reviews; the system doesn't enforce role-scoped access at the tool level. |
 | Apr 2026 | **Microsoft Agent Framework v1.0** | Middleware hooks for intercepting execution; pause/resume; human-in-the-loop approvals | Interception after the fact. No role-scoped tool surface definition. No upstream access shaping. |
+| May 2026 | **Notion Agent Activity** (Notion, May 13 2026) | Agent Activity dashboard showing what agents are doing in real time; one-click to full chat thread; eliminates wondering if agents are stuck | Control layer. Visibility after the fact vs Miranda's upfront tool authorization. Notion validated the observability need but did not build the enforcement mechanism — Miranda shapes the tool surface before the agent's context is built, not after it acts. |
 
 ---
 
@@ -144,6 +146,8 @@ User
 | Apr 2026 | **Memento-Skills** (arXiv, submitted March 19, 2026) | Continual agent self-improvement via externalized skill memory | Self-improvement without quality gate. Moonshiner timestamps predate submission by ~4 months. |
 | May 2026 | **HeavySkill DFlash** (Google/UCSD, Google Developers Blog) | Diffusion-style speculative decoding achieving 3.13x inference speedup; key finding: improving per-position acceptance probability is 2-3x more valuable than increasing block size — quality over quantity | Direct empirical validation of the jar thesis from the inference side: domain-specialized models with high acceptance rates on structured tasks (math, code) dramatically outperform general models. Exactly the case for a Python specialist jar. |
 | May 2026 | **NVIDIA Star Elastic** (MarkTechPost, May 9 2026) | Single checkpoint containing 30B, 23B, and 12B nested reasoning models; dynamic model selection across reasoning phases; 360x training cost reduction; 12B NVFP4 variant fits in 18.7GB — runs on RTX 3090 | Star Elastic gives you the jars. What's missing: the orchestration layer that decides which tier to route to based on task complexity. Brain decides which jar gets the task. Pappy verifies the output. Moonshiner improves the jar from verified runs. Hardware note: 12B on RTX 3090 validates the consumer-hardware local-first thesis. |
+| May 2026 | **LangChain Labs Moonshiner** (LangChain Labs, May 13 2026) | Applied research effort focused on continual learning from agent runs; capturing signal from traces, transforming it into training data, applying improvements back to agents; partners include Harvey, NVIDIA, Prime Intellect, Fireworks, Baseten | Pappy upstream. LangChain Labs is trying to figure out which signal is useful after the fact. Orca's Moonshiner starts with verified signal because Pappy gates it first — only PASS verdicts enter the training loop. Notable: LangChain Labs independently named their project Moonshiner, validating the distillation framing. |
+| May 2026 | **Red Hat Agentic Skills Repository** (Red Hat, May 13 2026, Red Hat Summit) | Curated skill packs encoding institutional memory into reusable agent behaviors; scoped permissions; human-in-the-loop checkpoints; RHEL/OpenShift/Ansible as governed agent execution platform | Quality-gated distillation loop. Skills are hand-curated, not trained from verified agent runs. Validates the jar system (reusable specialized behaviors) and Miranda (scoped permissions, human-in-the-loop checkpoints) but without Pappy upstream to generate clean training signal. Human curation is the bottleneck; Moonshiner removes it. |
 
 ---
 
@@ -251,6 +255,10 @@ The table below shows what each major team built and what piece they are missing
 | HeavySkill | ✅ | — | — | — | — | — |
 | Thoughtworks SPDD | ✅ | — | ✅ (principle) | ✅ (principle) | ✅ (principle) | — |
 | Rowboat | ✅ | — | — | — | — | ✅ |
+| LangChain Labs Moonshiner | — | — | — | ✅ (no quality gate) | — | — |
+| Cursor /multitask (Bennett Brownlow) | ✅ (subagent delegation) | — | — | — | — | — |
+| Notion Agent Activity | — | — | — | — | — | — |
+| Red Hat Agentic Skills Repository | — | ✅ (scoped permissions) | — | — | — | — |
 
 Every row is missing at least three checkmarks. Orca is the only system with all six.
 
@@ -279,7 +287,7 @@ The pattern documented here is consistent and repeating: well-funded teams with 
 
 The piece none of them have built is the contractual relationship between Pappy and Moonshiner: a quality verifier whose verdicts are the exclusive source of training signal for the next model. That relationship — verified output as curriculum — is what makes the system self-improving without self-degrading.
 
-The verified commit record is unambiguous. Maestro (Brain) was committed November 20, 2025. Moonshiner v0.5.0 "Complete LLM fine-tuning build system" was committed November 28, 2025. Every one of the 44 external validations in this document was published five or more months after those timestamps. The industry did not inspire this architecture. The architecture preceded the industry.
+The verified commit record is unambiguous. Maestro (Brain) was committed November 20, 2025. Moonshiner v0.5.0 "Complete LLM fine-tuning build system" was committed November 28, 2025. Every one of the 48 external validations in this document was published five or more months after those timestamps. The industry did not inspire this architecture. The architecture preceded the industry.
 
 On May 7-8, 2026 alone: Cursor shipped /orchestrate with planners, workers, and verifiers. Microsoft shipped waza, a CLI for evaluating agent skill quality. Garry Tan's gstack went viral with 62.8K views describing 6 named specialist agents each owning a phase of the build. Tech with Mak published a 9-layer production AI architecture with document_grader.py, adaptive_router.py, and versioned hot-swappable prompt templates. AMD published a blog post describing exactly the CPU/GPU split that Holster Memory addresses. All on the same two days. All describing pieces of an architecture committed in November 2025.
 
