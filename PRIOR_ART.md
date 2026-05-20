@@ -84,6 +84,8 @@ User
 | May 2026 | **Claude Code Agent View** (Anthropic, May 12 2026) | Dispatch multiple agent sessions at once; each keeps running without taking up a terminal tab; see what's running, waiting, and done at a glance; reply inline to unblock sessions; jump in and out without losing place; available on all paid plans | Pipeline visibility with human-in-the-loop unblocking is Orca's pipeline view plus Miranda's approval checkpoint described as a Claude Code feature. Gap: paid plans only. No local execution. No Pappy quality gate. No distillation. Orca has had a pipeline view showing agent sessions, verdicts, and waiting states since v1.0.0 -- free, local, no subscription. |
 | May 2026 | **Anthropic Managed Agents: Dreaming, Outcomes, Multiagent** (Anthropic, May 6 2026) | Lead agent decomposes work and delegates to specialist subagents with their own model, prompt, and tools running in parallel; specialists contribute to lead agent's overall context; full trace visibility in Claude Console | Cloud-locked. No local execution. No model training from verified signal. No jar system. Multiagent orchestration validates Brain + AHP architecture; specialists with role-specific models validates the jar routing thesis. |
 | May 2026 | **Cursor / Bennett Brownlow** (@burkeho, May 14 2026) | Subagent delegation keeping main agent context clean; routing to capable submodels by task type; improving /multitask so the orchestrator stays uncluttered while specialist subagents handle scoped work | No quality gate on subagent output before it returns to the orchestrator. Validates Brain's routing-by-complexity and context-isolation thesis. The gap: subagent outputs enter the main context unverified. |
+| May 2026 | **XDA Developers / Local LLM escalation** (May 17 2026) | Manual orchestration stack -- local model attempts task, retries on failure, escalates to Claude with compressed context; built with Ollama + LiteLLM + OpenRouter | Quality gate determining actual failure vs. perceived failure. No Pappy. No verified training signal from escalations. No AHP typed packets. Orca does this natively with one install. |
+| May 2026 | **Eric Provencher / Serial Orchestration** (@pvncher, May 18 2026) | Manager model decomposes tasks and keeps sub-agents on track via serial execution; argued serial orchestration over parallel swarms produces better results | Quality gate between steps. No Pappy blocking a failed link from propagating. No training signal from outcomes. |
 
 ---
 
@@ -99,6 +101,7 @@ User
 | Apr 2026 | **IBM Bob** | Human approval checkpoints between pipeline stages | Supervision by convention, not architecture. A human reviews; the system doesn't enforce role-scoped access at the tool level. |
 | Apr 2026 | **Microsoft Agent Framework v1.0** | Middleware hooks for intercepting execution; pause/resume; human-in-the-loop approvals | Interception after the fact. No role-scoped tool surface definition. No upstream access shaping. |
 | May 2026 | **Notion Agent Activity** (Notion, May 13 2026) | Agent Activity dashboard showing what agents are doing in real time; one-click to full chat thread; eliminates wondering if agents are stuck | Control layer. Visibility after the fact vs Miranda's upfront tool authorization. Notion validated the observability need but did not build the enforcement mechanism — Miranda shapes the tool surface before the agent's context is built, not after it acts. |
+| May 2026 | **LiteLLM Agent Platform** (BerriAI, May 16 2026) | Self-hosted Kubernetes platform for isolated agent sandboxes with persistent session management; per-team isolation, scoped secrets, session continuity across pod restarts; MIT license | Quality gate. No Pappy equivalent. Isolation without verification. No training loop from verified runs. Miranda works locally with zero infrastructure overhead vs. Kubernetes dependency. |
 
 ---
 
@@ -161,6 +164,7 @@ User
 | Apr 2026 | **OpenClaw A2A plugin architecture** (freeCodeCamp) | A2A plugin architecture proposal | Validates the pattern. No quality gate. No verified packet payload. |
 | 2026 | **AgentMail** | Agent-to-agent messaging system | Validates the communication substrate concept. No typed packet schema with repair instructions. |
 | Apr 2026 | **DARPA MATHBAC** | Phase I proposals seeking mathematical foundations for autonomous agent communication (proposals due June 2026) | DARPA independently identified the need for formal mathematical foundations for agent-to-agent communication — the problem AHP addresses at the protocol level. |
+| May 2026 | **RecursiveMAS** (UIUC + Stanford, May 15 2026) | Multi-agent framework where agents pass continuous latent embeddings instead of text between handoffs; RecursiveLink modules bridge different model architectures; 2.4x inference speedup, 75% token reduction, 8.3% accuracy improvement over baselines; Apache 2.0 license | Orchestration layer deciding which agents run and in what order. Quality gate on final output. Training signal pipeline from verified runs. RecursiveMAS optimizes the communication channel -- Orca determines what gets communicated and verifies what comes back. Complementary rather than competing: AHP structures the handoff at the protocol layer; RecursiveMAS eliminates text serialization at the model layer. |
 
 ---
 
@@ -174,6 +178,7 @@ User
 | Apr 2026 | **Microsoft Agent Framework v1.0** | Merged Semantic Kernel + AutoGen into single SDK; sequential/concurrent/handoff/group chat orchestration patterns; streaming, checkpointing, human-in-the-loop | Orchestration plumbing. No quality loop. No distillation pipeline. No verified training signal. |
 | Apr 2026 | **Anthropic Managed Agents** | Maestro + Miranda as hosted cloud service | Cloud-only. No Pappy. No distillation. No local execution. No jar system. |
 | Apr 2026 | **Rowboat** (YC-backed) | Open-source local-first AI coworker | Local-first framing validates the local execution thesis. No quality gate. No distillation loop. |
+| May 2026 | **Stanford/Meta/UIUC Agent Harness Survey** (arXiv:2605.18747, May 2026) | 102-page survey defining "code as agent harness" -- executable, inspectable, stateful, governed; evolution agents that optimize the harness itself from telemetry; multi-agent coordination through shared code artifacts | The complete integrated system. They describe the properties Orca already has. The survey is the map. Orca is the territory. |
 
 ---
 
@@ -259,6 +264,11 @@ The table below shows what each major team built and what piece they are missing
 | Cursor /multitask (Bennett Brownlow) | ✅ (subagent delegation) | — | — | — | — | — |
 | Notion Agent Activity | — | — | — | — | — | — |
 | Red Hat Agentic Skills Repository | — | ✅ (scoped permissions) | — | — | — | — |
+| RecursiveMAS | — | — | — | — | ✅ (latent embeddings, no quality gate) | — |
+| LiteLLM Agent Platform | — | ✅ (Kubernetes isolation) | — | — | — | ✅ |
+| XDA Developers / Local LLM escalation | ✅ (manual escalation) | — | — | — | — | — |
+| Eric Provencher / Serial Orchestration | ✅ (serial decomposition) | — | — | — | — | — |
+| Stanford/Meta/UIUC Agent Harness Survey | ✅ (described) | ✅ (described) | ✅ (described) | ✅ (described) | ✅ (described) | ✅ (described) |
 
 Every row is missing at least three checkmarks. Orca is the only system with all six.
 
@@ -287,7 +297,7 @@ The pattern documented here is consistent and repeating: well-funded teams with 
 
 The piece none of them have built is the contractual relationship between Pappy and Moonshiner: a quality verifier whose verdicts are the exclusive source of training signal for the next model. That relationship — verified output as curriculum — is what makes the system self-improving without self-degrading.
 
-The verified commit record is unambiguous. Maestro (Brain) was committed November 20, 2025. Moonshiner v0.5.0 "Complete LLM fine-tuning build system" was committed November 28, 2025. Every one of the 48 external validations in this document was published five or more months after those timestamps. The industry did not inspire this architecture. The architecture preceded the industry.
+The verified commit record is unambiguous. Maestro (Brain) was committed November 20, 2025. Moonshiner v0.5.0 "Complete LLM fine-tuning build system" was committed November 28, 2025. Every one of the 53 external validations in this document was published five or more months after those timestamps. The industry did not inspire this architecture. The architecture preceded the industry.
 
 On May 7-8, 2026 alone: Cursor shipped /orchestrate with planners, workers, and verifiers. Microsoft shipped waza, a CLI for evaluating agent skill quality. Garry Tan's gstack went viral with 62.8K views describing 6 named specialist agents each owning a phase of the build. Tech with Mak published a 9-layer production AI architecture with document_grader.py, adaptive_router.py, and versioned hot-swappable prompt templates. AMD published a blog post describing exactly the CPU/GPU split that Holster Memory addresses. All on the same two days. All describing pieces of an architecture committed in November 2025.
 
