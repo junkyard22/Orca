@@ -1,0 +1,35 @@
+{
+  "name": "@clawde/pappy-eval",
+  "version": "1.0.0",
+  "description": "Eval harness for Pappy's cheat-detection / training-eligibility judging — synthetic run packets, deterministic pre-checks, scoring. Does not affect Orca runtime.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "eval": "tsx src/cli.ts",
+    "eval:raw-real-pappy": "tsx src/cli.ts --judge=raw-real-pappy",
+    "eval:pappy-plus-hardening": "tsx src/cli.ts --judge=pappy-plus-hardening"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@clawde/pappy-core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.12.0",
+    "vitest": "^4.0.0",
+    "tsx": "^4.21.0"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0"
+}

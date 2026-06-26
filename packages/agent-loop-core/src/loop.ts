@@ -90,6 +90,28 @@ function recordFileChange(filesChanged: OrcaFileChange[], next: OrcaFileChange):
   }
 }
 
+function makeToolGateContext(
+  tool: string,
+  args: Record<string, unknown>,
+  taskText: string,
+  schema?: {
+    required?: string[];
+    properties?: Record<string, { type: string }>;
+  },
+): {
+  tool: string;
+  args: Record<string, unknown>;
+  taskText?: string;
+  schema?: {
+    required?: string[];
+    properties?: Record<string, { type: string }>;
+  };
+} {
+  return schema === undefined
+    ? { tool, args, taskText }
+    : { tool, args, taskText, schema };
+}
+
 export async function runAgentLoop(
   systemPrompt: string,
   taskPrompt: string,
@@ -208,7 +230,7 @@ export async function runAgentLoop(
           properties?: Record<string, { type: string }>;
         } | undefined;
       }) | undefined)?.getSchema?.(call.tool);
-      const beforeGate = ctx.gate?.beforeToolRun({ tool: call.tool, args: call.input, schema });
+      const beforeGate = ctx.gate?.beforeToolRun(makeToolGateContext(call.tool, call.input, taskPrompt, schema));
       if (beforeGate && !beforeGate.allowed) {
         turnAllToolsOk = false;
         console.error(`[MaestroAdapter] gate blocked tool "${call.tool}": ${beforeGate.reason}`);
@@ -259,7 +281,7 @@ export async function runAgentLoop(
       }
 
       // Miranda: after_tool_run gate
-      ctx.gate?.afterToolRun({ tool: call.tool, args: call.input }, { ok: result.ok, output: outputText });
+      ctx.gate?.afterToolRun(makeToolGateContext(call.tool, call.input, taskPrompt), { ok: result.ok, output: outputText });
 
       const enrichedRaw = { ...call.input } as Record<string, unknown>;
       if (commandFileChanges.length > 0) {
@@ -376,8 +398,25 @@ export async function runAgentLoop(
     const rescueCalls = parseToolCalls(rescueText);
     for (const call of rescueCalls) {
       if (call.tool !== "write_file") continue;
+      const schema = (ctx.tools as (OrcaToolService & {
+        getSchema?: (toolName: string) => {
+          required?: string[];
+          properties?: Record<string, { type: string }>;
+        } | undefined;
+      }) | undefined)?.getSchema?.(call.tool);
+      const beforeGate = ctx.gate?.beforeToolRun(makeToolGateContext(call.tool, call.input, taskPrompt, schema));
+      if (beforeGate && !beforeGate.allowed) {
+        toolEvents.push({
+          tool: call.tool,
+          ok: false,
+          summary: `${call.tool}: blocked by Miranda gate - ${beforeGate.reason}`,
+          raw: call.input,
+        });
+        break;
+      }
       const result = await tools.execute(call.tool, call.input);
       const outputText = normalizeToolText(result.output);
+      ctx.gate?.afterToolRun(makeToolGateContext(call.tool, call.input, taskPrompt), { ok: result.ok, output: outputText });
       toolEvents.push({
         tool: call.tool,
         ok: result.ok,

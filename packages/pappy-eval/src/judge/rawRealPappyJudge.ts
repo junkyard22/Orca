@@ -1,0 +1,80 @@
+import { evaluateWithPappy } from "@clawde/pappy-core";
+import type { PappyInput, PappyResult } from "@clawde/pappy-core";
+import type { JudgeFn, JudgeOutput, RunPacket, TrainingEligibility, Verdict } from "../types.js";
+
+// ---------------------------------------------------------------------------
+// Mode 1: raw-real-pappy
+//
+// Calls the actual current packages/pappy-core implementation as faithfully
+// as possible. No anti-cheat logic, no extra semantic reasoning, nothing
+// invented on top of what real Pappy already does — the point is to measure
+// today's Pappy as it actually exists, even if the score is bad.
+//
+// See GAPS.md for the precise list of what pappy-core cannot see or check
+// through this mapping.
+// ---------------------------------------------------------------------------
+
+/**
+ * Mechanical RunPacket -> PappyInput mapping. Exported so other judges
+ * (e.g. pappy-plus-hardening) can call real Pappy through the exact same,
+ * un-embellished translation rather than re-deriving their own.
+ */
+export function toPappyInput(packet: RunPacket): PappyInput {
+  return {
+    task: packet.task,
+    goals: packet.acceptanceCriteria,
+    // PappyInput has a single outputText field for "what the agent says it did" —
+    // there is no separate slot for diffSummary or testOutput (see GAPS.md).
+    outputText: packet.agentClaim,
+    filesChanged: packet.filesChanged,
+    toolEvents: packet.toolTrace.map((t) => ({ tool: t.tool, ok: t.ok, summary: t.summary })),
+  };
+}
+
+export function mapPappyVerdict(verdict: PappyResult["verdict"]): Verdict {
+  // pappy-core is a 3-state gate (PASS/WARN/FAIL). It has no concept of an
+  // ambiguous "needs_human_review" state, so that target verdict is
+  // structurally unreachable through this mapping.
+  switch (verdict) {
+    case "PASS":
+      return "accept";
+    case "WARN":
+      return "repair";
+    case "FAIL":
+      return "reject";
+  }
+}
+
+function mapTrainingEligibility(): TrainingEligibility {
+  // pappy-core has no field, check, or concept anywhere for "should this run
+  // be used as training data" — see GAPS.md. Reporting anything other than
+  // the conservative default here would fabricate a signal Pappy never
+  // produced.
+  return "needs_human_review";
+}
+
+/** Maps a real PappyResult onto the harness's JudgeOutput shape with no added judgment. */
+export function pappyResultToJudgeOutput(result: PappyResult): JudgeOutput {
+  const actionableIssues = result.issues.filter((i) => i.severity !== "LOW");
+
+  const evidenceUsed = [...new Set(result.receipt_ledger.flatMap((entry) => entry.evidence))];
+
+  return {
+    verdict: mapPappyVerdict(result.verdict),
+    confidence: result.confidence,
+    trainingEligibility: mapTrainingEligibility(),
+    deterministicFindings: [
+      "trainingEligibility not assessed: pappy-core has no concept of training-data eligibility.",
+      ...result.issues.map((i) => `[${i.code}] ${i.description}`),
+    ],
+    evidenceUsed,
+    failureReasons: actionableIssues.map((i) => i.description),
+    recommendedRepair: result.repairTask ?? "",
+  };
+}
+
+export function rawRealPappyJudgeFn(packet: RunPacket): JudgeOutput {
+  return pappyResultToJudgeOutput(evaluateWithPappy(toPappyInput(packet)));
+}
+
+export const rawRealPappyJudge: JudgeFn = rawRealPappyJudgeFn;

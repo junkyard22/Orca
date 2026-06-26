@@ -261,6 +261,78 @@ describe("runCompletenessChecks — empty diff verification (Phase 4.2)", () => 
 });
 
 // ---------------------------------------------------------------------------
+// File-change intent relevance
+// ---------------------------------------------------------------------------
+
+describe("runCompletenessChecks - file-change intent relevance", () => {
+  it("allows implementation changes for function-name fix tasks", () => {
+    const issues = runCompletenessChecks({
+      task: "Fix formatRelativeDate so yesterday renders correctly.",
+      outputText: "Updated formatRelativeDate.",
+      filesChanged: [
+        {
+          path: "src/date/formatRelativeDate.ts",
+          changeType: "M",
+          diff: "export function formatRelativeDate(value: Date) { return isYesterday(value) ? 'yesterday' : format(value); }",
+        },
+      ],
+    });
+
+    expect(issues.find((i) => i.code === "UNREQUESTED_FILE_CHANGE")).toBeUndefined();
+  });
+
+  it("allows relevant UI file changes for UI tasks", () => {
+    const issues = runCompletenessChecks({
+      task: "Update the settings modal button state for disabled saves.",
+      outputText: "Updated the settings modal button disabled state.",
+      filesChanged: [
+        {
+          path: "src/components/SettingsModal.tsx",
+          changeType: "M",
+          diff: "export function SettingsModal() { return <button disabled={isSaving}>Save</button>; }",
+        },
+      ],
+    });
+
+    expect(issues.find((i) => i.code === "UNREQUESTED_FILE_CHANGE")).toBeUndefined();
+  });
+
+  it("allows normal bug-fix implementation changes without hardcoded domain nouns", () => {
+    const issues = runCompletenessChecks({
+      task: "Fix the off-by-one pagination regression.",
+      outputText: "Fixed the pagination regression.",
+      filesChanged: [
+        {
+          path: "src/paginate.ts",
+          changeType: "M",
+          diff: "export function pageCount(total: number, size: number) { return Math.ceil(total / size); }",
+        },
+      ],
+    });
+
+    expect(issues.find((i) => i.code === "UNREQUESTED_FILE_CHANGE")).toBeUndefined();
+  });
+
+  it("still blocks file changes for read-only inspection tasks", () => {
+    const issues = runCompletenessChecks({
+      task: "Explain what formatRelativeDate does.",
+      outputText: "formatRelativeDate renders a relative date label.",
+      filesChanged: [
+        {
+          path: "src/date/formatRelativeDate.ts",
+          changeType: "M",
+          diff: "export function formatRelativeDate() { return 'changed'; }",
+        },
+      ],
+    });
+
+    const issue = issues.find((i) => i.code === "UNREQUESTED_FILE_CHANGE");
+    expect(issue).toBeDefined();
+    expect(issue!.severity).toBe("HIGH");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Semantic completeness verification (Case studies)
 // ---------------------------------------------------------------------------
 

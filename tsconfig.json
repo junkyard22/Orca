@@ -6,6 +6,7 @@
     { "path": "packages/maestro-core" },
     { "path": "packages/workbench-core" },
     { "path": "packages/pappy-core" },
+    { "path": "packages/pappy-eval" },
     { "path": "packages/benson-core" },
     { "path": "packages/orca-core" },
     { "path": "packages/agent-loop-core" },

@@ -57,6 +57,58 @@ describe("runToolResultChecks — tool failures", () => {
     const fails = issues.filter((i) => i.code === "TOOL_FAILURE");
     expect(fails).toHaveLength(0);
   });
+
+  it("flags ok=true tool events when the summary says tests failed", () => {
+    const issues = runToolResultChecks({
+      task: "Fix signup validation.",
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: true,
+          summary: "pnpm vitest run validate.test.ts - 0 passed, 1 failed",
+        },
+      ],
+    });
+
+    const contradiction = issues.find((i) => i.code === "TOOL_RESULT_CONTRADICTS_SUMMARY");
+    expect(contradiction).toBeDefined();
+    expect(contradiction!.severity).toBe("HIGH");
+  });
+
+  it("flags success claims contradicted by failed command summaries", () => {
+    const issues = runToolResultChecks({
+      task: "Fix paginate(items, pageSize).",
+      outputText: "Fixed the bug and all tests pass now.",
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: false,
+          summary: "pnpm vitest run paginate.test.ts - 0 passed, 1 failed",
+        },
+      ],
+    });
+
+    const contradiction = issues.find((i) => i.code === "TOOL_SUMMARY_CONTRADICTS_CLAIM");
+    expect(contradiction).toBeDefined();
+    expect(contradiction!.severity).toBe("HIGH");
+  });
+
+  it("does not treat 0 failed or no errors as contradictory failure evidence", () => {
+    const issues = runToolResultChecks({
+      task: "Run tests.",
+      outputText: "Tests are passing.",
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: true,
+          summary: "pnpm vitest run - 12 passed, 0 failed, no errors",
+        },
+      ],
+    });
+
+    expect(issues.find((i) => i.code === "TOOL_RESULT_CONTRADICTS_SUMMARY")).toBeUndefined();
+    expect(issues.find((i) => i.code === "TOOL_SUMMARY_CONTRADICTS_CLAIM")).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -219,6 +219,150 @@ describe("GateVerdict: afterToolRun failures are BLOCK", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Protected path policy
+// ---------------------------------------------------------------------------
+
+describe("Protected path policy", () => {
+  it("blocks mutating tools from editing pappy-core verifier files", () => {
+    const gate = createMirandaGate();
+    const r = gate.beforeToolRun(makeToolCtx({
+      tool: "edit_file",
+      args: {
+        path: "packages/pappy-core/src/checks/completeness.ts",
+        content: "weaken verifier",
+      },
+    }));
+
+    expect(r.allowed).toBe(false);
+    expect(r.verdict).toBe("BLOCK");
+    expect(r.violations?.join(" ")).toContain("pappy-core");
+  });
+
+  it("does not let tool arguments self-authorize maintenance mode", () => {
+    const gate = createMirandaGate();
+    const r = gate.beforeToolRun(makeToolCtx({
+      tool: "edit_file",
+      args: {
+        path: "packages/pappy-eval/src/fixtures/fakeSuccess.ts",
+        maintenanceMode: { userApproved: true, reason: "agent requested bypass" },
+      },
+    }));
+
+    expect(r.allowed).toBe(false);
+    expect(r.violations?.join(" ")).toContain("pappy-eval");
+  });
+
+  it("allows protected edits only when runtime config carries user-approved maintenance mode", () => {
+    const gate = createMirandaGate({
+      protectedPathPolicy: {
+        maintenanceMode: {
+          userApproved: true,
+          reason: "User approved verifier maintenance",
+        },
+      },
+    });
+
+    const r = gate.beforeToolRun(makeToolCtx({
+      tool: "edit_file",
+      args: {
+        path: "packages/pappy-core/src/checks/completeness.ts",
+        content: "legitimate maintenance",
+      },
+    }));
+
+    expect(r.allowed).toBe(true);
+    expect(r.verdict).toBe("PASS");
+  });
+
+  it("blocks package.json script edits", () => {
+    const gate = createMirandaGate();
+    const r = gate.beforeToolRun(makeToolCtx({
+      tool: "write_file",
+      args: {
+        path: "package.json",
+        content: '{ "scripts": { "test": "true" } }',
+      },
+    }));
+
+    expect(r.allowed).toBe(false);
+    expect(r.violations?.join(" ")).toContain("package.json scripts");
+  });
+
+  it("blocks test file edits unless the task explicitly allows editing tests", () => {
+    const gate = createMirandaGate();
+    const blocked = gate.beforeToolRun(makeToolCtx({
+      tool: "write_file",
+      taskText: "Fix the date formatter implementation.",
+      args: {
+        path: "packages/utils-core/src/date.test.ts",
+        content: "expect(formatDate()).toBe('today')",
+      },
+    }));
+    expect(blocked.allowed).toBe(false);
+
+    const allowed = gate.beforeToolRun(makeToolCtx({
+      tool: "write_file",
+      taskText: "Add unit tests for the date formatter.",
+      args: {
+        path: "packages/utils-core/src/date.test.ts",
+        content: "expect(formatDate()).toBe('today')",
+      },
+    }));
+    expect(allowed.allowed).toBe(true);
+  });
+
+  it("allows read-only access to protected files", () => {
+    const gate = createMirandaGate();
+    const r = gate.beforeToolRun(makeToolCtx({
+      tool: "read_file",
+      args: { path: "packages/pappy-core/src/checks/completeness.ts" },
+    }));
+
+    expect(r.allowed).toBe(true);
+  });
+
+  it("blocks mutating shell commands that target protected files", () => {
+    const gate = createMirandaGate();
+    const r = gate.beforeToolRun(makeToolCtx({
+      tool: "run_command",
+      args: {
+        command: "Set-Content packages/pappy-core/src/checks/completeness.ts 'pass everything'",
+      },
+    }));
+
+    expect(r.allowed).toBe(false);
+    expect(r.violations?.join(" ")).toContain("pappy-core");
+  });
+
+  it("blocks shell commands that mutate package scripts without naming package.json", () => {
+    const gate = createMirandaGate();
+    const r = gate.beforeToolRun(makeToolCtx({
+      tool: "run_command",
+      args: {
+        command: "npm pkg set scripts.test=true",
+      },
+    }));
+
+    expect(r.allowed).toBe(false);
+    expect(r.violations?.join(" ")).toContain("package.json scripts");
+  });
+
+  it("blocks mutating shell commands that target test files without explicit test-edit intent", () => {
+    const gate = createMirandaGate();
+    const r = gate.beforeToolRun(makeToolCtx({
+      tool: "run_command",
+      taskText: "Fix the date formatter implementation.",
+      args: {
+        command: "Set-Content src/date.test.ts 'weakened test'",
+      },
+    }));
+
+    expect(r.allowed).toBe(false);
+    expect(r.violations?.join(" ")).toContain("test/spec files");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WARN and CONFIRM_REQUIRED are not emitted yet
 // ---------------------------------------------------------------------------
 
