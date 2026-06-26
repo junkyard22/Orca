@@ -70,6 +70,8 @@ export type {
   GateVerdict,
   GateResult,
   GateName,
+  ProtectedPathMaintenanceMode,
+  ProtectedPathPolicyConfig,
   LLMCallGateContext,
   ToolGateContext,
   QCGateContext,

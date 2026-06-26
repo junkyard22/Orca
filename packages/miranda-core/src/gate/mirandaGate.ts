@@ -113,6 +113,8 @@ export interface ToolGateContext {
   tool: string;
   /** Arguments the agent is passing to the tool */
   args: Record<string, unknown>;
+  /** Optional task text used for policy checks that depend on explicit user intent. */
+  taskText?: string;
   /** Optional JSON schema for validating tool arguments */
   schema?: {
     required?: string[];
@@ -203,6 +205,13 @@ export interface MirandaGateConfig {
   allowedTools?: string[];
 
   /**
+   * Protected path policy for verifier/training/eval/control-plane files.
+   * Enabled by default. The only bypass is a runtime-provided maintenanceMode
+   * value with userApproved=true; tool arguments cannot self-authorize it.
+   */
+  protectedPathPolicy?: ProtectedPathPolicyConfig;
+
+  /**
    * Emit gate decisions to stderr when true.
    * Useful during development; disable in production to reduce noise.
    */
@@ -246,6 +255,182 @@ export interface MirandaGateConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Protected path enforcement
+// ---------------------------------------------------------------------------
+
+export interface ProtectedPathMaintenanceMode {
+  /** Must be set by the embedding runtime after explicit user approval. */
+  userApproved: true;
+  /** Human-readable maintenance reason; empty reasons do not enable bypass. */
+  reason: string;
+  approvedBy?: string;
+}
+
+export interface ProtectedPathPolicyConfig {
+  /** Defaults to true. */
+  enabled?: boolean;
+  /**
+   * Allows protected-path edits only when the host application has received
+   * explicit user approval for maintenance. This is intentionally config-only.
+   */
+  maintenanceMode?: ProtectedPathMaintenanceMode;
+  /** Allows test/spec file edits for tasks that explicitly ask to edit tests. */
+  allowTestFileEdits?: boolean;
+  /** Optional task text supplied by the runtime if not present on ToolGateContext. */
+  taskText?: string;
+}
+
+interface ProtectedPathViolation {
+  path: string;
+  reason: string;
+}
+
+const MUTATING_TOOL_RE = /(^|[_-])(write|edit|modify|delete|remove|move|rename|create|patch|apply|replace)([_-]|$)/i;
+const TEST_FILE_RE = /(^|[\s/])(?:__tests__|test|tests|spec|specs)(?:\/|$)|\.(?:test|spec)\.[jt]sx?(?:\s|$)/i;
+const MUTATING_COMMAND_RE =
+  />{1,2}|\b(?:rm|del|erase|move|mv|cp|copy|echo|set-content|add-content|out-file|new-item|remove-item|rename-item|move-item|sed\s+-i|perl\s+-pi|python(?:\.exe)?\s+-c|node(?:\.exe)?\s+-e)\b|\bgit\s+(?:apply|checkout|clean|reset|restore|merge|rebase|am)\b/i;
+const PACKAGE_SCRIPT_RE = /"scripts"\s*:|\b(?:pre|post)?(?:test|build|lint|start|prepare|install)\s*["']?\s*:|\bnpm\s+pkg\s+set\s+scripts\.|\bpnpm\s+pkg\s+set\s+scripts\./i;
+
+function normalizePolicyPath(value: string): string {
+  return value
+    .trim()
+    .replace(/^[`"']+|[`"',.;:]+$/g, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/^\.\//, "")
+    .toLowerCase();
+}
+
+function collectStringValues(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap((item) => collectStringValues(item));
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).flatMap((item) => collectStringValues(item));
+  }
+  return [];
+}
+
+function collectPathLikeValues(args: Record<string, unknown>): string[] {
+  const paths: string[] = [];
+  const visit = (value: unknown, key = ""): void => {
+    if (typeof value === "string") {
+      if (
+        /(?:^|_)(?:path|file|filename|target|destination|cwd|dir|directory)(?:$|_)/i.test(key) ||
+        /[\\/]/.test(value) ||
+        /\b[\w.-]+\.[a-z0-9]{1,8}\b/i.test(value)
+      ) {
+        paths.push(value);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, key));
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+        visit(childValue, childKey);
+      }
+    }
+  };
+
+  visit(args);
+  return [...new Set(paths)];
+}
+
+function isMaintenanceModeEnabled(policy: ProtectedPathPolicyConfig | undefined): boolean {
+  const reason = policy?.maintenanceMode?.reason.trim() ?? "";
+  return policy?.maintenanceMode?.userApproved === true && reason.length >= 8;
+}
+
+function taskExplicitlyAllowsTestEdits(ctx: ToolGateContext, policy: ProtectedPathPolicyConfig | undefined): boolean {
+  if (policy?.allowTestFileEdits === true) return true;
+
+  const taskText = [ctx.taskText, policy?.taskText].filter(Boolean).join(" ");
+  if (!taskText.trim()) return false;
+
+  return (
+    /\b(add|create|write|update|fix|repair|modify|edit|delete|remove|restore)\b.{0,80}\b(tests?|specs?|test files?|spec files?|assertions?|\.test\.|\.spec\.)\b/i.test(taskText) ||
+    /\b(tests?|specs?|test files?|spec files?|assertions?|\.test\.|\.spec\.)\b.{0,80}\b(add|create|write|update|fix|repair|modify|edit|delete|remove|restore)\b/i.test(taskText)
+  );
+}
+
+function isMutatingToolCall(ctx: ToolGateContext): boolean {
+  if (ctx.tool === "run_command") {
+    const command = typeof ctx.args["command"] === "string" ? ctx.args["command"] : "";
+    return MUTATING_COMMAND_RE.test(command) || PACKAGE_SCRIPT_RE.test(command);
+  }
+  return MUTATING_TOOL_RE.test(ctx.tool);
+}
+
+function classifyProtectedPath(
+  rawPath: string,
+  allArgText: string,
+  testEditsAllowed: boolean,
+): string | undefined {
+  const path = normalizePolicyPath(rawPath);
+  if (!path) return undefined;
+
+  if (/(^|[\s/])packages\/pappy-core(?:\/|$)/.test(path)) {
+    return "pappy-core verifier files are protected";
+  }
+  if (/(^|[\s/])packages\/pappy-eval(?:\/|$)/.test(path)) {
+    return "pappy-eval harness files are protected";
+  }
+  if (/(^|[\s/])(?:packages\/)?moonshiner[^/]*(?:\/|$)/.test(path)) {
+    return "Moonshiner training-data files are protected";
+  }
+  if (/(^|[\s/])\.github\/workflows(?:\/|$)/.test(path)) {
+    return "CI workflow control-plane files are protected";
+  }
+  if (/(^|[\s/])package\.json$/.test(path) && PACKAGE_SCRIPT_RE.test(allArgText)) {
+    return "package.json scripts are protected";
+  }
+  if (/(^|[\s/])package\.json$/.test(path) && /\b(delete|remove|rm|del|move|rename)\b/i.test(allArgText)) {
+    return "package.json control files are protected";
+  }
+  if (/(^|[\s/])(vitest|jest|playwright|cypress)\.config\.[cm]?[jt]s$/.test(path)) {
+    return "test runner config files are protected";
+  }
+  if (/(^|[\s/])(?:verifier|verifiers|eval|evals|evaluation|evaluations|judge|judges|qc[-_]?gate|acceptance[-_]?check)(?:\/|[-_.][^/]*\.(?:ts|tsx|js|jsx|json|ya?ml|toml)$)/.test(path)) {
+    return "verifier/eval control-plane files are protected";
+  }
+  if (TEST_FILE_RE.test(path) && !testEditsAllowed) {
+    return "test/spec files are protected unless the task explicitly allows test editing";
+  }
+
+  return undefined;
+}
+
+function evaluateProtectedPathPolicy(
+  ctx: ToolGateContext,
+  policy: ProtectedPathPolicyConfig | undefined,
+): ProtectedPathViolation[] {
+  if (policy?.enabled === false || isMaintenanceModeEnabled(policy)) return [];
+  if (!isMutatingToolCall(ctx)) return [];
+
+  const allArgText = collectStringValues(ctx.args).join("\n");
+  const testEditsAllowed = taskExplicitlyAllowsTestEdits(ctx, policy);
+  if (ctx.tool === "run_command" && PACKAGE_SCRIPT_RE.test(allArgText)) {
+    return [{ path: allArgText.slice(0, 200), reason: "package.json scripts are protected" }];
+  }
+  const candidates =
+    ctx.tool === "run_command"
+      ? [typeof ctx.args["command"] === "string" ? ctx.args["command"] : "", ...collectPathLikeValues(ctx.args)]
+      : collectPathLikeValues(ctx.args);
+
+  const violations: ProtectedPathViolation[] = [];
+  for (const candidate of candidates) {
+    const reason = classifyProtectedPath(candidate, allArgText, testEditsAllowed);
+    if (reason) {
+      violations.push({ path: candidate, reason });
+    }
+  }
+
+  return violations;
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -258,6 +443,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
   const {
     allowedModels,
     allowedTools,
+    protectedPathPolicy,
     verbose = false,
     onGate,
     ahpPacket,
@@ -342,6 +528,21 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
 
     beforeToolRun(ctx): GateResult {
       const violations: string[] = [];
+
+      const protectedPathViolations = evaluateProtectedPathPolicy(ctx, protectedPathPolicy);
+      if (protectedPathViolations.length > 0) {
+        const violationDetails = protectedPathViolations.map(
+          (violation) => `${violation.reason}: ${violation.path}`,
+        );
+        const result: GateResult = {
+          allowed: false,
+          reason: `Protected path policy blocked tool "${ctx.tool}"`,
+          violations: violationDetails,
+          verdict: deriveVerdict(false, violationDetails),
+        };
+        log(`before_tool_run BLOCKED (protected path)  tool=${ctx.tool}  ${violationDetails.join("; ")}`);
+        return report("before_tool_run", result, ctx);
+      }
 
       // ── AHP: lifecycle guard ────────────────────────────────────────────
       // Tools may only execute when the packet lifecycle is RUNNING.

@@ -11,7 +11,10 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "contract:check": "tsx scripts/contract-check.ts",
-    "contract:check:strict": "tsx scripts/contract-check.ts --strict"
+    "contract:check:strict": "tsx scripts/contract-check.ts --strict",
+    "pappy:eval": "pnpm --filter @clawde/pappy-eval run eval",
+    "pappy:eval:raw-real-pappy": "pnpm --filter @clawde/pappy-eval run eval:raw-real-pappy",
+    "pappy:eval:pappy-plus-hardening": "pnpm --filter @clawde/pappy-eval run eval:pappy-plus-hardening"
   },
   "engines": {
     "node": ">=20.0.0"

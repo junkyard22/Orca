@@ -55,10 +55,46 @@ export interface ExportSummary {
   exported: number;
   skipped: number;
   outputPath: string;
+  skipReasons: Record<string, number>;
 }
 
 const MIN_OUTPUT_LENGTH = 50;
 const SCORE_BY_VERDICT: Record<string, number> = { PASS: 10, WARN: 7 };
+
+const SECRET_PATTERNS: Array<{ reason: string; pattern: RegExp }> = [
+  { reason: "aws_access_key", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+  { reason: "aws_secret_access_key", pattern: /\baws_secret_access_key\s*=\s*[A-Za-z0-9/+=]{32,}\b/i },
+  { reason: "openai_api_key", pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/ },
+  { reason: "github_token", pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b/ },
+  { reason: "slack_token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/ },
+  { reason: "google_api_key", pattern: /\bAIza[0-9A-Za-z_-]{30,}\b/ },
+  { reason: "stripe_secret_key", pattern: /\bsk_(?:live|test)_[0-9A-Za-z]{20,}\b/ },
+  { reason: "private_key", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
+  {
+    reason: "env_secret_assignment",
+    pattern: /\b(?:[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE[_-]?KEY|CLIENT[_-]?SECRET|ACCESS[_-]?KEY)[A-Z0-9_]*)\s*=\s*['"]?[A-Za-z0-9_./+=:@-]{12,}/i,
+  },
+  {
+    reason: "generic_secret_literal",
+    pattern: /\b(?:api[_-]?key|auth[_-]?token|access[_-]?token|secret|password|client[_-]?secret)\s*[:=]\s*["'][A-Za-z0-9_./+=:@-]{12,}["']/i,
+  },
+];
+
+export function detectTrainingExportExclusion(text: string): string | undefined {
+  for (const { reason, pattern } of SECRET_PATTERNS) {
+    if (pattern.test(text)) return reason;
+  }
+  return undefined;
+}
+
+async function collectEvidenceText(store: OrcaStore, runId: string): Promise<string> {
+  try {
+    const events = await store.getRunToolEvents(runId);
+    return events.map((event) => event.summary ?? "").join("\n");
+  } catch {
+    return "";
+  }
+}
 
 /**
  * Export runs from the store as a Moonshiner-compatible JSONL file.
@@ -123,6 +159,24 @@ export async function exportTrainingData(
       continue;
     }
 
+    // 6. Training-safety filter - do not export poisoned or credential-bearing
+    // examples even if Pappy returned PASS/WARN.
+    const evidenceText = await collectEvidenceText(store, run.id);
+    const exportCorpus = [
+      run.intent,
+      outputText,
+      run.summary ?? "",
+      run.brainDecision ?? "",
+      evidenceText,
+    ].join("\n");
+    const exclusionReason = detectTrainingExportExclusion(exportCorpus);
+    if (exclusionReason) {
+      const key = `unsafe_artifact:${exclusionReason}`;
+      skipReasons[key] = (skipReasons[key] ?? 0) + 1;
+      skipped++;
+      continue;
+    }
+
     const score = SCORE_BY_VERDICT[run.verdict] ?? 7;
     const teacherRole = run.role ?? 'unknown';
 
@@ -176,9 +230,6 @@ export async function exportTrainingData(
   }
 
   exported = records.length;
-  // Runs that were read but not included in records are skipped (already counted above).
-  // Recalculate skipped to be the total minus exported (handles limit truncation).
-  skipped = runs.length - exported;
 
   // Ensure output directory exists
   const outputDir = path.dirname(path.resolve(opts.outputPath));
@@ -199,5 +250,5 @@ export async function exportTrainingData(
     console.log(`[export] skipped ${skipped} records (${reasons})`);
   }
 
-  return { exported, skipped, outputPath: opts.outputPath };
+  return { exported, skipped, outputPath: opts.outputPath, skipReasons };
 }

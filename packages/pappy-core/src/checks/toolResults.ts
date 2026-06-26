@@ -82,11 +82,82 @@ function hasToolOrAlias(actualTools: Set<string>, expectedTool: string): boolean
   return toolAliases(expectedTool).some((tool) => actualTools.has(tool));
 }
 
+const CLAIM_SUCCESS_PATTERN =
+  /\b(all tests? pass(?:ed|ing)?|tests? (?:are )?(?:all )?passing|successfully (?:completed|implemented|fixed)|works? correctly|task (?:is )?(?:complete|done))\b/i;
+
+function detectFailureSignals(text: string | undefined): string[] {
+  if (!text) return [];
+
+  const signals: string[] = [];
+  const lower = text.toLowerCase();
+
+  if (/\b0\s+passed\b/.test(lower)) {
+    signals.push("0 passed");
+  }
+
+  for (const match of lower.matchAll(/\b([1-9]\d*)\s+(failed|failures?|failing|errors?)\b/g)) {
+    signals.push(`${match[1]} ${match[2]}`);
+  }
+
+  for (const match of lower.matchAll(/\b(failed|failures?|failing|errors?)\s*[:=]\s*([1-9]\d*)\b/g)) {
+    signals.push(`${match[1]} ${match[2]}`);
+  }
+
+  if (/\b(assertionerror|typeerror|referenceerror|syntaxerror)\b/.test(lower)) {
+    signals.push("exception");
+  }
+
+  if (/\bexit code:?\s*[1-9]\d*\b|\bnon-zero exit code\b/.test(lower)) {
+    signals.push("nonzero exit");
+  }
+
+  for (const line of lower.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/\b(?:0|no)\s+(?:failed|failures?|errors?)\b/.test(trimmed)) continue;
+    if (/\bno\s+(?:error|errors|failure|failures)\b/.test(trimmed)) continue;
+    if (/\b(?:failed|failing|failure|error|errors)\b/.test(trimmed)) {
+      signals.push(trimmed.slice(0, 80));
+      break;
+    }
+  }
+
+  return [...new Set(signals)];
+}
+
 export function runToolResultChecks(input: PappyInput): Omit<Issue, "issueId">[] {
   const issues: Omit<Issue, "issueId">[] = [];
+  const claimsSuccess = CLAIM_SUCCESS_PATTERN.test(input.outputText ?? "");
 
   // ── Existing check: tool failures ─────────────────────────────────────────
   for (const event of input.toolEvents ?? []) {
+    const failureSignals = detectFailureSignals(event.summary);
+    if (event.ok && failureSignals.length > 0) {
+      issues.push({
+        severity: "HIGH",
+        code: "TOOL_RESULT_CONTRADICTS_SUMMARY",
+        category: "Tooling",
+        description: `Tool "${event.tool}" reported ok=true but its summary contains failure evidence.`,
+        expected_receipt: `tool_event for "${event.tool}" must have ok=false or a passing summary when failures are present.`,
+        evidence: `signals=${failureSignals.join(", ")} summary=${event.summary ?? ""}`,
+        fix_hint: "Treat the tool result as failed or rerun until the summary shows a real pass.",
+        message: `Tool "${event.tool}" ok=true contradicts its failure summary.`,
+        suggestedFix: "Rerun verification and preserve the actual failing tool result.",
+      });
+    } else if (!event.ok && failureSignals.length > 0 && claimsSuccess) {
+      issues.push({
+        severity: "HIGH",
+        code: "TOOL_SUMMARY_CONTRADICTS_CLAIM",
+        category: "Tooling",
+        description: `The output claims success, but tool "${event.tool}" summary contains failure evidence.`,
+        expected_receipt: "A success claim must be backed by passing command/test evidence.",
+        evidence: `claim=${(input.outputText ?? "").slice(0, 160)} signals=${failureSignals.join(", ")} summary=${event.summary ?? ""}`,
+        fix_hint: "Do not claim success until the failing command or test has been fixed and rerun successfully.",
+        message: `Success claim contradicts "${event.tool}" failure evidence.`,
+        suggestedFix: "Fix the failure and rerun verification before claiming success.",
+      });
+    }
+
     if (!event.ok) {
       // Permission-denied responses are intentional gates, not execution errors.
       // The model received a clear "not permitted" message and adapted — this is

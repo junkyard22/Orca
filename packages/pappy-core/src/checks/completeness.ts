@@ -574,18 +574,68 @@ function hasNonDeliverableOutputSignal(outputText: string): boolean {
   );
 }
 
+const FILE_CHANGE_INTENT_RE =
+  /\b(add|adds|added|adding|build|builds|built|building|create|creates|created|creating|delete|deletes|deleted|deleting|edit|edits|edited|editing|fix|fixes|fixed|fixing|generate|generates|generated|generating|implement|implements|implemented|implementing|make|makes|made|making|modify|modifies|modified|modifying|patch|patches|patched|patching|refactor|refactors|refactored|refactoring|remove|removes|removed|removing|replace|replaces|replaced|replacing|save|saves|saved|saving|update|updates|updated|updating|write|writes|writing|wrote|written)\b/i;
+const READ_ONLY_INTENT_RE =
+  /^\s*(explain|summari[sz]e|describe|inspect|read|review|list|show|find|search|tell me|what is|what are|where is|where are|how does|how do)\b/i;
+const EXPLICIT_ARTIFACT_TARGET_RE =
+  /\b(repo|repository|project|code|file|files|app|component|module|script|feature|test|workflow|config|package|source|implementation)\b|\b[\w./\\-]+\.\w{1,8}\b/i;
+const IMPLEMENTATION_FILE_RE =
+  /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|cs|cpp|c|h|hpp|rb|php|swift|sql|json|ya?ml|toml|css|scss|html|vue|svelte|md)$/i;
+const UI_TASK_RE = /\b(ui|ux|screen|page|view|component|button|form|input|modal|dialog|layout|style|css|render|responsive)\b/i;
+const UI_FILE_RE = /\.(tsx|jsx|vue|svelte|css|scss|html)$/i;
+const BUG_FIX_TASK_RE = /\b(fix|debug|repair|patch|correct|resolve|bug|defect|error|failure|regression|broken|incorrect|off-by-one)\b/i;
+
+function splitIdentifierParts(text: string): string[] {
+  return text
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_./\\-]+/g, " ")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((part) => part.length >= 3);
+}
+
+function extractTaskRelevanceTerms(text: string): string[] {
+  return [...new Set(
+    splitIdentifierParts(text)
+      .filter((term) =>
+        !STOP_WORDS.has(term) &&
+        !isGenericActionVerb(term) &&
+        !["the", "this", "that", "with", "without", "should", "must"].includes(term)
+      )
+      .map((term) => stemWord(term)),
+  )];
+}
+
+function fileChangeLooksRelevantToTask(taskText: string, file: NonNullable<PappyInput["filesChanged"]>[number]): boolean {
+  const pathText = file.path;
+  const combinedFileText = `${pathText}\n${file.diff ?? ""}`;
+  const fileTerms = new Set(splitIdentifierParts(combinedFileText).map((term) => stemWord(term)));
+  const taskTerms = extractTaskRelevanceTerms(taskText);
+
+  if (taskTerms.some((term) => fileTerms.has(term))) return true;
+  if (UI_TASK_RE.test(taskText) && UI_FILE_RE.test(pathText)) return true;
+  if (BUG_FIX_TASK_RE.test(taskText) && IMPLEMENTATION_FILE_RE.test(pathText)) return true;
+  if (FILE_CHANGE_INTENT_RE.test(taskText) && IMPLEMENTATION_FILE_RE.test(pathText) && taskTerms.length === 0) {
+    return true;
+  }
+
+  return false;
+}
+
 function taskExplicitlyAllowsFileChanges(input: PappyInput): boolean {
   if ((input.constraints?.requireFiles?.length ?? 0) > 0) return true;
 
   const combined = [input.task, ...(input.goals ?? [])].join(" ");
-  const hasChangeVerb =
-    /\b(add|adds|added|adding|build|builds|built|building|create|creates|created|creating|delete|deletes|deleted|deleting|edit|edits|edited|editing|fix|fixes|fixed|fixing|generate|generates|generated|generating|implement|implements|implemented|implementing|make|makes|made|making|modify|modifies|modified|modifying|patch|patches|patched|patching|refactor|refactors|refactored|refactoring|remove|removes|removed|removing|replace|replaces|replaced|replacing|save|saves|saved|saving|update|updates|updated|updating|write|writes|writing|wrote|written)\b/i.test(combined);
-  if (!hasChangeVerb) return false;
+  const hasChangeIntent = FILE_CHANGE_INTENT_RE.test(combined);
+  if (!hasChangeIntent) return false;
+  if (READ_ONLY_INTENT_RE.test(combined) && !hasChangeIntent) return false;
+  if (EXPLICIT_ARTIFACT_TARGET_RE.test(combined)) return true;
 
-  return (
-    /\b(repo|repository|project|code|file|files|app|component|module|script|feature|bug|test|workflow|config|package|source|implementation)\b/i.test(combined) ||
-    /\b[\w./\\-]+\.\w{1,8}\b/i.test(combined)
-  );
+  const files = input.filesChanged ?? [];
+  if (files.length === 0) return true;
+
+  return files.some((file) => fileChangeLooksRelevantToTask(combined, file));
 }
 
 function auditFailureCategories(input: PappyInput): string[] {
