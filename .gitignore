@@ -38,6 +38,11 @@ miranda-runs.jsonl
 apps/runner/fun_facts.txt
 apps/runner/random_fun_fact.txt
 .tmp-home*/
+tmp-run/
+
+# release-smoke output (outputDir in release-smoke.json).  The config itself is
+# committed on purpose; only the generated reports are ignored.
+smoke-reports/
 
 # Editor
 .vscode/

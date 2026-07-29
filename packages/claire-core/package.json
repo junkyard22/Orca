@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
   "engines": {

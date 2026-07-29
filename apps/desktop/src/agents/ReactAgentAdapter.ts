@@ -1,5 +1,6 @@
-import type { LLMAdapter, LLMMessage, LLMRequest } from "@clawde/miranda-core";
+import type { LLMAdapter } from "@clawde/miranda-core";
 import {
+  createDirectLLMService,
   extractFilesChangedFromCommandOutput,
   type AHPPacket,
   type OrcaLLMService,
@@ -23,7 +24,6 @@ type ToolEvent = { tool: string; ok: boolean; summary: string; raw?: unknown };
 type FileChange = { path: string; changeType: "A" | "M" | "D"; diff?: string };
 
 const OPEN_TOOL_CALL_TAG = "<tool_call>";
-const PROMPT_SEPARATOR = "\n\n---\n\n";
 
 function normalizeFileMutationToolName(toolName: string): string {
   return toolName.startsWith("desktop-commander_")
@@ -612,56 +612,6 @@ function renderTaskPrompt(
   return lines.join("\n");
 }
 
-function toSharedLLMService(
-  adapter: LLMAdapter,
-  defaults: { maxTokens: number; temperature: number },
-): OrcaLLMService {
-  function buildRequest(
-    prompt: string,
-    opts?: { maxTokens?: number; temperature?: number; enableThinking?: boolean; abortSignal?: AbortSignal },
-  ): LLMRequest {
-    const sepIdx = prompt.indexOf(PROMPT_SEPARATOR);
-    const messages: LLMMessage[] = sepIdx !== -1
-      ? [
-          { role: "system", content: prompt.slice(0, sepIdx) },
-          { role: "user", content: prompt.slice(sepIdx + PROMPT_SEPARATOR.length) },
-        ]
-      : [{ role: "user", content: prompt }];
-
-    return {
-      model: "",
-      messages,
-      temperature: opts?.temperature ?? defaults.temperature,
-      maxTokens: opts?.maxTokens ?? defaults.maxTokens,
-      signal: opts?.abortSignal,
-      ...(opts?.enableThinking !== undefined && { enableThinking: opts.enableThinking }),
-    };
-  }
-
-  return {
-    async complete(prompt, opts) {
-      const request = buildRequest(prompt, opts);
-      if (opts?.onToken && adapter.stream) {
-        const response = await adapter.stream(request, opts.onToken);
-        return { text: response.content };
-      }
-      const response = await adapter.complete(request);
-      return { text: response.content };
-    },
-
-    async stream(prompt, options, onChunk) {
-      const request = buildRequest(prompt, options);
-      if (adapter.stream) {
-        const response = await adapter.stream(request, onChunk);
-        return { text: response.content };
-      }
-      const response = await adapter.complete(request);
-      onChunk(response.content);
-      return { text: response.content };
-    },
-  };
-}
-
 function toSharedToolService(tools: Tool[], ctx: AgentRunContext): OrcaToolService {
   const service: OrcaToolService & {
     getSchema(name: string): Tool["schema"] | undefined;
@@ -751,7 +701,9 @@ export class ReactAgentAdapter implements AgentAdapter {
 
   private async runSharedLoopFallback(task: AgentTask, tools: Tool[], ctx: AgentRunContext): Promise<AgentResult> {
     const toolService = toSharedToolService(tools, ctx);
-    const llmService = toSharedLLMService(this.llmAdapter, {
+    // Empty model id: this.llmAdapter is already bound to a concrete model, so
+    // the request-level `model` field is unused on this path.
+    const llmService = createDirectLLMService(this.llmAdapter, "", {
       maxTokens: this.maxTokens,
       temperature: this.temperature,
     });

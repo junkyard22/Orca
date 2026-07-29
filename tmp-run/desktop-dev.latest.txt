@@ -1,3 +1,0 @@
-PID=44424
-STDOUT=C:\Orca\Orca\tmp-run\desktop-dev-20260420-124558.out.log
-STDERR=C:\Orca\Orca\tmp-run\desktop-dev-20260420-124558.err.log
