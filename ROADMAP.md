@@ -8,13 +8,24 @@
 | dewey-core | User context — workspace capture, git metadata, pre-flight context injection | ✅ `getWorkspaceContext()` captures git branch, commit, recent files; threaded into every task run. |
 | orca-core | Runtime wiring — routes tasks through Maestro → Pappy → repair loop | ✅ Solid architecture. Carries `OrcaToolService` in `OrcaRunCtx` for agent-loop mode. |
 | maestro-core | Orchestration — classifies tasks, scores risk, plan-gates, manages cancellation | ✅ `orchestrate()` solid. MaestroAdapter runs full agent loop with tools. |
-| miranda-core | LLM behavior enforcement — wraps prompts, validates outputs, repair loops, circuit breaker | ✅ Most complete package. Production-quality. 27 tests passing. |
-| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts on Maestro output | ✅ **Phase 4 COMPLETE.** 84 tests passing. SATISFACTION_EXPLANATION_THIN, PROOF_NO_TRACE, and all claim-proof checks working. |
-| workbench-core | Tool execution (Runner + tools) | ✅ ShellRunner done. **Phase 3 complete:** `ToolRegistry`, `readFileTool`, `writeFileTool`, `runCommandTool`, `listDirectoryTool`, `searchFilesTool` all implemented. |
-| apps/runner | CLI harness that wires everything together | ✅ **SHIPPABLE.** Works end-to-end with full agent-loop tool calling. Tool registry + `OrcaToolService` wired. |
-| apps/desktop | Electron shell | ✅ **Phase 6 COMPLETE.** Full renderer with streaming output, tool approval, session history, settings, auth lock, theme toggle, file attachments. Windows `.exe` artifacts produced. |
+| miranda-core | LLM behavior enforcement — gates, prompt wrapping, output validation, repair loops, circuit breaker | ✅ Production-quality. Also hosts the `MirandaGate` compliance layer. |
+| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts on Maestro output | ✅ **Phase 4 COMPLETE.** SATISFACTION_EXPLANATION_THIN, PROOF_NO_TRACE, and all claim-proof checks working. |
+| pappy-eval | Offline eval harness for Pappy — fixtures + deterministic judges | ✅ Fixture suite plus raw-Pappy and Pappy-plus-hardening judges. Run via `pnpm pappy:eval`. |
+| agent-loop-core | The shared tool-calling agent loop | ✅ Extracted from maestroAdapter; used by runner and desktop. Gated via `beforeLLMCall`. |
+| workbench-core | Tool execution (Runner + tools) | ✅ ShellRunner done. **Phase 3 complete:** `ToolRegistry` plus read/write/run/list/search tools, and a sandbox policy. |
+| claire-core | Conversational presentation layer | ⚠️ Implemented but **no tests**. |
+| mcp-client | Wraps MCP servers as `OrcaExtension` instances | ⚠️ Implemented but **no tests**. |
+| tool-bootstrap | Assembles the tool/extension registry for app shells | ⚠️ Implemented but **no tests**. |
+| ext-docs / ext-github / ext-web | Built-in extensions (Phase 7.3) | ✅ All three implement `OrcaExtension`. |
+| apps/runner | CLI harness that wires everything together | ✅ **SHIPPABLE.** Works end-to-end with full agent-loop tool calling. |
+| apps/desktop | Electron shell | ✅ **Phase 6 COMPLETE.** Streaming output, tool approval, session history, settings, auth lock, theme toggle, file attachments. Windows `.exe` artifacts produced. |
 
-The architecture is genuinely well-designed. The dependency graph is correct. The interfaces are clean. What's missing is the meat inside several of those interfaces.
+The architecture is genuinely well-designed. The dependency graph is correct, and
+the interfaces are clean.
+
+> Per-package test counts used to be quoted here and went stale by a wide margin
+> (miranda-core was listed at 27 when it had 128). Run `pnpm -r --if-present test`
+> for current numbers instead of trusting a figure in a document.
 
 ---
 
@@ -128,9 +139,9 @@ Agent loop protocol:
 `apps/runner/src/adapters/toolService.ts` — `createToolService(registry, workspaceRoot)` bridges `ToolRegistry` → `OrcaToolService`.
 `apps/runner/src/index.ts` — `createCoreToolRegistry()` + `createToolService()` wired at startup; `WORKSPACE_ROOT` env var sets the working directory.
 
-### 3.4 — Add the adapter pattern for tool extensions ⬜
+### 3.4 — Add the adapter pattern for tool extensions ✅
 
-The `OrcaExtension` interface (Phase 7) will formalize third-party tool registration. For now, custom tools can be added by calling `registry.register(myTool)` before `createToolService()` in the app shell.
+Superseded by Phase 7, which landed. `OrcaExtension` in [`orca-core/src/extension.ts`](packages/orca-core/src/extension.ts) is the formal registration contract; `ExtensionRegistry` converts loaded extensions into an `OrcaToolService`. Direct `registry.register(myTool)` still works for one-off local tools.
 
 ---
 
@@ -191,9 +202,13 @@ SQLite-backed run store using `better-sqlite3` (zero-infra, desktop-appropriate)
 
 ---
 
-## Phase 6 — Desktop App (Electron)
+## Phase 6 — Desktop App (Electron) ✅ COMPLETE
 
 **Goal:** A real UI that a non-developer can use.
+
+All three sub-items below shipped. The renderer streams output, tool approval and
+session history work, and Windows `.exe` artifacts are produced. The sub-sections
+are kept for the design rationale, not as open work.
 
 ### 6.1 — Replace the renderer skeleton
 
@@ -234,39 +249,51 @@ Users need to configure:
 
 ---
 
-## Phase 7 — Extension / Adapter System
+## Phase 7 — Extension / Adapter System ✅ COMPLETE
 
 **Goal:** Third parties (and you) can add capabilities without modifying core.
 
-### 7.1 — Formalize the adapter contract
+### 7.1 — Formalize the adapter contract ✅
+
+Landed in [`orca-core/src/extension.ts`](packages/orca-core/src/extension.ts). The
+shipped interface is narrower than the sketch originally in this document — it
+carries tools only, not roles or LLM adapters:
 
 ```typescript
-// In orca-core/src/adapters/
 export interface OrcaExtension {
-  id: string;
-  name: string;
-  version: string;
-
-  // Optional capabilities this extension adds
-  tools?: Tool[];
-  roles?: Record<string, RoleDefinition>;
-  llmAdapters?: LLMAdapter[];
-
-  // Lifecycle hooks
-  onLoad?(runtime: OrcaRuntime): Promise<void>;
+  readonly id: string;        // reverse-domain, e.g. "@orca/ext-github"
+  readonly name: string;
+  readonly version: string;
+  readonly tools: ExtTool[];  // required, not optional
+  onLoad?(): Promise<void>;   // no runtime argument
   onUnload?(): Promise<void>;
 }
 ```
 
-### 7.2 — Extension registry
+Roles and `llmAdapters` were deliberately left out: role definitions live in
+`maestro-core/src/prompts/rolePrompts.ts` and provider wiring is settings-driven,
+so neither needs an extension seam yet. Add them only if a real extension needs
+them.
 
-A simple registry in `orca-core` that loads extensions at startup and makes their tools/roles available to Maestro and the `RunnerRegistry`.
+### 7.2 — Extension registry ✅
 
-### 7.3 — Built-in extension examples to ship with
+`ExtensionRegistry` and `createExtensionRegistry()` in the same module. The
+registry loads extensions, aggregates their tools, and converts itself into an
+`OrcaToolService` that drops straight into `createOrcaRuntime({ tools })`. Wired
+up in [`apps/runner/src/index.ts`](apps/runner/src/index.ts) and
+[`tool-bootstrap`](packages/tool-bootstrap/src/index.ts).
 
-- **@orca/ext-github** — read PRs, issues, create commits
-- **@orca/ext-web** — fetch URLs, search the web
-- **@orca/ext-docs** — read PDFs, Word docs, render output to docx
+### 7.3 — Built-in extensions ✅
+
+All three ship and implement `OrcaExtension`:
+
+- **@clawde/ext-github** — PRs, issues, commits
+- **@clawde/ext-web** — URL fetch, web search
+- **@clawde/ext-docs** — PDF/Word ingestion, docx output
+
+Beyond the original plan, [`mcp-client`](packages/mcp-client) exposes MCP servers
+as `OrcaExtension` instances, so any MCP server becomes a tool source without
+core changes.
 
 ---
 
@@ -277,11 +304,22 @@ A simple registry in `orca-core` that loads extensions at startup and makes thei
 | ~~Week 1–2~~ | ~~**Phase 1** entirely.~~ ✅ **DONE** |
 | ~~Week 3~~ | ~~**Phase 3.1–3.3** (core tools).~~ ✅ **DONE** |
 | ~~Week 4~~ | ~~**Phase 2.1–2.2** (basic subagents).~~ ✅ **DONE** |
-| ~~Now~~ | ~~**Phase 5.1–5.3** (persistence).~~ ✅ **DONE** |
-| ~~Now~~ | ~~**Phase 4** (Pappy QC depth).~~ ✅ **DONE** (84 tests passing) |
-| **Now** | **Phase 6** (real desktop UI). Something you can hand to a non-developer. |
+| ~~Then~~ | ~~**Phase 5.1–5.3** (persistence).~~ ✅ **DONE** |
+| ~~Then~~ | ~~**Phase 4** (Pappy QC depth).~~ ✅ **DONE** |
+| ~~Then~~ | ~~**Phase 6** (real desktop UI).~~ ✅ **DONE** |
+| ~~Then~~ | ~~**Phase 7** (extension system).~~ ✅ **DONE** |
 
-| Ongoing | **Phase 7** (extension system) in parallel with the above. |
+**Every numbered phase in this document is now complete.** New work is tracked
+below rather than as further phases.
+
+### Open work
+
+| Priority | Work |
+|---|---|
+| 1 | **Measure prompt-cache hit rate, then act on it.** Profiling shows 99.82% of wall-clock is LLM inference ([PROFILING_FINDINGS.md](PROFILING_FINDINGS.md)), so token volume is the only lever that matters. `TokenUsage.cachedPromptTokens` now captures `prompt_tokens_details.cached_tokens`, which DashScope, OpenAI and OpenRouter all report. Collect real numbers before changing prompt assembly — the agent loop's prefix already looks stable, so implicit caching may be working already. |
+| 2 | **Tests for the untested packages.** `claire-core` (314 lines), `mcp-client` (505), `tool-bootstrap` (226) have no test files. `claire-core` runs with `--passWithNoTests` purely so the root `pnpm test` stays green. |
+| 3 | **Decide the two open architectural questions below** (model pools, multi-workspace). |
+| 4 | **Consider splitting the large files.** `apps/desktop/src/main.ts` is 2,378 lines; `ReactAgentAdapter.ts` 1,520; `orca-tracer.ts` 1,515; `maestroAdapter.ts` 1,337. |
 
 ---
 
@@ -289,8 +327,12 @@ A simple registry in `orca-core` that loads extensions at startup and makes thei
 
 Before going deep on implementation, these decisions affect everything:
 
-### 1. Synchronous vs streaming output ⚠️ PENDING
-Miranda's pipeline returns completed text. For good UX, you want streaming — the user sees output appearing as it's generated. This requires changes to `LLMAdapter`, `OrcaLLMService`, and the IPC bridge. **Decide before the UI layer is built.**
+### 1. Synchronous vs streaming output ✅ RESOLVED — streaming
+Streaming won, and it shipped. `LLMAdapter` and `OrcaLLMService` both expose
+`stream()`, callers pass `onToken`, the agent loop emits `stream:token` events, and
+the desktop renderer consumes them over the IPC bridge. Adapters without SSE fall
+back to a single buffered `complete()` call that fires `onChunk` once, so a
+non-streaming provider still works.
 
 ### 2. One model per role vs model pools ⚠️ PENDING
 The current `RoleSelector` picks a single role. Miranda already supports model fallback ladders per stage. Decide whether roles map 1:1 to models or whether each role can have a primary/fallback pool.

@@ -62,6 +62,13 @@ interface OpenAIChatResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /**
+     * Present when the provider serves part of the prompt from its context
+     * cache.  DashScope, OpenAI and OpenRouter all report cache hits here.
+     */
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
   };
 }
 
@@ -144,6 +151,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
           promptTokens: data.usage?.prompt_tokens,
           completionTokens: data.usage?.completion_tokens,
           totalTokens: data.usage?.total_tokens,
+          cachedPromptTokens: data.usage?.prompt_tokens_details?.cached_tokens,
         });
       }
 
@@ -154,10 +162,12 @@ export class OpenAICompatAdapter implements LLMAdapter {
 
       let usage: TokenUsage | null = null;
       if (data.usage) {
+        const cachedTokens = data.usage.prompt_tokens_details?.cached_tokens;
         usage = {
           promptTokens: data.usage.prompt_tokens,
           completionTokens: data.usage.completion_tokens,
           totalTokens: data.usage.total_tokens,
+          ...(cachedTokens !== undefined && { cachedPromptTokens: cachedTokens }),
         };
       }
 
