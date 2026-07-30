@@ -5,6 +5,7 @@
  *   - Total wall-clock time
  *   - Per-phase breakdown (LLM, Pappy, SQLite, AHP, trace writes, other)
  *   - Per-LLM-call breakdown sorted by duration
+ *   - Prompt-cache hit rate, split by call method
  *   - Trace write stats (count, total, mean, p95)
  *   - AHP validation stats
  *
@@ -52,6 +53,26 @@ function fmtMs(ms: number): string {
 // Core analysis
 // ---------------------------------------------------------------------------
 
+/**
+ * Prompt-cache accounting over a run's llm_call events.
+ *
+ * Only calls where the provider actually reported `cachedPromptTokens` count
+ * towards the ratio. A provider that never reports the field is not a 0% hit
+ * rate — it is an unmeasured call, and folding it in would understate caching.
+ */
+interface CacheStats {
+  /** Calls whose provider reported cached_tokens. */
+  reportingCalls: number;
+  /** Calls with no cache figure — provider silent, or usage never requested. */
+  silentCalls: number;
+  /** Prompt tokens across reporting calls. */
+  promptTokens: number;
+  /** Cached prompt tokens across reporting calls. */
+  cachedTokens: number;
+  /** Reporting-call counts per method, e.g. { stream: 6, complete: 1 }. */
+  byMethod: Record<string, number>;
+}
+
 interface RunAnalysis {
   filePath: string;
   runId: string;
@@ -63,10 +84,36 @@ interface RunAnalysis {
   traceMs: number;
   otherMs: number;
   llmCalls: ProfileEvent[];
+  cache: CacheStats;
   traceWriteTimes: number[];
   validationTimes: number[];
   pappyCalls: ProfileEvent[];
   notes: string[];
+}
+
+function collectCacheStats(llmCalls: ProfileEvent[]): CacheStats {
+  const stats: CacheStats = {
+    reportingCalls: 0,
+    silentCalls: 0,
+    promptTokens: 0,
+    cachedTokens: 0,
+    byMethod: {},
+  };
+
+  for (const call of llmCalls) {
+    const cached = call["cachedPromptTokens"];
+    if (typeof cached !== "number") {
+      stats.silentCalls++;
+      continue;
+    }
+    const method = (call["method"] as string) ?? "unknown";
+    stats.reportingCalls++;
+    stats.cachedTokens += cached;
+    stats.promptTokens += (call["promptTokens"] as number) ?? 0;
+    stats.byMethod[method] = (stats.byMethod[method] ?? 0) + 1;
+  }
+
+  return stats;
 }
 
 function analyzeRun(jsonlPath: string): RunAnalysis {
@@ -153,6 +200,7 @@ function analyzeRun(jsonlPath: string): RunAnalysis {
     llmCalls: [...llmCalls].sort(
       (a, b) => (b.durationMs as number) - (a.durationMs as number),
     ),
+    cache: collectCacheStats(llmCalls),
     traceWriteTimes,
     validationTimes,
     pappyCalls,
@@ -163,6 +211,51 @@ function analyzeRun(jsonlPath: string): RunAnalysis {
 // ---------------------------------------------------------------------------
 // Markdown rendering
 // ---------------------------------------------------------------------------
+
+function renderCacheSection(c: CacheStats): string[] {
+  const lines = ["## Prompt Cache", ""];
+
+  if (c.reportingCalls === 0) {
+    lines.push(
+      `No LLM call reported cached prompt tokens (${c.silentCalls} call(s) silent).`,
+      "",
+      "Either the provider has no context cache, or it reported no usage at all —",
+      "a streamed call only carries usage when the adapter requests it via",
+      "`stream_options.include_usage`.",
+      "",
+    );
+    return lines;
+  }
+
+  const ratio = c.promptTokens > 0
+    ? (c.cachedTokens / c.promptTokens * 100).toFixed(1) + "%"
+    : "n/a";
+  const methods = Object.entries(c.byMethod)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([method, count]) => `${method} × ${count}`)
+    .join(", ");
+
+  lines.push(
+    "| Metric | Value |",
+    "|--------|-------|",
+    `| **Cache hit rate** | **${ratio}** |`,
+    `| Cached prompt tokens | ${c.cachedTokens} |`,
+    `| Prompt tokens (reporting calls) | ${c.promptTokens} |`,
+    `| Calls reporting cache data | ${c.reportingCalls} (${methods}) |`,
+    `| Calls with no cache data | ${c.silentCalls} |`,
+    "",
+  );
+
+  if (c.silentCalls > 0) {
+    lines.push(
+      `Hit rate covers the ${c.reportingCalls} reporting call(s) only. Silent calls are`,
+      "excluded rather than counted as misses — an unmeasured call is not a miss.",
+      "",
+    );
+  }
+
+  return lines;
+}
 
 function renderReport(a: RunAnalysis): string {
   const lines: string[] = [
@@ -213,6 +306,8 @@ function renderReport(a: RunAnalysis): string {
     }
     lines.push("");
   }
+
+  lines.push(...renderCacheSection(a.cache));
 
   lines.push(
     "## Trace Write Stats",
