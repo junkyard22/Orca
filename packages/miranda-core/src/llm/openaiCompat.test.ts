@@ -94,3 +94,59 @@ describe("OpenAICompatAdapter reasoning_content fallback", () => {
     expect(onToken).toHaveBeenNthCalledWith(2, " and done");
   });
 });
+
+describe("OpenAICompatAdapter context-cache usage reporting", () => {
+  function completeWithUsage(usage: unknown) {
+    globalThis.fetch = vi.fn(async () =>
+      createJsonResponse({
+        choices: [{ message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+        model: "test-model",
+        usage,
+      }),
+    ) as typeof fetch;
+
+    const adapter = new OpenAICompatAdapter({
+      baseUrl: "https://example.test/v1",
+      defaultModel: "test-model",
+    });
+
+    return adapter.complete({
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 128,
+      temperature: 0,
+    });
+  }
+
+  it("reports cached prompt tokens when the provider returns prompt_tokens_details", async () => {
+    const result = await completeWithUsage({
+      prompt_tokens: 1500,
+      completion_tokens: 20,
+      total_tokens: 1520,
+      prompt_tokens_details: { cached_tokens: 1024 },
+    });
+
+    expect(result.usage?.promptTokens).toBe(1500);
+    expect(result.usage?.cachedPromptTokens).toBe(1024);
+  });
+
+  it("distinguishes a reported zero-token cache miss from an absent field", async () => {
+    const miss = await completeWithUsage({
+      prompt_tokens: 100,
+      completion_tokens: 5,
+      total_tokens: 105,
+      prompt_tokens_details: { cached_tokens: 0 },
+    });
+    expect(miss.usage?.cachedPromptTokens).toBe(0);
+
+    // Providers without context caching omit the field entirely.  That must stay
+    // undefined rather than collapsing to 0, so cache-hit ratios are not
+    // computed against providers that never report the metric.
+    const notReported = await completeWithUsage({
+      prompt_tokens: 100,
+      completion_tokens: 5,
+      total_tokens: 105,
+    });
+    expect(notReported.usage?.cachedPromptTokens).toBeUndefined();
+    expect("cachedPromptTokens" in (notReported.usage ?? {})).toBe(false);
+  });
+});

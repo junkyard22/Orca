@@ -48,9 +48,41 @@ function gitExec(cmd: string): string {
   }
 }
 
-function changedFiles(): string[] {
-  // All tracked changes vs HEAD (staged + unstaged), plus new untracked files.
+function refExists(ref: string): boolean {
+  return gitExec(`git rev-parse --verify --quiet ${ref}`).trim() !== "";
+}
+
+/**
+ * The branch point to diff against, or null when none can be resolved.
+ *
+ * Without this the check only ever saw uncommitted work, which made it a no-op
+ * in CI: `actions/checkout` produces a clean tree, so `git diff HEAD` was always
+ * empty and every run reported CLEAR regardless of what the PR changed.
+ */
+function resolveBaseRef(): string | null {
+  const explicit = process.env["CONTRACT_CHECK_BASE"];
+  if (explicit) return refExists(explicit) ? explicit : null;
+
+  // Set by GitHub Actions on pull_request events, e.g. "main".
+  const prBase = process.env["GITHUB_BASE_REF"];
+  if (prBase) {
+    for (const candidate of [`origin/${prBase}`, prBase]) {
+      if (refExists(candidate)) return candidate;
+    }
+  }
+
+  for (const candidate of ["origin/main", "origin/master", "main", "master"]) {
+    if (refExists(candidate)) return candidate;
+  }
+  return null;
+}
+
+function changedFiles(base: string | null): string[] {
   const sources = [
+    // Everything this branch changed relative to the merge base.  Three-dot so a
+    // busy base branch does not drag unrelated files in.
+    base ? gitExec(`git diff --name-only ${base}...HEAD`) : "",
+    // Uncommitted work, so the check still catches things pre-commit locally.
     gitExec("git diff --name-only HEAD"),
     gitExec("git diff --name-only --cached"),          // handles pre-first-commit repos
     gitExec("git ls-files --others --exclude-standard"),
@@ -64,6 +96,41 @@ function changedFiles(): string[] {
         .filter(Boolean),
     ),
   ];
+}
+
+/**
+ * Added/removed lines for one file, so content rules can judge what a change
+ * actually did instead of only where it landed.  Falls back to the whole file
+ * when no diff is available (a new untracked file).
+ */
+function changedLines(file: string, base: string | null): string | null {
+  const diffs = [
+    base ? gitExec(`git diff -U0 ${base}...HEAD -- "${file}"`) : "",
+    gitExec(`git diff -U0 HEAD -- "${file}"`),
+    gitExec(`git diff -U0 --cached -- "${file}"`),
+  ];
+  const lines = diffs
+    .join("\n")
+    .split("\n")
+    .filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l));
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
+/**
+ * Whether a path is source code these rules can meaningfully grep.
+ *
+ * Rules 2 and 3 look for call patterns, so pointing them at Markdown produces
+ * false positives: ROADMAP.md documents `ctx.tools.execute()` in prose and was
+ * being flagged as an ungated tool call.
+ */
+function isAnalyzableSource(file: string): boolean {
+  if (!/\.(?:[cm]?[jt]sx?)$/.test(file)) return false;
+  return !(
+    file.endsWith(".d.ts") ||
+    file.includes(".test.") ||
+    file.includes(".spec.") ||
+    file.includes("/dist/")
+  );
 }
 
 function readFileContent(relPath: string): string | null {
@@ -82,19 +149,39 @@ function readFileContent(relPath: string): string | null {
 //
 // The PLAN→ANSWER→CRITIQUE→REWRITE pipeline is frozen. Changes to these files
 // must not add new live behavior.
-function checkRule1(file: string): Finding | null {
+// Symbols that *are* the deprecated staging machinery.  Touching one of these is
+// what the freeze is actually about.
+const DEPRECATED_STAGE_RE =
+  /\bStageKind\b|\bSTAGE_ORDER\b|\bSTAGE_FORMAT\b|\bStageAttempt\b|\bStageResult\b|\bStageConfig\b|\bDEFAULT_MODELS\b|\brunStage\b|\brunPipeline\b/;
+
+function checkRule1(file: string, diff: string | null): Finding | null {
   const isDeprecated =
     file.includes("miranda-core/src/pipeline/") ||
     file.includes("miranda-core/src/contracts/");
   if (!isDeprecated) return null;
+
+  // `pipeline/types.ts` holds the frozen stage types *and* the live LLM contract
+  // (LLMRequest / LLMResponse / TokenUsage) that every adapter depends on, so
+  // path alone cannot tell a frozen-pipeline edit from a live-path one.  Judge
+  // the changed lines: only a change that touches the staging machinery is a
+  // freeze violation.  Anything else in these directories still surfaces as
+  // REVIEW REQUIRED rather than passing silently.
+  const touchesStageMachinery = diff === null || DEPRECATED_STAGE_RE.test(diff);
+
   return {
     ruleNum: 1,
-    ruleName: "Deprecated Miranda pipeline touched",
-    severity: "BLOCKED",
+    ruleName: touchesStageMachinery
+      ? "Deprecated Miranda pipeline touched"
+      : "Frozen-pipeline directory touched (staging machinery unchanged)",
+    severity: touchesStageMachinery ? "BLOCKED" : "REVIEW REQUIRED",
     file,
-    detail:
-      "The deprecated PLAN→ANSWER→CRITIQUE→REWRITE pipeline is frozen. " +
-      "Changes to these files must not add new live behavior.",
+    detail: touchesStageMachinery
+      ? "The deprecated PLAN→ANSWER→CRITIQUE→REWRITE pipeline is frozen. " +
+        "Changes to these files must not add new live behavior."
+      : "File lives in a frozen-pipeline directory, but the changed lines do not " +
+        "touch the staging machinery (StageKind, STAGE_ORDER, StageResult, …). " +
+        "Confirm the change only affects shared contracts such as LLMRequest, " +
+        "LLMResponse or TokenUsage, which the live adapters depend on.",
   };
 }
 
@@ -106,14 +193,10 @@ const LLM_CALL_RE =
   /\bctx\.llm\.\w+\s*\(|\bllm\.(?:stream|complete|call|invoke)\s*\(|\.llm\.(?:stream|complete|call|invoke)\s*\(/;
 
 function checkRule2(file: string, content: string): Finding | null {
-  // Skip type definitions, tests, and the gate file itself.
-  if (
-    file.endsWith(".d.ts") ||
-    file.includes(".test.") ||
-    file.includes(".spec.") ||
-    file.includes("mirandaGate") ||
-    file.endsWith("types.ts")
-  ) {
+  // Source only — greppping prose for call patterns yields false positives.
+  if (!isAnalyzableSource(file)) return null;
+  // Skip type definitions and the gate file itself.
+  if (file.includes("mirandaGate") || file.endsWith("types.ts")) {
     return null;
   }
   if (!LLM_CALL_RE.test(content)) return null;
@@ -136,13 +219,8 @@ function checkRule2(file: string, content: string): Finding | null {
 const TOOL_EXEC_RE = /(?:tools|ctx\.tools|toolService)\.execute\s*\(/;
 
 function checkRule3(file: string, content: string): Finding | null {
-  if (
-    file.endsWith(".d.ts") ||
-    file.includes(".test.") ||
-    file.includes(".spec.") ||
-    file.includes("mirandaGate") ||
-    file.endsWith("types.ts")
-  ) {
+  if (!isAnalyzableSource(file)) return null;
+  if (file.includes("mirandaGate") || file.endsWith("types.ts")) {
     return null;
   }
   if (!TOOL_EXEC_RE.test(content)) return null;
@@ -266,7 +344,8 @@ function checkRule7(file: string, content: string): Finding | null {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 function run(strict: boolean): void {
-  const allChanged = changedFiles();
+  const baseRef = resolveBaseRef();
+  const allChanged = changedFiles(baseRef);
 
   // Never flag the contract-check script itself — it will almost always be in
   // the diff when first added or updated.
@@ -279,8 +358,12 @@ function run(strict: boolean): void {
   const findings: Finding[] = [];
 
   for (const file of toScan) {
+    // Diff-aware rule — needs to know what the change did, not just where.
+    const rule1 = checkRule1(file, changedLines(file, baseRef));
+    if (rule1) findings.push(rule1);
+
     // Path-only rules
-    for (const check of [checkRule1, checkRule4, checkRule5, checkRule6]) {
+    for (const check of [checkRule4, checkRule5, checkRule6]) {
       const finding = check(file);
       if (finding) findings.push(finding);
     }
@@ -335,7 +418,13 @@ function run(strict: boolean): void {
     }
   }
 
-  // File list
+  // File list.  Naming the base makes it obvious when nothing is being compared —
+  // an unresolved base plus a clean worktree means the check saw no files at all.
+  console.log(
+    baseRef
+      ? `  Comparing against: ${baseRef} (plus uncommitted changes)`
+      : "  Comparing against: uncommitted changes only (no base ref resolved)",
+  );
   if (toScan.length === 0) {
     console.log("  Changed files scanned: none (clean worktree or no new files)");
   } else {
