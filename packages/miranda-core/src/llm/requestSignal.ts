@@ -1,4 +1,4 @@
-import type { LLMRequest } from "../pipeline/types.js";
+import type { LLMRequest } from "./types.js";
 
 export function createAbortError(reason?: unknown): Error {
   if (reason instanceof Error && reason.name === "AbortError") {

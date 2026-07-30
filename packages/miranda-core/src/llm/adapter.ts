@@ -3,7 +3,7 @@
  * Provider-agnostic interface for LLM calls.
  */
 
-import type { LLMRequest, LLMResponse } from "../pipeline/types.js";
+import type { LLMRequest, LLMResponse } from "./types.js";
 
 export interface LLMAdapter {
   /** Unique identifier for this adapter (e.g. "openrouter") */

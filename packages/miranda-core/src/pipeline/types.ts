@@ -28,46 +28,21 @@ export const STAGE_FORMAT: Record<StageKind, StageFormat> = {
 // ---------------------------------------------------------------------------
 // LLM types
 // ---------------------------------------------------------------------------
+//
+// Defined in ../llm/types.js, not here. They are live contracts spoken by the
+// provider adapters, and this file is the frozen pipeline — keeping them here
+// meant every adapter change had to edit a frozen file. Re-exported so the
+// stage types below and this module's public surface are unchanged.
 
-export interface ModelSpec {
-  /** OpenRouter model ID, e.g. "deepseek/deepseek-chat" */
-  id: string;
-  /** Display name for logs */
-  label: string;
-}
+export type {
+  ModelSpec,
+  LLMRequest,
+  LLMMessage,
+  LLMResponse,
+  TokenUsage,
+} from "../llm/types.js";
 
-export interface LLMRequest {
-  model: string;
-  messages: LLMMessage[];
-  temperature: number;
-  maxTokens: number;
-  signal?: AbortSignal;
-  /**
-   * When set, injects `enable_thinking` into the request body.
-   * Use `false` to suppress chain-of-thought on models that default to deep
-   * thinking (e.g. qwen3.5-plus). Use `true` to force it on. Omit to let the
-   * provider use its own default.
-   */
-  enableThinking?: boolean;
-}
-
-export interface LLMMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-export interface LLMResponse {
-  content: string;
-  model: string;
-  usage: TokenUsage | null;
-  durationMs: number;
-}
-
-export interface TokenUsage {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-}
+import type { ModelSpec, TokenUsage } from "../llm/types.js";
 
 // ---------------------------------------------------------------------------
 // Validation

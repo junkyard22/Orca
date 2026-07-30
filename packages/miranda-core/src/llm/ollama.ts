@@ -10,7 +10,7 @@
  */
 
 import type { LLMAdapter } from "./adapter.js";
-import type { LLMRequest, LLMResponse, TokenUsage } from "../pipeline/types.js";
+import type { LLMRequest, LLMResponse, TokenUsage } from "./types.js";
 import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
 
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";

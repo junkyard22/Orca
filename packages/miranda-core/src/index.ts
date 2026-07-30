@@ -16,14 +16,19 @@ export {
   createDefaultConfig,
 } from "./pipeline/types.js";
 
+// Live LLM contracts. Same names and shapes as before, sourced from the module
+// that owns them rather than through the frozen pipeline's re-export.
 export type {
-  StageKind,
-  StageFormat,
   ModelSpec,
   LLMRequest,
   LLMMessage,
   LLMResponse,
   TokenUsage,
+} from "./llm/types.js";
+
+export type {
+  StageKind,
+  StageFormat,
   ValidationResult,
   StageAttempt,
   StageResult,

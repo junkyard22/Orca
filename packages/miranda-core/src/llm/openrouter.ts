@@ -4,7 +4,7 @@
  */
 
 import type { LLMAdapter } from "./adapter.js";
-import type { LLMRequest, LLMResponse, TokenUsage } from "../pipeline/types.js";
+import type { LLMRequest, LLMResponse, TokenUsage } from "./types.js";
 import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -31,6 +31,10 @@ interface OpenRouterChatResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /** Present when the upstream provider serves part of the prompt from cache. */
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
   };
 }
 
@@ -101,10 +105,12 @@ export class OpenRouterAdapter implements LLMAdapter {
 
       let usage: TokenUsage | null = null;
       if (data.usage) {
+        const cachedTokens = data.usage.prompt_tokens_details?.cached_tokens;
         usage = {
           promptTokens: data.usage.prompt_tokens,
           completionTokens: data.usage.completion_tokens,
           totalTokens: data.usage.total_tokens,
+          ...(cachedTokens !== undefined && { cachedPromptTokens: cachedTokens }),
         };
       }
 
