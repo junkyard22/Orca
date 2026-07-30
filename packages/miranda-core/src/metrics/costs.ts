@@ -3,7 +3,8 @@
  * Estimate cost from token counts and a pricing table.
  */
 
-import type { TokenUsage, ModelPricing } from "../pipeline/types.js";
+import type { TokenUsage } from "../llm/types.js";
+import type { ModelPricing } from "../pipeline/types.js";
 import { DEFAULT_PRICING } from "../pipeline/types.js";
 
 /**
