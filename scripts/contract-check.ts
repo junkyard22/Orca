@@ -48,9 +48,41 @@ function gitExec(cmd: string): string {
   }
 }
 
-function changedFiles(): string[] {
-  // All tracked changes vs HEAD (staged + unstaged), plus new untracked files.
+function refExists(ref: string): boolean {
+  return gitExec(`git rev-parse --verify --quiet ${ref}`).trim() !== "";
+}
+
+/**
+ * The branch point to diff against, or null when none can be resolved.
+ *
+ * Without this the check only ever saw uncommitted work, which made it a no-op
+ * in CI: `actions/checkout` produces a clean tree, so `git diff HEAD` was always
+ * empty and every run reported CLEAR regardless of what the PR changed.
+ */
+function resolveBaseRef(): string | null {
+  const explicit = process.env["CONTRACT_CHECK_BASE"];
+  if (explicit) return refExists(explicit) ? explicit : null;
+
+  // Set by GitHub Actions on pull_request events, e.g. "main".
+  const prBase = process.env["GITHUB_BASE_REF"];
+  if (prBase) {
+    for (const candidate of [`origin/${prBase}`, prBase]) {
+      if (refExists(candidate)) return candidate;
+    }
+  }
+
+  for (const candidate of ["origin/main", "origin/master", "main", "master"]) {
+    if (refExists(candidate)) return candidate;
+  }
+  return null;
+}
+
+function changedFiles(base: string | null): string[] {
   const sources = [
+    // Everything this branch changed relative to the merge base.  Three-dot so a
+    // busy base branch does not drag unrelated files in.
+    base ? gitExec(`git diff --name-only ${base}...HEAD`) : "",
+    // Uncommitted work, so the check still catches things pre-commit locally.
     gitExec("git diff --name-only HEAD"),
     gitExec("git diff --name-only --cached"),          // handles pre-first-commit repos
     gitExec("git ls-files --others --exclude-standard"),
@@ -64,6 +96,23 @@ function changedFiles(): string[] {
         .filter(Boolean),
     ),
   ];
+}
+
+/**
+ * Whether a path is source code these rules can meaningfully grep.
+ *
+ * Rules 2 and 3 look for call patterns, so pointing them at Markdown produces
+ * false positives: ROADMAP.md documents `ctx.tools.execute()` in prose and was
+ * being flagged as an ungated tool call.
+ */
+function isAnalyzableSource(file: string): boolean {
+  if (!/\.(?:[cm]?[jt]sx?)$/.test(file)) return false;
+  return !(
+    file.endsWith(".d.ts") ||
+    file.includes(".test.") ||
+    file.includes(".spec.") ||
+    file.includes("/dist/")
+  );
 }
 
 function readFileContent(relPath: string): string | null {
@@ -106,14 +155,10 @@ const LLM_CALL_RE =
   /\bctx\.llm\.\w+\s*\(|\bllm\.(?:stream|complete|call|invoke)\s*\(|\.llm\.(?:stream|complete|call|invoke)\s*\(/;
 
 function checkRule2(file: string, content: string): Finding | null {
-  // Skip type definitions, tests, and the gate file itself.
-  if (
-    file.endsWith(".d.ts") ||
-    file.includes(".test.") ||
-    file.includes(".spec.") ||
-    file.includes("mirandaGate") ||
-    file.endsWith("types.ts")
-  ) {
+  // Source only — greppping prose for call patterns yields false positives.
+  if (!isAnalyzableSource(file)) return null;
+  // Skip type definitions and the gate file itself.
+  if (file.includes("mirandaGate") || file.endsWith("types.ts")) {
     return null;
   }
   if (!LLM_CALL_RE.test(content)) return null;
@@ -136,13 +181,8 @@ function checkRule2(file: string, content: string): Finding | null {
 const TOOL_EXEC_RE = /(?:tools|ctx\.tools|toolService)\.execute\s*\(/;
 
 function checkRule3(file: string, content: string): Finding | null {
-  if (
-    file.endsWith(".d.ts") ||
-    file.includes(".test.") ||
-    file.includes(".spec.") ||
-    file.includes("mirandaGate") ||
-    file.endsWith("types.ts")
-  ) {
+  if (!isAnalyzableSource(file)) return null;
+  if (file.includes("mirandaGate") || file.endsWith("types.ts")) {
     return null;
   }
   if (!TOOL_EXEC_RE.test(content)) return null;
@@ -266,7 +306,8 @@ function checkRule7(file: string, content: string): Finding | null {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 function run(strict: boolean): void {
-  const allChanged = changedFiles();
+  const baseRef = resolveBaseRef();
+  const allChanged = changedFiles(baseRef);
 
   // Never flag the contract-check script itself — it will almost always be in
   // the diff when first added or updated.
@@ -335,7 +376,13 @@ function run(strict: boolean): void {
     }
   }
 
-  // File list
+  // File list.  Naming the base makes it obvious when nothing is being compared —
+  // an unresolved base plus a clean worktree means the check saw no files at all.
+  console.log(
+    baseRef
+      ? `  Comparing against: ${baseRef} (plus uncommitted changes)`
+      : "  Comparing against: uncommitted changes only (no base ref resolved)",
+  );
   if (toScan.length === 0) {
     console.log("  Changed files scanned: none (clean worktree or no new files)");
   } else {

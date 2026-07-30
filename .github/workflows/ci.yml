@@ -18,6 +18,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Contract Check diffs the branch against its merge base.  The default
+          # shallow clone has no base ref, which is what made the check a no-op
+          # in CI: with nothing to compare against it reported CLEAR every run.
+          fetch-depth: 0
 
       # No `version:` here on purpose — action-setup reads the `packageManager`
       # field in package.json, so CI always uses the same pnpm that generated
