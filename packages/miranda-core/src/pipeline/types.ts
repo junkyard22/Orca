@@ -28,21 +28,59 @@ export const STAGE_FORMAT: Record<StageKind, StageFormat> = {
 // ---------------------------------------------------------------------------
 // LLM types
 // ---------------------------------------------------------------------------
-//
-// Defined in ../llm/types.js, not here. They are live contracts spoken by the
-// provider adapters, and this file is the frozen pipeline — keeping them here
-// meant every adapter change had to edit a frozen file. Re-exported so the
-// stage types below and this module's public surface are unchanged.
 
-export type {
-  ModelSpec,
-  LLMRequest,
-  LLMMessage,
-  LLMResponse,
-  TokenUsage,
-} from "../llm/types.js";
+export interface ModelSpec {
+  /** OpenRouter model ID, e.g. "deepseek/deepseek-chat" */
+  id: string;
+  /** Display name for logs */
+  label: string;
+}
 
-import type { ModelSpec, TokenUsage } from "../llm/types.js";
+export interface LLMRequest {
+  model: string;
+  messages: LLMMessage[];
+  temperature: number;
+  maxTokens: number;
+  signal?: AbortSignal;
+  /**
+   * When set, injects `enable_thinking` into the request body.
+   * Use `false` to suppress chain-of-thought on models that default to deep
+   * thinking (e.g. qwen3.5-plus). Use `true` to force it on. Omit to let the
+   * provider use its own default.
+   */
+  enableThinking?: boolean;
+}
+
+export interface LLMMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface LLMResponse {
+  content: string;
+  model: string;
+  usage: TokenUsage | null;
+  durationMs: number;
+}
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /**
+   * Prompt tokens served from the provider's context cache, when reported.
+   *
+   * Providers that do automatic prefix caching (Alibaba DashScope, OpenAI,
+   * OpenRouter) return this as `usage.prompt_tokens_details.cached_tokens`, and
+   * it is a subset of `promptTokens` — not an addition to it.  Cached tokens are
+   * billed at a reduced rate, so a run's cache hit ratio is
+   * `cachedPromptTokens / promptTokens`.
+   *
+   * `undefined` means the provider did not report the field, which is not the
+   * same as a zero-token cache hit.
+   */
+  cachedPromptTokens?: number;
+}
 
 // ---------------------------------------------------------------------------
 // Validation

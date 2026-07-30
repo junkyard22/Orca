@@ -17,7 +17,10 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules"],
+  // Tests are excluded from the build, matching the other packages.  Without
+  // this, tsc emits dist/index.test.js and vitest then discovers both the source
+  // and compiled copies, running every test twice.
+  "exclude": ["src/**/*.test.ts", "dist", "node_modules"],
   "references": [
     { "path": "../../packages/orca-core" }
   ]

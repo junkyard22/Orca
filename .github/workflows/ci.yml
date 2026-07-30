@@ -18,6 +18,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Contract Check diffs the branch against its merge base.  The default
+          # shallow clone has no base ref, which is what made the check a no-op
+          # in CI: with nothing to compare against it reported CLEAR every run.
+          fetch-depth: 0
 
       # No `version:` here on purpose — action-setup reads the `packageManager`
       # field in package.json, so CI always uses the same pnpm that generated
@@ -98,3 +103,13 @@ jobs:
       # this gate blocks what actually reaches users.
       - name: Audit production dependencies
         run: pnpm audit --prod --audit-level high
+
+      # workbench-core is vendored with its own package-lock.json, so it does not
+      # inherit the root pnpm overrides and the pnpm audit above cannot see it.
+      # That blind spot let a high-severity postcss advisory sit unreported, so
+      # the second lockfile gets its own gate.  --no-workspaces stops npm from
+      # trying to resolve the repo's `workspace:*` specifiers, which it cannot
+      # parse.
+      - name: Audit workbench-core lockfile
+        working-directory: packages/workbench-core
+        run: npm audit --no-workspaces --audit-level high
