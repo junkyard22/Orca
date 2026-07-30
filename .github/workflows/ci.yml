@@ -103,3 +103,13 @@ jobs:
       # this gate blocks what actually reaches users.
       - name: Audit production dependencies
         run: pnpm audit --prod --audit-level high
+
+      # workbench-core is vendored with its own package-lock.json, so it does not
+      # inherit the root pnpm overrides and the pnpm audit above cannot see it.
+      # That blind spot let a high-severity postcss advisory sit unreported, so
+      # the second lockfile gets its own gate.  --no-workspaces stops npm from
+      # trying to resolve the repo's `workspace:*` specifiers, which it cannot
+      # parse.
+      - name: Audit workbench-core lockfile
+        working-directory: packages/workbench-core
+        run: npm audit --no-workspaces --audit-level high

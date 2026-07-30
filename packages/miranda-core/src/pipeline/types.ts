@@ -67,6 +67,19 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * Prompt tokens served from the provider's context cache, when reported.
+   *
+   * Providers that do automatic prefix caching (Alibaba DashScope, OpenAI,
+   * OpenRouter) return this as `usage.prompt_tokens_details.cached_tokens`, and
+   * it is a subset of `promptTokens` — not an addition to it.  Cached tokens are
+   * billed at a reduced rate, so a run's cache hit ratio is
+   * `cachedPromptTokens / promptTokens`.
+   *
+   * `undefined` means the provider did not report the field, which is not the
+   * same as a zero-token cache hit.
+   */
+  cachedPromptTokens?: number;
 }
 
 // ---------------------------------------------------------------------------

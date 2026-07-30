@@ -58,12 +58,19 @@ interface McpOtherContent {
 type McpContent = McpTextContent | McpOtherContent;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+//
+// The four helpers below are exported for unit testing.  They hold the logic
+// most likely to break — schema translation and coercion of LLM-supplied
+// arguments — and reaching them through connectMcpServer() would mean spawning a
+// real MCP subprocess.  They are not part of the package's intended API.
 
 /**
  * Merge extra env vars with process.env, stripping undefined values so
  * StdioClientTransport receives Record<string, string> (not string | undefined).
+ *
+ * @internal Exported for tests.
  */
-function mergeEnv(extra?: Record<string, string>): Record<string, string> | undefined {
+export function mergeEnv(extra?: Record<string, string>): Record<string, string> | undefined {
   if (!extra) return undefined;
   const base: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -84,8 +91,10 @@ function mergeEnv(extra?: Record<string, string>): Record<string, string> | unde
  *  - enum values are coerced to strings and preserved
  *  - required[] is preserved as-is; missing → []
  *  - a missing or empty inputSchema is treated as { type:"object", properties:{}, required:[] }
+ *
+ * @internal Exported for tests.
  */
-function convertSchema(mcp: McpToolSchema | undefined): ExtTool["schema"] {
+export function convertSchema(mcp: McpToolSchema | undefined): ExtTool["schema"] {
   const props: ExtTool["schema"]["properties"] = {};
   const schema = mcp ?? {};
 
@@ -155,8 +164,10 @@ type CoerceResult =
  *
  * Returns { ok: true, args } on success or { ok: false, error } with a clear
  * message describing every failure (all errors are collected before returning).
+ *
+ * @internal Exported for tests.
  */
-function coerceAndValidate(
+export function coerceAndValidate(
   input: Record<string, unknown>,
   schema: McpToolSchema,
 ): CoerceResult {
@@ -246,8 +257,10 @@ function coerceAndValidate(
 /**
  * Extract plain text from an MCP callTool result's content array.
  * Non-text content (images, resources) is silently skipped.
+ *
+ * @internal Exported for tests.
  */
-function extractText(content: McpContent[]): string {
+export function extractText(content: McpContent[]): string {
   return content
     .filter((c): c is McpTextContent => c.type === "text")
     .map((c) => c.text)

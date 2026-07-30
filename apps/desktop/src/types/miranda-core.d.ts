@@ -27,6 +27,8 @@ declare module '@clawde/miranda-core' {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /** Subset of promptTokens served from the provider's cache, when reported. */
+    cachedPromptTokens?: number;
   }
 
   export interface LLMAdapter {
