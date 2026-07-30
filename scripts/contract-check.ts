@@ -99,24 +99,6 @@ function changedFiles(base: string | null): string[] {
 }
 
 /**
- * Added/removed lines for one file, so content rules can judge what a change
- * actually did instead of only where it landed.  Falls back to the whole file
- * when no diff is available (a new untracked file).
- */
-function changedLines(file: string, base: string | null): string | null {
-  const diffs = [
-    base ? gitExec(`git diff -U0 ${base}...HEAD -- "${file}"`) : "",
-    gitExec(`git diff -U0 HEAD -- "${file}"`),
-    gitExec(`git diff -U0 --cached -- "${file}"`),
-  ];
-  const lines = diffs
-    .join("\n")
-    .split("\n")
-    .filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l));
-  return lines.length > 0 ? lines.join("\n") : null;
-}
-
-/**
  * Whether a path is source code these rules can meaningfully grep.
  *
  * Rules 2 and 3 look for call patterns, so pointing them at Markdown produces
@@ -149,39 +131,27 @@ function readFileContent(relPath: string): string | null {
 //
 // The PLAN→ANSWER→CRITIQUE→REWRITE pipeline is frozen. Changes to these files
 // must not add new live behavior.
-// Symbols that *are* the deprecated staging machinery.  Touching one of these is
-// what the freeze is actually about.
-const DEPRECATED_STAGE_RE =
-  /\bStageKind\b|\bSTAGE_ORDER\b|\bSTAGE_FORMAT\b|\bStageAttempt\b|\bStageResult\b|\bStageConfig\b|\bDEFAULT_MODELS\b|\brunStage\b|\brunPipeline\b/;
-
-function checkRule1(file: string, diff: string | null): Finding | null {
+//
+// Path-based and unconditional, on purpose.  An earlier draft made this read the
+// changed lines so that edits confined to the live LLM contracts inside
+// pipeline/types.ts downgraded to REVIEW REQUIRED.  That treated the symptom:
+// those contracts had no business inside the freeze, and softening the rule
+// would have made every future adapter-contract change quietly acceptable.  They
+// live in miranda-core/src/llm/types.ts now, so the rule can stay strict and
+// still say something true.
+function checkRule1(file: string): Finding | null {
   const isDeprecated =
     file.includes("miranda-core/src/pipeline/") ||
     file.includes("miranda-core/src/contracts/");
   if (!isDeprecated) return null;
-
-  // `pipeline/types.ts` holds the frozen stage types *and* the live LLM contract
-  // (LLMRequest / LLMResponse / TokenUsage) that every adapter depends on, so
-  // path alone cannot tell a frozen-pipeline edit from a live-path one.  Judge
-  // the changed lines: only a change that touches the staging machinery is a
-  // freeze violation.  Anything else in these directories still surfaces as
-  // REVIEW REQUIRED rather than passing silently.
-  const touchesStageMachinery = diff === null || DEPRECATED_STAGE_RE.test(diff);
-
   return {
     ruleNum: 1,
-    ruleName: touchesStageMachinery
-      ? "Deprecated Miranda pipeline touched"
-      : "Frozen-pipeline directory touched (staging machinery unchanged)",
-    severity: touchesStageMachinery ? "BLOCKED" : "REVIEW REQUIRED",
+    ruleName: "Deprecated Miranda pipeline touched",
+    severity: "BLOCKED",
     file,
-    detail: touchesStageMachinery
-      ? "The deprecated PLAN→ANSWER→CRITIQUE→REWRITE pipeline is frozen. " +
-        "Changes to these files must not add new live behavior."
-      : "File lives in a frozen-pipeline directory, but the changed lines do not " +
-        "touch the staging machinery (StageKind, STAGE_ORDER, StageResult, …). " +
-        "Confirm the change only affects shared contracts such as LLMRequest, " +
-        "LLMResponse or TokenUsage, which the live adapters depend on.",
+    detail:
+      "The deprecated PLAN→ANSWER→CRITIQUE→REWRITE pipeline is frozen. " +
+      "Changes to these files must not add new live behavior.",
   };
 }
 
@@ -358,12 +328,8 @@ function run(strict: boolean): void {
   const findings: Finding[] = [];
 
   for (const file of toScan) {
-    // Diff-aware rule — needs to know what the change did, not just where.
-    const rule1 = checkRule1(file, changedLines(file, baseRef));
-    if (rule1) findings.push(rule1);
-
     // Path-only rules
-    for (const check of [checkRule4, checkRule5, checkRule6]) {
+    for (const check of [checkRule1, checkRule4, checkRule5, checkRule6]) {
       const finding = check(file);
       if (finding) findings.push(finding);
     }
