@@ -58,10 +58,13 @@ export interface TokenUsage {
    * them (`usage.prompt_tokens_details.cached_tokens` on DashScope, OpenAI and
    * OpenRouter).
    *
-   * A subset of `promptTokens`, not an addition to it. Left `undefined` rather
-   * than defaulting to 0 when the provider says nothing, so a hit ratio is never
-   * computed against a provider that simply does not report the field — 0 would
-   * be indistinguishable from a genuine cache miss.
+   * A subset of `promptTokens`, not an addition to it. Cached tokens are billed
+   * at a reduced rate, so a run's cache hit ratio is
+   * `cachedPromptTokens / promptTokens`.
+   *
+   * Left `undefined` rather than defaulting to 0 when the provider says nothing,
+   * so a hit ratio is never computed against a provider that simply does not
+   * report the field — 0 would be indistinguishable from a genuine cache miss.
    */
   cachedPromptTokens?: number;
 }

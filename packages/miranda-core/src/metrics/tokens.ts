@@ -3,7 +3,7 @@
  * Helpers for estimating token counts when the API doesn't return them.
  */
 
-import type { TokenUsage } from "../pipeline/types.js";
+import type { TokenUsage } from "../llm/types.js";
 
 /**
  * Rough average characters-per-token for English text.
