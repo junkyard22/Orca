@@ -285,3 +285,108 @@ describe("OpenAICompatAdapter streaming usage reporting", () => {
     expect(llmCall?.["usageReported"]).toBe(true);
   });
 });
+
+describe("OpenAICompatAdapter stream_options rejection fallback", () => {
+  function makeAdapter() {
+    return new OpenAICompatAdapter({
+      baseUrl: "https://example.test/v1",
+      defaultModel: "test-model",
+    });
+  }
+
+  function streamRequest() {
+    return {
+      messages: [{ role: "user" as const, content: "hello" }],
+      maxTokens: 128,
+      temperature: 0,
+    };
+  }
+
+  function bodyOfCall(n: number): Record<string, unknown> {
+    const mock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const init = mock.mock.calls[n]?.[1] as RequestInit;
+    return JSON.parse(init.body as string) as Record<string, unknown>;
+  }
+
+  function streamOk(): Response {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }
+
+  function badRequest(message: string): Response {
+    return new Response(JSON.stringify({ error: { message } }), { status: 400 });
+  }
+
+  it("retries without stream_options when the endpoint rejects it", async () => {
+    // A strict endpoint 400s on the unknown field. Streaming is the live path,
+    // so the call must still succeed — the cache metric is what gets dropped.
+    let call = 0;
+    globalThis.fetch = vi.fn(async () => {
+      call += 1;
+      return call === 1
+        ? badRequest("unrecognized request argument: stream_options")
+        : streamOk();
+    }) as typeof fetch;
+
+    const result = await makeAdapter().stream(streamRequest(), vi.fn());
+
+    expect(call).toBe(2);
+    expect(bodyOfCall(0)["stream_options"]).toEqual({ include_usage: true });
+    expect("stream_options" in bodyOfCall(1)).toBe(false);
+    expect(result.content).toBe("hi");
+  });
+
+  it("remembers the rejection so it costs one wasted request, not one per call", async () => {
+    let call = 0;
+    globalThis.fetch = vi.fn(async () => {
+      call += 1;
+      return call === 1
+        ? badRequest("unrecognized request argument: stream_options")
+        : streamOk();
+    }) as typeof fetch;
+
+    const adapter = makeAdapter();
+    await adapter.stream(streamRequest(), vi.fn());
+    expect(call).toBe(2);
+
+    // Second call must go straight out without the field — no second retry.
+    await adapter.stream(streamRequest(), vi.fn());
+    expect(call).toBe(3);
+    expect("stream_options" in bodyOfCall(2)).toBe(false);
+  });
+
+  it("still surfaces a 400 that was not about stream_options", async () => {
+    // The retry is a guess. When it was the wrong guess the error must still
+    // reach the caller rather than being swallowed by the fallback.
+    globalThis.fetch = vi.fn(async () =>
+      badRequest("model not found"),
+    ) as typeof fetch;
+
+    await expect(makeAdapter().stream(streamRequest(), vi.fn())).rejects.toThrow(
+      /model not found/,
+    );
+  });
+
+  it("does not retry a non-400 failure", async () => {
+    let call = 0;
+    globalThis.fetch = vi.fn(async () => {
+      call += 1;
+      return new Response("upstream exploded", { status: 500 });
+    }) as typeof fetch;
+
+    await expect(makeAdapter().stream(streamRequest(), vi.fn())).rejects.toThrow(
+      /API error 500/,
+    );
+    expect(call).toBe(1);
+  });
+});

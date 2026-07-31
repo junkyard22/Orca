@@ -55,6 +55,11 @@ export class OllamaAdapter implements LLMAdapter {
   private readonly baseUrl: string;
   private readonly defaultModel: string;
   private readonly apiKey?: string;
+  /**
+   * Set when the server has rejected `stream_options`, so the retry in stream()
+   * happens at most once per adapter instead of on every streamed call.
+   */
+  private streamUsageRejected = false;
 
   constructor(config: OllamaConfig = {}) {
     this.baseUrl = (config.baseUrl ?? DEFAULT_OLLAMA_BASE_URL).replace(/\/$/, "");
@@ -133,14 +138,18 @@ export class OllamaAdapter implements LLMAdapter {
     const model = request.model || this.defaultModel;
     const url = `${this.baseUrl}/v1/chat/completions`;
 
-    const body = {
+    const body: Record<string, unknown> = {
       model,
       messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
       temperature: request.temperature,
       max_tokens: request.maxTokens,
       stream: true,
-      stream_options: STREAM_USAGE_OPTIONS,
     };
+
+    const sendStreamUsage = !this.streamUsageRejected;
+    if (sendStreamUsage) {
+      body["stream_options"] = STREAM_USAGE_OPTIONS;
+    }
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
@@ -150,12 +159,27 @@ export class OllamaAdapter implements LLMAdapter {
       request.maxTokens > 4096 ? 180_000 : 90_000,
     );
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal,
-      });
+      const send = () =>
+        fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal,
+        });
+
+      let response = await send();
+
+      // baseUrl is user-configurable, so this can be pointed at a server that
+      // rejects the unknown `stream_options` field rather than ignoring it.
+      // Streaming is the live path, so drop the field and retry once rather than
+      // failing the call for the sake of a diagnostic. Remembered per adapter, so
+      // it costs one wasted request rather than one per streamed call.
+      if (!response.ok && response.status === 400 && sendStreamUsage) {
+        await response.text().catch(() => "");   // release the connection
+        this.streamUsageRejected = true;
+        delete body["stream_options"];
+        response = await send();
+      }
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "unknown error");

@@ -83,6 +83,11 @@ export class OpenAICompatAdapter implements LLMAdapter {
   private readonly extraHeaders: Record<string, string>;
   private readonly defaultEnableThinking?: boolean;
   private readonly includeStreamUsage: boolean;
+  /**
+   * Set when the endpoint has rejected `stream_options`, so the retry below
+   * happens at most once per adapter instead of on every streamed call.
+   */
+  private streamUsageRejected = false;
 
   constructor(config: OpenAICompatConfig) {
     if (!config.baseUrl) {
@@ -203,7 +208,8 @@ export class OpenAICompatAdapter implements LLMAdapter {
       stream: true,
     };
 
-    if (this.includeStreamUsage) {
+    const sendStreamUsage = this.includeStreamUsage && !this.streamUsageRejected;
+    if (sendStreamUsage) {
       body["stream_options"] = STREAM_USAGE_OPTIONS;
     }
 
@@ -222,12 +228,30 @@ export class OpenAICompatAdapter implements LLMAdapter {
       request.maxTokens > 4096 ? 120_000 : 60_000,
     );
     try {
-      const response = await fetch(this.url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal,
-      });
+      const send = () =>
+        fetch(this.url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal,
+        });
+
+      let response = await send();
+
+      // A strict OpenAI-compatible endpoint can reject the request outright for
+      // carrying an unknown `stream_options` field. Losing the cache metric is
+      // acceptable; losing streaming is not — and streaming is the live path, so
+      // a hard failure here takes the product down rather than degrading a
+      // diagnostic. Retry once without it and remember the answer, so a strict
+      // endpoint costs one wasted request per adapter rather than failing every
+      // streamed call. A 400 thrown for some other reason simply fails again
+      // below, at the price of that one retry.
+      if (!response.ok && response.status === 400 && sendStreamUsage) {
+        await response.text().catch(() => "");   // release the connection
+        this.streamUsageRejected = true;
+        delete body["stream_options"];
+        response = await send();
+      }
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "unknown error");
