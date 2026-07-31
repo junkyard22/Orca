@@ -1,0 +1,32 @@
+{
+  // scripts/ is not a workspace package, so `pnpm -r exec tsc --noEmit` never
+  // reached it and these files were only ever validated by tsx stripping their
+  // types at runtime — no checking at all.  That left contract-check.ts, the
+  // gate guarding every architecture-sensitive change, with less coverage than
+  // the code it guards.
+  //
+  // noEmit only: these run through tsx, nothing is compiled to disk.
+  "compilerOptions": {
+    "target": "ES2022",
+    // These run through tsx as ES modules and use import.meta.  The root
+    // package.json has no "type": "module", so Node16 resolution would infer
+    // CommonJS for them and reject import.meta outright.  They import nothing
+    // but node: builtins, so resolution strategy is otherwise immaterial.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

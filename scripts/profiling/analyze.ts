@@ -14,7 +14,7 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { join, basename, dirname } from "node:path";
+import { join, basename } from "node:path";
 
 interface ProfileEvent {
   phase: string;

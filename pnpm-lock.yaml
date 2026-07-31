@@ -29,6 +29,9 @@ importers:
 
   .:
     devDependencies:
+      '@types/node':
+        specifier: ^22.12.0
+        version: 22.19.17
       node-gyp:
         specifier: ^12.2.0
         version: 12.2.0
