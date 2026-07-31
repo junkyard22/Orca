@@ -27,6 +27,20 @@ import { verifyFileChanges } from "./fileVerifier.js";
 import { buildAHPRepairPrompt } from "./repairPrompt.js";
 
 // ---------------------------------------------------------------------------
+// Profiling emitter (inert unless ORCA_PROFILE=1 installed a hook)
+// ---------------------------------------------------------------------------
+
+type OrcaProfileEvent = Record<string, unknown>;
+type OrcaProfileEmitter = (event: OrcaProfileEvent) => void;
+
+function emitOrcaProfileEvent(event: OrcaProfileEvent): void {
+  const emitter = (globalThis as typeof globalThis & {
+    __orcaProfileEmit?: OrcaProfileEmitter;
+  }).__orcaProfileEmit;
+  emitter?.(event);
+}
+
+// ---------------------------------------------------------------------------
 // Input shape — only the fields Pappy needs from the execution result
 // ---------------------------------------------------------------------------
 
@@ -197,6 +211,35 @@ function checkSchemaAgainstOutput(
  * @returns The same packet reference, now with verdict and trace updated.
  */
 export function verifyAHPPacket(
+  packet: AHPPacket,
+  input: AHPVerificationInput,
+): AHPPacket {
+  // Thin profiling wrapper. scripts/profiling/emit.ts documents an
+  // `ahp_validation` phase that nothing ever emitted, so this — which runs the
+  // task classifier, the file verifier's real filesystem reads, and AC
+  // evaluation — was invisible to the profiler and its cost fell into the
+  // unattributed "other" bucket.
+  //
+  // A wrapper rather than instrumentation inside the body: the implementation
+  // has three separate `return packet` paths, and one emit site that cannot be
+  // bypassed is safer than three that can drift apart.
+  const profStart = Date.now();
+  const result = verifyAHPPacketImpl(packet, input);
+
+  emitOrcaProfileEvent({
+    phase: "ahp_validation",
+    durationMs: Date.now() - profStart,
+    packetId: packet.id,
+    role: packet.role,
+    verdict: result.verdict,
+    taskType: result.evalMeta?.taskType,
+    acCount: result.evalMeta?.mergedAcceptanceCriteria?.length ?? 0,
+  });
+
+  return result;
+}
+
+function verifyAHPPacketImpl(
   packet: AHPPacket,
   input: AHPVerificationInput,
 ): AHPPacket {

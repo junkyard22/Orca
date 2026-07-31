@@ -18,6 +18,27 @@ import type { AHPPacket, AHPTraceEntry, AHPExpectedOutput, AHPInput, AHPConstrai
 import { AHPLifecycle, AHPPacketRole } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Profiling emitter (inert unless ORCA_PROFILE=1 installed a hook)
+//
+// scripts/profiling/emit.ts documents an `ahp_packet_create` phase that nothing
+// ever emitted, so packet creation was invisible to the profiler. Creation is a
+// plain object construction and should measure at ~0ms — emitting it anyway is
+// the point: it lets a profile report say so rather than leaving the cost
+// unattributed in the "other" bucket, and it makes packet *counts* visible,
+// which is the number that actually varies between runs.
+// ---------------------------------------------------------------------------
+
+type OrcaProfileEvent = Record<string, unknown>;
+type OrcaProfileEmitter = (event: OrcaProfileEvent) => void;
+
+function emitOrcaProfileEvent(event: OrcaProfileEvent): void {
+  const emitter = (globalThis as typeof globalThis & {
+    __orcaProfileEmit?: OrcaProfileEmitter;
+  }).__orcaProfileEmit;
+  emitter?.(event);
+}
+
+// ---------------------------------------------------------------------------
 // Trace append
 // ---------------------------------------------------------------------------
 
@@ -84,8 +105,9 @@ export interface CreatePacketOptions {
  * The orchestrator transitions to COMPLETE/FAILED/INCONCLUSIVE at the end.
  */
 export function createRootPacket(opts: CreatePacketOptions): AHPPacket {
+  const profStart = Date.now();
   const now = new Date().toISOString();
-  return {
+  const packet: AHPPacket = {
     id:             opts.id,
     objective:      opts.objective,
     role:           AHPPacketRole.Root,
@@ -101,6 +123,17 @@ export function createRootPacket(opts: CreatePacketOptions): AHPPacket {
       updatedAt:   now,
     },
   };
+
+  emitOrcaProfileEvent({
+    phase: "ahp_packet_create",
+    durationMs: Date.now() - profStart,
+    role: "root",
+    packetId: packet.id,
+    constraintCount: packet.constraints.length,
+    inputCount: packet.inputs.length,
+  });
+
+  return packet;
 }
 
 /**
@@ -118,8 +151,9 @@ export function createChildPacket(
   parentPacketId: string,
   opts: CreatePacketOptions,
 ): AHPPacket {
+  const profStart = Date.now();
   const now = new Date().toISOString();
-  return {
+  const packet: AHPPacket = {
     id:             opts.id,
     objective:      opts.objective,
     role:           AHPPacketRole.Child,
@@ -135,6 +169,17 @@ export function createChildPacket(
       updatedAt:   now,
     },
   };
+
+  emitOrcaProfileEvent({
+    phase: "ahp_packet_create",
+    durationMs: Date.now() - profStart,
+    role: "child",
+    packetId: packet.id,
+    constraintCount: packet.constraints.length,
+    inputCount: packet.inputs.length,
+  });
+
+  return packet;
 }
 
 /**

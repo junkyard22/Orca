@@ -33,6 +33,24 @@ import type { OrcaPipelineTrace, OrcaPipelineTraceEntry, OrcaRuntime, OrcaEvent 
 import { redactValue, isFullTraceMode } from "./redact.js";
 
 // ---------------------------------------------------------------------------
+// Profiling emitter (inert unless ORCA_PROFILE=1 installed a hook)
+//
+// scripts/profiling/emit.ts documents a `trace_write` phase, but nothing ever
+// emitted one, so the cost of writing these artifacts fell into the profiler's
+// unattributed "other" bucket.
+// ---------------------------------------------------------------------------
+
+type OrcaProfileEvent = Record<string, unknown>;
+type OrcaProfileEmitter = (event: OrcaProfileEvent) => void;
+
+function emitOrcaProfileEvent(event: OrcaProfileEvent): void {
+  const emitter = (globalThis as typeof globalThis & {
+    __orcaProfileEmit?: OrcaProfileEmitter;
+  }).__orcaProfileEmit;
+  emitter?.(event);
+}
+
+// ---------------------------------------------------------------------------
 // Public factory
 // ---------------------------------------------------------------------------
 
@@ -96,6 +114,7 @@ export function createRunAnalysisWriter(outDir: string): RunAnalysisWriter {
     },
 
     async writeTrace(trace: OrcaPipelineTrace): Promise<void> {
+      const profStart = Date.now();
       const fullTrace = isFullTraceMode();
       const safeTrace = fullTrace
         ? trace
@@ -122,6 +141,17 @@ export function createRunAnalysisWriter(outDir: string): RunAnalysisWriter {
 
       const md = renderMarkdown(safeTrace, safeEvents);
       fs.writeFileSync(mdPath, md, "utf-8");
+
+      emitOrcaProfileEvent({
+        phase: "trace_write",
+        durationMs: Date.now() - profStart,
+        taskId: trace.taskId,
+        entryCount: trace.entries?.length ?? 0,
+        eventCount: safeEvents.length,
+        // Redaction walks the whole trace, so it is a plausible cost centre and
+        // worth being able to correlate against.
+        redacted: !fullTrace,
+      });
     },
   };
 }
