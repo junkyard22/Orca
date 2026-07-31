@@ -17,7 +17,7 @@
  */
 
 import { execSync }     from "node:child_process";
-import { existsSync }   from "node:fs";
+import { existsSync, copyFileSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -73,6 +73,25 @@ if (existsSync(ebCmd)) {
 
 run(`${eb} --win --x64`);
 
+// ── 3. Leave the provenance record beside the artifacts ───────────────────
+// build-info.json already ships inside the asar, but reading it there means
+// unpacking. A copy in release/ lets whoever produced the build identify these
+// binaries at a glance — which is the check that was missing when the shipped
+// EXE drifted three months behind main.
+const infoSrc = resolve(__dirname, "dist-main", "build-info.json");
+const infoDst = resolve(__dirname, "release", "build-info.json");
+let info = null;
+if (existsSync(infoSrc)) {
+  copyFileSync(infoSrc, infoDst);
+  info = JSON.parse(readFileSync(infoSrc, "utf8"));
+}
+
 console.log("\n✓  Build complete.");
 console.log("   Installer : release/Orca Setup *.exe");
 console.log("   Portable  : release/Orca *.exe");
+if (info) {
+  console.log(`   Built from: ${info.version} @ ${info.commitShort} (${info.branch})`);
+  if (info.dirty) {
+    console.log("   ⚠  WORKING TREE WAS DIRTY — this artifact is not reproducible from that commit.");
+  }
+}
