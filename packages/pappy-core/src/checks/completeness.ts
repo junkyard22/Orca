@@ -61,6 +61,14 @@ const STOP_WORDS = new Set([
   'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
   'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'be',
   'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+  // 'must' is deliberately absent, despite being the one modal missing here.
+  // Adding it is correct in isolation — "X must return Y" is standard criterion
+  // phrasing and "must" is not a domain concept — but measured on the eval suite
+  // it turned partial_success-001 from a correct repair into an accept. The
+  // demand for "must" was accidentally carrying a real incompleteness signal,
+  // and removing it traded a false reject for a false accept, which is the worse
+  // of the two: it ships bad work rather than costing a cycle. The underlying
+  // defect is real and needs a better completeness signal, not a stopword.
   'would', 'could', 'should', 'may', 'might', 'shall', 'can', 'need',
   'tell', 'me', 'it', 'what', 'how', 'why', 'when', 'where', 'who',
   'this', 'that', 'these', 'those', 'my', 'your', 'its', 'our',

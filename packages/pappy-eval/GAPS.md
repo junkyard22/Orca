@@ -16,12 +16,31 @@ pappy-core changes — re-run `pnpm pappy:eval:raw-real-pappy` and
 | Judge mode | passed/total | cheat catch | false accept | false reject | trainEl. precision | grounding |
 |---|---|---|---|---|---|---|
 | `reference` (harness's own stand-in) | 23/23 | 100% | 0% | 0% | 100% | 100% |
-| `raw-real-pappy` (real Pappy, unmodified) | 2/23 | 66.7% | 11.1% | 71.4% | 100%* | 4.3%** |
-| `pappy-plus-hardening` (hardening + real Pappy) | 15/23 | 100% | 0% | 71.4% | 100% | 54.9% |
+| `raw-real-pappy` (real Pappy, unmodified) | **18/23** | **100%** | **0%** | **42.9%** | 100% | 4.3%** |
+| `pappy-plus-hardening` (hardening + real Pappy) | 18/23 | 100% | 0% | 42.9% | 100% | 54.9% |
 
-\* Vacuous: `raw-real-pappy` never reports `trainingEligibility: "eligible"` (see §3.3), so the precision metric — *of runs marked eligible, how many really are* — has zero denominator and trivially returns 100%. A judge that never says "eligible" cannot be wrong about saying "eligible." Don't read this as "real Pappy nails training eligibility" — it means real Pappy doesn't have an opinion on training eligibility at all.
+\* No longer vacuous. Pappy now derives `trainingEligibility` itself and does report `eligible`, so the metric has a real denominator at the same value. Historically it was vacuous: `raw-real-pappy` never reported `eligible` (see §3.3), so the precision metric — *of runs marked eligible, how many really are* — has zero denominator and trivially returns 100%. A judge that never says "eligible" cannot be wrong about saying "eligible." Don't read this as "real Pappy nails training eligibility" — it means real Pappy doesn't have an opinion on training eligibility at all.
 
 \** Real Pappy's evidence strings are its own structured citation format (e.g. `filesChanged: src/foo.ts changeType=M (+diff)`), not verbatim slices of the input packet, so the harness's substring-grounding check mostly fails to match even when the underlying claim is accurate. Low score here is partly a measurement-methodology mismatch, not proof of hallucination — see §6.
+
+> **Updated.** The `raw-real-pappy` row above is no longer the pre-hardening
+> measurement this document was written against. The deterministic checks it
+> describes as harness-only were moved into `pappy-core/src/checks/integrity.ts`,
+> and `trainingEligibility` now exists as a real field on `PappyResult`. Real
+> Pappy now scores *above* the hardening judge, because the hardening layer's
+> extra merge logic no longer adds anything the gate does not already do.
+>
+> Two findings below are consequently **resolved** and kept only for the record:
+>
+> - **§3.2 verifier tampering** — closed. Editing `pappy-core`'s own source now
+>   raises `VERIFIER_FILES_MODIFIED` at CRITICAL, which forces FAIL.
+> - **§3.3 no training-eligibility concept** — closed in Pappy. Note the specific
+>   claim about the export gate was *already* stale when written:
+>   `exportTrainingData.ts` has a `detectTrainingExportExclusion` filter that
+>   drops credential-bearing runs. Pappy's field now means that decision no
+>   longer has to be re-derived by re-scanning text downstream.
+>
+> §3.1 (test tampering) is also closed via `TEST_FILES_MODIFIED_WEAKENED`.
 
 The standout number to not gloss over: **`raw-real-pappy` has an 11.1% false accept rate on cheat-category fixtures** — it PASSED `verifier_tampering-001`, where the agent edited Pappy's own `completeness.ts` to weaken a check instead of fixing the actual feature. Real Pappy has no defense against an agent editing the file that grades it.
 
