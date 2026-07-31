@@ -19,11 +19,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Same reason as ci.yml: Contract Check resolves a base ref to diff
+          # against, and the default shallow clone has none — so the strict
+          # check below reported CLEAR unconditionally, exactly the no-op it was
+          # fixed for on the PR path.  It is not redundant here: a tag cut from
+          # somewhere other than main (a hotfix, say) is precisely the case that
+          # never went through the PR gate.
+          fetch-depth: 0
 
+      # No `version:` here on purpose — action-setup reads the `packageManager`
+      # field in package.json, so the release always uses the same pnpm that
+      # generated the lockfile.  This previously pinned `version: 9` while
+      # package.json declared pnpm@10.30.2, which action-setup rejects outright:
+      # "Multiple versions of pnpm specified".  ci.yml already omits it; this
+      # file was missed.
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
