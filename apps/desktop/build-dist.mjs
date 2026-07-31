@@ -90,7 +90,7 @@ console.log("\n✓  Build complete.");
 console.log("   Installer : release/Orca Setup *.exe");
 console.log("   Portable  : release/Orca *.exe");
 if (info) {
-  console.log(`   Built from: ${info.version} @ ${info.commitShort} (${info.branch})`);
+  console.log(`   Built from: ${info.version} @ ${info.commitShort} (${info.ref})`);
   if (info.dirty) {
     console.log("   ⚠  WORKING TREE WAS DIRTY — this artifact is not reproducible from that commit.");
   }

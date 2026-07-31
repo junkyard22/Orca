@@ -34,6 +34,25 @@ function git(cmd, fallback = "unknown") {
   }
 }
 
+/**
+ * What was checked out, by the most useful name available.
+ *
+ * `git rev-parse --abbrev-ref HEAD` returns the literal string "HEAD" on a
+ * detached checkout, which names nothing — and the release workflow builds from
+ * a tag, so that is the case that matters most. GitHub Actions sets
+ * GITHUB_REF_NAME to the tag or branch being built; prefer it when present, and
+ * fall back to a tag name before giving up locally.
+ */
+function resolveRef() {
+  const ciRef = process.env["GITHUB_REF_NAME"];
+  if (ciRef) return ciRef;
+
+  const branch = git("git rev-parse --abbrev-ref HEAD");
+  if (branch !== "HEAD") return branch;
+
+  return git("git describe --tags --exact-match", "detached");
+}
+
 const pkgVersion = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf8")).version;
 const commit     = git("git rev-parse HEAD");
 const dirty      = git("git status --porcelain", "") !== "";
@@ -42,7 +61,8 @@ const buildInfo = {
   version:     pkgVersion,
   commit,
   commitShort: commit.slice(0, 8),
-  branch:      git("git rev-parse --abbrev-ref HEAD"),
+  // Branch name locally; the tag name on a release build.
+  ref:         resolveRef(),
   // True when the working tree had uncommitted changes at build time, which
   // means `commit` alone does not reproduce this artifact.
   dirty,
