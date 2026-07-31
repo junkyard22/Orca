@@ -24,6 +24,7 @@ import { runCompletenessChecks, runSatisfactionChecks } from "./checks/completen
 import { runStructureChecks }    from "./checks/structure.js";
 import { runClaimProofChecks } from "./checks/claimProof.js";
 import { runBrainChecks }      from "./checks/brain.js";
+import { runIntegrityChecks }  from "./checks/integrity.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
 
 type OrcaProfileEvent = Record<string, unknown>;
@@ -421,6 +422,10 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
     ...runCompletenessChecks(input),
     ...runStructureChecks(input),
     ...runSatisfactionChecks(input),
+    // Adversarial checks: was this run made to *look* successful? Emits CRITICAL
+    // for tampering with tests or with Pappy's own source, so no amount of
+    // semantic correctness in the checks above can redeem it.
+    ...runIntegrityChecks(input),
   ];
 
   // Step 4: build receipt ledger (criteria + claim entries merged).
