@@ -419,8 +419,18 @@ function extractDomainKeywords(task: string): Array<{ keyword: string; category:
     )
   ) {
     keywords.push({ keyword: "api", category: "integration" });
-    keywords.push({ keyword: "fetch", category: "data access" });
-    keywords.push({ keyword: "response", category: "data handling" });
+
+    // Only demand implementation vocabulary the task itself reached for.
+    // Detecting "an HTTP-ish task" does not mean every correct solution says
+    // "fetch" and "response": a webhook handler that verifies a signature does
+    // neither, and requiring both turned that correct run into a repair pass.
+    // The trigger set above is deliberately broad; what it *requires* must not be.
+    if (/\b(fetch|axios|xhr|curl|request|call|download|poll)\b/i.test(lower)) {
+      keywords.push({ keyword: "fetch", category: "data access" });
+    }
+    if (/\b(response|status|payload|body|return|reply|result)\b/i.test(lower)) {
+      keywords.push({ keyword: "response", category: "data handling" });
+    }
   }
 
   // Testing patterns — avoid common English words like "it", "describe"
@@ -781,9 +791,29 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   // what actually happened. Flag this as HIGH so it surfaces clearly.
   const LIMITATION_CRITERIA_TERMS = /\b(inability|unable|cannot|can't|can not|could not|couldn't|fail(ed|ure)?|no.access|not.possible|not.support|unavailable|limitation|constraint|denied|reject(ed)?|prohibit|cannot.be|not.be.able|out.of.scope)\b/i;
   const ALLOWED_VERDICT_FORMAT = /\b(pass\s*\/\s*warn\s*\/\s*fail|pass\s*,\s*warn\s*,\s*(or\s+)?fail|pass\s+warn\s+fail)\b/i;
+
+  // The terms above are failure *vocabulary*, and failure vocabulary describes
+  // working software at least as often as it describes a failed run: "add a test
+  // verifying an invalid signature is rejected", "return 403 when access is
+  // denied", "handle the error path". Matching on the vocabulary alone made this
+  // HIGH issue — and therefore an outright FAIL — fire on ordinary, correct work.
+  //
+  // The rubric this check exists to catch has a specific shape: it is about what
+  // *the agent's own answer* says, e.g. "Output explains inability to access the
+  // filesystem". So require the criterion to be self-referential about the
+  // response, and to not be describing behaviour the code under test should have.
+  const SELF_REPORT_TERMS =
+    /\b(output|response|answer|summary|explains?|documents?|reports?|states?|acknowledges?|notes?)\b/i;
+  const CODE_BEHAVIOUR_TERMS =
+    /\b(test|tests|spec|verify|verifies|verifying|assert|handler|handle[sd]?|throws?|returns?|catch(es)?|raise[sd]?|status|code|when|if|input|request|payload|signature|validation|validate[sd]?)\b/i;
+
   const allToolsSucceeded = hasTools && (input.toolEvents ?? []).every((e) => e.ok === true);
-  const limitationCriteria = (input.goals ?? []).filter((g) =>
-    LIMITATION_CRITERIA_TERMS.test(g) && !ALLOWED_VERDICT_FORMAT.test(g)
+  const limitationCriteria = (input.goals ?? []).filter(
+    (g) =>
+      LIMITATION_CRITERIA_TERMS.test(g) &&
+      !ALLOWED_VERDICT_FORMAT.test(g) &&
+      SELF_REPORT_TERMS.test(g) &&
+      !CODE_BEHAVIOUR_TERMS.test(g),
   );
   if (limitationCriteria.length > 0 && allToolsSucceeded) {
     issues.push({

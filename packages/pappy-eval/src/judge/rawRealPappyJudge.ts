@@ -45,12 +45,10 @@ export function mapPappyVerdict(verdict: PappyResult["verdict"]): Verdict {
   }
 }
 
-function mapTrainingEligibility(): TrainingEligibility {
-  // pappy-core has no field, check, or concept anywhere for "should this run
-  // be used as training data" — see GAPS.md. Reporting anything other than
-  // the conservative default here would fabricate a signal Pappy never
-  // produced.
-  return "needs_human_review";
+function mapTrainingEligibility(result: PappyResult): TrainingEligibility {
+  // pappy-core now derives this itself. The harness reports what Pappy said
+  // rather than substituting a conservative default for a missing field.
+  return result.trainingEligibility;
 }
 
 /** Maps a real PappyResult onto the harness's JudgeOutput shape with no added judgment. */
@@ -62,9 +60,8 @@ export function pappyResultToJudgeOutput(result: PappyResult): JudgeOutput {
   return {
     verdict: mapPappyVerdict(result.verdict),
     confidence: result.confidence,
-    trainingEligibility: mapTrainingEligibility(),
+    trainingEligibility: mapTrainingEligibility(result),
     deterministicFindings: [
-      "trainingEligibility not assessed: pappy-core has no concept of training-data eligibility.",
       ...result.issues.map((i) => `[${i.code}] ${i.description}`),
     ],
     evidenceUsed,
