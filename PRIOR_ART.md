@@ -3,7 +3,7 @@
 **Author:** James Yarber (GitHub: [junkyard22](https://github.com/junkyard22))
 **Organization:** [YakStacks](https://github.com/YakStacks)
 **Primary Repo:** [github.com/junkyard22/Orca](https://github.com/junkyard22/Orca)
-**Public Release:** Orca v1.0.0 (current: v1.3.0)
+**Public Release:** Orca v1.0.0 (current: v1.4.0)
 **Published Spec:** [Agent Handoff Protocol — github.com/junkyard22/AHP](https://github.com/junkyard22/AHP)
 **Published Runtime:** [@marsulta/mailman on npm](https://www.npmjs.com/package/@marsulta/mailman)
 **Document last updated:** May 2026
@@ -59,7 +59,7 @@ User
 - **February 27, 2026** -- Orca first public post
 - **Early 2026** -- AHP (@marsulta/mailman published to npm)
 - **February 2026** -- CARI (separate project)
-- **Current** -- Orca v1.3.0
+- **Current** -- Orca v1.4.0
 
 ---
 
