@@ -316,7 +316,7 @@ below rather than as further phases.
 
 | Priority | Work |
 |---|---|
-| 1 | **Measure prompt-cache hit rate, then act on it.** Profiling shows 99.82% of wall-clock is LLM inference ([PROFILING_FINDINGS.md](PROFILING_FINDINGS.md)), so token volume is the only lever that matters. `TokenUsage.cachedPromptTokens` now captures `prompt_tokens_details.cached_tokens`, which DashScope, OpenAI and OpenRouter all report. Collect real numbers before changing prompt assembly — the agent loop's prefix already looks stable, so implicit caching may be working already. |
+| 1 | **Measure prompt-cache hit rate, then act on it.** Profiling shows 99.82% of wall-clock is LLM inference ([PROFILING_FINDINGS.md](PROFILING_FINDINGS.md)), so token volume is the only lever that matters. `TokenUsage.cachedPromptTokens` captures `prompt_tokens_details.cached_tokens`, which DashScope, OpenAI and OpenRouter all report, on both the buffered and the streaming path — streaming needed `stream_options.include_usage`, without which every live agent-loop stage reported no usage at all. `scripts/profiling/analyze.ts` prints the hit rate per run. Collect real numbers before changing prompt assembly — the agent loop's prefix already looks stable, so implicit caching may be working already. |
 | 2 | **Tests for the untested packages.** `claire-core` (314 lines), `mcp-client` (505), `tool-bootstrap` (226) have no test files. `claire-core` runs with `--passWithNoTests` purely so the root `pnpm test` stays green. |
 | 3 | **Decide the two open architectural questions below** (model pools, multi-workspace). |
 | 4 | **Consider splitting the large files.** `apps/desktop/src/main.ts` is 2,378 lines; `ReactAgentAdapter.ts` 1,520; `orca-tracer.ts` 1,515; `maestroAdapter.ts` 1,337. |

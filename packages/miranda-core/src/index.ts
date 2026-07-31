@@ -109,6 +109,8 @@ export { OllamaAdapter } from "./llm/ollama.js";
 export type { OllamaConfig } from "./llm/ollama.js";
 export { OpenAICompatAdapter } from "./llm/openaiCompat.js";
 export type { OpenAICompatConfig } from "./llm/openaiCompat.js";
+export { STREAM_USAGE_OPTIONS, toTokenUsage } from "./llm/usage.js";
+export type { OpenAIUsagePayload } from "./llm/usage.js";
 
 // Metrics
 export { estimateTokens, resolveTokenUsage } from "./metrics/tokens.js";

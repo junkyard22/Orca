@@ -12,6 +12,11 @@
 import type { LLMAdapter } from "./adapter.js";
 import type { LLMRequest, LLMResponse, TokenUsage } from "./types.js";
 import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
+import {
+  STREAM_USAGE_OPTIONS,
+  toTokenUsage,
+  type OpenAIUsagePayload,
+} from "./usage.js";
 
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
 
@@ -42,11 +47,7 @@ interface OllamaChatResponse {
     finish_reason: string;
   }>;
   model?: string;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+  usage?: OpenAIUsagePayload;
 }
 
 export class OllamaAdapter implements LLMAdapter {
@@ -54,6 +55,11 @@ export class OllamaAdapter implements LLMAdapter {
   private readonly baseUrl: string;
   private readonly defaultModel: string;
   private readonly apiKey?: string;
+  /**
+   * Set when the server has rejected `stream_options`, so the retry in stream()
+   * happens at most once per adapter instead of on every streamed call.
+   */
+  private streamUsageRejected = false;
 
   constructor(config: OllamaConfig = {}) {
     this.baseUrl = (config.baseUrl ?? DEFAULT_OLLAMA_BASE_URL).replace(/\/$/, "");
@@ -110,14 +116,7 @@ export class OllamaAdapter implements LLMAdapter {
         throw new Error("Ollama returned no choices");
       }
 
-      let usage: TokenUsage | null = null;
-      if (data.usage) {
-        usage = {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
-        };
-      }
+      const usage = toTokenUsage(data.usage);
 
       return {
         content: firstChoice.message.content,
@@ -139,13 +138,18 @@ export class OllamaAdapter implements LLMAdapter {
     const model = request.model || this.defaultModel;
     const url = `${this.baseUrl}/v1/chat/completions`;
 
-    const body = {
+    const body: Record<string, unknown> = {
       model,
       messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
       temperature: request.temperature,
       max_tokens: request.maxTokens,
       stream: true,
     };
+
+    const sendStreamUsage = !this.streamUsageRejected;
+    if (sendStreamUsage) {
+      body["stream_options"] = STREAM_USAGE_OPTIONS;
+    }
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
@@ -155,12 +159,27 @@ export class OllamaAdapter implements LLMAdapter {
       request.maxTokens > 4096 ? 180_000 : 90_000,
     );
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal,
-      });
+      const send = () =>
+        fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal,
+        });
+
+      let response = await send();
+
+      // baseUrl is user-configurable, so this can be pointed at a server that
+      // rejects the unknown `stream_options` field rather than ignoring it.
+      // Streaming is the live path, so drop the field and retry once rather than
+      // failing the call for the sake of a diagnostic. Remembered per adapter, so
+      // it costs one wasted request rather than one per streamed call.
+      if (!response.ok && response.status === 400 && sendStreamUsage) {
+        await response.text().catch(() => "");   // release the connection
+        this.streamUsageRejected = true;
+        delete body["stream_options"];
+        response = await send();
+      }
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "unknown error");
@@ -170,7 +189,8 @@ export class OllamaAdapter implements LLMAdapter {
 
       let fullContent = "";
       let finalModel = model;
-      let completionTokens = 0;
+      let deltaCount = 0;
+      let reportedUsage: OpenAIUsagePayload | undefined;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -191,17 +211,29 @@ export class OllamaAdapter implements LLMAdapter {
             const chunk = JSON.parse(data) as {
               choices: Array<{ delta?: { content?: string } }>;
               model?: string;
+              usage?: OpenAIUsagePayload;
             };
             const token = chunk.choices[0]?.delta?.content ?? "";
-            if (token) { fullContent += token; completionTokens++; onToken(token); }
+            if (token) { fullContent += token; deltaCount++; onToken(token); }
             if (chunk.model) finalModel = chunk.model;
+            // stream_options.include_usage appends a final usage-only chunk.
+            if (chunk.usage) reportedUsage = chunk.usage;
           } catch { /* skip malformed chunks */ }
         }
       }
+
+      // Delta count only approximates completion tokens; it is the fallback for
+      // an Ollama build old enough to ignore stream_options.
+      const usage: TokenUsage = toTokenUsage(reportedUsage) ?? {
+        promptTokens: 0,
+        completionTokens: deltaCount,
+        totalTokens: deltaCount,
+      };
+
       return {
         content: fullContent,
         model: finalModel,
-        usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
+        usage,
         durationMs: Date.now() - startMs,
       };
     } finally {

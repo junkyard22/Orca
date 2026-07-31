@@ -6,6 +6,11 @@
 import type { LLMAdapter } from "./adapter.js";
 import type { LLMRequest, LLMResponse, TokenUsage } from "./types.js";
 import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
+import {
+  STREAM_USAGE_OPTIONS,
+  toTokenUsage,
+  type OpenAIUsagePayload,
+} from "./usage.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -27,15 +32,7 @@ interface OpenRouterChatResponse {
     finish_reason: string;
   }>;
   model: string;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    /** Present when the upstream provider serves part of the prompt from cache. */
-    prompt_tokens_details?: {
-      cached_tokens?: number;
-    };
-  };
+  usage?: OpenAIUsagePayload;
 }
 
 export class OpenRouterAdapter implements LLMAdapter {
@@ -103,16 +100,7 @@ export class OpenRouterAdapter implements LLMAdapter {
         throw new Error("OpenRouter returned no choices");
       }
 
-      let usage: TokenUsage | null = null;
-      if (data.usage) {
-        const cachedTokens = data.usage.prompt_tokens_details?.cached_tokens;
-        usage = {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
-          ...(cachedTokens !== undefined && { cachedPromptTokens: cachedTokens }),
-        };
-      }
+      const usage = toTokenUsage(data.usage);
 
       // Some thinking models return output via reasoning_content when content is empty
       const rawContent = firstChoice.message.content;
@@ -143,6 +131,7 @@ export class OpenRouterAdapter implements LLMAdapter {
       temperature: request.temperature,
       max_tokens: request.maxTokens,
       stream: true,
+      stream_options: STREAM_USAGE_OPTIONS,
     };
 
     if (request.enableThinking !== undefined) {
@@ -174,7 +163,8 @@ export class OpenRouterAdapter implements LLMAdapter {
 
       let fullContent = "";
       let finalModel = request.model;
-      let completionTokens = 0;
+      let deltaCount = 0;
+      let reportedUsage: OpenAIUsagePayload | undefined;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -196,11 +186,14 @@ export class OpenRouterAdapter implements LLMAdapter {
               const chunk = JSON.parse(data) as {
                 choices: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
                 model?: string;
+                usage?: OpenAIUsagePayload;
               };
               const delta = chunk.choices[0]?.delta;
               const token = delta?.content || delta?.reasoning_content || "";
-              if (token) { fullContent += token; completionTokens++; onToken(token); }
+              if (token) { fullContent += token; deltaCount++; onToken(token); }
               if (chunk.model) finalModel = chunk.model;
+              // stream_options.include_usage appends a final usage-only chunk.
+              if (chunk.usage) reportedUsage = chunk.usage;
             } catch { /* skip malformed chunks */ }
           }
         }
@@ -208,10 +201,18 @@ export class OpenRouterAdapter implements LLMAdapter {
         reader.releaseLock();
       }
 
+      // Delta count only approximates completion tokens; it is the fallback for
+      // a provider that sent no usage chunk, where the prompt side is unknown.
+      const usage: TokenUsage = toTokenUsage(reportedUsage) ?? {
+        promptTokens: 0,
+        completionTokens: deltaCount,
+        totalTokens: deltaCount,
+      };
+
       return {
         content: fullContent,
         model: finalModel,
-        usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
+        usage,
         durationMs: Date.now() - startMs,
       };
     } finally {

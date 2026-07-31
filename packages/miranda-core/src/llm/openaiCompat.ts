@@ -17,6 +17,11 @@
 import type { LLMAdapter } from "./adapter.js";
 import type { LLMRequest, LLMResponse, TokenUsage } from "./types.js";
 import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
+import {
+  STREAM_USAGE_OPTIONS,
+  toTokenUsage,
+  type OpenAIUsagePayload,
+} from "./usage.js";
 
 type OrcaProfileEvent = Record<string, unknown>;
 type OrcaProfileEmitter = (event: OrcaProfileEvent) => void;
@@ -49,6 +54,15 @@ export interface OpenAICompatConfig {
    * that default to deep thinking. Omit to leave provider default unchanged.
    */
   enableThinking?: boolean;
+  /**
+   * Whether `stream()` asks the provider to append a usage chunk to the SSE
+   * stream (`stream_options.include_usage`). Without it a streamed call reports
+   * no token counts at all, so cache metrics would only ever cover `complete()`.
+   *
+   * Defaults to `true`. Set to `false` for a strict custom endpoint that rejects
+   * request bodies containing `stream_options`.
+   */
+  includeStreamUsage?: boolean;
 }
 
 interface OpenAIChatResponse {
@@ -58,18 +72,7 @@ interface OpenAIChatResponse {
     finish_reason: string;
   }>;
   model?: string;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    /**
-     * Present when the provider serves part of the prompt from its context
-     * cache.  DashScope, OpenAI and OpenRouter all report cache hits here.
-     */
-    prompt_tokens_details?: {
-      cached_tokens?: number;
-    };
-  };
+  usage?: OpenAIUsagePayload;
 }
 
 export class OpenAICompatAdapter implements LLMAdapter {
@@ -79,6 +82,12 @@ export class OpenAICompatAdapter implements LLMAdapter {
   private readonly defaultModel: string;
   private readonly extraHeaders: Record<string, string>;
   private readonly defaultEnableThinking?: boolean;
+  private readonly includeStreamUsage: boolean;
+  /**
+   * Set when the endpoint has rejected `stream_options`, so the retry below
+   * happens at most once per adapter instead of on every streamed call.
+   */
+  private streamUsageRejected = false;
 
   constructor(config: OpenAICompatConfig) {
     if (!config.baseUrl) {
@@ -90,6 +99,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
     this.defaultModel         = config.defaultModel ?? "";
     this.extraHeaders         = config.extraHeaders ?? {};
     this.defaultEnableThinking = config.enableThinking;
+    this.includeStreamUsage   = config.includeStreamUsage ?? true;
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
@@ -160,16 +170,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
         throw new Error("API returned no choices");
       }
 
-      let usage: TokenUsage | null = null;
-      if (data.usage) {
-        const cachedTokens = data.usage.prompt_tokens_details?.cached_tokens;
-        usage = {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
-          ...(cachedTokens !== undefined && { cachedPromptTokens: cachedTokens }),
-        };
-      }
+      const usage = toTokenUsage(data.usage);
 
       // Some thinking models (e.g. Alibaba qwen3.5-plus on DashScope) return the
       // actual response in `reasoning_content` while `content` is null/empty.
@@ -207,6 +208,11 @@ export class OpenAICompatAdapter implements LLMAdapter {
       stream: true,
     };
 
+    const sendStreamUsage = this.includeStreamUsage && !this.streamUsageRejected;
+    if (sendStreamUsage) {
+      body["stream_options"] = STREAM_USAGE_OPTIONS;
+    }
+
     if (resolvedThinking !== undefined) {
       body["enable_thinking"] = resolvedThinking;
     }
@@ -222,12 +228,30 @@ export class OpenAICompatAdapter implements LLMAdapter {
       request.maxTokens > 4096 ? 120_000 : 60_000,
     );
     try {
-      const response = await fetch(this.url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal,
-      });
+      const send = () =>
+        fetch(this.url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal,
+        });
+
+      let response = await send();
+
+      // A strict OpenAI-compatible endpoint can reject the request outright for
+      // carrying an unknown `stream_options` field. Losing the cache metric is
+      // acceptable; losing streaming is not — and streaming is the live path, so
+      // a hard failure here takes the product down rather than degrading a
+      // diagnostic. Retry once without it and remember the answer, so a strict
+      // endpoint costs one wasted request per adapter rather than failing every
+      // streamed call. A 400 thrown for some other reason simply fails again
+      // below, at the price of that one retry.
+      if (!response.ok && response.status === 400 && sendStreamUsage) {
+        await response.text().catch(() => "");   // release the connection
+        this.streamUsageRejected = true;
+        delete body["stream_options"];
+        response = await send();
+      }
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "unknown error");
@@ -237,7 +261,8 @@ export class OpenAICompatAdapter implements LLMAdapter {
 
       let fullContent = "";
       let finalModel = model;
-      let completionTokens = 0;
+      let deltaCount = 0;
+      let reportedUsage: OpenAIUsagePayload | undefined;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -259,19 +284,32 @@ export class OpenAICompatAdapter implements LLMAdapter {
               const chunk = JSON.parse(data) as {
                 choices: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
                 model?: string;
+                usage?: OpenAIUsagePayload;
               };
               // Some thinking models (e.g. Alibaba qwen3.5-plus) stream actual
               // output via `reasoning_content` while `content` is empty/null.
               const delta = chunk.choices[0]?.delta;
               const token = delta?.content || delta?.reasoning_content || "";
-              if (token) { fullContent += token; completionTokens++; onToken(token); }
+              if (token) { fullContent += token; deltaCount++; onToken(token); }
               if (chunk.model) finalModel = chunk.model;
+              // With stream_options.include_usage the provider appends a final
+              // chunk carrying usage and an empty `choices` array.
+              if (chunk.usage) reportedUsage = chunk.usage;
             } catch { /* skip malformed chunks */ }
           }
         }
       } finally {
         reader.releaseLock();
       }
+
+      // Real counts when the provider sent the usage chunk. Otherwise fall back
+      // to the delta count, which approximates completion tokens only — the
+      // prompt side is genuinely unknown on that path, not zero.
+      const usage: TokenUsage = toTokenUsage(reportedUsage) ?? {
+        promptTokens: 0,
+        completionTokens: deltaCount,
+        totalTokens: deltaCount,
+      };
 
       const streamDurationMs = Date.now() - startMs;
       if (process.env["ORCA_PROFILE"] === "1") {
@@ -280,14 +318,19 @@ export class OpenAICompatAdapter implements LLMAdapter {
           method: "stream",
           model: finalModel,
           durationMs: streamDurationMs,
-          completionTokens,
-          totalTokens: completionTokens,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+          cachedPromptTokens: usage.cachedPromptTokens,
+          // Marks the counts above as provider-reported rather than estimated,
+          // so the analyzer never mixes delta counts into token totals.
+          usageReported: reportedUsage !== undefined,
         });
       }
       return {
         content: fullContent,
         model: finalModel,
-        usage: { promptTokens: 0, completionTokens, totalTokens: completionTokens },
+        usage,
         durationMs: streamDurationMs,
       };
     } finally {
