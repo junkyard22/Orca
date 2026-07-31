@@ -62,6 +62,14 @@ jobs:
       - name: Typecheck all workspaces
         run: pnpm -r exec tsc --noEmit
 
+      # `pnpm -r` only reaches workspace packages, and scripts/ is not one, so
+      # nothing here was ever typechecked — tsx strips the types at runtime
+      # without checking them.  That left contract-check.ts, the gate guarding
+      # every architecture-sensitive change, with less coverage than the code it
+      # guards.
+      - name: Typecheck scripts
+        run: pnpm typecheck:scripts
+
       # `pnpm -r --if-present` discovers packages instead of listing them, so a
       # new workspace package is covered the moment it lands.  The previous
       # hardcoded list had already silently missed pappy-eval and
