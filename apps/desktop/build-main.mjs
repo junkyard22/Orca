@@ -4,7 +4,8 @@
  * so no `pnpm build` of packages is required first.
  */
 import { build } from "esbuild";
-import { mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { mkdirSync, copyFileSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +13,47 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGES  = resolve(__dirname, "..", "..", "packages");
 
 mkdirSync("dist-main", { recursive: true });
+
+// ── Build provenance ──────────────────────────────────────────────────────
+//
+// `release/` is gitignored and the artifact filename carries only a version, so
+// there was no way to tell which commit any given EXE came from. That is how
+// the shipped build silently drifted three months behind main: nothing
+// contradicted it. build-info.json ships inside the asar so the question is
+// answerable from the artifact itself.
+//
+// `dirty` is the field that matters. A commit SHA recorded from a modified
+// working tree is a lie by omission — it names a commit whose source is not
+// what was built.
+
+function git(cmd, fallback = "unknown") {
+  try {
+    return execSync(cmd, { cwd: __dirname, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+  } catch {
+    return fallback;
+  }
+}
+
+const pkgVersion = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf8")).version;
+const commit     = git("git rev-parse HEAD");
+const dirty      = git("git status --porcelain", "") !== "";
+
+const buildInfo = {
+  version:     pkgVersion,
+  commit,
+  commitShort: commit.slice(0, 8),
+  branch:      git("git rev-parse --abbrev-ref HEAD"),
+  // True when the working tree had uncommitted changes at build time, which
+  // means `commit` alone does not reproduce this artifact.
+  dirty,
+  builtAt:     new Date().toISOString(),
+};
+
+writeFileSync(
+  resolve(__dirname, "dist-main", "build-info.json"),
+  JSON.stringify(buildInfo, null, 2) + "\n",
+  "utf8",
+);
 
 const shared = {
   bundle:   true,
@@ -53,3 +95,7 @@ if (existsSync(wasmSrc)) {
 }
 
 console.log("✓  dist-main/main.js + preload.js");
+console.log(
+  `✓  dist-main/build-info.json  ${buildInfo.version} @ ${buildInfo.commitShort}` +
+    `${buildInfo.dirty ? "  ⚠ DIRTY WORKING TREE" : ""}`,
+);
