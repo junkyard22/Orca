@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Same reason as ci.yml: Contract Check resolves a base ref to diff
           # against, and the default shallow clone has none — so the strict
@@ -35,10 +35,10 @@ jobs:
       # "Multiple versions of pnpm specified".  ci.yml already omits it; this
       # file was missed.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22.x
           cache: pnpm
@@ -56,7 +56,7 @@ jobs:
         run: pnpm --filter @clawde/desktop dist
 
       - name: Upload installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-windows
           # Only the two user-facing executables — no blockmaps, no unpacked dir
@@ -75,13 +75,13 @@ jobs:
 
     steps:
       - name: Download installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: desktop-windows
           path: release-assets/
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: release-assets/*.exe
