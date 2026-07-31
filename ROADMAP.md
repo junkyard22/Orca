@@ -9,7 +9,7 @@
 | orca-core | Runtime wiring — routes tasks through Maestro → Pappy → repair loop | ✅ Solid architecture. Carries `OrcaToolService` in `OrcaRunCtx` for agent-loop mode. |
 | maestro-core | Orchestration — classifies tasks, scores risk, plan-gates, manages cancellation | ✅ `orchestrate()` solid. MaestroAdapter runs full agent loop with tools. |
 | miranda-core | LLM behavior enforcement — gates, prompt wrapping, output validation, repair loops, circuit breaker | ✅ Production-quality. Also hosts the `MirandaGate` compliance layer. |
-| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts on Maestro output | ✅ **Phase 4 COMPLETE.** SATISFACTION_EXPLANATION_THIN, PROOF_NO_TRACE, and all claim-proof checks working. |
+| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts + training eligibility on Maestro output | ⚠️ **Phase 4.1–4.4 shipped; 4.5–4.7 open.** Integrity/anti-cheat checks catch 100% of the eval suite's cheats, but 42.9% of correct work is still sent to repair. See Phase 4. |
 | pappy-eval | Offline eval harness for Pappy — fixtures + deterministic judges | ✅ Fixture suite plus raw-Pappy and Pappy-plus-hardening judges. Run via `pnpm pappy:eval`. |
 | agent-loop-core | The shared tool-calling agent loop | ✅ Extracted from maestroAdapter; used by runner and desktop. Gated via `beforeLLMCall`. |
 | workbench-core | Tool execution (Runner + tools) | ✅ ShellRunner done. **Phase 3 complete:** `ToolRegistry` plus read/write/run/list/search tools, and a sandbox policy. |
@@ -149,25 +149,87 @@ Superseded by Phase 7, which landed. `OrcaExtension` in [`orca-core/src/extensio
 
 **Goal:** Pappy catches real problems, not just structural absences.
 
-Right now Pappy's checks are mostly "did the output have content at all?" That's not enough for production.
+**Status: 4.1–4.4 shipped. Effectiveness is now measured, not asserted — see the
+numbers below for what remains.**
 
-### 4.1 — Task-aware completeness checks
+The original text here claimed Pappy's checks were "mostly did the output have
+content at all." That stopped being true some time ago and the section was never
+updated. All four sub-items exist in code:
 
-Pappy needs to compare what was asked against what was delivered. If the task was "implement a login form" and the output doesn't mention `form`, `submit`, or `validation` — that's a FAIL, not a PASS.
+| Item | Where it lives |
+|------|----------------|
+| 4.1 Task-aware completeness | `pappy-core/src/checks/completeness.ts` — `runCompletenessChecks`, `runSatisfactionChecks` |
+| 4.2 File change verification | `pappy-core/src/ahp/fileVerifier.ts` — real filesystem reads, reached via `verifyAHPPacket` |
+| 4.3 Tool event correlation | `pappy-core/src/checks/toolResults.ts` |
+| 4.4 Repair task specificity | `pappy-core/src/repair.ts` — `buildRepairTask` groups issues by category |
 
-### 4.2 — File change verification
+Both entry points are live: `evaluateWithPappy` via `orca-core/src/adapters/pappyPort.ts`,
+and `verifyAHPPacket` via `orca-core/src/runtime.ts` and `repairLoop.ts`.
 
-If Maestro claimed to write files, Pappy should verify those files exist and contain the expected content. This requires Pappy to have read-only filesystem access.
+### Measured effectiveness
 
-### 4.3 — Tool event correlation
+Run `pnpm pappy:eval:raw-real-pappy` to refresh. Against the 23-fixture suite in
+`packages/pappy-eval`:
 
-If a task required running tests and no test runner tool event exists in the result, that's a WARN at minimum.
+| Metric | Baseline | Current |
+|--------|----------|---------|
+| fixtures passed | 3/23 | 18/23 |
+| cheat catch rate | 55.6% | 100% |
+| false accept rate | 11.1% | 0% |
+| false reject rate | 57.1% | 42.9% |
+| training-eligibility precision | 100% (vacuous) | 100% |
+| evidence grounding | 4.3% | 4.3% |
 
-### 4.4 — Expand repair task specificity
+Baseline is the state before the integrity checks and the training-eligibility
+axis landed. "Vacuous" means Pappy never returned `eligible`, so the precision
+metric had no denominator and trivially scored 100%.
 
-`buildRepairTask()` in `pappy-core/src/repair.ts` should generate targeted repair prompts, not generic ones. "Fix 2 HIGH issues: missing error handling in `write_file` call (line ~45) and no validation for empty input" is more actionable than "please fix the issues."
+### 4.5 — Reduce the false reject rate *(open, highest value)*
 
----
+42.9% of correct work is still sent back for repair. This is the most expensive
+defect in the system and the least visible: profiling puts essentially all
+wall-clock in LLM inference, so every spurious repair is a full round-trip, and a
+wrongly-rejected run still looks like the gate doing its job.
+
+The cause is `completeness.ts` heuristics demanding vocabulary the task never
+required. Two have been fixed (`ROUTING_CRITERIA_MISMATCH` firing on failure
+words that describe working software; `COMPLETENESS_MISSING_DOMAIN_TERMS`
+demanding "fetch"/"response" from anything HTTP-shaped). Known remaining
+examples, both reproducible:
+
+- `UNREQUESTED_FILE_CHANGE` fires HIGH on "add a formula evaluator", reading a
+  plain change request as inspection-only.
+- Goal-concept extraction treats the modal "must" as a required domain concept,
+  and derives "form" from "formula" by prefix.
+
+**Warning for whoever picks this up.** Removing "must" from the demanded concepts
+is correct in isolation and *regressed* the suite: it turned a partial success
+into an accept, because that demand was accidentally carrying a real
+incompleteness signal. The fix is a better completeness signal, not more
+stopwords. Verify against `false accept rate` — trading a false reject for a
+false accept is a loss, not a win.
+
+The suite is 23 fixtures. Treat the percentages as direction, and be wary of
+tuning heuristics against it.
+
+### 4.6 — Verdict has no "needs human review" state *(open, needs a design doc)*
+
+Scope drift is detected — an out-of-scope edit to `.env` or `.github/workflows/`
+raises `FORBIDDEN_PATH_ACCESSED` and correctly caps training eligibility at
+`needs_human_review`. But `Verdict` is `PASS | WARN | FAIL`, so the *verdict*
+collapses to WARN and the run goes to repair instead of to a human.
+
+Adding a fourth state changes the contract for every `PappyResult` consumer, and
+Miranda already reserves `CONFIRM_REQUIRED` "until wired" per CLAUDE.md. This
+needs an explicit design doc covering both, not an improvised fourth enum value.
+
+### 4.7 — Evidence grounding is 4.3% *(open, partly a measurement artifact)*
+
+Pappy emits its own structured citations (`filesChanged: src/foo.ts changeType=M`)
+rather than verbatim slices of the input, so the harness's substring-match
+grounding check mostly fails even when the citation is accurate. Some of this
+number is methodology, not hallucination — see `packages/pappy-eval/GAPS.md` §6
+before treating it as a defect.
 
 ## Phase 5 — Persistence & Session Management
 
@@ -305,11 +367,12 @@ core changes.
 | ~~Week 3~~ | ~~**Phase 3.1–3.3** (core tools).~~ ✅ **DONE** |
 | ~~Week 4~~ | ~~**Phase 2.1–2.2** (basic subagents).~~ ✅ **DONE** |
 | ~~Then~~ | ~~**Phase 5.1–5.3** (persistence).~~ ✅ **DONE** |
-| ~~Then~~ | ~~**Phase 4** (Pappy QC depth).~~ ✅ **DONE** |
+| Then | **Phase 4** (Pappy QC depth). ⚠️ **4.1–4.4 done, 4.5–4.7 open** — effectiveness is measured now; see Phase 4. |
 | ~~Then~~ | ~~**Phase 6** (real desktop UI).~~ ✅ **DONE** |
 | ~~Then~~ | ~~**Phase 7** (extension system).~~ ✅ **DONE** |
 
-**Every numbered phase in this document is now complete.** New work is tracked
+**Every numbered phase is complete except Phase 4, which is measured rather than
+finished — 4.5–4.7 remain open.** New work is tracked
 below rather than as further phases.
 
 ### Open work

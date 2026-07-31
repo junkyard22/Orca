@@ -66,6 +66,9 @@ function stubMaestro(outputText: string): MaestroPort {
 function stubPappyResult(verdict: "PASS" | "WARN" | "FAIL"): PappyResult {
   return {
     verdict,
+    // Mirrors deriveTrainingEligibility for the stub's issue set: a WARN is a
+    // partial success and needs review; PASS and an honest FAIL stay eligible.
+    trainingEligibility: verdict === "WARN" ? "needs_human_review" : "eligible",
     confidence: 1.0,
     summary: `stub-${verdict}`,
     acceptance_criteria: [],

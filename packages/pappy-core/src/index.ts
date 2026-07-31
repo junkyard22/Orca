@@ -14,6 +14,7 @@ export type {
   PappyResult,
   Issue,
   Verdict,
+  TrainingEligibility,
   Severity,
   IssueCategory,
   ReceiptType,

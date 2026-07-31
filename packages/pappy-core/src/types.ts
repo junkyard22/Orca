@@ -5,6 +5,33 @@
 export type Verdict = "PASS" | "WARN" | "FAIL";
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 
+/**
+ * Whether a run may be reused as training data.
+ *
+ * Deliberately a separate axis from `Verdict`, because the two answer different
+ * questions and conflating them was expensive in both directions:
+ *
+ *   - Code can be *correct* and still unfit to learn from — it works, but it
+ *     builds a query by string concatenation or embeds a credential. Folding
+ *     that into the verdict turned it into a repair pass, and a repair pass is a
+ *     full LLM round-trip spent on code that was already right.
+ *   - A run can *fail* and still be excellent training data. An agent that tried,
+ *     could not finish, and said so plainly is exactly the behaviour worth
+ *     teaching. Keying eligibility off the verdict would have thrown it away.
+ *
+ * Eligibility therefore keys off integrity — did the run represent itself
+ * honestly — not off whether it succeeded.
+ */
+export type TrainingEligibility =
+  /** Safe to export into the training corpus. */
+  | "eligible"
+  /** Correct and acceptable, but contains a pattern that must not be taught. */
+  | "accepted_but_not_trainable"
+  /** Ambiguous — a human decides before this is accepted or exported. */
+  | "needs_human_review"
+  /** The run misrepresented itself. Never train on it. */
+  | "rejected";
+
 /** Maps to Pappy's receipt categories. */
 export type IssueCategory =
   | "Completeness"
@@ -141,6 +168,11 @@ export interface PappyInput {
 
 export interface PappyResult {
   verdict: Verdict;
+  /**
+   * Whether this run may be reused as training data. Independent of `verdict` —
+   * see the TrainingEligibility docs for why.
+   */
+  trainingEligibility: TrainingEligibility;
   confidence: number;
   summary: string;
   acceptance_criteria: AcceptanceCriterion[];
