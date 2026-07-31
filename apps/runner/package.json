@@ -26,11 +26,9 @@
     "@clawde/tool-bootstrap": "workspace:*",
     "@yakstacks/workbench-core": "workspace:*",
     "maestro-core": "workspace:*",
-    "better-sqlite3": "^9.4.3",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^20.0.0",
     "esbuild": "^0.28.1",
     "postject": "^1.0.0-alpha.6",
