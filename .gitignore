@@ -44,6 +44,13 @@ tmp-run/
 # committed on purpose; only the generated reports are ignored.
 smoke-reports/
 
+# ORCA_PROFILE=1 run output.  makeProfilePath() names these
+# `run-<ISO-timestamp>.jsonl`, so match the timestamp shape rather than the whole
+# directory: profile-runs/run-1..3 are curated evidence cited by
+# PROFILING_FINDINGS.md and must stay tracked, and a future curated profile
+# should be committable under a simple name without needing `git add -f`.
+profile-runs/run-[0-9][0-9][0-9][0-9]-*.jsonl
+
 # Editor
 .vscode/
 .idea/
