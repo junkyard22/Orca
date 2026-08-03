@@ -662,3 +662,52 @@ describe("runCompletenessChecks — generic task handling (no false positives)",
     expect(domainTermsIssue!.severity).toBe("MEDIUM");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Hyphenated concept matching
+// ---------------------------------------------------------------------------
+
+describe("goal coverage — hyphenated concepts", () => {
+  function coverageIssue(input: Parameters<typeof runCompletenessChecks>[0]) {
+    return runCompletenessChecks(input).find(
+      (i) => i.code === "COMPLETENESS_GOAL_COVERAGE",
+    );
+  }
+
+  it("counts a hyphenated concept as met when its substantive parts appear", () => {
+    // The term splitter does not break on "-", so "non-negative" was extracted
+    // as one token and only ever satisfied by that literal string. An answer
+    // saying "negative numbers" satisfies the criterion in substance.
+    const issue = coverageIssue({
+      task: "Fix formatRelativeDate for future dates.",
+      goals: ["formatRelativeDate must return a non-negative value for future dates"],
+      outputText:
+        "Fixed formatRelativeDate to detect future dates and return 'in 3 days' " +
+        "rather than negative numbers. The value is never negative now.",
+    });
+    expect(issue?.description ?? "").not.toContain("non-negative");
+  });
+
+  it("is not satisfied by a lesser part when the head part is absent", () => {
+    // The load-bearing half. Matching on any part would let "user-provided" be
+    // satisfied by an unrelated mention of "user"; matching on the longest part
+    // requires "provided" to actually appear.
+    const issue = coverageIssue({
+      task: "Add an expression evaluator.",
+      goals: ["Must evaluate a user-provided arithmetic expression safely"],
+      outputText: "Added an evaluator. The user calls it with an expression.",
+    });
+    expect(issue?.description ?? "").toContain("user-provided");
+  });
+
+  it("ignores parts shorter than four characters rather than demanding them", () => {
+    // "non" alone carries no meaning; demanding it would make the compound
+    // unsatisfiable for the opposite reason.
+    const issue = coverageIssue({
+      task: "Return a re-entrant lock.",
+      goals: ["Implement a re-entrant locking helper"],
+      outputText: "Implemented a locking helper that is entrant across calls.",
+    });
+    expect(issue?.description ?? "").not.toContain("re-entrant");
+  });
+});
