@@ -63,6 +63,9 @@ function stampIssueIds(issues: Omit<Issue, "issueId">[]): Issue[] {
 // Acceptance criteria — derived from task + goals + constraints
 // ---------------------------------------------------------------------------
 
+const GENERIC_OUTPUT_CRITERION =
+  "Task must produce non-empty output, file changes, or tool results.";
+
 function deriveAcceptanceCriteria(input: PappyInput): AcceptanceCriterion[] {
   const criteria: AcceptanceCriterion[] = [];
   let n = 0;
@@ -94,7 +97,7 @@ function deriveAcceptanceCriteria(input: PappyInput): AcceptanceCriterion[] {
   if (criteria.length === 0) {
     criteria.push({
       id: "AC1",
-      text: "Task must produce non-empty output, file changes, or tool results.",
+      text: GENERIC_OUTPUT_CRITERION,
       required: true,
     });
   }
@@ -105,6 +108,25 @@ function deriveAcceptanceCriteria(input: PappyInput): AcceptanceCriterion[] {
 // ---------------------------------------------------------------------------
 // Receipt ledger — one entry per acceptance criterion
 // ---------------------------------------------------------------------------
+
+const REPORTING_STOP_WORDS = new Set([
+  "the", "a", "an", "and", "or", "with", "from", "into", "which", "whether",
+  "output", "response", "answer", "result", "read", "repository", "root",
+  "contains", "contain", "includes", "include", "identifies", "identify",
+  "describes", "describe", "states", "state", "distinguishes", "distinguish",
+  "explains", "explain", "provides", "provide", "shows", "show", "reports",
+  "report", "respond", "summarize", "summarise", "ends", "must", "should",
+  "exactly", "how", "many", "are", "is", "be", "of", "to", "in", "for",
+  "top", "level", "supporting",
+]);
+
+function reportingTermRoot(term: string): string {
+  if (term.length > 5 && /ing$/.test(term)) return term.slice(0, -3);
+  if (term.length > 4 && /ed$/.test(term)) return term.slice(0, -2);
+  if (term.length > 4 && /es$/.test(term)) return term.slice(0, -2);
+  if (term.length > 3 && /s$/.test(term)) return term.slice(0, -1);
+  return term;
+}
 
 /**
  * Verify an acceptance criterion against specific evidence in the output.
@@ -152,10 +174,17 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
     };
   }
 
-  if (/^Output must contain a section titled/i.test(ac.text)) {
+  const sectionMatch = ac.text.match(/^Output must contain a section titled "([^"]+)"\.$/i);
+  if (sectionMatch) {
+    const title = sectionMatch[1] ?? "";
+    const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const hasSectionHeading = new RegExp(
+      `^(?:#{1,6}\\s+)?${escapedTitle}\\s*:?\\s*$`,
+      "im",
+    ).test(outputText);
     return {
-      proved: hasOutput,
-      evidence: hasOutput ? ["outputText is non-empty"] : [],
+      proved: hasSectionHeading,
+      evidence: hasSectionHeading ? [`section heading: ${title}`] : [],
     };
   }
   
@@ -277,19 +306,54 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
     };
   }
 
-  // Default fallback: actual output text or file changes must exist.
-  // Tool activity alone (hasTools) is NOT sufficient proof of semantic success —
-  // the user expects a response, not just evidence that tools were invoked.
-  // This prevents runs that silently fired tools but produced no final answer
-  // from being marked as having proved their acceptance criteria.
-  const someProofExists = hasOutput || hasFiles;
-  return {
-    proved: someProofExists,
-    evidence: [
-      ...(hasOutput ? ["outputText is non-empty"] : []),
-      ...(hasFiles  ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
-    ],
-  };
+  // Reporting criteria describe observable properties of the response rather
+  // than implementation behavior. Prove them only when the response covers the
+  // criterion's specific topic terms and the run has an objective tool/file
+  // receipt. This preserves useful report verification without allowing bare,
+  // unrelated text to certify an arbitrary semantic criterion.
+  const isReportingCriterion =
+    /^(output|response|answer|result)\s+\w+/i.test(ac.text) ||
+    /\b(answer|respond|report|summari[sz]e)\s+with\b/i.test(ac.text);
+  if (isReportingCriterion) {
+    const topicTerms = [...new Set(
+      lowerCriterion
+        .split(/[^a-z0-9_-]+/)
+        .filter((term) => term.length >= 3 && !REPORTING_STOP_WORDS.has(term)),
+    )];
+    const matchedTerms = topicTerms.filter((term) => containsTerm(reportingTermRoot(term)));
+    const requiredMatches = Math.max(1, Math.ceil(topicTerms.length * 0.6));
+    const hasObjectiveReceipt = hasTools || hasFiles;
+    const proved = topicTerms.length > 0 && matchedTerms.length >= requiredMatches && hasObjectiveReceipt;
+
+    return {
+      proved,
+      evidence: proved
+        ? [
+            `criterion terms found: ${matchedTerms.join(", ")}`,
+            ...(hasFiles ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
+            ...(hasTools ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
+          ]
+        : [],
+    };
+  }
+
+  // Pappy's built-in fallback criterion is structural and can be verified
+  // directly. It is the only criterion for which artifact presence suffices.
+  if (ac.text === GENERIC_OUTPUT_CRITERION) {
+    const proved = hasOutput || hasFiles || hasTools;
+    return {
+      proved,
+      evidence: [
+        ...(hasOutput ? ["outputText is non-empty"] : []),
+        ...(hasFiles ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
+        ...(hasTools ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
+      ],
+    };
+  }
+
+  // Unknown semantic criteria have no deterministic verifier. Fail closed:
+  // unrelated output or file activity is not criterion-specific proof.
+  return { proved: false, evidence: [] };
 }
 
 function buildCriteriaLedger(
@@ -313,6 +377,24 @@ function buildCriteriaLedger(
   }
 
   return entries;
+}
+
+function buildMissingReceiptIssues(
+  receiptLedger: readonly ReceiptEntry[],
+): Omit<Issue, "issueId">[] {
+  return receiptLedger
+    .filter((entry) => entry.status === "MISSING")
+    .map((entry) => ({
+      severity: "HIGH" as const,
+      code: "REQUIRED_RECEIPT_MISSING",
+      category: "Proof",
+      description: `Required receipt ${entry.ref} is missing: ${entry.required_receipt.details}`,
+      expected_receipt: `${entry.required_receipt.type}: ${entry.required_receipt.details}`,
+      evidence: `${entry.ref}: status=MISSING; evidence=[]`,
+      fix_hint: `Provide criterion-specific evidence for ${entry.ref} and re-run verification.`,
+      message: `Required receipt ${entry.ref} is missing.`,
+      suggestedFix: `Satisfy ${entry.ref} with verifiable evidence before marking the task complete.`,
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +568,10 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
   // Must happen BEFORE stampIssueIds so CORE_GOAL_MISSING can inspect the ledger.
   const criteriaLedger = buildCriteriaLedger(input, acceptance_criteria);
   const receipt_ledger: ReceiptEntry[] = [...criteriaLedger, ...claimLedger];
+
+  // The ledger is authoritative: a required MISSING row must feed verdict
+  // derivation regardless of how many other criteria were proved.
+  rawIssues.push(...buildMissingReceiptIssues(receipt_ledger));
 
   // ── CORE_GOAL_MISSING: all specific-goal criteria unproved ───────────────
   // When the task has explicit goals (i.e. more than just the generic fallback AC)

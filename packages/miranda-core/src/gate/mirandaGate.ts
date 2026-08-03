@@ -10,7 +10,7 @@
  *   before_tool_run  → tool in allowlist? args well-formed?
  *   after_tool_run   → receipt captured?
  *   before_qc        → non-empty output ready for QC?
- *   after_qc         → verdict well-formed and logged?
+ *   after_qc         → verdict well-formed and receipt-consistent?
  *
  * AHP enforcement (layered within gate logic):
  *   - transitionAHPLifecycle  validates state-machine transitions; throws on illegal moves
@@ -135,6 +135,8 @@ export interface QCGateContext {
   pappyVerdict?: string;
   /** Stable Pappy issue codes observed for this QC pass. */
   issueCodes?: string[];
+  /** Receipt-ledger refs whose required evidence is missing. */
+  missingReceiptRefs?: string[];
   /** Pappy issue categories/types observed for this QC pass. */
   issueTypes?: string[];
   /** Pappy confidence score for this QC pass, when available. */
@@ -183,7 +185,7 @@ export interface MirandaGate {
   /** Stage: QC — before Pappy evaluates. */
   beforeQC(ctx: QCGateContext): GateResult;
 
-  /** Stage: QC — after Pappy verdict. */
+  /** Stage: QC — validate and record Pappy verdict consistency. */
   afterQC(ctx: QCGateContext, verdict: string, issueCount: number): GateResult;
 }
 
@@ -717,6 +719,19 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
           verdict: deriveVerdict(false),
         };
         log(`after_qc ERROR  ${result.reason}`);
+        return report("after_qc", result, ctx);
+      }
+
+      const missingReceiptRefs = ctx.missingReceiptRefs ?? [];
+      if (missingReceiptRefs.length > 0 && (verdict === "PASS" || verdict === "WARN")) {
+        const violations = [`Missing required receipts: ${missingReceiptRefs.join(", ")}`];
+        const result: GateResult = {
+          allowed: false,
+          reason: `QC consistency violation: verdict=${verdict} with ${missingReceiptRefs.length} missing required receipt(s)`,
+          violations,
+          verdict: deriveVerdict(false, violations),
+        };
+        log(`after_qc BLOCKED  ${result.reason}`);
         return report("after_qc", result, ctx);
       }
 

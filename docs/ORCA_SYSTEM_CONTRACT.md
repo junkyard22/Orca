@@ -142,7 +142,9 @@ Pappy owns quality verdicts. The three valid outcomes are:
 | `WARN` | Output has issues but is acceptable. Continue with diagnostic. |
 | `FAIL` | Output does not meet criteria. Maestro should trigger repair. |
 
-Miranda's `afterQC` checkpoint may record diagnostics and trace state after Pappy issues its verdict. It must not:
+The receipt ledger is authoritative. Every required receipt with status `MISSING` must produce a `HIGH` issue and a Pappy `FAIL`, even when other acceptance criteria are proved. A semantic acceptance criterion without a deterministic verifier fails closed; non-empty output alone is not proof.
+
+Miranda's `afterQC` checkpoint may validate verdict/receipt consistency and record diagnostics after Pappy issues its verdict. A blocked consistency checkpoint is an alarm; it does not replace or rewrite Pappy's outcome. Miranda must not:
 
 - Downgrade a Pappy `FAIL` to `WARN` or `PASS`
 - Skip the repair loop that a `FAIL` would normally trigger

@@ -23,6 +23,11 @@ export function buildQCGateContext(options: BuildQCGateContextOptions): QCGateCo
     attempt: options.attempt,
     pappyVerdict: options.qcResult.verdict,
     issueCodes: uniqueStrings(options.qcResult.issues.map((issue) => issue.code)),
+    missingReceiptRefs: uniqueStrings(
+      options.qcResult.receipt_ledger
+        .filter((receipt) => receipt.status === "MISSING")
+        .map((receipt) => receipt.ref),
+    ),
     issueTypes: uniqueStrings(options.qcResult.issues.map((issue) => issue.category)),
     confidence: options.qcResult.confidence,
     stoppedBecause: options.maestroResult?.metadata?.stoppedBecause,
@@ -42,6 +47,7 @@ export function recordAfterQCGateDiagnostic(
     attempt: gateContext.attempt,
     pappyVerdict: gateContext.pappyVerdict,
     issueCodes: gateContext.issueCodes,
+    missingReceiptRefs: gateContext.missingReceiptRefs,
     issueTypes: gateContext.issueTypes,
     confidence: gateContext.confidence,
     stoppedBecause: gateContext.stoppedBecause,

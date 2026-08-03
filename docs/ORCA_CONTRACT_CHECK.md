@@ -57,7 +57,7 @@ Answer these questions before submitting or approving a change in the areas abov
    If no, the change is not compliant.
 
 7. **Does this change Pappy verdict logic or repair behavior?**
-   If yes, confirm that no other component is overriding, suppressing, or short-circuiting a Pappy `FAIL`. Confirm that Miranda's `afterQC` is not being used to alter QC outcomes.
+   If yes, confirm that every required `MISSING` receipt feeds a `HIGH` issue and Pappy `FAIL`, and that no other component overrides, suppresses, or short-circuits that `FAIL`. Miranda's `afterQC` may report a receipt/verdict inconsistency but must not alter the QC outcome.
 
 8. **Does this expose internal diagnostics to user-facing output?**
    Check for stage labels, gate verdicts, trace IDs, role names as chatter, or repair-loop counters appearing in final Benson output. If yes, route through Benson's translation layer.
