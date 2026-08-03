@@ -1658,7 +1658,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       async execute(name, input) {
         const normalizedInput = absolutizeDesktopCommanderInput(name, input, workspaceRoot);
         const toolSchema = bootstrap.allTools.find((tool) => tool.name === name)?.schema;
-        const gateCtx = { tool: name, args: normalizedInput, schema: toolSchema };
+        const gateCtx = { tool: name, args: normalizedInput, workspaceRoot, schema: toolSchema };
         const beforeGate = gate.beforeToolRun(gateCtx);
         if (!beforeGate.allowed) {
           return {

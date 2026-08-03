@@ -5,7 +5,7 @@ import {
   type OrcaRunCtx,
   type OrcaToolService,
 } from "@clawde/orca-core";
-import type { GateResult } from "@clawde/miranda-core";
+import type { GateResult, ToolGateContext } from "@clawde/miranda-core";
 import type { AgentLoopResult, ParsedCall } from "./types.js";
 
 const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
@@ -41,7 +41,8 @@ export function parseToolCalls(text: string): ParsedCall[] {
 
 export function formatToolResult(tool: string, ok: boolean, output: string, error?: string): string {
   const status = ok ? 'ok="true"' : 'ok="false"';
-  const body = ok ? output : (error ?? output ?? "unknown error");
+  const failureDetails = [error, output].filter((value) => value && value.trim().length > 0);
+  const body = ok ? output : (failureDetails.join("\n") || "unknown error");
   return `\n<tool_result tool="${tool}" ${status}>\n${body}\n</tool_result>`;
 }
 
@@ -94,22 +95,16 @@ function makeToolGateContext(
   tool: string,
   args: Record<string, unknown>,
   taskText: string,
+  workspaceRoot: string | undefined,
   schema?: {
     required?: string[];
     properties?: Record<string, { type: string }>;
   },
-): {
-  tool: string;
-  args: Record<string, unknown>;
-  taskText?: string;
-  schema?: {
-    required?: string[];
-    properties?: Record<string, { type: string }>;
-  };
-} {
-  return schema === undefined
+): ToolGateContext {
+  const base = workspaceRoot === undefined
     ? { tool, args, taskText }
-    : { tool, args, taskText, schema };
+    : { tool, args, taskText, workspaceRoot };
+  return schema === undefined ? base : { ...base, schema };
 }
 
 export async function runAgentLoop(
@@ -230,7 +225,9 @@ export async function runAgentLoop(
           properties?: Record<string, { type: string }>;
         } | undefined;
       }) | undefined)?.getSchema?.(call.tool);
-      const beforeGate = ctx.gate?.beforeToolRun(makeToolGateContext(call.tool, call.input, taskPrompt, schema));
+      const beforeGate = ctx.gate?.beforeToolRun(
+        makeToolGateContext(call.tool, call.input, taskPrompt, ctx.workspaceRoot, schema),
+      );
       if (beforeGate && !beforeGate.allowed) {
         turnAllToolsOk = false;
         console.error(`[MaestroAdapter] gate blocked tool "${call.tool}": ${beforeGate.reason}`);
@@ -281,7 +278,10 @@ export async function runAgentLoop(
       }
 
       // Miranda: after_tool_run gate
-      ctx.gate?.afterToolRun(makeToolGateContext(call.tool, call.input, taskPrompt), { ok: result.ok, output: outputText });
+      ctx.gate?.afterToolRun(
+        makeToolGateContext(call.tool, call.input, taskPrompt, ctx.workspaceRoot),
+        { ok: result.ok, output: outputText },
+      );
 
       const enrichedRaw = { ...call.input } as Record<string, unknown>;
       if (commandFileChanges.length > 0) {
@@ -404,7 +404,9 @@ export async function runAgentLoop(
           properties?: Record<string, { type: string }>;
         } | undefined;
       }) | undefined)?.getSchema?.(call.tool);
-      const beforeGate = ctx.gate?.beforeToolRun(makeToolGateContext(call.tool, call.input, taskPrompt, schema));
+      const beforeGate = ctx.gate?.beforeToolRun(
+        makeToolGateContext(call.tool, call.input, taskPrompt, ctx.workspaceRoot, schema),
+      );
       if (beforeGate && !beforeGate.allowed) {
         toolEvents.push({
           tool: call.tool,
@@ -416,7 +418,10 @@ export async function runAgentLoop(
       }
       const result = await tools.execute(call.tool, call.input);
       const outputText = normalizeToolText(result.output);
-      ctx.gate?.afterToolRun(makeToolGateContext(call.tool, call.input, taskPrompt), { ok: result.ok, output: outputText });
+      ctx.gate?.afterToolRun(
+        makeToolGateContext(call.tool, call.input, taskPrompt, ctx.workspaceRoot),
+        { ok: result.ok, output: outputText },
+      );
       toolEvents.push({
         tool: call.tool,
         ok: result.ok,

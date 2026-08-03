@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import * as path from "node:path";
 import {
   createMirandaGate,
   transitionAHPLifecycle,
@@ -246,6 +247,20 @@ describe("GateVerdict: afterToolRun failures are BLOCK", () => {
 // ---------------------------------------------------------------------------
 
 describe("Protected path policy", () => {
+  it("blocks tool paths outside the configured workspace", () => {
+    const workspaceRoot = path.resolve("workspace");
+    const gate = createMirandaGate();
+    const result = gate.beforeToolRun(makeToolCtx({
+      tool: "write_file",
+      workspaceRoot,
+      args: { path: path.resolve("outside", "file.txt"), content: "data" },
+    }));
+
+    expect(result.allowed).toBe(false);
+    expect(result.verdict).toBe("BLOCK");
+    expect(result.violations?.join(" ")).toMatch(/outside.*workspace/i);
+  });
+
   it("blocks mutating tools from editing pappy-core verifier files", () => {
     const gate = createMirandaGate();
     const r = gate.beforeToolRun(makeToolCtx({

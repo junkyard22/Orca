@@ -13,9 +13,13 @@
  */
 
 import type { Issue, PappyInput, Claim, ReceiptEntry, ReceiptType } from "../types.js";
+import { TEST_FAIL_OUTPUT_PATTERN } from "./integrity.js";
 
 function pathMatches(candidate: string, expected: string): boolean {
-  return candidate === expected || candidate.endsWith(expected) || expected.endsWith(candidate);
+  const normalize = (value: string) => value.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+  const normalizedCandidate = normalize(candidate);
+  const normalizedExpected = normalize(expected);
+  return normalizedCandidate === normalizedExpected || normalizedCandidate.endsWith(`/${normalizedExpected}`);
 }
 
 function extractToolPath(raw: unknown): string | null {
@@ -42,6 +46,15 @@ function extractToolOutput(raw: unknown): string | null {
   return typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : null;
 }
 
+function hasCommandFailureEvidence(entry: { summary: string; raw?: unknown }): boolean {
+  const evidence = [entry.summary, extractToolOutput(entry.raw) ?? ""].join("\n");
+  return TEST_FAIL_OUTPUT_PATTERN.test(evidence) || /\btimed out after\b/i.test(evidence);
+}
+
+function isSuccessfulExecutionEvent(entry: { ok: boolean; summary: string; raw?: unknown }): boolean {
+  return entry.ok && !hasCommandFailureEvidence(entry);
+}
+
 function normalizeForMatch(text: string): string {
   return text
     .toLowerCase()
@@ -62,7 +75,7 @@ function summarizeToolEvidence(raw: unknown): string {
 
 function getExecutionEvents(input: PappyInput) {
   return (input.toolEvents ?? []).filter((entry) => {
-    if (!entry.ok) return false;
+    if (!isSuccessfulExecutionEvent(entry)) return false;
     return Boolean(extractToolCommand(entry.raw) || extractToolOutput(entry.raw) || /run_command|start_process|execute/i.test(entry.tool));
   });
 }
@@ -278,7 +291,7 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
     findProof(_match, input) {
       const testEvent = (input.toolEvents ?? []).find(
         (e) =>
-          e.ok &&
+          isSuccessfulExecutionEvent(e) &&
           /test|jest|vitest|mocha|pytest|cargo\s+test|go\s+test/i.test(
             `${e.tool} ${e.summary} ${extractToolCommand(e.raw) ?? ""}`,
           ),

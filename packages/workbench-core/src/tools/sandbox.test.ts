@@ -59,6 +59,16 @@ describe("evaluateCommandPolicy", () => {
     expect(evaluateCommandPolicy("mkdir new-folder", policy).category).toBe("moderate");
   });
 
+  it("does not auto-approve commands that enumerate the environment", () => {
+    const policy = createSandboxPolicy();
+
+    for (const command of ["env", "printenv", "set"]) {
+      const result = evaluateCommandPolicy(command, policy);
+      expect(result.requiresApproval).toBe(true);
+      expect(result.category).not.toBe("safe");
+    }
+  });
+
   it("blocks dangerous patterns", () => {
     const policy = createSandboxPolicy();
     

@@ -54,10 +54,10 @@ Answer these questions before submitting or approving a change in the areas abov
    If yes, proceed to question 6.
 
 6. **Does every side-effecting tool call pass through Miranda gates (`beforeToolRun` / `afterToolRun`)?**
-   If no, the change is not compliant.
+   If no, the change is not compliant. For filesystem or command tools, also confirm that path arguments/cwd cannot escape the configured workspace, commands requiring approval fail when no approval handler exists, and failed/timed-out commands cannot emit success receipts.
 
 7. **Does this change Pappy verdict logic or repair behavior?**
-   If yes, confirm that every required `MISSING` receipt feeds a `HIGH` issue and Pappy `FAIL`, and that no other component overrides, suppresses, or short-circuits that `FAIL`. Miranda's `afterQC` may report a receipt/verdict inconsistency but must not alter the QC outcome.
+   If yes, confirm that every required `MISSING` receipt feeds a `HIGH` issue and Pappy `FAIL`, AHP has no non-empty-output fallback or empty-contract PASS, and no other component overrides, suppresses, or short-circuits that `FAIL`. Miranda's `afterQC` may report a receipt/verdict inconsistency but must not alter the QC outcome.
 
 8. **Does this expose internal diagnostics to user-facing output?**
    Check for stage labels, gate verdicts, trace IDs, role names as chatter, or repair-loop counters appearing in final Benson output. If yes, route through Benson's translation layer.

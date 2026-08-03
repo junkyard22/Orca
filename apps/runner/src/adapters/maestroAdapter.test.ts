@@ -350,6 +350,17 @@ describe("formatToolResult", () => {
     expect(formatted).toContain("Exit code 1");
   });
 
+  it("preserves captured command output alongside a failure message", () => {
+    const formatted = formatToolResult(
+      "run_command",
+      false,
+      "[Exit code 1]\n1 test failed",
+      "Command failed with exit code 1",
+    );
+    expect(formatted).toContain("Command failed with exit code 1");
+    expect(formatted).toContain("1 test failed");
+  });
+
   it("falls back to output text when error is undefined but ok=false", () => {
     const formatted = formatToolResult("write_file", false, "some output");
     expect(formatted).toContain("some output");

@@ -20,6 +20,7 @@
 
 import type { AHPPacket, AHPConstraint } from "../ahp/types.js";
 import { AHPLifecycle, AHPVerdict } from "../ahp/types.js";
+import * as path from "node:path";
 
 // ---------------------------------------------------------------------------
 // AHP lifecycle transition enforcement
@@ -115,6 +116,8 @@ export interface ToolGateContext {
   args: Record<string, unknown>;
   /** Optional task text used for policy checks that depend on explicit user intent. */
   taskText?: string;
+  /** Absolute workspace boundary for path-bearing tool arguments. */
+  workspaceRoot?: string;
   /** Optional JSON schema for validating tool arguments */
   schema?: {
     required?: string[];
@@ -285,6 +288,46 @@ export interface ProtectedPathPolicyConfig {
 interface ProtectedPathViolation {
   path: string;
   reason: string;
+}
+
+function collectExplicitPathArguments(args: Record<string, unknown>): string[] {
+  const paths: string[] = [];
+  const visit = (value: unknown, key: string): void => {
+    if (typeof value === "string") {
+      if (/(?:^|_)(?:path|file|filename|target|destination|cwd|dir|directory)(?:$|_)/i.test(key)) {
+        paths.push(value);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, key));
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+        visit(childValue, childKey);
+      }
+    }
+  };
+
+  for (const [key, value] of Object.entries(args)) visit(value, key);
+  return [...new Set(paths)];
+}
+
+function evaluateWorkspaceBoundary(ctx: ToolGateContext): ProtectedPathViolation[] {
+  if (!ctx.workspaceRoot) return [];
+
+  const workspaceRoot = path.resolve(ctx.workspaceRoot);
+  return collectExplicitPathArguments(ctx.args).flatMap((requestedPath) => {
+    const candidate = path.isAbsolute(requestedPath)
+      ? path.resolve(requestedPath)
+      : path.resolve(workspaceRoot, requestedPath);
+    const relative = path.relative(workspaceRoot, candidate);
+    const outside = relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+    return outside
+      ? [{ path: requestedPath, reason: "path is outside the configured workspace" }]
+      : [];
+  });
 }
 
 const MUTATING_TOOL_RE = /(^|[_-])(write|edit|modify|delete|remove|move|rename|create|patch|apply|replace)([_-]|$)/i;
@@ -530,6 +573,21 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
 
     beforeToolRun(ctx): GateResult {
       const violations: string[] = [];
+
+      const workspaceViolations = evaluateWorkspaceBoundary(ctx);
+      if (workspaceViolations.length > 0) {
+        const violationDetails = workspaceViolations.map(
+          (violation) => `${violation.reason}: ${violation.path}`,
+        );
+        const result: GateResult = {
+          allowed: false,
+          reason: `Workspace boundary blocked tool "${ctx.tool}"`,
+          violations: violationDetails,
+          verdict: deriveVerdict(false, violationDetails),
+        };
+        log(`before_tool_run BLOCKED (workspace)  tool=${ctx.tool}  ${violationDetails.join("; ")}`);
+        return report("before_tool_run", result, ctx);
+      }
 
       const protectedPathViolations = evaluateProtectedPathPolicy(ctx, protectedPathPolicy);
       if (protectedPathViolations.length > 0) {

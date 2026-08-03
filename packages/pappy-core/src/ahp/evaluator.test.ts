@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import * as path from "node:path";
 import {
   AHPLifecycle,
   AHPPacketRole,
@@ -189,7 +190,7 @@ describe("verifyAHPPacket — evalMeta", () => {
     expect(packet.evalMeta).toBeUndefined();
   });
 
-  it("passes a completed child packet with non-empty output when packet ACs are intentionally empty", () => {
+  it("fails closed for a completed child packet with no acceptance criteria", () => {
     const packet = makePacket({
       expectedOutput: { schema: {}, acceptanceCriteria: [] },
     });
@@ -205,7 +206,7 @@ describe("verifyAHPPacket — evalMeta", () => {
 
     verifyAHPPacket(packet, makeInput("Implemented the requested plan and reviewed the result."));
 
-    expect(packet.verdict).toBe(AHPVerdict.PASS);
+    expect(packet.verdict).toBe(AHPVerdict.FAIL);
     expect(packet.evalMeta).toBeDefined();
     expect(packet.evalMeta?.mergedAcceptanceCriteria).toHaveLength(0);
   });
@@ -252,12 +253,7 @@ describe("verifyAHPPacket — soft AC verdict downgrade", () => {
     // "appropriate length" keywords: "appropriate", "length" — use output that omits both
     verifyAHPPacket(packet, makeInput("x"));
     // If both "appropriate" and "length" don't appear, the AC fails.
-    // Since the only failing AC is soft, verdict should be downgraded to WARN.
-    // (If it passes due to vague-AC fallback, this test is a no-op which is fine.)
-    if (packet.verdict === AHPVerdict.FAIL) {
-      // This would be a regression — soft-only failures should not be FAIL
-      expect(packet.verdict).not.toBe(AHPVerdict.FAIL);
-    }
+    expect(packet.verdict).toBe(AHPVerdict.WARN);
   });
 
   it("hard AC failure with mix of soft failures → FAIL verdict", () => {
@@ -272,16 +268,119 @@ describe("verifyAHPPacket — soft AC verdict downgrade", () => {
     packet.trace = [{ timestamp: new Date().toISOString(), state: AHPLifecycle.RUNNING, actor: "worker", note: "" }];
     // Output that doesn't mention "distributed" or "architecture" or "patterns"
     verifyAHPPacket(packet, makeInput("caching stores responses for reuse"));
-    // If the hard AC truly fails, verdict must be FAIL or WARN (not soft-downgraded WARN)
-    // We cannot guarantee the keyword check fails without mocking, so just verify
-    // that a hard AC failure never produces a soft-only WARN based on a passing hard AC.
-    expect([AHPVerdict.PASS, AHPVerdict.WARN, AHPVerdict.FAIL]).toContain(packet.verdict);
+    expect(packet.verdict).toBe(AHPVerdict.FAIL);
+    expect(packet.trace.at(-1)?.note).toContain("PAC1(no matching keywords found)");
   });
 });
 
 // ---------------------------------------------------------------------------
 // isTerminalAHPLifecycle
 // ---------------------------------------------------------------------------
+
+describe("verifyAHPPacket file receipts", () => {
+  it("does not accept an output-only reference as proof that a required file exists", () => {
+    const packet = makePacket({
+      objective: "Create the requested artifact",
+      expectedOutput: {
+        schema: {},
+        acceptanceCriteria: ["File 'secrets.txt' must be created"],
+      },
+    });
+
+    verifyAHPPacket(packet, makeInput("Created secrets.txt"));
+
+    expect(packet.verdict).toBe(AHPVerdict.FAIL);
+    expect(packet.trace.at(-1)?.note).toContain("file not found: secrets.txt");
+  });
+
+  it("does not accept a similarly named file as the required file receipt", () => {
+    const packet = makePacket({
+      objective: "Create the requested artifact",
+      expectedOutput: {
+        schema: {},
+        acceptanceCriteria: ["File 'secrets.txt' must be created"],
+      },
+    });
+
+    verifyAHPPacket(packet, {
+      outputText: "Created the artifact.",
+      filesChanged: [{ path: "not-secrets.txt", changeType: "A" }],
+    });
+
+    expect(packet.verdict).toBe(AHPVerdict.FAIL);
+  });
+
+  it("does not accept an out-of-workspace file change as the required receipt", () => {
+    const workspaceRoot = process.cwd();
+    const outsideFile = path.resolve(workspaceRoot, "..", "outside", "receipt.txt");
+    const packet = makePacket({
+      objective: "Create the requested artifact",
+      expectedOutput: {
+        schema: {},
+        acceptanceCriteria: [`File '${outsideFile}' must be created`],
+      },
+    });
+
+    verifyAHPPacket(packet, {
+      outputText: "Created the artifact.",
+      workspaceRoot,
+      filesChanged: [{ path: outsideFile, changeType: "A" }],
+    });
+
+    expect(packet.verdict).toBe(AHPVerdict.FAIL);
+  });
+});
+
+describe("verifyAHPPacket semantic receipts", () => {
+  it("does not prove a vague semantic criterion from unrelated non-empty output", () => {
+    const packet = makePacket({
+      objective: "Do the requested work",
+      expectedOutput: {
+        schema: {},
+        acceptanceCriteria: ["uses flux"],
+      },
+    });
+
+    verifyAHPPacket(packet, makeInput("The work is complete."));
+
+    expect(packet.verdict).toBe(AHPVerdict.FAIL);
+    expect(packet.trace.at(-1)?.note).toContain("no matching keywords found");
+  });
+
+  it("fails when any hard user criterion is missing even if another criterion passes", () => {
+    const packet = makePacket({
+      objective: "Do the thing",
+      expectedOutput: {
+        schema: {},
+        acceptanceCriteria: ["alpha beta", "uses distributed architecture patterns"],
+      },
+    });
+
+    verifyAHPPacket(packet, makeInput("alpha beta"));
+
+    expect(packet.verdict).toBe(AHPVerdict.FAIL);
+    expect(packet.trace.at(-1)?.note).toContain("PASS: PAC1");
+    expect(packet.trace.at(-1)?.note).toContain("FAIL: PAC2");
+  });
+
+  it("does not satisfy an expected output schema from a deleted file diff", () => {
+    const packet = makePacket({
+      objective: "Do the thing",
+      expectedOutput: {
+        schema: { token: "string" },
+        acceptanceCriteria: ["alpha beta"],
+      },
+    });
+
+    verifyAHPPacket(packet, {
+      outputText: "alpha beta",
+      filesChanged: [{ path: "old.txt", changeType: "D", diff: "token" }],
+    });
+
+    expect(packet.verdict).toBe(AHPVerdict.FAIL);
+    expect(packet.trace.at(-1)?.note).toContain("schema missing keys: token");
+  });
+});
 
 describe("isTerminalAHPLifecycle", () => {
   it("returns true for COMPLETE", () => {

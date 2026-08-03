@@ -149,12 +149,13 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
   const hasOutput  = outputText.trim().length > 0;
   const hasFiles   = (input.filesChanged?.length ?? 0) > 0;
   const hasTools   = (input.toolEvents?.length ?? 0) > 0;
-  const touched    = new Set((input.filesChanged ?? []).map((f) => f.path));
+  const presentFiles = (input.filesChanged ?? []).filter((file) => file.changeType !== "D");
+  const touched    = new Set(presentFiles.map((f) => f.path));
   const lowerOutput = outputText.toLowerCase();
   const lowerCriterion = ac.text.toLowerCase();
   
   // Build combined search text from output and diffs
-  const diffText = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
+  const diffText = presentFiles.map((f) => f.diff ?? "").join("\n");
   const searchText = `${lowerOutput} ${diffText.toLowerCase()}`;
   
   // Helper to check if a pattern matches
@@ -188,16 +189,20 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
     };
   }
   
-  // Check for code block / implementation requirement
+  // Check for code / implementation requirements. Mere prose mentioning code
+  // keywords (or an otherwise empty fenced block) is not a receipt.
   if (criterionContainsTerm("code") || criterionContainsTerm("implementation") || criterionContainsTerm("function") || criterionContainsTerm("class") || criterionContainsTerm("TypeScript")) {
-    const hasCodeBlock = /```/.test(outputText);
-    const hasCodeKeywords = /\b(function |class |const |let |var |export |import |type |interface |enum |def |async )/.test(outputText);
-    const hasCode = hasCodeBlock || hasCodeKeywords || hasFiles;
+    const codeDeclarationPattern = /\b(?:function\s+[A-Za-z_$][\w$]*\s*\(|class\s+[A-Za-z_$][\w$]*(?:\s+\w+)*\s*\{|(?:const|let|var)\s+[A-Za-z_$][\w$]*(?:\s*:[^=;\n]+)?\s*=|(?:interface|type|enum)\s+[A-Za-z_$][\w$]*|def\s+[A-Za-z_]\w*\s*\()/;
+    const hasCodeInOutput = codeDeclarationPattern.test(outputText);
+    const hasCodeInDiff = codeDeclarationPattern.test(diffText);
+    const hasCode = hasCodeInOutput || hasCodeInDiff;
     
     if (hasCode) {
       return {
         proved: true,
-        evidence: hasCodeBlock ? ["code block (```) found"] : hasCodeKeywords ? ["code keywords found"] : ["file changes with code"],
+        evidence: hasCodeInOutput
+          ? ["code declaration found in output"]
+          : ["code declaration found in non-deleted file diff"],
       };
     }
     return { proved: false, evidence: [] };
@@ -213,15 +218,25 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
     /\btests?\s+(for|covering|cover|coverage|suite)\b/i.test(ac.text);
 
   if (mentionsTestingFramework || explicitlyRequestsTests) {
-    const hasTestFramework = containsTerm("vitest") || containsTerm("jest") || containsTerm("mocha");
-    const hasTestFunctions = containsTerm("describe") || containsTerm("it") || containsTerm("expect") || searchText.includes("test(");
-    const hasTestFile = (input.filesChanged ?? []).some(f => f.path.includes(".test.") || f.path.includes(".spec."));
+    const requestedFrameworks = ["vitest", "jest", "mocha"]
+      .filter((framework) => criterionContainsTerm(framework));
+    const hasTestFramework = requestedFrameworks.length === 0 || requestedFrameworks.some(
+      (framework) => new RegExp(
+        `(?:from\\s+["']${framework}|require\\(\\s*["']${framework}|\\b${framework}\\s*\\.)`,
+        "i",
+      ).test(`${outputText}\n${diffText}`),
+    );
+    const hasTestFunctions = /\b(?:describe|it|test|expect)\s*\(/i.test(searchText);
+    const hasTestFile = presentFiles.some(
+      (file) => file.path.includes(".test.") || file.path.includes(".spec."),
+    );
+    const hasTestArtifact = hasTestFunctions || hasTestFile;
     
-    if (hasTestFramework || hasTestFunctions || hasTestFile) {
+    if (hasTestFramework && hasTestArtifact) {
       return {
         proved: true,
         evidence: [
-          ...(hasTestFramework ? ["test framework mentioned"] : []),
+          ...(requestedFrameworks.length > 0 ? ["requested test framework used in code"] : []),
           ...(hasTestFunctions ? ["test functions (describe/it/expect) found"] : []),
           ...(hasTestFile ? ["test file in filesChanged"] : []),
         ],

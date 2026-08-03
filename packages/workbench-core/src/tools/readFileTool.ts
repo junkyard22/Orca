@@ -1,6 +1,6 @@
 import * as fs from "fs";
-import * as path from "path";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
+import { resolveWorkspacePath } from "./workspacePath.js";
 
 export const readFileTool: Tool = {
   name: "read_file",
@@ -22,11 +22,8 @@ export const readFileTool: Tool = {
       return { ok: false, output: "", error: '"path" is required and must be a string' };
     }
 
-    const resolved = path.isAbsolute(rawPath)
-      ? rawPath
-      : path.resolve(ctx.workspaceRoot, rawPath);
-
     try {
+      const resolved = resolveWorkspacePath(ctx.workspaceRoot, rawPath);
       const content = fs.readFileSync(resolved, "utf8");
       return { ok: true, output: content };
     } catch (err) {

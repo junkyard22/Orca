@@ -1067,6 +1067,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           const gateCtx = {
             tool: toolName,
             args: toolInput,
+            workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
             schema: tool.schema,
           };
           const beforeToolGate = ctx.gate?.beforeToolRun(gateCtx);

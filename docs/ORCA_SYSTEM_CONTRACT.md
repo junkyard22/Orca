@@ -130,6 +130,10 @@ All side effects must be routed through approved Miranda gates before execution.
 
 There are no categories of side effect that are pre-approved to bypass Miranda. If a gate does not yet exist for a new class of side effect, the correct response is to add the gate — not to proceed without one.
 
+Core file tools and command working directories are confined to the configured workspace. The executor must resolve existing symlinks/junctions and reject paths that escape that boundary; Miranda independently blocks lexically out-of-workspace path arguments when `workspaceRoot` is present in the tool gate context.
+
+`run_command` is fail-closed. A command that requires approval must not execute when no approval handler is configured. A timeout or non-zero exit code is a failed tool result (`ok=false`), with captured output retained only as diagnostic evidence. Child processes receive an allowlisted operational environment rather than the host's full credential-bearing environment.
+
 ---
 
 ## Quality and Repair Rules
@@ -143,6 +147,8 @@ Pappy owns quality verdicts. The three valid outcomes are:
 | `FAIL` | Output does not meet criteria. Maestro should trigger repair. |
 
 The receipt ledger is authoritative. Every required receipt with status `MISSING` must produce a `HIGH` issue and a Pappy `FAIL`, even when other acceptance criteria are proved. A semantic acceptance criterion without a deterministic verifier fails closed; non-empty output alone is not proof.
+
+The AHP verifier follows the same rule: a file reference in prose is not a file receipt, deleted or similarly named files do not satisfy a required path, an empty acceptance contract cannot pass, and any missing hard criterion produces `FAIL` even when another criterion passes.
 
 Miranda's `afterQC` checkpoint may validate verdict/receipt consistency and record diagnostics after Pappy issues its verdict. A blocked consistency checkpoint is an alarm; it does not replace or rewrite Pappy's outcome. Miranda must not:
 

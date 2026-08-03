@@ -53,7 +53,7 @@ Checkpoint methods:
 
 - `beforeLLMCall(ctx)` checks the LLM call context before the provider call.
 - `afterLLMCall(ctx, output, validation)` is available for output-shape validation where explicitly wired.
-- `beforeToolRun(ctx)` validates tool allowlists and arguments before execution.
+- `beforeToolRun(ctx)` validates tool allowlists, argument shape, protected paths, and workspace containment before execution. Live callers should provide `workspaceRoot` in the tool gate context.
 - `afterToolRun(ctx, result)` records/validates tool receipts after execution.
 - `beforeQC(ctx)` validates that output is present before Pappy QC.
 - `afterQC(ctx, verdict, issueCount)` records diagnostics after Pappy returns its verdict.
