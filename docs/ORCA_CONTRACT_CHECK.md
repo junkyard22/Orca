@@ -47,8 +47,8 @@ Answer these questions before submitting or approving a change in the areas abov
 3. **Does this add or change an LLM call?**
    If yes, proceed to question 4.
 
-4. **Does every live LLM call pass through `beforeLLMCall`?**
-   If no, the change is not compliant. Add the gate or file a design note explaining why it is deliberately ungated.
+4. **Does every live LLM call pass through `beforeLLMCall` and `afterLLMCall`?**
+   If no, the change is not compliant. Direct transport adapters do not satisfy this requirement by themselves; the live caller must enforce both gates.
 
 5. **Does this add or change a tool call?**
    If yes, proceed to question 6.
@@ -57,7 +57,7 @@ Answer these questions before submitting or approving a change in the areas abov
    If no, the change is not compliant. For filesystem or command tools, also confirm that path arguments/cwd cannot escape the configured workspace, commands requiring approval fail when no approval handler exists, and failed/timed-out commands cannot emit success receipts.
 
 7. **Does this change Pappy verdict logic or repair behavior?**
-   If yes, confirm that every required `MISSING` receipt feeds a `HIGH` issue and Pappy `FAIL`, AHP has no non-empty-output fallback or empty-contract PASS, and no other component overrides, suppresses, or short-circuits that `FAIL`. Miranda's `afterQC` may report a receipt/verdict inconsistency but must not alter the QC outcome.
+   If yes, confirm that every required `MISSING` receipt feeds a `HIGH` issue and Pappy `FAIL`, AHP has no non-empty-output fallback or empty-contract PASS, every initial/audit/repair Pappy invocation first receives `beforeQC` approval, and no other component overrides, suppresses, short-circuits, or budget-downgrades that `FAIL`. Miranda's `afterQC` may report a receipt/verdict inconsistency but must not alter the QC outcome.
 
 8. **Does this expose internal diagnostics to user-facing output?**
    Check for stage labels, gate verdicts, trace IDs, role names as chatter, or repair-loop counters appearing in final Benson output. If yes, route through Benson's translation layer.
@@ -86,8 +86,8 @@ The `scripts/contract-check.ts` script automates the static portion of this chec
 scripts/contract-check.ts
   ├── Accepts a list of changed file paths (from git diff --name-only or CI)
   ├── Flags files in known risk zones (orchestration, LLM paths, gates, QC, role prompts)
-  ├── Greps for LLM call patterns not preceded by beforeLLMCall invocation
-  ├── Greps for tool call patterns not preceded by beforeToolRun invocation
+  ├── Greps newly added LLM call patterns for beforeLLMCall or the fail-closed gated-call helper
+  ├── Greps newly added tool call patterns for beforeToolRun invocation
   ├── Greps for deprecated Miranda pipeline symbols in non-legacy files
   ├── Greps for raw internal stage labels or gate verdicts in Benson output paths
   └── Prints a checklist summary: CLEAR / REVIEW REQUIRED / BLOCKED

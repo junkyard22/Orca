@@ -118,7 +118,7 @@ export async function handleRepairLoop(
   budgetUsd?: number,
   spentSoFarUsd?: number,
   initialErrorMessage?: string,
-  initialGateBlockReason?: string,
+  _initialGateBlockReason?: string,
   ahpPacket?: AHPPacket,
   initialArtifacts?: OrcaMaestroResult,
 ): Promise<OrcaExecutionResult> {
@@ -140,9 +140,11 @@ export async function handleRepairLoop(
         lastOutputText,
       });
       return {
-        status: "WARN",
+        status: "FAIL",
         userFacingText: lastOutputText,
         summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${spentUsd.toFixed(4)} spent). Skipped ${maxPasses - pass + 1} repair pass(es).`,
+        ...(currentArtifacts ? { artifacts: currentArtifacts } : {}),
+        qcResult: currentQC,
       };
     }
     emitter.emit({ type: "repair:start", taskId: ctx.runId, pass, maxPasses });
@@ -256,8 +258,34 @@ export async function handleRepairLoop(
 
     throwIfAborted(ctx.abortSignal);
 
-    // Miranda: before_qc gate
-    ctx.gate?.beforeQC({ taskId: ctx.runId, outputText: maestroResult.outputText ?? "" });
+    // Miranda: before_qc is an enforcing gate. A denial is a controlled stop;
+    // the previous Pappy FAIL remains authoritative and is never re-judged.
+    const beforeQcGate = ctx.gate?.beforeQC({
+      taskId: ctx.runId,
+      outputText: maestroResult.outputText ?? "",
+    });
+    if (beforeQcGate) {
+      emitter.emit({
+        type: "miranda:checkpoint",
+        taskId: ctx.runId,
+        gate: "before_qc",
+        allowed: beforeQcGate.allowed,
+        reason: beforeQcGate.reason,
+      });
+      if (!beforeQcGate.allowed) {
+        ctx.recordTrace?.("repair.pass.qc_blocked", {
+          pass,
+          reason: beforeQcGate.reason,
+        });
+        return {
+          status: "FAIL",
+          userFacingText: lastOutputText,
+          summary: currentQC.internalSummary,
+          artifacts: maestroResult,
+          qcResult: currentQC,
+        };
+      }
+    }
 
     verifyRepairPackets(maestroResult, ctx);
     const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
@@ -337,9 +365,7 @@ export async function handleRepairLoop(
   });
   const failureSuffix = initialErrorMessage
     ? ` Agent error: ${initialErrorMessage}`
-    : initialGateBlockReason
-      ? ` ${initialGateBlockReason}`
-      : '';
+    : '';
   return {
     status: "FAIL",
     userFacingText: lastOutputText,

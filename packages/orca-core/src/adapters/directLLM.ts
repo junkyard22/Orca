@@ -3,12 +3,12 @@ import type { LLMRequest, LLMMessage } from "@clawde/miranda-core";
 import type { OrcaLLMService } from "../types.js";
 
 /**
- * createDirectLLMService — bypasses Miranda's LLM stage pipeline.
+ * createDirectLLMService — single-call LLM transport.
  *
  * This is the current live LLM service used by the runner. It makes a
  * single model call per prompt without Miranda's multi-stage pipeline
- * (PLAN→ANSWER→CRITIQUE→REWRITE). Miranda's gate (ctx.gate) still runs
- * at the tool-call and QC boundary — only the per-LLM-call staging is absent.
+ * (PLAN→ANSWER→CRITIQUE→REWRITE). This transport has no run context, so
+ * every live call site must wrap it with Miranda's before/after LLM gates.
  *
  * Prompt format: Maestro joins systemPrompt and taskPrompt with "\n\n---\n\n".
  * This adapter splits on that separator so the model receives a proper

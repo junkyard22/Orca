@@ -49,6 +49,52 @@ async function ghFetch(path: string, acceptOverride?: string): Promise<{ ok: boo
   }
 }
 
+function isInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+function resolveCloneDestination(
+  workspaceRoot: string,
+  destName: string,
+): { ok: true; path: string } | { ok: false; error: string } {
+  const rootPath = path.resolve(workspaceRoot);
+  const destPath = path.resolve(rootPath, destName);
+
+  if (!isInside(rootPath, destPath)) {
+    return { ok: false, error: "Clone destination must be inside the workspace." };
+  }
+
+  try {
+    const realRoot = fs.realpathSync(rootPath);
+    let existingAncestor = destPath;
+    while (!fs.existsSync(existingAncestor)) {
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) break;
+      existingAncestor = parent;
+    }
+
+    const realAncestor = fs.realpathSync(existingAncestor);
+    if (!isInside(realRoot, realAncestor)) {
+      return {
+        ok: false,
+        error: "Clone destination must remain inside the workspace after resolving links.",
+      };
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Unable to validate clone destination: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  return { ok: true, path: destPath };
+}
+
 // ── Tool: github_list_prs ─────────────────────────────────────────────────
 
 const listPrsTool: ExtTool = {
@@ -256,7 +302,7 @@ const cloneRepoTool: ExtTool = {
   name: "github_clone_repo",
   description:
     "Clone a GitHub repository into the workspace. " +
-    "Automatically injects GITHUB_TOKEN for authentication when set. " +
+    "Uses GITHUB_TOKEN for ephemeral authentication when set. " +
     "Provide either a full URL or owner + repo name.",
   schema: {
     type: "object",
@@ -278,10 +324,46 @@ const cloneRepoTool: ExtTool = {
     let repoName: string;
 
     if (typeof input["url"] === "string" && input["url"]) {
-      repoUrl = input["url"];
-      const match = repoUrl.match(/\/([^/]+?)(?:\.git)?$/);
-      repoName = match?.[1] ?? "repo";
+      const rawUrl = input["url"];
+      const sshMatch = rawUrl.match(/^git@github\.com:([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/);
+      if (sshMatch) {
+        repoName = sshMatch[2]!;
+        repoUrl = `git@github.com:${sshMatch[1]}/${repoName}.git`;
+      } else {
+        let parsed: URL;
+        try {
+          parsed = new URL(rawUrl);
+        } catch {
+          return { ok: false, output: "", error: "Repository URL must be a valid GitHub HTTPS or SSH URL." };
+        }
+        if (parsed.username || parsed.password) {
+          return { ok: false, output: "", error: "Repository URLs must not contain credentials." };
+        }
+        const segments = parsed.pathname
+          .replace(/\/$/, "")
+          .replace(/\.git$/, "")
+          .split("/")
+          .filter(Boolean);
+        if (
+          parsed.protocol !== "https:" ||
+          parsed.hostname.toLowerCase() !== "github.com" ||
+          parsed.search !== "" ||
+          parsed.hash !== "" ||
+          segments.length !== 2 ||
+          segments.some((segment) => !/^[A-Za-z0-9_.-]+$/.test(segment))
+        ) {
+          return { ok: false, output: "", error: "Repository URL must be a valid GitHub HTTPS or SSH URL." };
+        }
+        repoName = segments[1]!;
+        repoUrl = `https://github.com/${segments[0]}/${repoName}.git`;
+      }
     } else if (typeof input["owner"] === "string" && typeof input["repo"] === "string") {
+      if (
+        !/^[A-Za-z0-9_.-]+$/.test(input["owner"]) ||
+        !/^[A-Za-z0-9_.-]+$/.test(input["repo"])
+      ) {
+        return { ok: false, output: "", error: '"owner" and "repo" contain invalid characters.' };
+      }
       repoName = input["repo"];
       repoUrl = `https://github.com/${input["owner"]}/${input["repo"]}.git`;
     } else {
@@ -289,7 +371,11 @@ const cloneRepoTool: ExtTool = {
     }
 
     const destName = typeof input["dest"] === "string" && input["dest"] ? input["dest"] : repoName;
-    const destPath = path.resolve(ctx.workspaceRoot, destName);
+    const destination = resolveCloneDestination(ctx.workspaceRoot, destName);
+    if (!destination.ok) {
+      return { ok: false, output: "", error: destination.error };
+    }
+    const destPath = destination.path;
 
     if (fs.existsSync(destPath)) {
       // If it's already a git repo (from a previous run or repair pass), treat as success.
@@ -306,14 +392,19 @@ const cloneRepoTool: ExtTool = {
       };
     }
 
-    // Inject GITHUB_TOKEN into the URL for authenticated clones
+    // Configure authentication only for this child process. The clean URL is
+    // what Git persists as origin, and no credential appears in process argv.
     const token = process.env["GITHUB_TOKEN"];
-    let cloneUrl = repoUrl;
+    const cloneEnv = { ...process.env };
+    delete cloneEnv["GITHUB_TOKEN"];
     if (token) {
       try {
         const parsed = new URL(repoUrl.replace(/\.git$/, ""));
         if (parsed.hostname === "github.com") {
-          cloneUrl = `https://${token}@github.com${parsed.pathname}.git`;
+          cloneEnv["GIT_CONFIG_COUNT"] = "1";
+          cloneEnv["GIT_CONFIG_KEY_0"] = "http.https://github.com/.extraheader";
+          cloneEnv["GIT_CONFIG_VALUE_0"] =
+            `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
         }
       } catch {
         // Not parseable — use the URL as-is
@@ -321,9 +412,9 @@ const cloneRepoTool: ExtTool = {
     }
 
     return new Promise<ExtToolResult>((resolve) => {
-      const child = spawn("git", ["clone", cloneUrl, destPath], {
+      const child = spawn("git", ["clone", repoUrl, destPath], {
         cwd: ctx.workspaceRoot,
-        env: process.env,
+        env: cloneEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -349,7 +440,7 @@ const cloneRepoTool: ExtTool = {
         const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
         const combined = [stdout, stderr].filter(Boolean).join("\n");
         // Sanitize token from any output
-        const sanitized = token ? combined.replace(new RegExp(token, "g"), "***") : combined;
+        const sanitized = token ? combined.split(token).join("***") : combined;
 
         if (code !== 0) {
           resolve({ ok: false, output: "", error: `git clone failed (exit ${code}):\n${sanitized}` });

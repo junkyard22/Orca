@@ -2,7 +2,7 @@
  * Orca Core — Runtime Stress Tests
  *
  * Covers scenarios not in runtime.test.ts:
- *   - Budget guard (initial spend >= limit → skip repair with WARN)
+ *   - Budget guard (initial spend >= limit → skip repair without downgrading FAIL)
  *   - Miranda gate blocking (beforeQC allowed:false)
  *   - Tool permission filtering (toolsAllowed allowlist, empty array, undefined)
  *   - Trace sanitization via writeTrace (circular refs, deep nesting, large strings, large arrays)
@@ -126,7 +126,7 @@ function collectEvents<T extends OrcaEvent["type"]>(
 // ===========================================================================
 
 describe("budget guard", () => {
-  it("skips repair and returns WARN when initial spend >= budgetUsd", async () => {
+  it("skips repair without downgrading Pappy FAIL when initial spend >= budgetUsd", async () => {
     // Initial Maestro pass costs $0.05 — budget is $0.04 → no repair should run
     const maestro: MaestroPort = {
       run: vi.fn(async () => ({
@@ -144,13 +144,13 @@ describe("budget guard", () => {
 
     const result = await runtime.executeTask(makeTaskSpec());
 
-    expect(result.status).toBe("WARN");
+    expect(result.status).toBe("FAIL");
     expect(result.summary).toContain("Budget cap");
     // Maestro should only have been called once (no repair pass)
     expect((maestro.run as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
   });
 
-  it("returns WARN with budget info in summary", async () => {
+  it("returns FAIL with budget info in summary", async () => {
     const maestro = makeMaestro("output", 1.0); // $1 spend
     const pappy: PappyPort = {
       evaluate: vi.fn(() => makePappyResult("FAIL")),
@@ -160,7 +160,7 @@ describe("budget guard", () => {
       makeBasicDeps(maestro, pappy, { budgetUsd: 0.5 }),
     ).executeTask(makeTaskSpec());
 
-    expect(result.status).toBe("WARN");
+    expect(result.status).toBe("FAIL");
     // Summary should mention both the limit and the spend
     expect(result.summary).toMatch(/\$0\.5/);
     expect(result.summary).toMatch(/\$1/);
@@ -199,6 +199,45 @@ describe("budget guard", () => {
 // ===========================================================================
 
 describe("Miranda gate blocking", () => {
+  it("stops before Pappy when beforeQC denies the evaluation", async () => {
+    const gate = {
+      beforeQC: vi.fn(() => ({ allowed: false, reason: "compliance-blocked" })),
+      afterQC: vi.fn(() => ({ allowed: true, reason: "ok" })),
+    };
+    const maestro = makeMaestro("unverified output");
+    const pappy: PappyPort = { evaluate: vi.fn(() => makePappyResult("PASS")) };
+
+    const result = await createOrcaRuntime(
+      makeBasicDeps(maestro, pappy, { gate: gate as any }),
+    ).executeTask(makeTaskSpec());
+
+    expect(result.status).toBe("FAIL");
+    expect(pappy.evaluate).not.toHaveBeenCalled();
+    expect(gate.afterQC).not.toHaveBeenCalled();
+  });
+
+  it("stops a repair pass when beforeQC denies re-evaluation", async () => {
+    const gate = {
+      beforeQC: vi.fn()
+        .mockReturnValueOnce({ allowed: true, reason: "initial-ok" })
+        .mockReturnValueOnce({ allowed: false, reason: "repair-qc-blocked" }),
+      afterQC: vi.fn(() => ({ allowed: true, reason: "ok" })),
+    };
+    const maestro: MaestroPort = {
+      run: vi.fn(async () => ({ outputText: "candidate output", metadata: { role: "coder" } })),
+    };
+    const pappy: PappyPort = { evaluate: vi.fn(() => makePappyResult("FAIL")) };
+
+    const result = await createOrcaRuntime(
+      makeBasicDeps(maestro, pappy, { gate: gate as any, maxRepairPasses: 1 }),
+    ).executeTask(makeTaskSpec());
+
+    expect(result.status).toBe("FAIL");
+    expect(pappy.evaluate).toHaveBeenCalledTimes(1);
+    expect(gate.beforeQC).toHaveBeenCalledTimes(2);
+    expect(gate.afterQC).toHaveBeenCalledTimes(1);
+  });
+
   it("emits miranda:checkpoint event when gate.beforeQC fires", async () => {
     const gate = {
       beforeQC: vi.fn(() => ({ allowed: true, reason: "ok" })),

@@ -297,6 +297,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       workspaceContext: effectiveWorkspaceContext,
       workspaceRoot: effectiveWorkspaceRoot,
       gate: deps.gate,
+      model: deps.model,
       requestToolApproval: deps.requestToolApproval,
     };
 
@@ -438,8 +439,57 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         if (qcEnabled) {
           const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult);
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
+          const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText });
+          if (beforeQcGate) {
+            emitter.emit({
+              type: "miranda:checkpoint",
+              taskId,
+              gate: "before_qc",
+              allowed: beforeQcGate.allowed,
+              reason: beforeQcGate.reason,
+            });
+          }
+
+          if (beforeQcGate && !beforeQcGate.allowed) {
+            gateBlockReason = beforeQcGate.reason;
+            recordTrace("qc.run.blocked", {
+              attempt: 0,
+              isRepair: false,
+              reason: beforeQcGate.reason,
+            });
+            result = {
+              status: "FAIL",
+              userFacingText: outputText,
+              summary: "Quality verification was blocked before evaluation.",
+              artifacts: { auditResult },
+            };
+          } else {
           const qcResult = pappy.evaluate(qcInput);
           persistedQcResult = qcResult;
+          const afterQcContext = buildQCGateContext({
+            taskId,
+            outputText,
+            qcResult,
+            qcStage: "initial",
+            attempt: 0,
+            maestroResult: auditMaestroResult,
+          });
+          const afterQcGate = ctx.gate?.afterQC(
+            afterQcContext,
+            qcResult.verdict,
+            qcResult.issues.length,
+          );
+          if (afterQcGate) {
+            recordAfterQCGateDiagnostic(ctx, afterQcGate, afterQcContext);
+            emitter.emit({
+              type: "miranda:checkpoint",
+              taskId,
+              gate: "after_qc",
+              allowed: afterQcGate.allowed,
+              verdict: afterQcGate.verdict,
+              reason: afterQcGate.reason,
+            });
+          }
           emitter.emit({
             type: "qc:result",
             taskId,
@@ -468,6 +518,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             summary: qcResult.internalSummary,
             artifacts: { auditResult },
           };
+          }
         } else {
           recordTrace("qc.skipped", { reason: "pappy_not_configured" });
           result = {
@@ -576,11 +627,21 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             allowed: beforeQcGate.allowed,
             reason: beforeQcGate.reason,
           });
-          if (!beforeQcGate.allowed) {
-            gateBlockReason = beforeQcGate.reason;
-          }
         }
 
+        if (beforeQcGate && !beforeQcGate.allowed) {
+          gateBlockReason = beforeQcGate.reason;
+          recordTrace("qc.run.blocked", {
+            attempt: 0,
+            isRepair: false,
+            reason: beforeQcGate.reason,
+          });
+          result = {
+            status: "FAIL",
+            userFacingText: maestroResult.outputText,
+            summary: "Quality verification was blocked before evaluation.",
+          };
+        } else {
         const qcResult = pappy.evaluate(qcInput);
         persistedQcResult = qcResult;
 
@@ -663,7 +724,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             spentUsd: initialSpendUsd,
           });
           result = {
-            status: "WARN",
+            status: "FAIL",
             userFacingText: maestroResult.outputText,
             summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${initialSpendUsd.toFixed(4)} spent on initial pass). Repair skipped.`,
           };
@@ -684,19 +745,22 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             budgetUsd,
             initialSpendUsd,
             maestroResult.metadata?.errorMessage,
-            gateBlockReason,
+            undefined,
             maestroResult.ahpPacket,
             maestroResult,
           );
           if (result.artifacts) {
             persistedMaestroResult = normalizeMaestroResult(result.artifacts as OrcaMaestroResult);
-            persistedQcResult = result.qcResult ?? pappy.evaluate(buildPappyInput(normalizedTaskSpec, persistedMaestroResult));
-            recordTrace("repair.final_result", {
-              result: persistedMaestroResult,
-              qcVerdict: persistedQcResult.verdict,
-              qcIssues: persistedQcResult.issues,
-            });
+            persistedQcResult = result.qcResult ?? persistedQcResult;
+            if (persistedQcResult) {
+              recordTrace("repair.final_result", {
+                result: persistedMaestroResult,
+                qcVerdict: persistedQcResult.verdict,
+                qcIssues: persistedQcResult.issues,
+              });
+            }
           }
+        }
         }
       }
       }

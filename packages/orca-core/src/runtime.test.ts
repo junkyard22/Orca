@@ -515,6 +515,40 @@ describe("createOrcaRuntime", () => {
         rmSync(explicitRoot, { recursive: true, force: true });
       }
     });
+
+    it("routes project-audit verification through the QC gate", async () => {
+      const explicitRoot = mkdtempSync(join(tmpdir(), "orca-audit-qc-gate-"));
+      writeFileSync(join(explicitRoot, "package.json"), JSON.stringify({ name: "audit-qc-gate" }));
+      const gate = {
+        beforeQC: vi.fn(() => ({ allowed: false, reason: "audit-qc-blocked" })),
+        afterQC: vi.fn(() => ({ allowed: true, reason: "ok" })),
+      };
+      const pappy = {
+        evaluate: vi.fn(() => createMockPappyResult("PASS")),
+      } satisfies PappyPort;
+
+      try {
+        const result = await createOrcaRuntime({
+          maestro: { run: vi.fn() },
+          pappy,
+          llm: createMockLLM(),
+          gate: gate as any,
+        }).executeTask(createTaskSpec({
+          originalUserMessage: `Audit this app\n${explicitRoot}`,
+          intent: "audit this app",
+          mode: "project_audit",
+          permissions: { fileRead: true, fileWrite: false, shellExec: false },
+          context: { auditPath: explicitRoot },
+        }));
+
+        expect(result.status).toBe("FAIL");
+        expect(gate.beforeQC).toHaveBeenCalledTimes(1);
+        expect(pappy.evaluate).not.toHaveBeenCalled();
+        expect(gate.afterQC).not.toHaveBeenCalled();
+      } finally {
+        rmSync(explicitRoot, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("WARN path — maestro returns output, pappy returns WARN", () => {

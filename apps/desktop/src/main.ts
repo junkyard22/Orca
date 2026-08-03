@@ -72,6 +72,7 @@ import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRout
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
 import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
+import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
 
 type AgentTool = {
   name: string;
@@ -514,11 +515,15 @@ async function brainRoute(
     ctx.recordTrace?.("brain.route.prompt", { attempt, prompt });
     let responseText = "";
     try {
-      const { text } = await brainLLM.complete(prompt, {
-        maxTokens: 512,
-        temperature: 0,
-        abortSignal: ctx.abortSignal,
-      });
+      const { text } = await runGatedLLMCall(
+        ctx,
+        { stage: "brain_route", outputOf: (result) => result.text },
+        () => brainLLM.complete(prompt, {
+          maxTokens: 512,
+          temperature: 0,
+          abortSignal: ctx.abortSignal,
+        }),
+      );
       responseText = text;
       ctx.recordTrace?.("brain.route.response", { attempt, text: responseText });
       decision = parseBrainDecision(responseText);
@@ -893,7 +898,7 @@ function buildMaestroAdapter(
 
     // Build a per-worker gate that enforces AHP constraints from the child packet.
     // This is scoped per-run so the constraint state never leaks across workers.
-    const workerGate = childPacket && childPacket.constraints.length > 0
+    const constraintGate = childPacket && childPacket.constraints.length > 0
       ? createMirandaGate({
           ahpPacket: childPacket,
           checkConstraint: (constraint, gateCtx) => {
@@ -912,11 +917,13 @@ function buildMaestroAdapter(
             });
           },
         })
-      : ctx.gate;
+      : undefined;
+    const workerGate = composeMirandaGates(ctx.gate, constraintGate);
 
     const agentCtx: AgentRunContext = {
       ...ctx,
       gate: workerGate,
+      model: selectedModelId,
       ahpPacket: childPacket,
       subagentDepth: options.subagent ? (ctx.subagentDepth ?? 0) + 1 : ctx.subagentDepth,
       workspaceRoot: ctx.workspaceRoot ?? workspaceRoot,
@@ -1060,18 +1067,22 @@ function buildMaestroAdapter(
         try {
           ctx.emit?.({ type: "stream:reset", taskId: ctx.runId });
           const brainLLM = roleAdapters["brain"] ?? ctx.llm;
-          const { text } = await brainLLM.complete(synthesisPrompt, {
-            maxTokens: 2048,
-            temperature: 0.2,
-            abortSignal: ctx.abortSignal,
-            onToken: (chunk: string) => {
-              ctx.emit?.({
-                type: "stream:token",
-                taskId: ctx.runId,
-                chunk,
-              });
-            },
-          });
+          const { text } = await runGatedLLMCall(
+            ctx,
+            { stage: "result_synthesis", outputOf: (result) => result.text },
+            () => brainLLM.complete(synthesisPrompt, {
+              maxTokens: 2048,
+              temperature: 0.2,
+              abortSignal: ctx.abortSignal,
+              onToken: (chunk: string) => {
+                ctx.emit?.({
+                  type: "stream:token",
+                  taskId: ctx.runId,
+                  chunk,
+                });
+              },
+            }),
+          );
           outputText = text.trim();
           synthesisProducedOutput = outputText.length > 0 && !isNonDeliverableOutput(outputText);
         } catch (err) {
@@ -1718,6 +1729,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       requestToolApproval,
       budgetUsd: s.budgetUsd,
       gate,
+      model,
     });
     analysisWriter.attachRuntime(runtime);
     // Narrator handles all of Claire's LLM calls (conversational replies and
@@ -1726,12 +1738,21 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     const narratorModel = s.roles?.['narrator']?.model ?? model;
     claire = createClaire({
       complete: async (messages: ClaireMessage[]) => {
-        const resp = await narratorAdapter.complete({
-          model: narratorModel,
-          messages,
-          temperature: 0.9,
-          maxTokens: 1024,
-        });
+        const resp = await runGatedLLMCall(
+          { gate, model: narratorModel },
+          {
+            stage: "claire_narration",
+            model: narratorModel,
+            budgetLimit: s.budgetUsd > 0 ? s.budgetUsd : Infinity,
+            outputOf: (result) => result.content,
+          },
+          () => narratorAdapter.complete({
+            model: narratorModel,
+            messages,
+            temperature: 0.9,
+            maxTokens: 1024,
+          }),
+        );
         return resp.content;
       },
       executeTask: runtime.executeTask.bind(runtime),
