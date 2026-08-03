@@ -18,7 +18,7 @@ export interface ToolRunCtx {
   abortSignal?: AbortSignal;
   /** Optional sandbox policy for command execution. */
   sandbox?: SandboxPolicy;
-  /** Optional approval callback — return true to approve, false to deny. */
+  /** Approval callback. Commands that require approval fail closed when omitted. */
   requestApproval?: (tool: string, args: Record<string, unknown>, reason: string) => Promise<boolean>;
 }
 

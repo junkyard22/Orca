@@ -150,11 +150,11 @@ describe("verifyFileChanges — FileWrite: file exists check", () => {
     expect(overrides.get("file exists at expected path")!.passed).toBe(true);
   });
 
-  it("passes when no explicit paths in objective (ambiguous task)", () => {
+  it("fails closed when an ambiguous file-write task has no file receipt", () => {
     const packet = makePacket("Write a config file for the server");
     const overrides = verifyFileChanges(packet, { filesChanged: [] }, TaskType.FileWrite);
     const check = overrides.get("file exists at expected path")!;
-    expect(check.passed).toBe(true);
+    expect(check.passed).toBe(false);
     expect(check.evidence).toContain("no explicit");
   });
 
@@ -185,12 +185,12 @@ describe("verifyFileChanges — FileWrite: content match check", () => {
     expect(overrides.get("content matches described intent")!.passed).toBe(true);
   });
 
-  it("passes (skipped) when filesChanged is empty", () => {
+  it("fails closed when filesChanged has no content receipt", () => {
     const packet = makePacket("Create a handler with logging");
     const overrides = verifyFileChanges(packet, { filesChanged: [] }, TaskType.FileWrite);
     const check = overrides.get("content matches described intent")!;
-    expect(check.passed).toBe(true);
-    expect(check.evidence).toContain("skipped");
+    expect(check.passed).toBe(false);
+    expect(check.evidence).toContain("no file content");
   });
 
   it("fails when diff content has no keywords matching objective", () => {
@@ -205,12 +205,11 @@ describe("verifyFileChanges — FileWrite: content match check", () => {
     expect(overrides.get("content matches described intent")!.passed).toBe(false);
   });
 
-  it("ignores deleted files for content check", () => {
+  it("does not treat a deleted file as a content receipt", () => {
     const packet = makePacket("Delete the old logger");
     const files: FileItem[] = [{ path: "src/logger.ts", changeType: "D" }];
     const overrides = verifyFileChanges(packet, { filesChanged: files }, TaskType.FileWrite);
-    // No readable content from a deletion → check skipped (passed=true)
-    expect(overrides.get("content matches described intent")!.passed).toBe(true);
+    expect(overrides.get("content matches described intent")!.passed).toBe(false);
   });
 });
 
@@ -348,5 +347,38 @@ describe("verifyFileChanges — disk integration", () => {
     );
     expect(overrides.get("file exists at expected path")!.passed).toBe(false);
     expect(overrides.get("file exists at expected path")!.evidence).toContain("nonexistent.ts");
+  });
+
+  it("does not read an expected absolute path outside the workspace", () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pappy-fv-outside-"));
+    const outsideFile = path.join(outsideDir, "secret.txt");
+    fs.writeFileSync(outsideFile, "secret", "utf8");
+
+    try {
+      const packet = makePacket(`Create '${outsideFile}'`);
+      const overrides = verifyFileChanges(
+        packet,
+        { filesChanged: [], workspaceRoot: tmpDir },
+        TaskType.FileWrite,
+      );
+      expect(overrides.get("file exists at expected path")!.passed).toBe(false);
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept an out-of-workspace filesChanged entry as a receipt", () => {
+    const outsideFile = path.resolve(tmpDir, "..", "outside-receipt.txt");
+    const packet = makePacket(`Create '${outsideFile}'`);
+    const overrides = verifyFileChanges(
+      packet,
+      {
+        filesChanged: [{ path: outsideFile, changeType: "A", diff: "outside" }],
+        workspaceRoot: tmpDir,
+      },
+      TaskType.FileWrite,
+    );
+
+    expect(overrides.get("file exists at expected path")!.passed).toBe(false);
   });
 });

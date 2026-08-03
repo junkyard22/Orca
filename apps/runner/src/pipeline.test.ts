@@ -609,7 +609,7 @@ describe("Pipeline: G — output contract (golden)", () => {
   it("G3: Pappy WARN verdict → SUCCESS result; clean text is the exact output", async () => {
     // Runtime contract: Pappy WARN verdict → OrcaExecutionResult status "SUCCESS".
     // No budget note or separator is added — only the clean maestro text is shown.
-    // (Budget-capped WARN is a separate code path involving `budgetUsd` option.)
+    // Budget exhaustion never changes a Pappy verdict; an unresolved FAIL remains FAIL.
     const { text } = await runPipeline(
       "Migrate the database schema",
       "Migrated 2 of 5 tables successfully.",

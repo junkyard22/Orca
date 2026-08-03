@@ -103,6 +103,7 @@ import type {
 import {
   OpenAICompatAdapter,
   OllamaAdapter,
+  createMirandaGate,
 } from "@clawde/miranda-core";
 import type {
   LLMAdapter,
@@ -110,6 +111,7 @@ import type {
   LLMRequest,
   LLMResponse,
 } from "@clawde/miranda-core";
+import { runGatedLLMCall } from "./src/llmGate.ts";
 
 // ── Load real settings ─────────────────────────────────────────────────────
 
@@ -617,6 +619,9 @@ async function runAgentLoop(
   taskPrompt: string,
   tools: OrcaToolService,
   llm: OrcaLLMService,
+  ctx: OrcaRunCtx,
+  stage: string,
+  model?: string,
 ): Promise<{
   text: string;
   toolEvents: NonNullable<OrcaMaestroResult['toolEvents']>;
@@ -629,7 +634,11 @@ async function runAgentLoop(
   let lastText = '';
 
   for (let i = 0; i < MAX_ITER; i++) {
-    const { text } = await llm.complete(conversation, { maxTokens: 4096 });
+    const { text } = await runGatedLLMCall(
+      ctx,
+      { stage, model, outputOf: (result) => result.text },
+      () => llm.complete(conversation, { maxTokens: 4096 }),
+    );
     lastText = text;
     const { calls } = parseToolCalls(text);
     if (calls.length === 0) break;
@@ -672,6 +681,7 @@ async function runAgentLoop(
 
 function createTracingMaestro(
   roleAdapters: Partial<Record<string, OrcaLLMService>>,
+  roleModels: Partial<Record<string, string>>,
   availableToolNames: string[],
   toolService: OrcaToolService,
 ): MaestroPort {
@@ -718,9 +728,14 @@ function createTracingMaestro(
             : brainPrompt;
           try {
             printMsg("→ Brain [decompose]", C.cyan, prompt);
-            const { text: decisionJson } = await brainLLM.complete(
-              prompt,
-              { maxTokens: 512, temperature: 0 },
+            const { text: decisionJson } = await runGatedLLMCall(
+              ctx,
+              {
+                stage: "tracer_brain_route",
+                model: roleModels["brain"],
+                outputOf: (result) => result.text,
+              },
+              () => brainLLM.complete(prompt, { maxTokens: 512, temperature: 0 }),
             );
             printMsg("← Brain [decompose response]", C.green, decisionJson);
             trace("Maestro", C.dim, `  Raw routing JSON: ${decisionJson.slice(0, 200)}`);
@@ -848,7 +863,15 @@ function createTracingMaestro(
             // Dump full conversation state before sending to model
             dumpConversation(role, iterationCount, conversation);
 
-            const { text } = await llmForRole.complete(conversation, { maxTokens: 4096 });
+            const { text } = await runGatedLLMCall(
+              ctx,
+              {
+                stage: "tracer_agent_iteration",
+                model: roleModels[role],
+                outputOf: (result) => result.text,
+              },
+              () => llmForRole.complete(conversation, { maxTokens: 4096 }),
+            );
             lastText = text;
 
             // Dump raw model response
@@ -1132,7 +1155,15 @@ function createTracingMaestro(
             }
 
             let output: string;
-            const res = await runAgentLoop(headSystem, headTask, toolService, headLLM);
+            const res = await runAgentLoop(
+              headSystem,
+              headTask,
+              toolService,
+              headLLM,
+              ctx,
+              "tracer_subagent_iteration",
+              roleModels[dept.head],
+            );
             output = res.text;
             printMsg(`← ${dept.head} [response]`, C.green, output);
             ctx.emit?.({ type: 'subagent:done', taskId, subagentId, role: dept.head, ok: true });
@@ -1205,14 +1236,22 @@ function createTracingMaestro(
 
       let synthOutput: string;
       try {
-        const res = await brainLLM.complete(
-          synthFullPrompt,
+        const res = await runGatedLLMCall(
+          ctx,
           {
-            maxTokens: 8192,
-            onToken: ctx.emit
-              ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
-              : undefined,
+            stage: "tracer_result_synthesis",
+            model: roleModels["brain"],
+            outputOf: (result) => result.text,
           },
+          () => brainLLM.complete(
+            synthFullPrompt,
+            {
+              maxTokens: 8192,
+              onToken: ctx.emit
+                ? (chunk) => ctx.emit!({ type: 'stream:token', taskId, chunk })
+                : undefined,
+            },
+          ),
         );
         synthOutput = res.text;
       } catch (err) {
@@ -1286,6 +1325,7 @@ async function main() {
   // Build per-role LLM services — all backed by TracingLiveAdapter for logging.
   // Mirrors initOrca() in main.ts so the tracer exercises the exact same path.
   const roleAdapters: Partial<Record<string, OrcaLLMService>> = {};
+  const roleModels: Partial<Record<string, string>> = {};
   let brainLLM: OrcaLLMService | null = null;
 
   if (existsSync(SETTINGS_PATH)) {
@@ -1301,6 +1341,7 @@ async function main() {
       const svc     = createDirectLLMService(wrapped, roleEntry.model, { maxTokens: 8192, temperature: 0.7 });
 
       roleAdapters[roleName] = svc;
+      roleModels[roleName] = roleEntry.model;
       if (roleName === 'brain') brainLLM = svc;
       trace("Init", C.blue, `  role=${roleName.padEnd(12)} model=${roleEntry.model}  provider=${(prov as any).name ?? prov.type}`);
     }
@@ -1318,6 +1359,7 @@ async function main() {
     const wrapped = new TracingLiveAdapter(raw, "brain");
     brainLLM = createDirectLLMService(wrapped, defaultModel, { maxTokens: 8192, temperature: 0.7 });
     roleAdapters['brain'] = brainLLM;
+    roleModels['brain'] = defaultModel;
     trace("Init", C.yellow, `  Fallback: brain → ${defaultModel} via OPENROUTER_API_KEY`);
   }
 
@@ -1330,15 +1372,26 @@ async function main() {
 
   // Resolve workspace root: two dirs up from apps/desktop → monorepo root
   const workspaceRoot = path.resolve(import.meta.dirname, '../..');
+  const gate = createMirandaGate({ allowedTools: availableToolNames });
 
   const toolService: OrcaToolService = {
-    execute(name, input) {
+    async execute(name, input) {
       const tool = toolRegistry.get(name);
-      if (!tool) return Promise.resolve({
+      if (!tool) return {
         ok: false, output: '',
         error: `Unknown tool: "${name}". Available: ${toolRegistry.list().map(t => t.name).join(', ')}`,
-      });
-      return tool.execute(input, { workspaceRoot, runId: '' });
+      };
+      const gateContext = { tool: name, args: input, workspaceRoot };
+      const beforeGate = gate.beforeToolRun(gateContext);
+      if (!beforeGate.allowed) {
+        return { ok: false, output: '', error: `Miranda gate blocked tool call: ${beforeGate.reason}` };
+      }
+      const result = await tool.execute(input, { workspaceRoot, runId: '' });
+      const afterGate = gate.afterToolRun(gateContext, { ok: result.ok, output: result.output });
+      if (!afterGate.allowed) {
+        return { ok: false, output: '', error: `Miranda gate blocked tool result: ${afterGate.reason}` };
+      }
+      return result;
     },
     formatForPrompt() {
       return `Workspace root: ${workspaceRoot}\n\n${toolRegistry.formatForPrompt()}`;
@@ -1346,7 +1399,7 @@ async function main() {
   };
 
   trace("Init", C.blue, "Creating tracing Maestro adapter...");
-  const maestro = createTracingMaestro(roleAdapters, availableToolNames, toolService);
+  const maestro = createTracingMaestro(roleAdapters, roleModels, availableToolNames, toolService);
 
   trace("Init", C.blue, `Creating Pappy QC port (${DEV_MODE ? "debug trace — full output" : "terse — set ORCA_DEV=1 for full trace"})...`);
   const pappy = DEV_MODE ? createDebugPappyPort() : createPappyPort();
@@ -1358,7 +1411,16 @@ async function main() {
     path.join(process.env["HOME"] || process.env["USERPROFILE"] || "", ".orca", "runs.db")
   );
   
-  const runtime: OrcaRuntime = createOrcaRuntime({ maestro, llm, pappy, maxRepairPasses: 1, tools: toolService, store });
+  const runtime: OrcaRuntime = createOrcaRuntime({
+    maestro,
+    llm,
+    pappy,
+    maxRepairPasses: 1,
+    tools: toolService,
+    store,
+    gate,
+    model: roleModels["brain"],
+  });
 
   // Subscribe to all non-stream events
   const events: OrcaEvent[] = [];

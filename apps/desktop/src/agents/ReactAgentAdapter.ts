@@ -10,6 +10,7 @@ import {
 import { formatToolResult as sharedFormatToolResult, runAgentLoop } from "@clawde/agent-loop-core";
 import type { AgentAdapter, AgentTask, AgentResult, ThoughtRecord, AgentRunContext } from "./AgentAdapter";
 import type { RoleName } from "maestro-core";
+import { runGatedLLMCall } from "../llmGate";
 
 type Tool = {
   name: string;
@@ -834,26 +835,32 @@ export class ReactAgentAdapter implements AgentAdapter {
           messages,
         });
 
-        if (useStreaming) {
-          response = await this.llmAdapter.stream!(
-            {
-              model: "",
-              messages,
-              maxTokens: this.maxTokens,
-              temperature: this.temperature,
-              signal: ctx.abortSignal,
-            },
-            ctx.onStreamToken!,
-          );
-        } else {
-          response = await this.llmAdapter.complete({
-            model: "",
-            messages,
-            maxTokens: this.maxTokens,
-            temperature: this.temperature,
-            signal: ctx.abortSignal,
-          });
-        }
+        response = await runGatedLLMCall(
+          ctx,
+          {
+            stage: "agent_iteration",
+            model: ctx.model ?? this.llmAdapter.name,
+            outputOf: (result) => result.content,
+          },
+          () => useStreaming
+            ? this.llmAdapter.stream!(
+                {
+                  model: "",
+                  messages,
+                  maxTokens: this.maxTokens,
+                  temperature: this.temperature,
+                  signal: ctx.abortSignal,
+                },
+                ctx.onStreamToken!,
+              )
+            : this.llmAdapter.complete({
+                model: "",
+                messages,
+                maxTokens: this.maxTokens,
+                temperature: this.temperature,
+                signal: ctx.abortSignal,
+              }),
+        );
 
         const modelOutput = response.content;
         throwIfAborted(ctx.abortSignal);
@@ -1067,6 +1074,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           const gateCtx = {
             tool: toolName,
             args: toolInput,
+            workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
             schema: tool.schema,
           };
           const beforeToolGate = ctx.gate?.beforeToolRun(gateCtx);
@@ -1341,23 +1349,31 @@ export class ReactAgentAdapter implements AgentAdapter {
             iterationCount,
             toolCount: toolsUsed.length,
           });
-          const finalization = await this.llmAdapter.complete({
-            model: "",
-            messages: [
-              ...messages,
-              {
-                role: "user",
-                content:
-                  "No more tool calls are allowed. Use only the tool results already in this conversation. " +
-                  "Produce the final user-facing deliverable now using exactly this format:\n\n" +
-                  "FINAL ANSWER:\n" +
-                  "The complete answer to the user's request.",
-              },
-            ],
-            maxTokens: this.maxTokens,
-            temperature: Math.min(this.temperature, 0.3),
-            signal: ctx.abortSignal,
-          });
+          const finalization = await runGatedLLMCall(
+            ctx,
+            {
+              stage: "agent_finalization",
+              model: ctx.model ?? this.llmAdapter.name,
+              outputOf: (result) => result.content,
+            },
+            () => this.llmAdapter.complete({
+              model: "",
+              messages: [
+                ...messages,
+                {
+                  role: "user",
+                  content:
+                    "No more tool calls are allowed. Use only the tool results already in this conversation. " +
+                    "Produce the final user-facing deliverable now using exactly this format:\n\n" +
+                    "FINAL ANSWER:\n" +
+                    "The complete answer to the user's request.",
+                },
+              ],
+              maxTokens: this.maxTokens,
+              temperature: Math.min(this.temperature, 0.3),
+              signal: ctx.abortSignal,
+            }),
+          );
           throwIfAborted(ctx.abortSignal);
           const finalizationText = stripToolCalls(finalization.content);
           const finalizationAnswer = extractFinalAnswer(finalizationText);

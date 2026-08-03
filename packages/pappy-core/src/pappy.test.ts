@@ -96,14 +96,15 @@ describe("evaluateWithPappy — verdict", () => {
     expect(result.verdict).toBe("FAIL");
   });
 
-  it("returns WARN when only MEDIUM issues exist", () => {
-    // Missing required section → MEDIUM
+  it("returns FAIL when a required output section receipt is missing", () => {
     const result = evaluateWithPappy({
       task: "Write a plan.",
       outputText: "Here is the plan.",
       constraints: { requireSections: ["Implementation"] },
     });
-    expect(result.verdict).toBe("WARN");
+    expect(result.receipt_ledger.find((entry) => entry.ref === "AC1")?.status).toBe("MISSING");
+    expect(result.issues.some((issue) => issue.code === "REQUIRED_RECEIPT_MISSING")).toBe(true);
+    expect(result.verdict).toBe("FAIL");
   });
 
   it("returns WARN (not FAIL) when TOOL_INSTRUMENTATION_MISSING is present", () => {
@@ -182,8 +183,8 @@ describe("evaluateWithPappy — verdict", () => {
 
   it("returns WARN when multiple MEDIUM issues exist without hard-fail codes", () => {
     const result = evaluateWithPappy({
-      task: "Explain recursion.",
-      outputText: "Recursion is when a function calls itself.",
+      task: "Explain recursion and database authentication.",
+      outputText: "## Examples\nRecursion is when a function calls itself.",
       constraints: { requireSections: ["Examples"] },
       toolEvents: [{ tool: "read_file", ok: true, summary: "context read" }],
     });
@@ -297,6 +298,19 @@ describe("evaluateWithPappy — receipt ledger", () => {
     expect(entry?.status).toBe("PROVED");
   });
 
+  it("does not prove a required file receipt when that file was deleted", () => {
+    const result = evaluateWithPappy({
+      task: "Create required.txt",
+      outputText: "Done.",
+      constraints: { requireFiles: ["required.txt"] },
+      filesChanged: [{ path: "required.txt", changeType: "D" }],
+      toolEvents: [{ tool: "run_command", ok: true, summary: "cleanup completed" }],
+    });
+
+    expect(result.receipt_ledger.find((entry) => entry.ref === "AC1")?.status).toBe("MISSING");
+    expect(result.verdict).toBe("FAIL");
+  });
+
   it("does not misread 'test script exists' as a unit-test requirement", () => {
     const result = evaluateWithPappy({
       task: "Read package.json and answer with 3 bullets.",
@@ -315,6 +329,81 @@ describe("evaluateWithPappy — receipt ledger", () => {
 
     expect(result.receipt_ledger.find((e) => e.ref === "AC1")?.status).toBe("PROVED");
     expect(result.issues.some((issue) => issue.code === "CORE_GOAL_MISSING")).toBe(false);
+  });
+
+  it("does not prove an unsupported semantic criterion from unrelated non-empty output", () => {
+    const result = evaluateWithPappy({
+      task: "Implement the requested logic features.",
+      goals: ["The line implements a theorem prover for first-order logic"],
+      outputText: "The requested work is complete.",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "context read" }],
+    });
+
+    expect(result.receipt_ledger.find((entry) => entry.ref === "AC1")?.status).toBe("MISSING");
+  });
+
+  it("does not prove a code criterion from deleting an unrelated file", () => {
+    const result = evaluateWithPappy({
+      task: "Implement a TypeScript parser.",
+      goals: ["Output contains a TypeScript implementation"],
+      outputText: "Implemented the requested parser.",
+      filesChanged: [{ path: "README.md", changeType: "D" }],
+      toolEvents: [{ tool: "run_command", ok: true, summary: "cleanup completed" }],
+    });
+
+    expect(result.receipt_ledger.find((entry) => entry.ref === "AC1")?.status).toBe("MISSING");
+    expect(result.verdict).toBe("FAIL");
+  });
+
+  it("does not prove a code criterion from negated declaration words", () => {
+    const result = evaluateWithPappy({
+      task: "Implement a TypeScript parser.",
+      goals: ["Output contains a TypeScript implementation"],
+      outputText: "No function or class was implemented.",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "context read" }],
+    });
+
+    expect(result.receipt_ledger.find((entry) => entry.ref === "AC1")?.status).toBe("MISSING");
+    expect(result.verdict).toBe("FAIL");
+  });
+
+  it("does not prove a unit-test criterion from a negated framework mention", () => {
+    const result = evaluateWithPappy({
+      task: "Add unit tests with Vitest.",
+      goals: ["Output includes unit tests using Vitest"],
+      outputText: "No unit tests were written; Vitest was not used.",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "context read" }],
+    });
+
+    expect(result.receipt_ledger.find((entry) => entry.ref === "AC1")?.status).toBe("MISSING");
+    expect(result.verdict).toBe("FAIL");
+  });
+
+  it("fails when any required criterion receipt is missing even if other criteria are proved", () => {
+    const result = evaluateWithPappy({
+      task: "Report deployment readiness and implement the requested logic feature.",
+      goals: [
+        "Output states the current deployment state",
+        "The line implements a theorem prover for first-order logic",
+        "Output states the readiness level",
+      ],
+      outputText: "Current deployment state: running. Readiness level: green.",
+      toolEvents: [{ tool: "read_file", ok: true, summary: "deployment metadata read" }],
+    });
+
+    expect(result.receipt_ledger.map((entry) => entry.status)).toEqual([
+      "PROVED",
+      "MISSING",
+      "PROVED",
+    ]);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "REQUIRED_RECEIPT_MISSING",
+        severity: "HIGH",
+        evidence: expect.stringContaining("AC2"),
+      }),
+    ]));
+    expect(result.verdict).toBe("FAIL");
   });
 });
 

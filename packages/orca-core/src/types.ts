@@ -266,10 +266,11 @@ export interface OrcaRunCtx {
    */
   workspaceContext?: WorkspaceContext;
   /**
-   * Miranda's gate — guards before/after every tool call and QC run.
+   * Miranda's gate — guards before/after every live LLM call, tool call, and QC run.
    * before_tool_run / after_tool_run: validates tool allowlist and receipts.
    * before_qc / after_qc: validates QC preconditions and verdict shape.
-   * The LLM gates (before/after_llm_call) live inside the Miranda pipeline.
+   * Direct LLM transports do not apply policy themselves: every live caller
+   * must invoke before_llm_call and after_llm_call around the provider call.
    */
   gate?: MirandaGate;
   /**

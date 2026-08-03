@@ -127,6 +127,25 @@ describe("checkTestOutputContradictsClaim", () => {
     expect(issues[0]?.severity).toBe("CRITICAL");
   });
 
+  it("reads captured command output when the event summary hides the failure", () => {
+    const issues = checkTestOutputContradictsClaim(
+      input({
+        outputText: "All tests pass.",
+        toolEvents: [
+          {
+            tool: "run_command",
+            ok: true,
+            summary: "run_command: ok (31 chars)",
+            raw: { _outputForProof: "[Exit code 1]\n1 test failed" },
+          },
+        ],
+      }),
+    );
+
+    expect(issues[0]?.code).toBe("TEST_OUTPUT_CONTRADICTS_CLAIM");
+    expect(issues[0]?.severity).toBe("CRITICAL");
+  });
+
   it("does not read a zero failure count as a failure", () => {
     // "0 failed" is the shape of a *successful* run and must not trip the check.
     expect(

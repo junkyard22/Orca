@@ -63,6 +63,17 @@ describe("runClaimProofChecks — file modification claims", () => {
     const unverified = issues.filter((i) => i.code === "PROOF_CLAIM_UNVERIFIED");
     expect(unverified).toHaveLength(0);
   });
+
+  it("does not accept a similarly named file as the modification receipt", () => {
+    const { issues, ledger } = runClaimProofChecks({
+      task: "Update auth.ts.",
+      outputText: "I updated `auth.ts` with the fix.",
+      filesChanged: [{ path: "not-auth.ts", changeType: "M", diff: "changed = true;" }],
+    });
+
+    expect(ledger[0]?.status).toBe("MISSING");
+    expect(issues.some((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -116,6 +127,28 @@ describe("runClaimProofChecks — file creation claims", () => {
 });
 
 describe("runClaimProofChecks — test command claims", () => {
+  it("rejects an ok=true test receipt whose captured output has a non-zero exit code", () => {
+    const { issues, ledger } = runClaimProofChecks({
+      task: "Run pnpm test and report the result.",
+      outputText: "All tests pass.",
+      toolEvents: [
+        {
+          tool: "run_command",
+          ok: true,
+          summary: "run_command: ok (31 chars)",
+          raw: {
+            command: "pnpm test",
+            _outputForProof: "[Exit code 1]\n1 test failed",
+          },
+        },
+      ],
+    });
+
+    expect(ledger.find((entry) => entry.required_receipt.type === "command_exit_0")?.status)
+      .toBe("MISSING");
+    expect(issues.some((issue) => issue.code === "PROOF_CLAIM_UNVERIFIED")).toBe(true);
+  });
+
   it("does NOT flag a tests-passed claim when a successful pytest run_command event is present", () => {
     const { issues } = runClaimProofChecks({
       task: "Create calculator and run tests.",

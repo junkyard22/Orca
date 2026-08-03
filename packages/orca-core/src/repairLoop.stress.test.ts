@@ -224,30 +224,6 @@ describe("repair loop exhaustion", () => {
     expect(result.summary).toContain("timeout after 30s");
   });
 
-  it("appends initialGateBlockReason when no errorMessage", async () => {
-    const maestro: MaestroPort = {
-      run: vi.fn(async () => ({ outputText: "bad" })),
-    };
-    const pappy: PappyPort = { evaluate: vi.fn(() => makeFailResult()) };
-
-    const result = await handleRepairLoop(
-      makeTask(),
-      makeFailResult(),
-      makeCtx(),
-      maestro,
-      pappy,
-      makeEmitter(),
-      1,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,  // no errorMessage
-      "blocked by compliance gate", // gateBlockReason
-    );
-
-    expect(result.summary).toContain("blocked by compliance gate");
-  });
 });
 
 // ===========================================================================
@@ -340,7 +316,7 @@ describe("repair loop early exit", () => {
 // ===========================================================================
 
 describe("budget enforcement in repair loop", () => {
-  it("stops repair loop when accumulated spend >= budget", async () => {
+  it("stops repair without downgrading the current Pappy FAIL when accumulated spend reaches budget", async () => {
     let callCount = 0;
     const maestro: MaestroPort = {
       run: vi.fn(async () => {
@@ -368,11 +344,11 @@ describe("budget enforcement in repair loop", () => {
 
     // First pass runs (0.04 < 0.05), second is skipped (0.07 >= 0.05)
     expect(callCount).toBe(1);
-    expect(result.status).toBe("WARN");
+    expect(result.status).toBe("FAIL");
     expect(result.summary).toContain("Budget cap");
   });
 
-  it("returns WARN with correct spend/budget amounts in summary", async () => {
+  it("returns FAIL with correct spend/budget amounts in summary", async () => {
     const maestro: MaestroPort = {
       run: vi.fn(async () => ({
         outputText: "bad",
@@ -395,7 +371,7 @@ describe("budget enforcement in repair loop", () => {
       0.01,  // spentSoFarUsd — pass 1 will push total to $0.11 >= $0.10
     );
 
-    expect(result.status).toBe("WARN");
+    expect(result.status).toBe("FAIL");
     // Summary should reference the budget ceiling
     expect(result.summary).toMatch(/\$0\.10/);
   });
@@ -422,7 +398,7 @@ describe("budget enforcement in repair loop", () => {
 
     // Maestro should never be called
     expect((maestro.run as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
-    expect(result.status).toBe("WARN");
+    expect(result.status).toBe("FAIL");
     expect(result.userFacingText).toBe("initial-output");
   });
 });
@@ -722,9 +698,9 @@ describe("cost accumulation", () => {
     );
 
     // Pass 1 runs: 0.02 + 0.04 = 0.06 < 0.10
-    // Pass 2 runs: 0.06 + 0.04 = 0.10 >= 0.10 → WARN
+    // Pass 2 runs: 0.06 + 0.04 = 0.10 >= 0.10; unresolved QC remains FAIL.
     expect(callCount).toBe(2);
-    expect(result.status).toBe("WARN");
+    expect(result.status).toBe("FAIL");
   });
 });
 

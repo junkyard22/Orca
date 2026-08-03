@@ -23,7 +23,7 @@ import {
   mergeAcceptanceCriteria,
   getACPriority,
 } from "./taskClassifier.js";
-import { verifyFileChanges } from "./fileVerifier.js";
+import { isWorkspaceFileReceipt, verifyFileChanges } from "./fileVerifier.js";
 import { buildAHPRepairPrompt } from "./repairPrompt.js";
 
 // ---------------------------------------------------------------------------
@@ -71,21 +71,30 @@ export interface AHPVerificationInput {
  * acceptance criterion text.
  *
  * Strategy:
- *   - Extract significant words from the AC (≥4 chars, not stop-words).
- *   - Consider the AC proved if ANY of those words appear in the search corpus
- *     (outputText + file diffs), OR if outputText is non-empty and the AC is
- *     generic (no distinctive keyword found).
- *
- * This intentionally favours recall over precision — a WARN is preferable to
- * a false FAIL on a vague AC.  Poorly-specified ACs will surface as
- * INCONCLUSIVE via the scheme check path instead.
+ *   - Require objective filesChanged evidence for file/tool-event criteria.
+ *   - Extract significant words from other ACs and require criterion-specific
+ *     coverage in output or a non-deleted diff.
+ *   - Fail closed when a criterion has no deterministic matching terms.
  */
+function pathMatchesReceipt(candidate: string, expected: string): boolean {
+  const normalize = (value: string) => value.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+  const normalizedCandidate = normalize(candidate);
+  const normalizedExpected = normalize(expected);
+  return normalizedCandidate === normalizedExpected || normalizedCandidate.endsWith(`/${normalizedExpected}`);
+}
+
 function checkACAgainstOutput(
   acText: string,
   input: AHPVerificationInput,
 ): { passed: boolean; evidence: string } {
   const outputText = input.outputText ?? "";
-  const diffText   = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
+  const receiptFiles = (input.filesChanged ?? []).filter((file) =>
+    file.changeType !== "D" &&
+    (!input.workspaceRoot || isWorkspaceFileReceipt(input.workspaceRoot, file.path)),
+  );
+  const diffText   = receiptFiles
+    .map((file) => file.diff ?? "")
+    .join("\n");
   const corpus     = `${outputText} ${diffText}`.toLowerCase();
 
   if (!corpus.trim()) {
@@ -100,9 +109,9 @@ function checkACAgainstOutput(
       acText.match(/creating\s+([\w.\-\/]+)/i) ??
       acText.match(/\b([\w.\-]+\.[\w]{1,6})\b/);
     const p = filePathMatch?.[1] ?? "";
-    const touched = (input.filesChanged ?? []).map((f) => f.path);
+    const touched = receiptFiles.map((file) => file.path);
     if (p) {
-      if (touched.some((t) => t.endsWith(p) || t === p)) {
+      if (touched.some((candidate) => pathMatchesReceipt(candidate, p))) {
         return { passed: true, evidence: `file present: ${p}` };
       }
       return { passed: false, evidence: `tool_event AC: file not created: ${p}` };
@@ -118,12 +127,9 @@ function checkACAgainstOutput(
   const fileReq = acText.match(/[Ff]ile ["`']?([^"`'\s,]+)["`']?/);
   if (fileReq) {
     const p = fileReq[1] ?? "";
-    const touched = (input.filesChanged ?? []).map((f) => f.path);
-    if (touched.some((t) => t.endsWith(p) || t === p)) {
+    const touched = receiptFiles.map((file) => file.path);
+    if (touched.some((candidate) => pathMatchesReceipt(candidate, p))) {
       return { passed: true, evidence: `file present: ${p}` };
-    }
-    if (outputText.toLowerCase().includes(p.toLowerCase())) {
-      return { passed: true, evidence: `file referenced in output: ${p}` };
     }
     return { passed: false, evidence: `file not found: ${p}` };
   }
@@ -143,10 +149,8 @@ function checkACAgainstOutput(
     .filter((w) => w.length >= 4 && !STOP_WORDS.has(w));
 
   if (keywords.length === 0) {
-    // Generic/empty AC — prove with non-empty output
-    return outputText.trim().length > 0
-      ? { passed: true, evidence: "output is non-empty" }
-      : { passed: false, evidence: "output is empty" };
+    // Generic/empty criteria cannot be verified from artifact presence alone.
+    return { passed: false, evidence: "criterion has no verifiable terms" };
   }
 
   const matchedKeywords = keywords.filter((kw) => corpus.includes(kw));
@@ -157,11 +161,6 @@ function checkACAgainstOutput(
       passed: true,
       evidence: `keywords matched: ${matchedKeywords.slice(0, 3).join(", ")}`,
     };
-  }
-
-  // Fallback: non-empty output satisfies a vague AC
-  if (outputText.trim().length > 0 && keywords.length <= 2) {
-    return { passed: true, evidence: "output is non-empty (vague AC)" };
   }
 
   return {
@@ -188,7 +187,13 @@ function checkSchemaAgainstOutput(
   if (keys.length === 0) return { passed: true, missingKeys: [] };
 
   const outputText = input.outputText ?? "";
-  const diffText   = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
+  const diffText   = (input.filesChanged ?? [])
+    .filter((file) =>
+      file.changeType !== "D" &&
+      (!input.workspaceRoot || isWorkspaceFileReceipt(input.workspaceRoot, file.path)),
+    )
+    .map((file) => file.diff ?? "")
+    .join("\n");
   const corpus     = `${outputText} ${diffText}`.toLowerCase();
 
   const missingKeys = keys.filter((k) => !corpus.includes(k.toLowerCase()));
@@ -363,19 +368,16 @@ function verifyAHPPacketImpl(
   let verdict: AHPVerdict;
   if (!schemaPassed) {
     verdict = AHPVerdict.FAIL;
-  } else if (failed.length === 0 && acResults.length > 0) {
-    verdict = AHPVerdict.PASS;
   } else if (acResults.length === 0) {
-    // No ACs defined — non-empty output is sufficient for PASS
+    // No contract means there is nothing Pappy can verify.
+    verdict = AHPVerdict.FAIL;
+  } else if (failed.length === 0) {
     verdict = AHPVerdict.PASS;
-  } else if (passed.length > 0 && failed.length > 0) {
-    verdict = AHPVerdict.WARN;
+  } else if (failed.some((result) => getACPriority(result.ac) === "hard")) {
+    verdict = AHPVerdict.FAIL;
   } else {
-    // All ACs failed.  If every failure is a soft (stylistic) criterion, downgrade
-    // to WARN — soft-only failures should not drive a hard FAIL verdict.
-    verdict = failed.every((r) => getACPriority(r.ac) === "soft")
-      ? AHPVerdict.WARN
-      : AHPVerdict.FAIL;
+    // Only soft (stylistic) criteria are missing.
+    verdict = AHPVerdict.WARN;
   }
 
   packet.verdict = verdict;

@@ -5,6 +5,23 @@ import * as fs from "fs";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
 import { evaluateCommandPolicy, createSandboxPolicy } from "./sandbox.js";
 import { createAbortError, throwIfAborted } from "./abort.js";
+import { resolveWorkspacePath } from "./workspacePath.js";
+
+const COMMAND_ENV_ALLOWLIST = new Set([
+  "appdata", "ci", "colorterm", "commonprogramfiles", "comspec", "force_color",
+  "home", "homedrive", "homepath", "lang", "lc_all", "localappdata", "no_color",
+  "number_of_processors", "os", "path", "pathext", "processor_architecture",
+  "programdata", "programfiles", "programfiles(x86)", "shell", "systemroot", "temp",
+  "term", "tmp", "tmpdir", "user", "username", "userprofile", "windir",
+]);
+
+function commandEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(source).filter(
+      ([name, value]) => value !== undefined && COMMAND_ENV_ALLOWLIST.has(name.toLowerCase()),
+    ),
+  );
+}
 
 /**
  * Parse a shell command to detect file redirections (e.g., > file.py, >> file.py).
@@ -125,7 +142,15 @@ export const runCommandTool: Tool = {
     }
     
     // Request approval if required
-    if (policyResult.requiresApproval && ctx.requestApproval) {
+    if (policyResult.requiresApproval) {
+      if (!ctx.requestApproval) {
+        return {
+          ok: false,
+          output: "",
+          error: `Command requires approval, but no approval handler is configured: ${policyResult.reason}`,
+        };
+      }
+
       const approved = await ctx.requestApproval("run_command", input, policyResult.reason);
       throwIfAborted(ctx.abortSignal);
       if (!approved) {
@@ -138,12 +163,15 @@ export const runCommandTool: Tool = {
     }
 
     const rawCwd = input["cwd"];
-    const cwd =
-      typeof rawCwd === "string"
-        ? path.isAbsolute(rawCwd)
-          ? rawCwd
-          : path.resolve(ctx.workspaceRoot, rawCwd)
-        : ctx.workspaceRoot;
+    let cwd: string;
+    try {
+      cwd = resolveWorkspacePath(
+        ctx.workspaceRoot,
+        typeof rawCwd === "string" ? rawCwd : ".",
+      );
+    } catch (err) {
+      return { ok: false, output: "", error: err instanceof Error ? err.message : String(err) };
+    }
 
     // Cap timeout at sandbox max
     const requestedTimeout =
@@ -167,7 +195,7 @@ export const runCommandTool: Tool = {
 
       const child = spawn(command, [], {
         cwd,
-        env: process.env,
+        env: commandEnvironment(process.env),
         detached: process.platform !== "win32",
         shell: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -217,6 +245,14 @@ export const runCommandTool: Tool = {
       timer = setTimeout(() => {
         timedOut = true;
         terminateChildProcess(child);
+        const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
+        const timeoutText = `Timed out after ${timeout}ms`;
+        const outputWithTimeout = combined
+          ? `[${timeoutText}]\n${combined}`
+          : `[${timeoutText}]`;
+        finish({ ok: false, output: outputWithTimeout, error: timeoutText });
       }, timeout);
 
       child.on("error", (err) => {
@@ -237,24 +273,25 @@ export const runCommandTool: Tool = {
         const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
 
         if (timedOut) {
-          // A timeout is a command outcome, not a tool malfunction. The shell
-          // ran, Orca captured what it could, and the model can use the timeout
-          // as diagnostic evidence (common for servers and hanging startup).
+          // Preserve partial output as diagnostic evidence, but never describe
+          // a timed-out command as a successful tool receipt.
           const timeoutText = `Timed out after ${timeout}ms`;
           const outputWithTimeout = combined
             ? `[${timeoutText}]\n${combined}`
             : `[${timeoutText}]`;
-          finish({ ok: true, output: outputWithTimeout });
+          finish({ ok: false, output: outputWithTimeout, error: timeoutText });
         } else if ((code ?? -1) !== 0) {
-          // A non-zero exit code is informational — the shell command ran to
-          // completion, it just signalled failure. Return ok:true so Pappy QC
-          // doesn't treat this as a tool malfunction; the LLM can read the
-          // exit code in the output and reason about it.
+          // A non-zero process exit is a failed tool result. Keep stdout/stderr
+          // in output so the agent and Pappy can diagnose the failure.
           const exitCode = code ?? -1;
           const outputWithCode = combined
             ? `[Exit code ${exitCode}]\n${combined}`
             : `[Exit code ${exitCode}]`;
-          finish({ ok: true, output: outputWithCode });
+          finish({
+            ok: false,
+            output: outputWithCode,
+            error: `Command failed with exit code ${exitCode}`,
+          });
         } else {
           // Include file changes in the output for the caller to parse
           const outputWithChanges = fileChanges.length > 0

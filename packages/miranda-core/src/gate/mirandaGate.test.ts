@@ -8,11 +8,12 @@
  *   4. WARN is not emitted yet — reserved for future non-blocking advisory gates
  *   5. CONFIRM_REQUIRED is not emitted yet
  *   6. verdict contract: PASS/WARN ↔ allowed:true, BLOCK/CONFIRM_REQUIRED ↔ allowed:false
- *   7. No runtime behavior changes — `allowed` remains authoritative
+ *   7. Legacy contexts keep their behavior; receipt inconsistencies are blocked
  *   8. No deprecated Miranda pipeline behavior is reactivated
  */
 
 import { describe, it, expect } from "vitest";
+import * as path from "node:path";
 import {
   createMirandaGate,
   transitionAHPLifecycle,
@@ -111,6 +112,29 @@ describe("GateResult backward compatibility", () => {
   it("afterQC returns allowed:true for recognized verdict", () => {
     const r = gate.afterQC(makeQCCtx(), "PASS", 0);
     expect(r.allowed).toBe(true);
+  });
+
+  it("afterQC blocks an inconsistent PASS when required receipts are missing", () => {
+    const r = gate.afterQC(
+      makeQCCtx({ missingReceiptRefs: ["AC2"] }),
+      "PASS",
+      0,
+    );
+
+    expect(r.allowed).toBe(false);
+    expect(r.verdict).toBe("BLOCK");
+    expect(r.violations).toContain("Missing required receipts: AC2");
+  });
+
+  it("afterQC accepts a FAIL that is consistent with missing required receipts", () => {
+    const r = gate.afterQC(
+      makeQCCtx({ missingReceiptRefs: ["AC2"] }),
+      "FAIL",
+      1,
+    );
+
+    expect(r.allowed).toBe(true);
+    expect(r.verdict).toBe("PASS");
   });
 });
 
@@ -223,6 +247,20 @@ describe("GateVerdict: afterToolRun failures are BLOCK", () => {
 // ---------------------------------------------------------------------------
 
 describe("Protected path policy", () => {
+  it("blocks tool paths outside the configured workspace", () => {
+    const workspaceRoot = path.resolve("workspace");
+    const gate = createMirandaGate();
+    const result = gate.beforeToolRun(makeToolCtx({
+      tool: "write_file",
+      workspaceRoot,
+      args: { path: path.resolve("outside", "file.txt"), content: "data" },
+    }));
+
+    expect(result.allowed).toBe(false);
+    expect(result.verdict).toBe("BLOCK");
+    expect(result.violations?.join(" ")).toMatch(/outside.*workspace/i);
+  });
+
   it("blocks mutating tools from editing pappy-core verifier files", () => {
     const gate = createMirandaGate();
     const r = gate.beforeToolRun(makeToolCtx({

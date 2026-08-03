@@ -201,9 +201,9 @@ describe("AHP root packet — lifecycle finalization (Option A, no children)", (
     expect(result.ahpRootPacket!.lifecycle).toBe(AHPLifecycle.COMPLETE);
   });
 
-  it("lifecycle is COMPLETE when result is WARN via budget-exceeded path", async () => {
+  it("lifecycle is FAILED when budget exhaustion leaves Pappy FAIL unresolved", async () => {
     // Budget-exceeded path: Pappy says FAIL with a repairTask, but spend >= budget.
-    // The runtime skips repair and returns WARN → AHP root lifecycle COMPLETE.
+    // The runtime skips repair but retains FAIL → AHP root lifecycle FAILED.
     const budgetMaestro: MaestroPort = {
       run: async () => ({ outputText: "partial work", summary: "ran over budget", metadata: { costUsd: 1.0 } }),
     };
@@ -236,12 +236,12 @@ describe("AHP root packet — lifecycle finalization (Option A, no children)", (
       pappy: makePappy(failWithRepair),
       llm: { complete: async (p: string) => ({ text: `response to: ${p}` }) },
       maxRepairPasses: 2,
-      budgetUsd: 0.50, // spend (1.0) >= budget (0.50) → WARN path
+      budgetUsd: 0.50, // spend (1.0) >= budget (0.50) → fail-closed path
     };
     const runtime = createOrcaRuntime(deps);
     const result  = await runtime.executeTask(makeTask());
-    expect(result.status).toBe("WARN");
-    expect(result.ahpRootPacket!.lifecycle).toBe(AHPLifecycle.COMPLETE);
+    expect(result.status).toBe("FAIL");
+    expect(result.ahpRootPacket!.lifecycle).toBe(AHPLifecycle.FAILED);
   });
 
   it("lifecycle is FAILED when result is FAIL", async () => {

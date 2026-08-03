@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@clawde/orca-core": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "devDependencies": {
     "@types/node": "^22.12.0",

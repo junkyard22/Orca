@@ -48,6 +48,50 @@ export interface FileCheckResult {
  */
 export type FileVerificationOverrides = Map<string, FileCheckResult>;
 
+function isWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+function resolveWorkspaceFile(workspaceRoot: string, requestedPath: string): string | undefined {
+  try {
+    const workspace = path.resolve(workspaceRoot);
+    const candidate = path.isAbsolute(requestedPath)
+      ? path.resolve(requestedPath)
+      : path.resolve(workspace, requestedPath);
+    if (!isWithin(workspace, candidate)) return undefined;
+
+    const realWorkspace = fs.realpathSync.native(workspace);
+    let existingAncestor = candidate;
+    while (!fs.existsSync(existingAncestor)) {
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) return undefined;
+      existingAncestor = parent;
+    }
+    const realAncestor = fs.realpathSync.native(existingAncestor);
+    if (!isWithin(realWorkspace, realAncestor)) return undefined;
+
+    const tail = path.relative(existingAncestor, candidate);
+    const resolved = tail ? path.join(realAncestor, tail) : realAncestor;
+    return isWithin(realWorkspace, resolved) ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveExistingWorkspaceFile(workspaceRoot: string, requestedPath: string): string | undefined {
+  const resolved = resolveWorkspaceFile(workspaceRoot, requestedPath);
+  return resolved && fs.existsSync(resolved) ? resolved : undefined;
+}
+
+export function isWorkspaceFileReceipt(workspaceRoot: string, requestedPath: string): boolean {
+  return resolveWorkspaceFile(workspaceRoot, requestedPath) !== undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Path extraction
 // ---------------------------------------------------------------------------
@@ -102,10 +146,18 @@ function checkFilesExist(
   workspaceRoot?: string,
 ): FileCheckResult {
   if (expectedPaths.length === 0) {
-    return { passed: true, evidence: "no explicit file paths found in task description" };
+    const presentFiles = filesChanged.filter((file) => file.changeType !== "D");
+    return presentFiles.length > 0
+      ? { passed: true, evidence: `${presentFiles.length} file receipt(s) present; no explicit path in task` }
+      : { passed: false, evidence: "no explicit file path and no non-deleted file receipt" };
   }
 
-  const changedPaths = filesChanged.map((f) => f.path);
+  const changedPaths = filesChanged
+    .filter((file) =>
+      file.changeType !== "D" &&
+      (!workspaceRoot || isWorkspaceFileReceipt(workspaceRoot, file.path)),
+    )
+    .map((file) => file.path);
   const found: string[]   = [];
   const missing: string[] = [];
 
@@ -126,16 +178,10 @@ function checkFilesExist(
 
     // Disk check when workspaceRoot is provided
     if (workspaceRoot) {
-      try {
-        const abs = path.isAbsolute(expected)
-          ? expected
-          : path.resolve(workspaceRoot, expected);
-        if (fs.existsSync(abs)) {
-          found.push(expected);
-          continue;
-        }
-      } catch {
-        // Resolve error — treat as missing
+      const existingFile = resolveExistingWorkspaceFile(workspaceRoot, expected);
+      if (existingFile) {
+        found.push(expected);
+        continue;
       }
     }
 
@@ -186,6 +232,7 @@ function checkContentMatchesIntent(
 
   for (const file of filesChanged) {
     if (file.changeType === "D") continue; // deleted files have no content
+    if (workspaceRoot && !isWorkspaceFileReceipt(workspaceRoot, file.path)) continue;
 
     // Use diff captured from the agent's tool events
     if (file.diff) contentParts.push(file.diff);
@@ -193,9 +240,8 @@ function checkContentMatchesIntent(
     // Read actual file from disk when workspaceRoot is available (stronger signal)
     if (workspaceRoot) {
       try {
-        const abs = path.isAbsolute(file.path)
-          ? file.path
-          : path.resolve(workspaceRoot, file.path);
+        const abs = resolveExistingWorkspaceFile(workspaceRoot, file.path);
+        if (!abs) continue;
         const content = fs.readFileSync(abs, "utf8");
         if (content.length > CONTENT_READ_BYTE_LIMIT) {
           truncatedPaths.push(file.path);
@@ -208,8 +254,7 @@ function checkContentMatchesIntent(
   }
 
   if (contentParts.length === 0) {
-    // No file content available — skip this check gracefully
-    return { passed: true, evidence: "no file content available for content check (skipped)" };
+    return { passed: false, evidence: "no file content receipt available for content check" };
   }
 
   const corpus   = contentParts.join("\n").toLowerCase();

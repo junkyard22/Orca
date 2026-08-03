@@ -102,7 +102,17 @@ function strippedFileText(input: PappyInput): string {
  * Concatenating them is the closest faithful equivalent.
  */
 function testOutputText(input: PappyInput): string {
-  return (input.toolEvents ?? []).map((t) => t.summary).join("\n");
+  return (input.toolEvents ?? [])
+    .map((event) => {
+      const raw = event.raw && typeof event.raw === "object"
+        ? event.raw as Record<string, unknown>
+        : undefined;
+      const captured = raw?.["_outputForProof"] ?? raw?.["output"] ?? raw?.["stdout"];
+      return [event.summary, typeof captured === "string" ? captured : ""]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .join("\n");
 }
 
 function claimText(input: PappyInput): string {

@@ -1,6 +1,6 @@
 import * as fs from "fs";
-import * as path from "path";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
+import { resolveWorkspacePath } from "./workspacePath.js";
 
 export const listDirectoryTool: Tool = {
   name: "list_directory",
@@ -22,11 +22,8 @@ export const listDirectoryTool: Tool = {
       return { ok: false, output: "", error: '"path" is required and must be a string' };
     }
 
-    const resolved = path.isAbsolute(rawPath)
-      ? rawPath
-      : path.resolve(ctx.workspaceRoot, rawPath);
-
     try {
+      const resolved = resolveWorkspacePath(ctx.workspaceRoot, rawPath);
       const entries = fs.readdirSync(resolved, { withFileTypes: true });
       const lines = entries.map((e) => (e.isDirectory() ? `d  ${e.name}/` : `f  ${e.name}`));
       return { ok: true, output: lines.join("\n") || "(empty directory)" };

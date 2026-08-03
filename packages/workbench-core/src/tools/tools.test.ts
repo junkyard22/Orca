@@ -47,6 +47,34 @@ describe("readFileTool", () => {
     expect(result.output).toBe("relative content");
   });
 
+  it("rejects an absolute path outside the workspace", async () => {
+    const outside = makeTmpDir();
+    const file = path.join(outside, "secret.txt");
+    fs.writeFileSync(file, "outside secret");
+
+    try {
+      const result = await readFileTool.execute({ path: file }, makeCtx(tmp));
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/outside.*workspace/i);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a path that escapes through a workspace junction", async () => {
+    const outside = makeTmpDir();
+    fs.writeFileSync(path.join(outside, "secret.txt"), "outside secret");
+    fs.symlinkSync(outside, path.join(tmp, "escape"), "junction");
+
+    try {
+      const result = await readFileTool.execute({ path: "escape/secret.txt" }, makeCtx(tmp));
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/outside.*workspace/i);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("returns ok:false for a missing file", async () => {
     const result = await readFileTool.execute({ path: "nonexistent.txt" }, makeCtx(tmp));
     expect(result.ok).toBe(false);
@@ -111,6 +139,39 @@ describe("writeFileTool", () => {
     expect(fs.readFileSync(path.join(tmp, "relative-out.txt"), "utf8")).toBe("hello");
   });
 
+  it("rejects a write outside the workspace", async () => {
+    const outside = path.join(path.dirname(tmp), `${path.basename(tmp)}-outside.txt`);
+    try {
+      const result = await writeFileTool.execute(
+        { path: outside, content: "must not be written" },
+        makeCtx(tmp),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/outside.*workspace/i);
+      expect(fs.existsSync(outside)).toBe(false);
+    } finally {
+      fs.rmSync(outside, { force: true });
+    }
+  });
+
+  it("rejects a write that escapes through a workspace junction", async () => {
+    const outside = makeTmpDir();
+    fs.symlinkSync(outside, path.join(tmp, "escape"), "junction");
+
+    try {
+      const result = await writeFileTool.execute(
+        { path: "escape/secret.txt", content: "must not be written" },
+        makeCtx(tmp),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/outside.*workspace/i);
+      expect(fs.existsSync(path.join(outside, "secret.txt"))).toBe(false);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("returns ok:false when path is missing", async () => {
     const result = await writeFileTool.execute({ content: "data" }, makeCtx(tmp));
     expect(result.ok).toBe(false);
@@ -166,6 +227,17 @@ describe("listDirectoryTool", () => {
     const result = await listDirectoryTool.execute({ path: "sub" }, makeCtx(tmp));
     expect(result.ok).toBe(true);
     expect(result.output).toContain("a.ts");
+  });
+
+  it("rejects a directory outside the workspace", async () => {
+    const outside = makeTmpDir();
+    try {
+      const result = await listDirectoryTool.execute({ path: outside }, makeCtx(tmp));
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/outside.*workspace/i);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("returns ok:false for a missing directory", async () => {
@@ -250,6 +322,21 @@ describe("searchFilesTool", () => {
     expect(result.ok).toBe(true);
     expect(result.output).toMatch(/gamma\.ts/);
   });
+
+  it("rejects a search directory outside the workspace", async () => {
+    const outside = makeTmpDir();
+    fs.writeFileSync(path.join(outside, "secret.txt"), "needle");
+    try {
+      const result = await searchFilesTool.execute(
+        { pattern: "needle", directory: outside },
+        makeCtx(tmp),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/outside.*workspace/i);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── run_command ──────────────────────────────────────────────────────────────
@@ -268,28 +355,30 @@ describe("runCommandTool", () => {
     // `node -e` is cross-platform and safe
     const result = await runCommandTool.execute(
       { command: "node -e \"process.stdout.write('ping')\"" },
-      makeCtx(tmp),
+      makeCtx(tmp, { requestApproval: async () => true }),
     );
     expect(result.ok).toBe(true);
     expect(result.output).toContain("ping");
   });
 
-  it("returns ok:true with exit-code evidence for a non-zero exit code", async () => {
+  it("returns ok:false with exit-code evidence for a non-zero exit code", async () => {
     const result = await runCommandTool.execute(
       { command: "node -e \"process.exit(1)\"" },
-      makeCtx(tmp),
+      makeCtx(tmp, { requestApproval: async () => true }),
     );
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.output).toMatch(/exit code/i);
+    expect(result.error).toMatch(/exit code 1/i);
   });
 
-  it("returns ok:true with timeout evidence when a command times out", async () => {
+  it("returns ok:false with timeout evidence when a command times out", async () => {
     const result = await runCommandTool.execute(
       { command: "node -e \"setTimeout(() => {}, 5000)\"", timeout: 50 },
-      makeCtx(tmp),
+      makeCtx(process.cwd(), { requestApproval: async () => true }),
     );
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.output).toMatch(/Timed out after 50ms/i);
+    expect(result.error).toMatch(/Timed out after 50ms/i);
   });
 
   it("blocks a denied command (curl | bash pattern)", async () => {
@@ -316,6 +405,20 @@ describe("runCommandTool", () => {
     expect(result.error).toMatch(/"command"/);
   });
 
+  it("rejects a working directory outside the workspace", async () => {
+    const outside = makeTmpDir();
+    try {
+      const result = await runCommandTool.execute(
+        { command: "node --version", cwd: outside },
+        makeCtx(tmp),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/outside.*workspace/i);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("denies command when approval callback returns false", async () => {
     const ctx = makeCtx(tmp, {
       sandbox: createSandboxPolicy({ requireApprovalForAll: true }),
@@ -328,6 +431,17 @@ describe("runCommandTool", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/denied/i);
+  });
+
+  it("denies a command requiring approval when no approval callback is configured", async () => {
+    const result = await runCommandTool.execute(
+      { command: "node -e \"process.stdout.write('should-not-run')\"" },
+      makeCtx(tmp),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.output).toBe("");
+    expect(result.error).toMatch(/requires approval.*no approval/i);
   });
 
   it("proceeds when approval callback returns true", async () => {
@@ -343,11 +457,32 @@ describe("runCommandTool", () => {
     expect(result.output).toContain("approved");
   });
 
+  it("does not inherit credential-like environment variables", async () => {
+    const key = "ORCA_TEST_COMMAND_SECRET";
+    const previous = process.env[key];
+    process.env[key] = "must-not-reach-child";
+
+    try {
+      const result = await runCommandTool.execute(
+        { command: `node -e "process.stdout.write(process.env.${key} ?? 'missing')"` },
+        makeCtx(tmp, { requestApproval: async () => true }),
+      );
+      expect(result.ok).toBe(true);
+      expect(result.output).toBe("missing");
+    } finally {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  });
+
   it("aborts a running command when the abort signal fires", async () => {
     const controller = new AbortController();
     const task = runCommandTool.execute(
       { command: "node -e \"setTimeout(() => {}, 5000)\"", cwd: process.cwd() },
-      makeCtx(tmp, { abortSignal: controller.signal }),
+      makeCtx(process.cwd(), {
+        abortSignal: controller.signal,
+        requestApproval: async () => true,
+      }),
     );
 
     setTimeout(() => controller.abort(new Error("Stopped.")), 100);

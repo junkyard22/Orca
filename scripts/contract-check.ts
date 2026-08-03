@@ -162,15 +162,19 @@ function checkRule1(file: string): Finding | null {
 const LLM_CALL_RE =
   /\bctx\.llm\.\w+\s*\(|\bllm\.(?:stream|complete|call|invoke)\s*\(|\.llm\.(?:stream|complete|call|invoke)\s*\(/;
 
-function checkRule2(file: string, content: string): Finding | null {
+export function checkRule2(
+  file: string,
+  content: string,
+  addedContent: string = content,
+): Finding | null {
   // Source only — greppping prose for call patterns yields false positives.
   if (!isAnalyzableSource(file)) return null;
   // Skip type definitions and the gate file itself.
   if (file.includes("mirandaGate") || file.endsWith("types.ts")) {
     return null;
   }
-  if (!LLM_CALL_RE.test(content)) return null;
-  if (content.includes("beforeLLMCall")) return null;
+  if (!LLM_CALL_RE.test(addedContent)) return null;
+  if (content.includes("beforeLLMCall") || content.includes("runGatedLLMCall")) return null;
   return {
     ruleNum: 2,
     ruleName: "Live LLM call without beforeLLMCall gate",
@@ -188,12 +192,16 @@ function checkRule2(file: string, content: string): Finding | null {
 // a beforeToolRun gate call in the same file.
 const TOOL_EXEC_RE = /(?:tools|ctx\.tools|toolService)\.execute\s*\(/;
 
-function checkRule3(file: string, content: string): Finding | null {
+export function checkRule3(
+  file: string,
+  content: string,
+  addedContent: string = content,
+): Finding | null {
   if (!isAnalyzableSource(file)) return null;
   if (file.includes("mirandaGate") || file.endsWith("types.ts")) {
     return null;
   }
-  if (!TOOL_EXEC_RE.test(content)) return null;
+  if (!TOOL_EXEC_RE.test(addedContent)) return null;
   if (content.includes("beforeToolRun")) return null;
   return {
     ruleNum: 3,
@@ -204,6 +212,21 @@ function checkRule3(file: string, content: string): Finding | null {
       "File calls tools.execute() but does not invoke beforeToolRun in the same file. " +
       "Every side-effecting tool call must pass through the Miranda gate.",
   };
+}
+
+export function extractAddedLines(diff: string): string {
+  return diff
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1))
+    .join("\n");
+}
+
+function readAddedContent(file: string, diffBase: string, fullContent: string): string {
+  const tracked = gitExec(`git ls-files -- "${file.replace(/"/g, '\\"')}"`).trim() !== "";
+  if (!tracked) return fullContent;
+  const diff = gitExec(`git diff --unified=0 --no-color ${diffBase} -- "${file.replace(/"/g, '\\"')}"`);
+  return extractAddedLines(diff);
 }
 
 // Rule 4 — Pappy QC / repair behavior touched → REVIEW REQUIRED
@@ -315,6 +338,8 @@ function checkRule7(file: string, content: string): Finding | null {
 
 function run(strict: boolean): void {
   const baseRef = resolveBaseRef();
+  const mergeBase = baseRef ? gitExec(`git merge-base ${baseRef} HEAD`).trim() : "";
+  const diffBase = mergeBase || "HEAD";
   const allChanged = changedFiles(baseRef);
 
   // Never flag the contract-check script itself — it will almost always be in
@@ -337,10 +362,13 @@ function run(strict: boolean): void {
     // Content rules — read file once
     const content = readFileContent(file);
     if (content !== null) {
-      for (const check of [checkRule2, checkRule3, checkRule7]) {
-        const finding = check(file, content);
-        if (finding) findings.push(finding);
-      }
+      const addedContent = readAddedContent(file, diffBase, content);
+      const llmFinding = checkRule2(file, content, addedContent);
+      if (llmFinding) findings.push(llmFinding);
+      const toolFinding = checkRule3(file, content, addedContent);
+      if (toolFinding) findings.push(toolFinding);
+      const diagnosticFinding = checkRule7(file, content);
+      if (diagnosticFinding) findings.push(diagnosticFinding);
     }
   }
 
@@ -441,4 +469,6 @@ function run(strict: boolean): void {
   process.exit(0);
 }
 
-run(process.argv.includes("--strict"));
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  run(process.argv.includes("--strict"));
+}

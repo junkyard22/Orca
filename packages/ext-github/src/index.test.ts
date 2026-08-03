@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EventEmitter } from "events";
+
+const spawnMock = vi.hoisted(() => vi.fn());
+vi.mock("child_process", () => ({ spawn: spawnMock }));
+
 import { githubExtension } from "./index.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -24,6 +29,7 @@ function mockFetch(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
+  spawnMock.mockReset();
   vi.stubGlobal("fetch", mockFetch([]));
 });
 
@@ -195,6 +201,71 @@ describe("github_list_repos", () => {
 });
 
 // ── Extension metadata ────────────────────────────────────────────────────────
+
+describe("github_clone_repo", () => {
+  const cloneRepo = () => tool("github_clone_repo");
+
+  function mockSuccessfulClone() {
+    spawnMock.mockImplementation(() => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      queueMicrotask(() => child.emit("close", 0));
+      return child;
+    });
+  }
+
+  it("keeps authentication out of the clone URL and process arguments", async () => {
+    const token = "github_pat_secret.value";
+    vi.stubEnv("GITHUB_TOKEN", token);
+    mockSuccessfulClone();
+
+    const result = await cloneRepo().execute(
+      { owner: "octo", repo: "project", dest: "safe-clone-target" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(spawnMock).toHaveBeenCalledOnce();
+    const [, args, options] = spawnMock.mock.calls[0]!;
+    expect(args).toEqual([
+      "clone",
+      "https://github.com/octo/project.git",
+      expect.stringContaining("safe-clone-target"),
+    ]);
+    expect(JSON.stringify(args)).not.toContain(token);
+    expect(options.env.GIT_CONFIG_KEY_0).toBe("http.https://github.com/.extraheader");
+    expect(options.env.GIT_CONFIG_VALUE_0).toMatch(/^Authorization: Basic /);
+    expect(options.env.GIT_CONFIG_VALUE_0).not.toContain(token);
+  });
+
+  it("rejects clone destinations outside the workspace before spawning git", async () => {
+    const result = await cloneRepo().execute(
+      { owner: "octo", repo: "project", dest: "../outside-workspace" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/inside the workspace/i);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects credential-bearing repository URLs", async () => {
+    const result = await cloneRepo().execute(
+      { url: "https://secret@github.com/octo/project.git", dest: "safe-clone-target" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/credentials/i);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("githubExtension", () => {
   it("has correct id and 5 tools", () => {

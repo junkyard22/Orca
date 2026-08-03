@@ -113,6 +113,8 @@ Trains and improves role behavior using verified traces — traces that have pas
 
 **No final completion should claim success without verification when QC is required.** If Pappy QC is part of the task lifecycle, a response that bypasses or short-circuits QC must not be presented to the user as a successful completion.
 
+**Every Pappy evaluation requires gate approval.** Initial runs, project audits, and every repair pass must receive an allowed `beforeQC` result before invoking Pappy. A denied pre-QC gate is a controlled `FAIL`; it is not permission to evaluate through another path. Successful evaluation is followed by diagnostic `afterQC` recording.
+
 ---
 
 ## Side-Effect Rules
@@ -126,9 +128,15 @@ All side effects must be routed through approved Miranda gates before execution.
 - MCP tool calls (`desktop-commander_*`, `github-mcp_*`, and any future MCP server tools)
 - Networked tools (web fetch, API calls)
 - Destructive actions (delete, overwrite, truncate)
-- Provider / model calls where Miranda gate coverage is enabled
+- Provider / model calls
 
 There are no categories of side effect that are pre-approved to bypass Miranda. If a gate does not yet exist for a new class of side effect, the correct response is to add the gate — not to proceed without one.
+
+Core file tools and command working directories are confined to the configured workspace. The executor must resolve existing symlinks/junctions and reject paths that escape that boundary; Miranda independently blocks lexically out-of-workspace path arguments when `workspaceRoot` is present in the tool gate context.
+
+`run_command` is fail-closed. A command that requires approval must not execute when no approval handler is configured. A timeout or non-zero exit code is a failed tool result (`ok=false`), with captured output retained only as diagnostic evidence. Child processes receive an allowlisted operational environment rather than the host's full credential-bearing environment.
+
+Credentials must not be embedded in command arguments, clone URLs, or persisted Git remotes. Authenticated Git operations use ephemeral child-process configuration, redact credentials from diagnostics, and remove unused credential variables from the child environment. Clone destinations are subject to the same lexical and resolved-link workspace containment rules as other filesystem tools.
 
 ---
 
@@ -142,7 +150,13 @@ Pappy owns quality verdicts. The three valid outcomes are:
 | `WARN` | Output has issues but is acceptable. Continue with diagnostic. |
 | `FAIL` | Output does not meet criteria. Maestro should trigger repair. |
 
-Miranda's `afterQC` checkpoint may record diagnostics and trace state after Pappy issues its verdict. It must not:
+The receipt ledger is authoritative. Every required receipt with status `MISSING` must produce a `HIGH` issue and a Pappy `FAIL`, even when other acceptance criteria are proved. A semantic acceptance criterion without a deterministic verifier fails closed; non-empty output alone is not proof.
+
+Budget exhaustion is a stop condition, not a quality verdict. If the current Pappy verdict is `FAIL`, exhausting the repair budget must retain `FAIL`; it must never downgrade unresolved quality failure to `WARN`.
+
+The AHP verifier follows the same rule: a file reference in prose is not a file receipt, deleted or similarly named files do not satisfy a required path, an empty acceptance contract cannot pass, and any missing hard criterion produces `FAIL` even when another criterion passes.
+
+Miranda's `afterQC` checkpoint may validate verdict/receipt consistency and record diagnostics after Pappy issues its verdict. A blocked consistency checkpoint is an alarm; it does not replace or rewrite Pappy's outcome. Miranda must not:
 
 - Downgrade a Pappy `FAIL` to `WARN` or `PASS`
 - Skip the repair loop that a `FAIL` would normally trigger

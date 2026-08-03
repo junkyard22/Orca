@@ -81,9 +81,18 @@ function createTask(overrides: Partial<AgentTask> = {}): AgentTask {
 
 // Helper to create run context
  function createCtx(overrides: Partial<OrcaRunCtx> = {}): OrcaRunCtx {
+  const pass = { allowed: true, reason: "ok", verdict: "PASS" as const };
   return {
     llm: {} as any,
     runId: "test-run-id",
+    gate: {
+      beforeLLMCall: () => pass,
+      afterLLMCall: () => pass,
+      beforeToolRun: () => pass,
+      afterToolRun: () => pass,
+      beforeQC: () => pass,
+      afterQC: () => pass,
+    },
     ...overrides,
   };
 }
@@ -118,6 +127,34 @@ function createAHPPacket(
 describe("ReactAgentAdapter Loop Detection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("does not invoke the model when Miranda blocks the LLM call", async () => {
+    const mockAdapter = new MockLLMAdapter(["FINAL ANSWER:\nshould not run"]);
+    const gate = {
+      beforeLLMCall: vi.fn(() => ({ allowed: false, reason: "model blocked" })),
+      afterLLMCall: vi.fn(() => ({ allowed: true, reason: "ok" })),
+    };
+    const adapter = new ReactAgentAdapter(
+      mockAdapter,
+      "You are a helpful assistant.",
+      "strong_model" as RoleName,
+    );
+
+    const result = await adapter.run(createTask(), [], createCtx({
+      gate: gate as any,
+      model: "blocked/model",
+      recordTrace: vi.fn(),
+    }));
+
+    expect(result.stoppedBecause).toBe("error");
+    expect(result.error).toMatch(/Miranda.*blocked.*LLM/i);
+    expect(mockAdapter.requests).toHaveLength(0);
+    expect(gate.beforeLLMCall).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "agent_iteration",
+      model: "blocked/model",
+    }));
+    expect(gate.afterLLMCall).not.toHaveBeenCalled();
   });
 
   // Test 1: Identical call loop — same read_file call 3 times
@@ -622,6 +659,12 @@ Next: Call it
 Ship readiness is yellow. Package metadata and README were reviewed, but source search found shipping-related follow-up work.`,
     ];
 
+    const gate = {
+      beforeLLMCall: vi.fn(() => ({ allowed: true, reason: "ok" })),
+      afterLLMCall: vi.fn(() => ({ allowed: true, reason: "ok" })),
+      beforeToolRun: vi.fn(() => ({ allowed: true, reason: "ok" })),
+      afterToolRun: vi.fn(() => ({ allowed: true, reason: "ok" })),
+    };
     const adapter = new ReactAgentAdapter(
       new MockLLMAdapter(responses),
       "You are a helpful assistant.",
@@ -639,12 +682,17 @@ Ship readiness is yellow. Package metadata and README were reviewed, but source 
         createMockTool("read_file", "file content") as any,
         createMockTool("search_files", "ship TODO") as any,
       ],
-      createCtx(),
+      createCtx({ gate: gate as any, model: "review/model" }),
     );
 
     expect(result.stoppedBecause).toBe("done");
     expect(result.outputText).toContain("Ship readiness is yellow");
     expect(result.iterationCount).toBe(3);
+    expect(gate.beforeLLMCall).toHaveBeenCalledTimes(4);
+    expect(gate.beforeLLMCall).toHaveBeenLastCalledWith(expect.objectContaining({
+      stage: "agent_finalization",
+      model: "review/model",
+    }));
   });
 
   it("does not require write_file for read-only inspections that name files", async () => {

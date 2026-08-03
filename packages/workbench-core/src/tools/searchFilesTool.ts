@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
+import { resolveWorkspacePath } from "./workspacePath.js";
 
 // Directories never worth descending into.
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", "build", ".cache", "coverage"]);
@@ -93,9 +94,12 @@ export const searchFilesTool: Tool = {
 
     const rawDir =
       typeof input["directory"] === "string" ? input["directory"] : ".";
-    const searchDir = path.isAbsolute(rawDir)
-      ? rawDir
-      : path.resolve(ctx.workspaceRoot, rawDir);
+    let searchDir: string;
+    try {
+      searchDir = resolveWorkspacePath(ctx.workspaceRoot, rawDir);
+    } catch (err) {
+      return { ok: false, output: "", error: err instanceof Error ? err.message : String(err) };
+    }
 
     const glob =
       typeof input["glob"] === "string" ? input["glob"] : undefined;

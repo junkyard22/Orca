@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
+import { resolveWorkspacePath } from "./workspacePath.js";
 
 export const writeFileTool: Tool = {
   name: "write_file",
@@ -32,11 +33,8 @@ export const writeFileTool: Tool = {
       return { ok: false, output: "", error: '"content" must be a string' };
     }
 
-    const resolved = path.isAbsolute(rawPath)
-      ? rawPath
-      : path.resolve(ctx.workspaceRoot, rawPath);
-
     try {
+      const resolved = resolveWorkspacePath(ctx.workspaceRoot, rawPath);
       fs.mkdirSync(path.dirname(resolved), { recursive: true });
       fs.writeFileSync(resolved, content, "utf8");
       return {

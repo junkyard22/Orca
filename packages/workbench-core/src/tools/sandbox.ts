@@ -34,7 +34,6 @@ const DEFAULT_ALLOWED_COMMANDS = [
 
   // Safe utilities
   "echo", "pwd", "cd", "whoami", "hostname", "date", "uname",
-  "env", "printenv", "set",
 ];
 
 /**
