@@ -9,6 +9,7 @@
 | orca-core | Runtime wiring — routes tasks through Maestro → Pappy → repair loop | ✅ Solid architecture. Carries `OrcaToolService` in `OrcaRunCtx` for agent-loop mode. |
 | maestro-core | Orchestration — classifies tasks, scores risk, plan-gates, manages cancellation | ✅ `orchestrate()` solid. MaestroAdapter runs full agent loop with tools. |
 | miranda-core | LLM behavior enforcement — gates, prompt wrapping, output validation, repair loops, circuit breaker | ✅ Production-quality. Also hosts the `MirandaGate` compliance layer. |
+| pappy-core | QC evaluator — PASS/WARN/FAIL verdicts + training eligibility on Maestro output | ⚠️ **Phase 4.1–4.4 shipped; 4.5–4.7 open.** Integrity/anti-cheat checks catch 100% of the eval suite's cheats, but 71.4% of correct work is still sent to repair (57.1% with #71 alongside). See Phase 4. |
 | pappy-core | QC evaluator — PASS/WARN/FAIL verdicts + training eligibility on Maestro output | ⚠️ **Phase 4.1–4.4 shipped; 4.5–4.7 open.** Integrity/anti-cheat checks catch 100% of the eval suite's cheats, but 28.6% of correct work is still sent to repair. See Phase 4. |
 | pappy-eval | Offline eval harness for Pappy — fixtures + deterministic judges | ✅ Fixture suite plus raw-Pappy and Pappy-plus-hardening judges. Run via `pnpm pappy:eval`. |
 | agent-loop-core | The shared tool-calling agent loop | ✅ Extracted from maestroAdapter; used by runner and desktop. Gated via `beforeLLMCall`. |
@@ -173,6 +174,10 @@ Run `pnpm pappy:eval:raw-real-pappy` to refresh. Against the 23-fixture suite in
 
 | Metric | Baseline | Current |
 |--------|----------|---------|
+| fixtures passed | 3/23 | 13/23 |
+| cheat catch rate | 55.6% | 100% |
+| false accept rate | 11.1% | 0% |
+| false reject rate | 57.1% | 71.4% |
 | fixtures passed | 3/23 | 19/23 |
 | cheat catch rate | 55.6% | 100% |
 | false accept rate | 11.1% | 0% |

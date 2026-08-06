@@ -26,6 +26,7 @@ import { runStructureChecks }    from "./checks/structure.js";
 import { runClaimProofChecks } from "./checks/claimProof.js";
 import { runBrainChecks }      from "./checks/brain.js";
 import { runIntegrityChecks }  from "./checks/integrity.js";
+import { extractCriterionSymbols, findCriterionSymbols } from "./checks/criterionSymbols.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
 
 type OrcaProfileEvent = Record<string, unknown>;
@@ -144,7 +145,10 @@ function reportingTermRoot(term: string): string {
  *
  * Your output is evaluated by an automated QC system (Pappy) that checks for specific evidence of each criterion. A response that does not contain the required evidence will be rejected and sent back for repair. Save everyone the repair pass — get it right the first time.
  */
-function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): { proved: boolean; evidence: string[] } {
+function verifyAcceptanceCriterion(
+  ac: AcceptanceCriterion,
+  input: PappyInput,
+): { proved: boolean; partial?: boolean; evidence: string[] } {
   const outputText = input.outputText ?? "";
   const hasOutput  = outputText.trim().length > 0;
   const hasFiles   = (input.filesChanged?.length ?? 0) > 0;
@@ -366,6 +370,48 @@ function verifyAcceptanceCriterion(ac: AcceptanceCriterion, input: PappyInput): 
     };
   }
 
+  // Identifier-anchored behavioural criteria — "<symbol> must <do something>",
+  // the dominant shape for coding work. These match none of the verifiers above
+  // and previously fell straight to fail-closed, which is why correct work
+  // naming a real symbol had no way to produce a receipt at all.
+  const symbols = extractCriterionSymbols(ac.text);
+  if (symbols.length > 0) {
+    // Joined with spaces because this only ever feeds a substring check.
+    const changedCode = presentFiles.map((f) => `${f.path} ${f.diff ?? ""}`).join(" ");
+    const { inCode, inAccount } = findCriterionSymbols(symbols, changedCode, outputText);
+
+    if (inCode.length > 0 || inAccount.length > 0) {
+      // A unified diff routinely changes a function's body without restating
+      // its name, so requiring the symbol inside the diff alone rejects correct
+      // work over a property of diff formatting. The agent's own account naming
+      // the symbol is evidence — but the agent writes that text, so on its own
+      // it proves nothing.
+      //
+      // PROVED therefore needs the symbol plus corroboration from a source the
+      // agent does not author: the symbol in the changed code itself, or a tool
+      // event that actually ran. PARTIAL is the symbol named with nothing
+      // objective behind it.
+      const corroborated = inCode.length > 0 || (input.toolEvents ?? []).some((e) => e.ok);
+      const named = [...new Set([...inCode, ...inAccount])].join(", ");
+
+      if (corroborated) {
+        return {
+          proved: true,
+          evidence: [
+            `criterion symbol(s) ${named} present in ${inCode.length > 0 ? "changed code" : "the run account"}`,
+            ...(hasFiles ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
+            ...(hasTools ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
+          ],
+        };
+      }
+      return {
+        proved: false,
+        partial: true,
+        evidence: [`criterion symbol(s) ${named} named, but nothing objective corroborates the change`],
+      };
+    }
+  }
+
   // Unknown semantic criteria have no deterministic verifier. Fail closed:
   // unrelated output or file activity is not criterion-specific proof.
   return { proved: false, evidence: [] };
@@ -378,7 +424,7 @@ function buildCriteriaLedger(
   const entries: ReceiptEntry[] = [];
 
   for (const ac of criteria) {
-    const { proved, evidence } = verifyAcceptanceCriterion(ac, input);
+    const { proved, partial, evidence } = verifyAcceptanceCriterion(ac, input);
     
     entries.push({
       ref: ac.id,
@@ -386,7 +432,7 @@ function buildCriteriaLedger(
         type: "criterion_specific",
         details: ac.text.slice(0, 80) + (ac.text.length > 80 ? "..." : ""),
       },
-      status: proved ? "PROVED" : "MISSING",
+      status: proved ? "PROVED" : partial ? "PARTIAL" : "MISSING",
       evidence,
     });
   }
@@ -397,7 +443,25 @@ function buildCriteriaLedger(
 function buildMissingReceiptIssues(
   receiptLedger: readonly ReceiptEntry[],
 ): Omit<Issue, "issueId">[] {
-  return receiptLedger
+  // PARTIAL warns rather than failing. The criterion named a symbol and that
+  // symbol was genuinely touched — specific evidence, but not proof the
+  // behaviour is right. Treating it as MISSING fails every correct coding task;
+  // treating it as PROVED restores the vacuous fallback this replaced.
+  const partial: Omit<Issue, "issueId">[] = receiptLedger
+    .filter((entry) => entry.status === "PARTIAL")
+    .map((entry) => ({
+      severity: "MEDIUM" as const,
+      code: "RECEIPT_PARTIAL",
+      category: "Proof" as const,
+      description: `Receipt ${entry.ref} is partial: the named code was changed, but the criterion's behaviour is unverified — ${entry.required_receipt.details}`,
+      expected_receipt: `${entry.required_receipt.type}: ${entry.required_receipt.details}`,
+      evidence: `${entry.ref}: status=PARTIAL; evidence=${JSON.stringify(entry.evidence)}`,
+      fix_hint: `Show the criterion's behaviour holds for ${entry.ref} — a passing test or command output naming it.`,
+      message: `Receipt ${entry.ref} is partial.`,
+      suggestedFix: `Add executable proof for ${entry.ref}.`,
+    }));
+
+  const missing: Omit<Issue, "issueId">[] = receiptLedger
     .filter((entry) => entry.status === "MISSING")
     .map((entry) => ({
       severity: "HIGH" as const,
@@ -410,6 +474,8 @@ function buildMissingReceiptIssues(
       message: `Required receipt ${entry.ref} is missing.`,
       suggestedFix: `Satisfy ${entry.ref} with verifiable evidence before marking the task complete.`,
     }));
+
+  return [...missing, ...partial];
 }
 
 // ---------------------------------------------------------------------------

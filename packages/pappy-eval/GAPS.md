@@ -16,6 +16,7 @@ pappy-core changes — re-run `pnpm pappy:eval:raw-real-pappy` and
 | Judge mode | passed/total | cheat catch | false accept | false reject | trainEl. precision | grounding |
 |---|---|---|---|---|---|---|
 | `reference` (harness's own stand-in) | 23/23 | 100% | 0% | 0% | 100% | 100% |
+| `raw-real-pappy` (real Pappy, unmodified) | **13/23** | **100%** | **0%** | **71.4%** | 62.5% | 4.3%** |
 | `raw-real-pappy` (real Pappy, unmodified) | **19/23** | **100%** | **0%** | **28.6%** | 100% | 4.3%** |
 | `pappy-plus-hardening` (hardening + real Pappy) | 18/23 | 100% | 0% | 42.9% | 100% | 54.9% |
 
