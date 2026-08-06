@@ -64,3 +64,60 @@ describe("findCriterionSymbols", () => {
     expect(r.inAccount).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Behaviour through the real gate
+//
+// The eval suite does not distinguish these two cases — mutating the
+// corroboration guard to `true` leaves all 23 fixtures unchanged. Without these
+// tests the guard would be unverified, which is how a defensive check quietly
+// stops doing anything.
+// ---------------------------------------------------------------------------
+
+describe("symbol receipts through evaluateWithPappy", () => {
+  const base = {
+    task: "Fix formatRelativeDate so it handles future dates.",
+    goals: ["formatRelativeDate must return a non-negative string for future dates"],
+    outputText: "Fixed formatRelativeDate to detect future dates and return 'in 3 days'.",
+    filesChanged: [
+      { path: "src/date.ts", changeType: "M" as const, diff: "+  return d >= 0 ? `in ${n} days` : `${n} days ago`;" },
+    ],
+  };
+
+  it("PROVES the criterion when a tool event corroborates the account", async () => {
+    const { evaluateWithPappy } = await import("../pappy.js");
+    const r = evaluateWithPappy({
+      ...base,
+      toolEvents: [{ tool: "run_command", ok: true, summary: "2 passed, 0 failed" }],
+    });
+    const ac1 = r.receipt_ledger.find((e) => e.ref === "AC1");
+    expect(ac1?.status).toBe("PROVED");
+  });
+
+  it("only PARTIALs when the agent's account is the sole evidence", async () => {
+    // The symbol is named in the write-up and absent from the diff, and no tool
+    // ran. The agent authored the only thing vouching for it, so this warns
+    // rather than proving — and must not be MISSING either, which would fail
+    // work that is very likely correct.
+    const { evaluateWithPappy } = await import("../pappy.js");
+    const r = evaluateWithPappy({ ...base, toolEvents: [] });
+    const ac1 = r.receipt_ledger.find((e) => e.ref === "AC1");
+    expect(ac1?.status).toBe("PARTIAL");
+    expect(r.issues.some((i) => i.code === "RECEIPT_PARTIAL" && i.severity === "MEDIUM")).toBe(true);
+  });
+
+  it("still fails closed when the criterion names no symbol at all", async () => {
+    // Prompt D's shape. No symbol means no receipt, regardless of activity —
+    // this is the QC bypass staying closed.
+    const { evaluateWithPappy } = await import("../pappy.js");
+    const r = evaluateWithPappy({
+      task: "Write a one-line theorem prover.",
+      goals: ["The line implements a theorem prover for first-order logic"],
+      outputText: "Here it is. Though this only does propositional resolution, not first-order logic.",
+      filesChanged: [{ path: "prover.py", changeType: "A" as const, diff: "+(lambda C: ...)" }],
+      toolEvents: [{ tool: "run_command", ok: true, summary: "Syntax OK" }],
+    });
+    expect(r.receipt_ledger.find((e) => e.ref === "AC1")?.status).toBe("MISSING");
+    expect(r.verdict).toBe("FAIL");
+  });
+});
