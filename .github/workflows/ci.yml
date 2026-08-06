@@ -91,15 +91,27 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Scoped to production dependencies on purpose.  A full-tree audit
-      # currently cannot pass: electron-builder pulls minimatch ->
-      # brace-expansion@2, and the fix for the outstanding brace-expansion
-      # advisory only exists in 5.x, which minimatch does not accept.  Those
-      # packages are devDependencies used at packaging time and never ship.
-      # Dependabot still reports the full tree, so nothing is hidden here —
-      # this gate blocks what actually reaches users.
-      - name: Audit production dependencies
-        run: pnpm audit --prod --audit-level high
+      # Full tree, not --prod.
+      #
+      # This was scoped to --prod because a full-tree audit could not pass:
+      # electron-builder pulls minimatch -> brace-expansion@2, whose fix only
+      # existed in 5.x.  Raised overrides have since resolved that, and the full
+      # tree now passes at both high and moderate.
+      #
+      # The scoping had a hole worth naming, because "devDependency" and "does
+      # not ship" are not the same claim.  Electron is declared in
+      # apps/desktop devDependencies — correct, electron-builder needs it at
+      # build time — so pnpm scoped it as dev and --prod skipped it entirely.
+      # But Electron *is* the runtime inside the packaged EXE: 15 advisories
+      # (3 high) sat against the shipped 39.8.5 while this gate reported clean.
+      # Dependabot caught them; CI did not.
+      #
+      # If a packaging-only advisory ever blocks this again, prefer ignoring
+      # that specific CVE via pnpm.auditConfig.ignoreCves over re-scoping the
+      # whole gate — an explicit, reviewable exception rather than a silent
+      # blind spot.
+      - name: Audit dependencies
+        run: pnpm audit --audit-level high
 
       # workbench-core is vendored with its own package-lock.json, so it does not
       # inherit the root pnpm overrides and the pnpm audit above cannot see it.
