@@ -166,7 +166,36 @@ function wordOrStemMatches(outputText: string, word: string): boolean {
       return true;
     }
   }
-  
+
+  // Hyphenated compounds are extracted as single tokens — the term splitter does
+  // not break on "-" — so "non-negative" was only ever satisfied by the literal
+  // string "non-negative". An answer saying "instead of negative numbers"
+  // satisfies that criterion in substance and was scored as missing it.
+  //
+  // Matches on the longest component — the part carrying the meaning — rather
+  // than on any part. Three rules were measured against the eval suite:
+  //
+  //   every part must match     18/23, false reject 42.9%
+  //   any part may match        19/23, false reject 28.6%
+  //   longest part must match   19/23, false reject 28.6%
+  //
+  // All three held false accepts at 0%. "every" was my first instinct and the
+  // measurement did not support it: it costs a false reject to buy nothing.
+  // "longest" accepts strictly less than "any" for the same result, so it is
+  // preferred — "user-provided" is satisfied by "provided", not by an unrelated
+  // mention of "user".
+  //
+  // Parts shorter than four characters ("non", "re") carry no meaning alone and
+  // are ignored rather than demanded — requiring them would make the compound
+  // unsatisfiable for the opposite reason.
+  if (lowerWord.includes("-")) {
+    const parts = lowerWord.split("-").filter((p) => p.length >= 4);
+    const head = parts.slice().sort((a, b) => b.length - a.length)[0];
+    if (head && wordOrStemMatches(lowerOutput, head)) {
+      return true;
+    }
+  }
+
   return false;
 }
 
