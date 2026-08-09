@@ -6,7 +6,7 @@ on:
       - security/nanoid-3.3.17
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   refresh-lockfile:
@@ -29,12 +29,12 @@ jobs:
       - name: Verify high-severity audit is clear
         run: pnpm audit --audit-level high
 
-      - name: Commit refreshed lockfile
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml
-          if ! git diff --cached --quiet; then
-            git commit -m "fix(deps): refresh nanoid lockfile"
-            git push
-          fi
+      - name: Show lockfile diff
+        run: git diff -- pnpm-lock.yaml
+
+      - name: Upload refreshed lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: refreshed-pnpm-lock
+          path: pnpm-lock.yaml
+          if-no-files-found: error
