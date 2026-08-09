@@ -87,6 +87,20 @@ export function detectTrainingExportExclusion(text: string): string | undefined 
   return undefined;
 }
 
+/**
+ * PappyPort stamps the effective training decision into the persisted summary.
+ * Keep this separate from the verdict filter: PASS/WARN/FAIL and trainability
+ * intentionally answer different questions.
+ */
+export function detectTrainingEligibilityExclusion(summary: string | undefined): string | undefined {
+  if (!summary) return undefined;
+  const match = summary.match(/\btraining_eligibility=(eligible|accepted_but_not_trainable|needs_human_review|rejected)\b/i);
+  if (!match?.[1]) return undefined;
+
+  const eligibility = match[1].toLowerCase();
+  return eligibility === 'eligible' ? undefined : eligibility;
+}
+
 async function collectEvidenceText(store: OrcaStore, runId: string): Promise<string> {
   try {
     const events = await store.getRunToolEvents(runId);
@@ -128,7 +142,17 @@ export async function exportTrainingData(
       continue;
     }
 
-    // 2. Repair pass filter — default 0 means first-attempt-only
+    // 2. Pappy training-eligibility filter. A PASS is not automatically
+    // trainable; verifier provenance and integrity checks may forbid export.
+    const trainingExclusion = detectTrainingEligibilityExclusion(run.summary);
+    if (trainingExclusion) {
+      const key = `pappy_training_eligibility:${trainingExclusion}`;
+      skipReasons[key] = (skipReasons[key] ?? 0) + 1;
+      skipped++;
+      continue;
+    }
+
+    // 3. Repair pass filter — default 0 means first-attempt-only
     const repairPasses = run.repairPasses ?? 0;
     if (repairPasses > maxRepairs) {
       skipReasons['too_many_repairs'] = (skipReasons['too_many_repairs'] ?? 0) + 1;
@@ -136,14 +160,14 @@ export async function exportTrainingData(
       continue;
     }
 
-    // 3. Task type filter
+    // 4. Task type filter
     if (opts.taskType !== undefined && run.role !== opts.taskType) {
       skipReasons['wrong_task_type'] = (skipReasons['wrong_task_type'] ?? 0) + 1;
       skipped++;
       continue;
     }
 
-    // 4. Minimum iterations filter
+    // 5. Minimum iterations filter
     const iterations = run.iterationCount ?? 1;
     if (opts.minIterations !== undefined && iterations < opts.minIterations) {
       skipReasons['too_few_iterations'] = (skipReasons['too_few_iterations'] ?? 0) + 1;
@@ -151,7 +175,7 @@ export async function exportTrainingData(
       continue;
     }
 
-    // 5. Output quality check — skip empty or suspiciously short outputs
+    // 6. Output quality check — skip empty or suspiciously short outputs
     const outputText = run.outputText ?? '';
     if (outputText.length < MIN_OUTPUT_LENGTH) {
       skipReasons['output_too_short'] = (skipReasons['output_too_short'] ?? 0) + 1;
@@ -159,7 +183,7 @@ export async function exportTrainingData(
       continue;
     }
 
-    // 6. Training-safety filter - do not export poisoned or credential-bearing
+    // 7. Training-safety filter - do not export poisoned or credential-bearing
     // examples even if Pappy returned PASS/WARN.
     const evidenceText = await collectEvidenceText(store, run.id);
     const exportCorpus = [
