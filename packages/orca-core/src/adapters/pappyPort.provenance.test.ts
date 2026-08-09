@@ -4,8 +4,8 @@ import { createPappyPort } from "./pappyPort.js";
 
 function cleanInput(overrides: Partial<PappyInput> = {}): PappyInput {
   return {
-    task: "Explain recursion.",
-    outputText: "Recursion is a function calling itself until a terminating condition is reached.",
+    task: "Explain what recursion means.",
+    outputText: "Recursion is a function calling itself. This is a detailed explanation of how recursion works in programming.",
     toolEvents: [{ tool: "read_file", ok: true, summary: "context read" }],
     ...overrides,
   };
