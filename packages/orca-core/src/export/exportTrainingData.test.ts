@@ -120,9 +120,46 @@ describe("exportTrainingData training-safety filtering", () => {
     expect(readFileSync(out, "utf8")).toBe("");
   });
 
+  it("does not export a PASS run that Pappy marked accepted-but-not-trainable", async () => {
+    const out = outputPath();
+    const store = new MemoryStore([
+      makeRun({
+        id: "self-reviewed-run",
+        summary: "verdict=PASS no_issues training_eligibility=accepted_but_not_trainable review_independence=self_review review_fallback=true",
+      }),
+    ]);
+
+    const summary = await exportTrainingData(store, { outputPath: out });
+
+    expect(summary.exported).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(summary.skipReasons["pappy_training_eligibility:accepted_but_not_trainable"]).toBe(1);
+    expect(readFileSync(out, "utf8")).toBe("");
+  });
+
+  it("does not export a run whose verifier independence is unresolved", async () => {
+    const out = outputPath();
+    const store = new MemoryStore([
+      makeRun({
+        id: "unknown-review-run",
+        summary: "verdict=PASS no_issues training_eligibility=needs_human_review review_independence=unknown review_fallback=true",
+      }),
+    ]);
+
+    const summary = await exportTrainingData(store, { outputPath: out });
+
+    expect(summary.exported).toBe(0);
+    expect(summary.skipReasons["pappy_training_eligibility:needs_human_review"]).toBe(1);
+  });
+
   it("exports safe PASS runs", async () => {
     const out = outputPath();
-    const store = new MemoryStore([makeRun({ id: "safe-run" })]);
+    const store = new MemoryStore([
+      makeRun({
+        id: "safe-run",
+        summary: "verdict=PASS no_issues training_eligibility=eligible review_independence=independent review_fallback=false",
+      }),
+    ]);
 
     const summary = await exportTrainingData(store, { outputPath: out });
     const lines = readFileSync(out, "utf8").trim().split("\n");
