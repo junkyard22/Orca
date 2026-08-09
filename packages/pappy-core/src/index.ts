@@ -26,4 +26,8 @@ export type {
   FileChange,
   ToolEvent,
   Constraints,
+  ModelIdentity,
+  ModelReviewProvenance,
+  ReviewIndependenceStatus,
+  ReviewIndependence,
 } from "./types.js";
