@@ -6,7 +6,7 @@ on:
       - security/nanoid-3.3.17
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   refresh-lockfile:
@@ -29,12 +29,27 @@ jobs:
       - name: Verify high-severity audit is clear
         run: pnpm audit --audit-level high
 
-      - name: Show lockfile diff
-        run: git diff -- pnpm-lock.yaml
+      - name: Create detached fix commit object
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE_SHA="$(git rev-parse HEAD)"
+          BASE_TREE="$(git show -s --format=%T "$BASE_SHA")"
 
-      - name: Upload refreshed lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: refreshed-pnpm-lock
-          path: pnpm-lock.yaml
-          if-no-files-found: error
+          BLOB_SHA="$(jq -Rs '{content: ., encoding: "utf-8"}' < pnpm-lock.yaml | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input - --jq .sha)"
+
+          TREE_SHA="$(jq -n \
+            --arg base "$BASE_TREE" \
+            --arg blob "$BLOB_SHA" \
+            '{base_tree:$base,tree:[{path:"pnpm-lock.yaml",mode:"100644",type:"blob",sha:$blob},{path:".github/workflows/refresh-nanoid-lock.yml",mode:"100644",type:"blob",sha:null}]}' \
+            | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/trees" --input - --jq .sha)"
+
+          COMMIT_SHA="$(jq -n \
+            --arg message "fix(deps): patch nanoid vulnerability" \
+            --arg tree "$TREE_SHA" \
+            --arg parent "$BASE_SHA" \
+            '{message:$message,tree:$tree,parents:[$parent]}' \
+            | gh api --method POST "repos/${GITHUB_REPOSITORY}/git/commits" --input - --jq .sha)"
+
+          echo "GENERATED_COMMIT_SHA=$COMMIT_SHA"
