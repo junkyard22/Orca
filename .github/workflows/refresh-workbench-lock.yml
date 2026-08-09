@@ -22,7 +22,7 @@ jobs:
 
       - name: Refresh workbench lockfile
         working-directory: packages/workbench-core
-        run: npm install --package-lock-only
+        run: npm install --package-lock-only --workspaces=false
 
       - name: Verify workbench high-severity audit is clear
         working-directory: packages/workbench-core
