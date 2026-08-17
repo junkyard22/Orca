@@ -221,4 +221,17 @@ describe("settings", () => {
 
     expect(loaded.workspaceRoot).toBe("C:\\Orca\\Orca");
   });
+
+  it("round-trips Cargo resolution and Narrator progress settings", async () => {
+    await saveSettings({
+      ...baseSettings,
+      autoResolveCargo: false,
+      narratorProgressMode: "model",
+    });
+
+    const loaded = await loadSettings();
+
+    expect(loaded.autoResolveCargo).toBe(false);
+    expect(loaded.narratorProgressMode).toBe("model");
+  });
 });

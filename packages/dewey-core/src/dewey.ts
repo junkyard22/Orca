@@ -2,7 +2,15 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ContextStore } from './context/contextStore.js';
 import { PlanReviewer } from './review/planReviewer.js';
-import type { UserBrief, DeweyReview, BrainPlan, ObservedRun } from './types.js';
+import { summarizeContextManifest } from './cargo.js';
+import type {
+  ContextManifest,
+  ContextManifestAction,
+  UserBrief,
+  DeweyReview,
+  BrainPlan,
+  ObservedRun,
+} from './types.js';
 
 const DEFAULT_CONTEXT_PATH = join(homedir(), '.orca', 'userContext.json');
 
@@ -63,6 +71,7 @@ export class Dewey {
       ...context.warm.learnedPreferences.communication,
     ]);
     const tone = detectTone(context.warm.learnedPreferences.communication);
+    const resourceBrief = summarizeContextManifest(context.hot.currentSession.manifest);
 
     console.error(`[Dewey] Briefing for task type "${taskType}", tone "${tone}"`);
 
@@ -70,9 +79,10 @@ export class Dewey {
       userName: context.hot.name,
       timezone: context.hot.timezone,
       relevantPreferences,
-      relevantContext: notes,
+      relevantContext: uniqueStrings([...notes, ...resourceBrief.lines]),
       availableApps,
       suggestedTone: tone,
+      resourceBrief,
     };
   }
 
@@ -100,5 +110,13 @@ export class Dewey {
   async startSession(): Promise<void> {
     await this.store.load();
     await this.store.startSession();
+  }
+
+  async getManifest(): Promise<ContextManifest> {
+    return this.store.getManifest();
+  }
+
+  async updateManifest(action: ContextManifestAction): Promise<ContextManifest> {
+    return this.store.updateManifest(action);
   }
 }

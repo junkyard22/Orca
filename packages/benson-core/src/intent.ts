@@ -201,9 +201,9 @@ function extractPermissions(message: string): Permission[] {
   const permissions: Permission[] = ["read"];
   const leadingVerb = extractLeadingVerb(message);
 
-  const writeSignals = /\b(create|write|save|edit|modify|update|delete|remove|add|append)\b/i;
+  const writeSignals = /\b(create|write|save|edit|modify|update|delete|remove|add|append|fix|implement|refactor|rename|replace|patch|move|send|post|merge|close|reopen|approve|reject|clone)\b/i;
   const shellSignals = /\b(run|execute|install|build|deploy|compile|start|stop)\b/i;
-  const networkSignals = /\b(fetch|download|upload|request|call|api|url|http)\b/i;
+  const networkSignals = /\b(fetch|download|upload|request|call|api|url|http|github|connector|web|repo|repository|remote|clone)\b/i;
 
   if (writeSignals.test(message)) permissions.push("write");
   if (shellSignals.test(message) || leadingVerb === "test") permissions.push("shell");

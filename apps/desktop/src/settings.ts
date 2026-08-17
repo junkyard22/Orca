@@ -101,6 +101,10 @@ export interface OrcaSettings {
    * Defaults to true (shown).
    */
   showPipeline?:   boolean;
+  /** Resolve attached URLs and previous runs into compact Dewey summaries. Defaults to true. */
+  autoResolveCargo?: boolean;
+  /** Use the configured Narrator role to style the fixed progress vocabulary. */
+  narratorProgressMode?: 'standard' | 'model';
   /**
    * GitHub Personal Access Token. Injected as GITHUB_TOKEN for the
    * github_clone_repo tool and other GitHub API calls. Requires `repo` scope

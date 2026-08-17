@@ -23,6 +23,7 @@ describe("normalizeTaskSpec", () => {
       fileRead: true,
       fileWrite: false,
       shellExec: false,
+      networkAccess: false,
     });
     // No toolsAllowed — dynamic MCP tools must not be blocked
     expect(task.permissions?.toolsAllowed).toBeUndefined();
@@ -38,6 +39,7 @@ describe("normalizeTaskSpec", () => {
 
     expect(task.permissions?.fileWrite).toBe(true);
     expect(task.permissions?.shellExec).toBe(true);
+    expect(task.permissions?.networkAccess).toBe(true);
     // No whitelist — all registered tools (including MCP) are available
     expect(task.permissions?.toolsAllowed).toBeUndefined();
   });

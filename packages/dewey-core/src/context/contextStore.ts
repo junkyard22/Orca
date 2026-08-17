@@ -1,6 +1,11 @@
 import { promises as fs } from 'node:fs';
 import { dirname } from 'node:path';
-import type { PreferenceBuckets, UserContext } from '../types.js';
+import {
+  applyContextManifestAction,
+  createEmptyContextManifest,
+  normalizeContextManifest,
+} from '../cargo.js';
+import type { ContextManifest, ContextManifestAction, PreferenceBuckets, UserContext } from '../types.js';
 
 function emptyPreferenceBuckets(): PreferenceBuckets {
   return {
@@ -16,7 +21,11 @@ const DEFAULT_CONTEXT: UserContext = {
   hot: {
     name: "User",
     timezone: "America/Chicago",
-    currentSession: { startedAt: "", recentTasks: [] },
+    currentSession: {
+      startedAt: "",
+      recentTasks: [],
+      manifest: createEmptyContextManifest(),
+    },
   },
   warm: {
     learnedPreferences: emptyPreferenceBuckets(),
@@ -83,6 +92,7 @@ function normalizeContext(raw: unknown): UserContext {
             ? currentSession.startedAt
             : defaults.hot.currentSession.startedAt,
         recentTasks: normalizeStringArray(currentSession.recentTasks),
+        manifest: normalizeContextManifest(currentSession.manifest),
       },
     },
     warm: {
@@ -185,5 +195,20 @@ export class ContextStore {
   async recordTask(taskSummary: string): Promise<void> {
     this.context.hot.currentSession.recentTasks.push(taskSummary);
     await this.save();
+  }
+
+  async getManifest(): Promise<ContextManifest> {
+    await this.load();
+    return structuredClone(this.context.hot.currentSession.manifest);
+  }
+
+  async updateManifest(action: ContextManifestAction): Promise<ContextManifest> {
+    await this.load();
+    this.context.hot.currentSession.manifest = applyContextManifestAction(
+      this.context.hot.currentSession.manifest,
+      action,
+    );
+    await this.save();
+    return structuredClone(this.context.hot.currentSession.manifest);
   }
 }

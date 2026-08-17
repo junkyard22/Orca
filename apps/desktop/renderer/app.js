@@ -13,8 +13,11 @@ if (!window.orca) {
     onToolRequest:     () => () => {},
     onMaximizeChange:  () => () => {},
     sendMessage:       async () => ({ ok: false, error: "No Electron context" }),
-    getSettings:       async () => ({ providers: [], roles: {}, budgetUsd: 0.10, maxRepairPasses: 2, verbose: false, workspaceRoot: "", showPipeline: true, githubToken: "" }),
+    getSettings:       async () => ({ providers: [], roles: {}, budgetUsd: 0.10, maxRepairPasses: 2, verbose: false, workspaceRoot: "", showPipeline: true, autoResolveCargo: true, narratorProgressMode: "standard", githubToken: "" }),
     saveSettings:      async () => ({ ok: false, error: "No Electron context" }),
+    getCargo:          async () => null,
+    updateCargo:       async () => ({ ok: false, error: "No Electron context" }),
+    pickCargoResources: async () => [],
     getAuthStatus:     async () => ({ enabled: false, hasPassword: false, locked: false }),
     unlock:            async () => ({ ok: false, error: "No Electron context" }),
     lock:              async () => ({ enabled: false, hasPassword: false, locked: false }),
@@ -46,9 +49,20 @@ const statusText    = document.getElementById("status-text");
 const statusbarCost = document.getElementById("statusbar-cost");
 const chatView      = document.getElementById("chat-view");
 const settingsView  = document.getElementById("settings-view");
-const attachBtn     = document.getElementById("attach-btn");
-const fileInput     = document.getElementById("file-input");
-const attachBar     = document.getElementById("attachments-bar");
+const cargoAddBtn   = document.getElementById("cargo-add-btn");
+const cargoAddMenu  = document.getElementById("cargo-add-menu");
+const slashPalette  = document.getElementById("slash-palette");
+const contextTray   = document.getElementById("context-tray");
+const contextChips  = document.getElementById("context-chips");
+const contextCount  = document.getElementById("context-tray-count");
+const cargoDialog   = document.getElementById("cargo-dialog");
+const cargoDialogForm = document.getElementById("cargo-dialog-form");
+const cargoDialogTitle = document.getElementById("cargo-dialog-title");
+const cargoDialogDescription = document.getElementById("cargo-dialog-description");
+const cargoDialogInput = document.getElementById("cargo-dialog-input");
+const cargoDialogOptions = document.getElementById("cargo-dialog-options");
+const cargoDialogError = document.getElementById("cargo-dialog-error");
+const cargoDialogSubmit = document.getElementById("cargo-dialog-submit");
 const sidebar       = document.getElementById("sidebar");
 const sessionList   = document.getElementById("session-list");
 const topbarTitle   = document.getElementById("topbar-title");
@@ -127,9 +141,12 @@ function destroyLiveTracePanel() {
   livePanel = null;
 }
 
-// ── Pending file attachments ───────────────────────────────────────────────
-// Each entry: { name, type, content, dataUrl?, isImage }
-const pendingAttachments = [];
+// ── Persistent Cargo context ───────────────────────────────────────────────
+let cargoManifest = null;
+let cargoConnectors = [];
+let cargoPreviousRuns = [];
+let slashSelection = 0;
+let cargoDialogState = null;
 
 // Streaming: active bubble element + accumulated raw text while tokens arrive.
 // Finalised (markdown-rendered) when sendMessage resolves.
@@ -212,8 +229,9 @@ function applyAuthStatus(status) {
   if (authState.locked) {
     settingsView.style.display = "none";
     chatView.style.display = "flex";
-    pendingAttachments.splice(0);
-    renderAttachmentBar();
+    cargoAddMenu.classList.add("hidden");
+    slashPalette.classList.add("hidden");
+    closeCargoDialog();
     authPassword.value = "";
     clearAuthError();
     focusUnlock();
@@ -221,6 +239,7 @@ function applyAuthStatus(status) {
 
   syncComposerState();
   syncIdleStatus();
+  if (!authState.locked) refreshCargo();
   if (!authState.locked && !busy && settingsView.style.display !== "flex") {
     inputEl.focus();
   }
@@ -277,6 +296,7 @@ function handleInitStatus(s) {
 
   syncComposerState();
   syncIdleStatus();
+  refreshCargo();
 }
 
 orca.onInitStatus(handleInitStatus);
@@ -338,23 +358,10 @@ orca.onOrcaEvent((e) => {
     return;
   }
 
-  const labels = {
-    "task:start":    "planning\u2026",
-    "maestro:start": e.isRepair ? `repairing (pass ${e.attempt})\u2026` : "generating\u2026",
-    "maestro:done":  e.isRepair ? `repair pass ${e.attempt} done` : "reviewing\u2026",
-    "qc:result":     e.verdict === "PASS" ? "QC passed \u2713" : `QC found ${e.issueCount} issue(s)`,
-    "repair:start":  `starting repair pass ${e.pass}/${e.maxPasses}\u2026`,
-    "maestro:agent_start": `${e.role} agent generating\u2026`,
-    "maestro:agent_done":  e.stoppedBecause === "done" ? `${e.role} done (${e.iterations} iter)` : `${e.role} stopped: ${e.stoppedBecause}`,
-    "subagent:spawned": `worker ${e.role} started\u2026`,
-    "subagent:done": e.ok ? `worker ${e.role} done; synthesizing\u2026` : `worker ${e.role} incomplete; synthesizing\u2026`,
-    "subagent:failed": `worker ${e.role} failed; synthesizing\u2026`,
-    "task:done":     "done",
-  };
-  const label = labels[e.type] ?? e.type;
-  // Only update the status bar while a task is actively running;
-  // late-arriving events after the task resolves should not override "ready".
-  if (busy) setStatus(label, e.type !== "task:done");
+  // Narrator copy is produced by Benson from semantic milestones only. Keep
+  // internal role names, gate labels, counters, and stop reasons in Details.
+  const narratorMessage = e.narratorProgress?.message;
+  if (busy && narratorMessage) setStatus(narratorMessage, e.type !== "task:done");
 });
 
 // ── Streaming IPC channels ────────────────────────────────────────────────
@@ -410,7 +417,7 @@ function setStatus(text, active = false) {
 
 function setInputEnabled(enabled) {
   inputEl.disabled   = !enabled;
-  attachBtn.disabled = !enabled;
+  cargoAddBtn.disabled = !enabled;
 
   if (busy) {
     sendBtn.disabled = false;
@@ -1243,8 +1250,7 @@ function appendToolCard(id, tool, args) {
 
 async function sendMessage() {
   const text = inputEl.value.replace(/\r\n?/g, "\n").trim();
-  const hasAttachments = pendingAttachments.length > 0;
-  if (!text && !hasAttachments) return;
+  if (!text) return;
   if (busy) return;
   if (!canUseApp()) {
     if (authKnown && authState.locked) {
@@ -1263,32 +1269,29 @@ async function sendMessage() {
   pendingPipelineSummary = null;
   setInputEnabled(false);
   inputEl.value = "";
+  slashPalette.classList.add("hidden");
   autoResize();
   if (statusbarCost) statusbarCost.textContent = "";
 
-  // Snapshot and clear attachments before async work
-  const snapshotAttachments = pendingAttachments.splice(0);
-  renderAttachmentBar();
-
-  // Build the text that actually gets sent to the model
-  const attachCtx = buildAttachmentContextFrom(snapshotAttachments);
-  const fullText   = attachCtx ? (text ? `${attachCtx}\n\n${text}` : attachCtx) : text;
-
-  // Show user bubble (with optional image previews)
-  appendUserMsg(text, snapshotAttachments);
+  // Cargo carries references only; resource contents are fetched lazily by
+  // Miranda-gated tools rather than being copied into the prompt.
+  appendUserMsg(text, []);
   if (text) setTopbarTitle(text);
   appendThinking();
-  // Phase 1 live pipeline trace — compact "Orca is working…" panel.
-  // Hidden via CSS when Show Pipeline is off; otherwise it streams safe
-  // progress rows from runtime events while the task is active.
+  // The Narrator stays visible for general progress. The existing Show
+  // Pipeline setting controls only its expandable technical details.
   startLiveTracePanel("");
-  setStatus("planning…", true);
+  setStatus("Getting started…", true);
 
   let finalStatus = "ready";
   try {
-    const result = await orca.sendMessage(fullText);
+    const result = await orca.sendMessage(text);
+    if (result.cargoManifest) {
+      cargoManifest = result.cargoManifest;
+      renderContextTray();
+    }
     removeThinking();
-    finishLiveTracePanel("done");
+    finishLiveTracePanel(result.ok ? "Work complete" : "Could not complete");
 
     if (streamBubble) {
       // Attach role badge before finalising (element still accessible here).
@@ -1335,7 +1338,7 @@ async function sendMessage() {
     if (!result.ok) finalStatus = "error";
   } catch (err) {
     removeThinking();
-    finishLiveTracePanel("error");
+    finishLiveTracePanel("Could not complete");
     if (streamBubble) { streamBubble.remove(); streamBubble = null; streamText = ""; }
     appendSys(String(err), "error");
     finalStatus = "error";
@@ -1363,146 +1366,275 @@ function autoResize() {
 }
 inputEl.addEventListener("input", autoResize);
 
-// ── File attachment logic ─────────────────────────────────────────────────
+const SLASH_COMMANDS = [
+  { name: "repo", description: "Attach a repository", takesArgument: true },
+  { name: "file", description: "Attach a file or path", takesArgument: true },
+  { name: "task", description: "Attach a task", takesArgument: true },
+  { name: "connect", description: "Attach a configured connector", takesArgument: true },
+  { name: "context", description: "Show the current Cargo manifest", takesArgument: false },
+  { name: "status", description: "Show workspace and connector status", takesArgument: false },
+];
 
-const IMAGE_TYPES = new Set(["image/png","image/jpeg","image/gif","image/webp","image/svg+xml","image/bmp"]);
-const MAX_TEXT_BYTES = 200_000; // 200 KB text cap before truncation
+function cargoResources(manifest) {
+  if (!manifest) return [];
+  const resources = [];
+  if (manifest.workspace?.rootPath) {
+    resources.push({ icon: "W", label: manifest.workspace.label || manifest.workspace.rootPath, detail: manifest.workspace.rootPath });
+  }
+  if (manifest.workspace?.repository) {
+    const repo = manifest.workspace.repository;
+    resources.push({ id: repo.id, icon: "R", label: repo.label, detail: repo.locator });
+  }
+  for (const file of manifest.files ?? []) {
+    resources.push({ id: file.id, icon: file.kind === "folder" ? "D" : "F", label: file.label, detail: file.path });
+  }
+  for (const task of manifest.tasks ?? []) {
+    resources.push({ id: task.id, icon: "T", label: task.label, detail: task.reference });
+  }
+  for (const connector of manifest.connectors ?? []) {
+    resources.push({
+      id: connector.id,
+      icon: "C",
+      label: connector.label,
+      detail: connector.available ? "Connected" : "Not configured",
+      unavailable: !connector.available,
+    });
+  }
+  for (const item of manifest.urls ?? []) {
+    resources.push({ id: item.id, icon: "U", label: item.label, detail: item.url });
+  }
+  for (const run of manifest.previousRuns ?? []) {
+    resources.push({ id: run.id, icon: "P", label: run.label, detail: run.runId });
+  }
+  return resources;
+}
 
-function readAsText(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => resolve(null);
-    reader.readAsText(file);
+function renderContextTray() {
+  const resources = cargoResources(cargoManifest);
+  contextTray.classList.toggle("empty", resources.length === 0);
+  contextCount.textContent = resources.length ? `${resources.length} loaded` : "Empty";
+  contextChips.innerHTML = resources.map((resource) => `
+    <div class="context-chip${resource.unavailable ? " unavailable" : ""}" title="${escapeHtml(resource.detail || resource.label)}">
+      <span class="context-chip-icon">${resource.icon}</span>
+      <span class="context-chip-label">${escapeHtml(resource.label)}</span>
+      ${resource.id ? `<button type="button" data-cargo-remove="${escapeHtml(resource.id)}" aria-label="Remove ${escapeHtml(resource.label)} from Cargo">×</button>` : ""}
+    </div>
+  `).join("");
+  contextChips.querySelectorAll("[data-cargo-remove]").forEach((button) => {
+    button.addEventListener("click", () => updateCargo({ type: "remove", resourceId: button.dataset.cargoRemove }));
   });
 }
 
-function readAsDataURL(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => resolve(null);
-    reader.readAsDataURL(file);
-  });
-}
-
-function formatBytes(n) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-async function addAttachment(file) {
-  const isImage = IMAGE_TYPES.has(file.type) || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
-  let content = null;
-  let dataUrl = null;
-
-  if (isImage) {
-    dataUrl = await readAsDataURL(file);
-  } else {
-    // Try reading as text (will work for text/code files)
-    const raw = await readAsText(file);
-    if (raw !== null) {
-      content = raw.length > MAX_TEXT_BYTES
-        ? raw.slice(0, MAX_TEXT_BYTES) + `\n\n[… truncated — file is ${formatBytes(file.size)} total]`
-        : raw;
-    }
+async function refreshCargo() {
+  try {
+    const snapshot = await orca.getCargo();
+    if (!snapshot) return;
+    cargoManifest = snapshot.manifest;
+    cargoConnectors = snapshot.connectors ?? [];
+    cargoPreviousRuns = snapshot.previousRuns ?? [];
+    renderContextTray();
+  } catch {
+    // Cargo remains usable after the next successful init/status event.
   }
-
-  const att = { name: file.name, type: file.type, size: file.size, isImage, content, dataUrl };
-  pendingAttachments.push(att);
-  renderAttachmentBar();
 }
 
-function removeAttachment(idx) {
-  pendingAttachments.splice(idx, 1);
-  renderAttachmentBar();
-}
-
-function renderAttachmentBar() {
-  if (!pendingAttachments.length) {
-    attachBar.style.display = "none";
-    attachBar.innerHTML = "";
-    return;
+async function updateCargo(action) {
+  const result = await orca.updateCargo(action);
+  if (!result?.ok) {
+    appendSys(result?.error || "Could not update Cargo.", "error");
+    return false;
   }
-  attachBar.style.display = "flex";
-  attachBar.innerHTML = pendingAttachments.map((att, i) => {
-    if (att.isImage && att.dataUrl) {
-      return `
-        <div class="attach-chip attach-chip--image" data-idx="${i}">
-          <img class="attach-thumb" src="${escapeHtml(att.dataUrl)}" alt="${escapeHtml(att.name)}" />
-          <span class="attach-chip-name">${escapeHtml(att.name)}</span>
-          <button class="attach-chip-remove" data-idx="${i}" title="Remove">✕</button>
-        </div>`;
-    }
-    const icon = att.content === null ? "📄" : "📝";
-    return `
-      <div class="attach-chip" data-idx="${i}">
-        <span class="attach-chip-icon">${icon}</span>
-        <span class="attach-chip-name">${escapeHtml(att.name)}</span>
-        <span class="attach-chip-size">${formatBytes(att.size)}</span>
-        <button class="attach-chip-remove" data-idx="${i}" title="Remove">✕</button>
-      </div>`;
-  }).join("");
+  cargoManifest = result.manifest;
+  renderContextTray();
+  return true;
+}
 
-  attachBar.querySelectorAll(".attach-chip-remove").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      removeAttachment(+btn.dataset.idx);
+function closeCargoDialog() {
+  cargoDialog.classList.add("hidden");
+  cargoDialogState = null;
+  cargoDialogInput.value = "";
+  cargoDialogOptions.innerHTML = "";
+  cargoDialogError.classList.add("hidden");
+  inputEl.focus();
+}
+
+function showCargoDialogError(message) {
+  cargoDialogError.textContent = message;
+  cargoDialogError.classList.remove("hidden");
+}
+
+function openCargoTextDialog(config) {
+  cargoDialogState = { mode: "text", ...config };
+  cargoDialogTitle.textContent = config.title;
+  cargoDialogDescription.textContent = config.description;
+  cargoDialogInput.placeholder = config.placeholder;
+  cargoDialogInput.type = config.inputType || "text";
+  cargoDialogInput.classList.remove("hidden");
+  cargoDialogOptions.innerHTML = "";
+  cargoDialogSubmit.classList.remove("hidden");
+  cargoDialog.classList.remove("hidden");
+  setTimeout(() => cargoDialogInput.focus(), 0);
+}
+
+function openCargoOptionsDialog(config) {
+  cargoDialogState = { mode: "options", selected: null, ...config };
+  cargoDialogTitle.textContent = config.title;
+  cargoDialogDescription.textContent = config.description;
+  cargoDialogInput.classList.add("hidden");
+  cargoDialogSubmit.classList.add("hidden");
+  cargoDialogOptions.innerHTML = config.options.length
+    ? config.options.map((option) => `
+        <button type="button" data-cargo-option="${escapeHtml(option.id)}"${option.disabled ? " disabled" : ""}>
+          <span>${escapeHtml(option.label)}</span>
+          ${option.meta ? `<small>${escapeHtml(option.meta)}</small>` : ""}
+        </button>
+      `).join("")
+    : '<p class="cargo-dialog-empty">Nothing is available yet.</p>';
+  cargoDialogOptions.querySelectorAll("[data-cargo-option]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const option = config.options.find((item) => item.id === button.dataset.cargoOption);
+      if (!option) return;
+      const ok = await updateCargo(config.action(option));
+      if (ok) closeCargoDialog();
     });
   });
+  cargoDialog.classList.remove("hidden");
 }
 
-// Build the context block from a given attachment array (not pendingAttachments directly).
-function buildAttachmentContextFrom(attachments) {
-  if (!attachments.length) return "";
-  const parts = [];
-  for (const att of attachments) {
-    if (att.isImage) {
-      parts.push(`[Attached image: ${att.name}]`);
-    } else if (att.content !== null) {
-      const ext = att.name.split(".").pop() ?? "";
-      parts.push(`[Attached file: ${att.name}]\n\`\`\`${ext}\n${att.content}\n\`\`\``);
-    } else {
-      parts.push(`[Attached file: ${att.name} (binary, ${formatBytes(att.size)})]`);
+async function handleCargoAdd(kind) {
+  cargoAddMenu.classList.add("hidden");
+  cargoAddBtn.setAttribute("aria-expanded", "false");
+  if (kind === "file" || kind === "folder") {
+    const picked = await orca.pickCargoResources(kind);
+    for (const resource of picked ?? []) {
+      await updateCargo({
+        type: "attach_file",
+        path: resource.path,
+        label: resource.label,
+        fileKind: resource.kind,
+      });
     }
+    return;
   }
-  return parts.join("\n\n");
+  if (kind === "repository") {
+    openCargoTextDialog({
+      title: "Add repository",
+      description: "Use owner/name, a repository URL, or a local repository label.",
+      placeholder: "owner/repository",
+      action: (value) => ({ type: "attach_repository", locator: value }),
+    });
+  } else if (kind === "task") {
+    openCargoTextDialog({
+      title: "Add task",
+      description: "Attach an issue number, task ID, or short task description.",
+      placeholder: "#142 or Fix the login flow",
+      action: (value) => ({ type: "attach_task", reference: value }),
+    });
+  } else if (kind === "url") {
+    openCargoTextDialog({
+      title: "Add URL",
+      description: "The page is referenced now and read later through a gated tool.",
+      placeholder: "https://example.com/resource",
+      inputType: "url",
+      validate: (value) => /^https?:\/\//i.test(value) ? null : "Enter an http:// or https:// URL.",
+      action: (value) => ({ type: "attach_url", url: value }),
+    });
+  } else if (kind === "connector") {
+    openCargoOptionsDialog({
+      title: "Add connector",
+      description: "Connectors come from Settings and the currently loaded tool stack.",
+      options: cargoConnectors.map((connector) => ({
+        ...connector,
+        meta: connector.available ? "Available" : "Not connected",
+      })),
+      action: (option) => ({
+        type: "attach_connector",
+        connectorId: option.id,
+        label: option.label,
+        available: option.available,
+      }),
+    });
+  } else if (kind === "previous_run") {
+    openCargoOptionsDialog({
+      title: "Add previous run",
+      description: "Attach a recent run as a reference for this workspace.",
+      options: cargoPreviousRuns.map((run) => ({
+        id: run.id,
+        label: run.label,
+        meta: new Date(run.createdAt).toLocaleString(),
+      })),
+      action: (option) => ({ type: "attach_previous_run", runId: option.id, label: option.label }),
+    });
+  }
 }
 
-// Button wiring
-attachBtn.addEventListener("click", () => fileInput.click());
+function slashMatches() {
+  const match = inputEl.value.match(/^\/([a-z]*)$/i);
+  if (!match) return [];
+  const query = (match[1] || "").toLowerCase();
+  return SLASH_COMMANDS.filter((command) => command.name.startsWith(query));
+}
 
-fileInput.addEventListener("change", async () => {
-  const files = Array.from(fileInput.files ?? []);
-  fileInput.value = ""; // allow re-selecting the same file
-  for (const f of files) await addAttachment(f);
-});
-
-// Drag-and-drop onto the input area
-const inputWrap = document.getElementById("input-wrap");
-inputWrap.addEventListener("dragover", (e) => {
-  e.preventDefault();
-  inputWrap.classList.add("drag-over");
-});
-inputWrap.addEventListener("dragleave", () => inputWrap.classList.remove("drag-over"));
-inputWrap.addEventListener("drop", async (e) => {
-  e.preventDefault();
-  inputWrap.classList.remove("drag-over");
-  const files = Array.from(e.dataTransfer?.files ?? []);
-  for (const f of files) await addAttachment(f);
-});
-
-// Paste images directly into the chat
-inputEl.addEventListener("paste", async (e) => {
-  const items = Array.from(e.clipboardData?.items ?? []);
-  const imageItems = items.filter((item) => item.kind === "file" && IMAGE_TYPES.has(item.type));
-  if (!imageItems.length) return;
-  e.preventDefault();
-  for (const item of imageItems) {
-    const file = item.getAsFile();
-    if (file) await addAttachment(file);
+function renderSlashPalette() {
+  const matches = slashMatches();
+  if (!matches.length) {
+    slashPalette.classList.add("hidden");
+    slashPalette.innerHTML = "";
+    return;
   }
+  slashSelection = Math.min(slashSelection, matches.length - 1);
+  slashPalette.innerHTML = matches.map((command, index) => `
+    <button type="button" role="option" class="${index === slashSelection ? "selected" : ""}" data-slash-command="${command.name}">
+      <code>/${command.name}</code><span>${command.description}</span>
+    </button>
+  `).join("");
+  slashPalette.classList.remove("hidden");
+  slashPalette.querySelectorAll("[data-slash-command]").forEach((button) => {
+    button.addEventListener("click", () => chooseSlashCommand(button.dataset.slashCommand));
+  });
+}
+
+function chooseSlashCommand(name) {
+  const command = SLASH_COMMANDS.find((item) => item.name === name);
+  if (!command) return;
+  inputEl.value = `/${command.name}${command.takesArgument ? " " : ""}`;
+  slashPalette.classList.add("hidden");
+  autoResize();
+  inputEl.focus();
+}
+
+cargoAddBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const open = cargoAddMenu.classList.toggle("hidden") === false;
+  cargoAddBtn.setAttribute("aria-expanded", String(open));
+  slashPalette.classList.add("hidden");
+});
+cargoAddMenu.querySelectorAll("[data-cargo-add]").forEach((button) => {
+  button.addEventListener("click", () => handleCargoAdd(button.dataset.cargoAdd));
+});
+cargoDialogForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!cargoDialogState || cargoDialogState.mode !== "text") return;
+  const value = cargoDialogInput.value.trim();
+  if (!value) return showCargoDialogError("Enter a value to add.");
+  const validationError = cargoDialogState.validate?.(value);
+  if (validationError) return showCargoDialogError(validationError);
+  const ok = await updateCargo(cargoDialogState.action(value));
+  if (ok) closeCargoDialog();
+});
+document.getElementById("cargo-dialog-cancel").addEventListener("click", closeCargoDialog);
+cargoDialog.addEventListener("click", (event) => {
+  if (event.target === cargoDialog) closeCargoDialog();
+});
+document.addEventListener("click", (event) => {
+  if (!cargoAddMenu.contains(event.target) && event.target !== cargoAddBtn) {
+    cargoAddMenu.classList.add("hidden");
+    cargoAddBtn.setAttribute("aria-expanded", "false");
+  }
+});
+inputEl.addEventListener("input", () => {
+  slashSelection = 0;
+  renderSlashPalette();
 });
 
 // ── Keyboard ──────────────────────────────────────────────────────────────
@@ -1510,6 +1642,26 @@ inputEl.addEventListener("paste", async (e) => {
 // Alt+Enter or Shift+Enter → insert a newline
 
 inputEl.addEventListener("keydown", (e) => {
+  if (!slashPalette.classList.contains("hidden")) {
+    const matches = slashMatches();
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const direction = e.key === "ArrowDown" ? 1 : -1;
+      slashSelection = (slashSelection + direction + matches.length) % matches.length;
+      renderSlashPalette();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      slashPalette.classList.add("hidden");
+      return;
+    }
+    if (e.key === "Enter" && !e.altKey && !e.shiftKey && matches[slashSelection]) {
+      e.preventDefault();
+      chooseSlashCommand(matches[slashSelection].name);
+      return;
+    }
+  }
   if (e.key === "Enter") {
     if (e.altKey || e.shiftKey) {
       // Insert a literal newline at the cursor position
@@ -1534,6 +1686,8 @@ const setBudget       = document.getElementById("set-budget");
 const setRepairs      = document.getElementById("set-repairs");
 const setVerbose      = document.getElementById("set-verbose");
 const setShowPipeline = document.getElementById("set-show-pipeline");
+const setAutoResolveCargo = document.getElementById("set-auto-resolve-cargo");
+const setModelNarrator = document.getElementById("set-model-narrator");
 const setWorkspace    = document.getElementById("set-workspace");
 const setSaveBtn      = document.getElementById("btn-save-settings");
 const setStatus2      = document.getElementById("settings-status");
@@ -2006,6 +2160,8 @@ function openSettings() {
     setRepairs.value       = String(s.maxRepairPasses ?? 2);
     setVerbose.checked        = !!s.verbose;
     setShowPipeline.checked   = s.showPipeline !== false;
+    setAutoResolveCargo.checked = s.autoResolveCargo !== false;
+    setModelNarrator.checked = s.narratorProgressMode === "model";
     setWorkspace.value        = s.workspaceRoot ?? "";
     const ghTokenEl = document.getElementById("set-github-token");
     if (ghTokenEl) ghTokenEl.value = s.githubToken ?? "";
@@ -2055,6 +2211,8 @@ setSaveBtn.addEventListener("click", async () => {
     maxRepairPasses: parseInt(setRepairs.value, 10) || 0,
     verbose:         setVerbose.checked,
     showPipeline:    setShowPipeline.checked,
+    autoResolveCargo: setAutoResolveCargo.checked,
+    narratorProgressMode: setModelNarrator.checked ? "model" : "standard",
     workspaceRoot:   setWorkspace.value.trim(),
     githubToken:     ghTokenInput ? (ghTokenInput.value.trim() || undefined) : editingSettings.githubToken,
   };

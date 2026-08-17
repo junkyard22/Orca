@@ -1,7 +1,7 @@
 /* ── Orca pipeline trace (Phase 1 visibility UI) ──────────────────────────
  * Produces a normalized, *safe* user-facing representation of pipeline
- * progress events. The renderer uses this to drive the live "Orca is
- * working…" panel without exposing chain-of-thought, raw prompts,
+ * progress events. The renderer uses this to drive the live Narrator panel
+ * without exposing chain-of-thought, raw prompts,
  * scratchpads, or tool args.
  *
  * Two pieces:
@@ -60,6 +60,13 @@
     if (typeof spec.startedAt === "number")  row.startedAt  = spec.startedAt;
     if (typeof spec.endedAt   === "number")  row.endedAt    = spec.endedAt;
     if (typeof spec.durationMs === "number") row.durationMs = spec.durationMs;
+    if (spec.narratorMessage) {
+      row.narratorMessage = safeString(spec.narratorMessage, MAX_SUMMARY_LEN);
+      row.narratorMilestone = safeStage(spec.narratorMilestone);
+      row.narratorTone = spec.narratorTone === "complete" || spec.narratorTone === "warning"
+        ? spec.narratorTone
+        : "active";
+    }
     return row;
   }
 
@@ -162,6 +169,19 @@
       : codes.join(", ");
   }
 
+  function safeNarratorProgress(value) {
+    if (!value || typeof value !== "object") return {};
+    const message = safeString(value.message, MAX_SUMMARY_LEN).trim();
+    if (!message) return {};
+    return {
+      narratorMessage: message,
+      narratorMilestone: safeStage(value.milestone),
+      narratorTone: value.tone === "complete" || value.tone === "warning"
+        ? value.tone
+        : "active",
+    };
+  }
+
   /**
    * Map a runtime OrcaEvent to a single normalized UI trace row.
    * Returns null when the event has no safe user-facing representation.
@@ -177,7 +197,10 @@
     const now = typeof o.now === "number" ? o.now : Date.now();
     const seq = typeof o.seq === "number" ? o.seq : now;
     const id  = (e.taskId || "run") + ":" + e.type + ":" + seq;
-    const base = { id: id, runId: e.taskId, startedAt: now };
+    const base = Object.assign(
+      { id: id, runId: e.taskId, startedAt: now },
+      safeNarratorProgress(e.narratorProgress),
+    );
 
     switch (e.type) {
       case "task:start":
@@ -455,7 +478,7 @@
   }
 
   /**
-   * Create a compact "Orca is working…" panel attached under messagesEl.
+   * Create a compact Narrator progress panel attached under messagesEl.
    * Returns a controller with pushRow / setRole / finish / destroy.
    *
    * The panel renders only sanitized rows from mapOrcaEventToTraceRow.
@@ -470,6 +493,7 @@
     const startedAt  = typeof opts.now === "number" ? opts.now : Date.now();
 
     const seenKeys      = new Set();
+    const seenNarration = new Set();
     let timerHandle     = null;
     let stickyTimer     = null;
     let stickyDelayMs   = 0;
@@ -485,7 +509,7 @@
     wrap.innerHTML = ""
       + '<div class="ltp-header" role="button" aria-expanded="false" tabindex="0">'
       +   '<span class="ltp-spinner" aria-hidden="true"></span>'
-      +   '<span class="ltp-title">Orca is working…</span>'
+      +   '<span class="ltp-title">Narrator</span>'
       +   '<span class="ltp-role" data-role hidden></span>'
       +   '<span class="ltp-current" data-current></span>'
       +   '<span class="ltp-elapsed" data-elapsed>0.0s</span>'
@@ -495,6 +519,7 @@
       +   '<button class="ltp-view-trace" type="button" aria-label="Jump to full pipeline summary" hidden>Full trace ↓</button>'
       +   '<button class="ltp-close" type="button" aria-label="Dismiss pipeline trace" hidden>✕</button>'
       + '</div>'
+      + '<div class="ltp-narration" data-narration aria-live="polite" aria-label="Work progress"></div>'
       + '<div class="ltp-detail" data-detail role="region" aria-label="Pipeline progress" hidden>'
       +   '<div class="ltp-rows" data-rows></div>'
       + '</div>';
@@ -506,6 +531,7 @@
     const toggleBtn = wrap.querySelector(".ltp-toggle");
     const closeBtn      = wrap.querySelector(".ltp-close");
     const viewTraceBtn  = wrap.querySelector(".ltp-view-trace");
+    const narrationEl   = wrap.querySelector("[data-narration]");
     const detailEl      = wrap.querySelector("[data-detail]");
     const rowsEl        = wrap.querySelector("[data-rows]");
 
@@ -549,7 +575,27 @@
     }
 
     function rowDedupKey(row) {
-      return row.component + "|" + row.stage + "|" + row.status + "|" + row.summary;
+      return row.component + "|" + row.stage + "|" + row.status + "|" + row.summary
+        + "|" + (row.narratorMessage || "");
+    }
+
+    function renderNarration(row) {
+      if (!row.narratorMessage || seenNarration.has(row.narratorMessage)) return false;
+      seenNarration.add(row.narratorMessage);
+
+      const item = document.createElement("div");
+      item.className = "ltp-narration-item ltp-narration-" + row.narratorTone;
+      const icon = document.createElement("span");
+      icon.className = "ltp-narration-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = row.narratorTone === "complete" ? "✓"
+        : row.narratorTone === "warning" ? "!" : "▸";
+      const message = document.createElement("span");
+      message.textContent = row.narratorMessage;
+      item.append(icon, message);
+      narrationEl.appendChild(item);
+      while (narrationEl.children.length > 4) narrationEl.removeChild(narrationEl.firstChild);
+      return true;
     }
 
     function renderRow(row) {
@@ -576,7 +622,12 @@
       if (seenKeys.has(key)) return false;
       seenKeys.add(key);
       rowsEl.appendChild(renderRow(row));
-      currentEl.textContent = row.component + " · " + row.summary;
+      renderNarration(row);
+      if (row.narratorMessage) {
+        currentEl.textContent = row.narratorMessage;
+      } else if (seenNarration.size === 0) {
+        currentEl.textContent = row.component + " · " + row.summary;
+      }
       return true;
     }
 
@@ -691,6 +742,7 @@
     safeStage:              safeStage,
     formatDuration:         formatDuration,
     formatIssueSummary:     formatIssueSummary,
+    safeNarratorProgress:   safeNarratorProgress,
     statusIcon:             statusIcon,
     shouldAutoRemove:       shouldAutoRemove,
     badgeRoleLabel:         badgeRoleLabel,

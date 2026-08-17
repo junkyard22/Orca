@@ -20,6 +20,7 @@ function looksLikeTaskPermissions(value: unknown): value is TaskPermissions {
     typeof record["fileRead"] === "boolean" &&
     typeof record["fileWrite"] === "boolean" &&
     typeof record["shellExec"] === "boolean" &&
+    (record["networkAccess"] === undefined || typeof record["networkAccess"] === "boolean") &&
     (record["toolsAllowed"] === undefined || Array.isArray(record["toolsAllowed"]))
   );
 }
@@ -32,6 +33,7 @@ export function normalizeTaskPermissions(input: unknown): TaskPermissions | unde
       fileRead: input.fileRead,
       fileWrite: input.fileWrite,
       shellExec: input.shellExec,
+      networkAccess: input.networkAccess ?? false,
       ...(input.toolsAllowed !== undefined && { toolsAllowed: uniqueStrings(input.toolsAllowed) }),
     };
   }
@@ -46,6 +48,7 @@ export function normalizeTaskPermissions(input: unknown): TaskPermissions | unde
 
   const fileWrite = permissions.has("write");
   const shellExec = permissions.has("shell");
+  const networkAccess = permissions.has("network");
 
   // Intentionally no toolsAllowed whitelist here — the boolean flags
   // (fileWrite, shellExec) already drive the LLM execution-limit text.
@@ -54,6 +57,7 @@ export function normalizeTaskPermissions(input: unknown): TaskPermissions | unde
     fileRead: true,
     fileWrite,
     shellExec,
+    networkAccess,
   };
 }
 

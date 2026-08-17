@@ -46,6 +46,16 @@ describe("ContextStore", () => {
     expect(ctx2.warm.learnedPreferences.communication).toContain("prefer_email");
   });
 
+  it("persists and reloads the Cargo manifest", async () => {
+    await store.updateManifest({ type: "attach_file", path: "ARCHITECTURE.md" });
+    await store.updateManifest({ type: "attach_task", reference: "#142" });
+
+    const store2 = new ContextStore(join(tmpDir, "context.json"));
+    const manifest = await store2.getManifest();
+    expect(manifest.files.map((file) => file.path)).toEqual(["ARCHITECTURE.md"]);
+    expect(manifest.tasks.map((task) => task.reference)).toEqual(["#142"]);
+  });
+
   it("getRelevantContext returns preferences for the task type", async () => {
     await store.load();
     await store.addSignal("use_calendar_events", "scheduling");
@@ -150,6 +160,15 @@ describe("Dewey", () => {
       expect(Array.isArray(brief.relevantContext)).toBe(true);
       expect(Array.isArray(brief.availableApps)).toBe(true);
       expect(["brief", "detailed", "casual", "formal"]).toContain(brief.suggestedTone);
+      expect(brief.resourceBrief.summary).toBeDefined();
+    });
+
+    it("briefs attached resources without loading raw contents", async () => {
+      await dewey.updateManifest({ type: "attach_file", path: "ARCHITECTURE.md" });
+      const brief = await dewey.brief("review the architecture");
+
+      expect(brief.resourceBrief.lines).toContain("Files and folders: ARCHITECTURE.md [ARCHITECTURE.md]");
+      expect(brief.relevantContext.join("\n")).not.toContain("raw contents");
     });
 
     it("detects work task type for coding tasks", async () => {

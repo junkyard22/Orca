@@ -25,6 +25,7 @@ export interface TaskPermissions {
   fileRead:     boolean;
   fileWrite:    boolean;
   shellExec:    boolean;
+  networkAccess?: boolean;
   toolsAllowed?: string[];
 }
 
@@ -344,6 +345,8 @@ export interface OrcaRuntimeDeps {
   llm: OrcaLLMService;
   /** When supplied, ctx.tools is populated and the agent loop activates. */
   tools?: OrcaToolService;
+  /** Tool names backed by network connectors or MCP servers. */
+  connectorTools?: string[];
   /**
    * Configured workspace root for tool execution. Runtime may override this
    * per task when the user explicitly names an existing absolute workspace path.
