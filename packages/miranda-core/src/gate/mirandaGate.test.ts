@@ -15,6 +15,8 @@
 import { describe, it, expect } from "vitest";
 import * as path from "node:path";
 import {
+  classifyToolPermissionRequirement,
+  composeMirandaGates,
   createMirandaGate,
   transitionAHPLifecycle,
   type GateResult,
@@ -397,6 +399,92 @@ describe("Protected path policy", () => {
 
     expect(r.allowed).toBe(false);
     expect(r.violations?.join(" ")).toContain("test/spec files");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task-scoped resource permissions
+// ---------------------------------------------------------------------------
+
+describe("Task-scoped resource permissions", () => {
+  const noResourceAccess = createMirandaGate({
+    taskPermissions: {
+      fileRead: false,
+      fileWrite: false,
+      shellExec: false,
+      networkAccess: false,
+    },
+    connectorTools: ["github_list_prs", "github_create_issue"],
+  });
+
+  it.each([
+    ["desktop-commander_read_file", "File reads"],
+    ["desktop-commander_write_file", "File writes"],
+    ["run_command", "Shell execution"],
+    ["github_list_prs", "Connector reads"],
+  ])("blocks %s when its task permission is absent", (tool, expected) => {
+    const result = noResourceAccess.beforeToolRun(makeToolCtx({ tool }));
+    expect(result.allowed).toBe(false);
+    expect(result.violations?.join(" ")).toContain(expected);
+  });
+
+  it("requires both network and write permission for connector mutations", () => {
+    const readOnlyConnectorGate = createMirandaGate({
+      taskPermissions: {
+        fileRead: true,
+        fileWrite: false,
+        shellExec: false,
+        networkAccess: true,
+      },
+      connectorTools: ["github_create_issue"],
+    });
+
+    const result = readOnlyConnectorGate.beforeToolRun(makeToolCtx({ tool: "github_create_issue" }));
+    expect(result.allowed).toBe(false);
+    expect(result.violations?.join(" ")).toContain("Connector writes");
+  });
+
+  it("allows a resource tool when the matching permission is present", () => {
+    const readGate = createMirandaGate({
+      taskPermissions: {
+        fileRead: true,
+        fileWrite: false,
+        shellExec: false,
+        networkAccess: false,
+      },
+    });
+
+    expect(readGate.beforeToolRun(makeToolCtx({ tool: "read_file" })).allowed).toBe(true);
+  });
+
+  it("classifies namespaced file and configured connector tools", () => {
+    expect(classifyToolPermissionRequirement("desktop-commander_read_file")).toBe("file_read");
+    expect(classifyToolPermissionRequirement("desktop-commander_start_search", ["desktop-commander_start_search"]))
+      .toBe("file_read");
+    expect(classifyToolPermissionRequirement("desktop-commander_execute_command", ["desktop-commander_execute_command"]))
+      .toBe("shell_exec");
+    expect(classifyToolPermissionRequirement("linear_update_issue", ["linear_update_issue"]))
+      .toBe("connector_write");
+  });
+
+  it("classifies previous-run resolution as a gated read", () => {
+    expect(classifyToolPermissionRequirement("cargo_read_previous_run")).toBe("file_read");
+  });
+
+  it("composes host and task policies so either can block", () => {
+    const host = createMirandaGate({ allowedTools: ["read_file"] });
+    const task = createMirandaGate({
+      taskPermissions: {
+        fileRead: false,
+        fileWrite: false,
+        shellExec: false,
+        networkAccess: false,
+      },
+    });
+    const composed = composeMirandaGates(host, task);
+
+    expect(composed?.beforeToolRun(makeToolCtx({ tool: "read_file" })).allowed).toBe(false);
+    expect(composed?.beforeToolRun(makeToolCtx({ tool: "write_file" })).allowed).toBe(false);
   });
 });
 

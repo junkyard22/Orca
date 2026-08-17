@@ -1,10 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { LocalAuthView, SaveLocalAuthInput, SaveLocalAuthResult } from "./auth";
 import type { OrcaPipelineTrace } from "@clawde/orca-core";
+import type { ContextManifest, ContextManifestAction } from "@clawde/dewey-core";
+
+type CargoClientAction = Exclude<
+  ContextManifestAction,
+  { type: "set_workspace" } | { type: "sync_connectors" } | { type: "clear" }
+>;
 
 export type OrcaEventData = Record<string, unknown>;
 export type BensonReply  = { kind: "CLARIFY" | "RESULT"; text: string; options?: string[] };
-export type SendResult   = { ok: boolean; reply?: BensonReply; error?: string; pipelineSummary?: Record<string, unknown> };
+export type SendResult   = { ok: boolean; reply?: BensonReply; error?: string; pipelineSummary?: Record<string, unknown>; cargoManifest?: ContextManifest };
 export type InitStatus   = { ok: boolean; error?: string | null };
 export type SaveResult   = { ok: boolean; error?: string };
 export type AppAuthStatus = LocalAuthView & { locked: boolean };
@@ -49,6 +55,8 @@ export type OrcaSettings = {
   workspaceRoot:   string;
   mcpServers?:     McpServerConfig[];
   showPipeline?:   boolean;
+  autoResolveCargo?: boolean;
+  narratorProgressMode?: "standard" | "model";
 };
 
 export type SessionSummary = {
@@ -59,6 +67,13 @@ export type SessionSummary = {
   status:      "SUCCESS" | "FAIL";
   outputText?: string;
   costUsd?:    number;
+};
+
+export type CargoSnapshot = {
+  manifest: ContextManifest;
+  connectors: Array<{ id: string; label: string; available: boolean }>;
+  previousRuns: Array<{ id: string; label: string; createdAt: string }>;
+  status: { ready: boolean; availableToolCount: number };
 };
 
 contextBridge.exposeInMainWorld("orca", {
@@ -80,6 +95,15 @@ contextBridge.exposeInMainWorld("orca", {
 
   saveSettings: (s: OrcaSettings): Promise<SaveResult> =>
     ipcRenderer.invoke("settings:save", s),
+
+  getCargo: (): Promise<CargoSnapshot | null> =>
+    ipcRenderer.invoke("cargo:get"),
+
+  updateCargo: (action: CargoClientAction): Promise<{ ok: boolean; manifest?: ContextManifest; error?: string }> =>
+    ipcRenderer.invoke("cargo:update", action),
+
+  pickCargoResources: (kind: "file" | "folder"): Promise<Array<{ path: string; label: string; kind: "file" | "folder" }>> =>
+    ipcRenderer.invoke("cargo:pick", kind),
 
   getAuthStatus: (): Promise<AppAuthStatus> =>
     ipcRenderer.invoke("auth:status"),

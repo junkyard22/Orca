@@ -19,6 +19,7 @@ const {
   safeStage,
   formatDuration,
   formatIssueSummary,
+  safeNarratorProgress,
   statusIcon,
   shouldAutoRemove,
   badgeRoleLabel,
@@ -203,6 +204,37 @@ describe("mapOrcaEventToTraceRow — happy path", () => {
 });
 
 describe("mapOrcaEventToTraceRow — privacy boundaries", () => {
+  it("carries only sanitized Narrator milestone text into a trace row", () => {
+    const escape = String.fromCharCode(0x1b);
+    const row = mapOrcaEventToTraceRow({
+      type: "task:start",
+      taskId: "t1",
+      intent: "secret request",
+      narratorProgress: {
+        milestone: "planning",
+        message: "Planning" + escape + " now " + "x".repeat(300),
+        tone: "complete",
+      },
+    } as any);
+
+    expect(row?.narratorMilestone).toBe("planning");
+    expect(row?.narratorTone).toBe("complete");
+    expect(row?.narratorMessage).not.toContain(escape);
+    expect(row?.narratorMessage.length).toBeLessThanOrEqual(160);
+    expect(JSON.stringify(row)).not.toContain("secret request");
+  });
+
+  it("normalizes malformed Narrator updates", () => {
+    expect(safeNarratorProgress(null)).toEqual({});
+    expect(
+      safeNarratorProgress({ message: "Working", milestone: "", tone: "unknown" }),
+    ).toEqual({
+      narratorMessage: "Working",
+      narratorMilestone: "stage",
+      narratorTone: "active",
+    });
+  });
+
   it("returns null for raw model output / chain-of-thought event types", () => {
     expect(
       mapOrcaEventToTraceRow({

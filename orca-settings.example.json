@@ -43,6 +43,8 @@
       "label": "Alibaba Coding Plan: Qwen3.5 Plus"
     }
   },
+  "autoResolveCargo": true,
+  "narratorProgressMode": "standard",
   "mcpServers": [
     {
       "id": "desktop-commander",

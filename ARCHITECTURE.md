@@ -51,6 +51,60 @@ User input
 | Desktop | `apps/desktop` | Electron GUI — settings UI, chat view, session history |
 | Runner | `apps/runner` | CLI entry point and pipeline tracer |
 
+## Cargo context intake
+
+Cargo is the desktop app's persistent resource-intake layer. The composer accepts
+`/repo`, `/file`, `/task`, `/connect`, `/context`, and `/status`, plus line-oriented
+`@repo`, `@file`, `@task`, and `@connector` references. The **+** menu is the graphical
+equivalent and additionally exposes folders, URLs, and previous runs.
+
+Ownership follows the existing pod boundaries:
+
+- **Benson** parses conversation syntax and formats command responses.
+- **Dewey** owns and persists the typed `ContextManifest`, then turns it into a compact
+  pre-flight brief. The manifest stores resource locators and labels, never raw file or
+  connector contents.
+- **Orca Runtime** composes each task's resource permissions with the host Miranda gate.
+- **Miranda** gates file reads, file writes, shell execution, and connector reads/writes
+  before a resource tool runs.
+- **Desktop** resolves graphical selections and derives connector availability from the
+  tools loaded from `orca-settings.json`. Settings remain the source of truth for the
+  workspace and configured connectors; attaching a connector does not install or
+  configure a backend.
+
+The manifest is session-independent and stored with Dewey's existing user context in
+`~/.orca/userContext.json`. Workers receive Dewey's compact locator brief. Raw resource
+contents are loaded only by an explicitly permitted tool call when a task needs them.
+
+When **Resolve Cargo resources** is enabled in Settings, the desktop performs a bounded
+pre-flight resolution for attached URLs and previous runs. URLs use the registered
+`web_fetch` tool; previous runs use a virtual history-read operation. Both pass through a
+composed Miranda resource gate before reading. A Settings-selected Reader, Narrator, or
+Brain model converts the bounded source data into compact summaries in one provider call;
+only those summaries enter Dewey's brief and raw contents are not persisted. Attached
+connectors add their currently loaded tool capabilities to the brief, so MCP and static
+extension backends remain provider-neutral and Settings-driven.
+
+## Narrator progress
+
+The desktop chat includes a lightweight **Narrator** above the technical pipeline trace.
+It translates semantic runtime milestones into short updates such as planning, work step
+completed, checking, and finalizing. Benson owns the fixed, user-facing language; the
+desktop only maps typed `OrcaEvent` metadata to those milestones and counts completed
+steps.
+
+Standard narration is deterministic and does not make additional model calls. It never receives
+or renders prompt text, model output, tool arguments, paths, error strings, or Miranda
+diagnostics. Detailed component events remain available behind the existing pipeline
+Details control, while general Narrator updates remain visible when technical pipeline
+display is disabled.
+
+Settings can optionally enable a personalized Narrator voice. Orca then asks the explicitly
+configured Narrator role for a complete milestone lexicon once per initialization. That
+request contains canonical milestone phrases only—never the active task, tool output, or
+errors. The result is schema-checked, length-capped, stripped of internal component terms,
+and falls back per phrase to Benson's deterministic copy.
+
 ## Tools & MCP
 
 ### Tool loading stack
@@ -162,7 +216,7 @@ MCP server `env` values (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN`) are encrypted at r
 |------|------|--------|
 | `before_llm_call` | Before each live LLM invocation | Model allowlist; budget fields are neutral unless live cost accounting is wired |
 | `after_llm_call` | After each LLM response | Output shape validation |
-| `before_tool_run` | Before each tool execution | **Tool allowlist**, null args, required fields, types |
+| `before_tool_run` | Before each tool execution | **Tool allowlist**, task file/shell/connector permissions, workspace boundary, protected paths, null args, required fields, types |
 | `after_tool_run` | After each tool execution | Non-empty receipt |
 | `before_qc` | Before Pappy evaluation | Non-empty output |
 | `after_qc` | After Pappy verdict | Diagnostic checkpointing only; Pappy remains the quality verifier |

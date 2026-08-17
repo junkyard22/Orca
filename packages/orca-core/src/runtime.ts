@@ -24,6 +24,7 @@ import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
 import { isAbortError, throwIfAborted } from "./abort.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
+import { composeMirandaGates, createMirandaGate } from "@clawde/miranda-core";
 import {
   createRootPacket,
   registerChildOnRoot,
@@ -238,6 +239,18 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
   ): Promise<OrcaExecutionResult> {
     throwIfAborted(options?.abortSignal);
     const normalizedTaskSpec = normalizeTaskSpec(taskSpec);
+    const taskPermissionGate = normalizedTaskSpec.permissions
+      ? createMirandaGate({
+          taskPermissions: {
+            fileRead: normalizedTaskSpec.permissions.fileRead,
+            fileWrite: normalizedTaskSpec.permissions.fileWrite,
+            shellExec: normalizedTaskSpec.permissions.shellExec,
+            networkAccess: normalizedTaskSpec.permissions.networkAccess ?? false,
+          },
+          connectorTools: deps.connectorTools,
+        })
+      : undefined;
+    const effectiveGate = composeMirandaGates(deps.gate, taskPermissionGate);
     const workspaceContext = deps.getWorkspaceContext?.();
     const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec);
     const effectiveWorkspaceRoot = explicitWorkspaceRoot ?? deps.workspaceRoot ?? workspaceContext?.cwd;
@@ -296,7 +309,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       emit: (event) => emitter.emit(event),
       workspaceContext: effectiveWorkspaceContext,
       workspaceRoot: effectiveWorkspaceRoot,
-      gate: deps.gate,
+      gate: effectiveGate,
       model: deps.model,
       requestToolApproval: deps.requestToolApproval,
     };
@@ -314,6 +327,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       fileRead: normalizedTaskSpec.permissions?.fileRead ?? true,
       fileWrite: normalizedTaskSpec.permissions?.fileWrite ?? true,
       shellExec: normalizedTaskSpec.permissions?.shellExec ?? false,
+      networkAccess: normalizedTaskSpec.permissions?.networkAccess ?? false,
       toolsEnabled: !!ctx.tools,
     });
 

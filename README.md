@@ -34,6 +34,13 @@ pnpm dev
 
 Opens an Electron window. Go to **Settings** to configure LLM providers and map models to roles.
 
+The desktop composer includes **Cargo**, a persistent context tray. Use `/repo`, `/file`,
+`/task`, `/connect`, `/context`, or `/status`, add line-oriented `@repo`, `@file`, `@task`,
+and `@connector` references, or use the **+** menu. Attached resources are stored as typed
+references; reads and writes still pass through Miranda. Settings can automatically resolve
+attached URLs and previous runs into compact Dewey summaries and can use the configured
+Narrator role to personalize privacy-safe progress updates.
+
 ### CLI Runner
 
 ```bash

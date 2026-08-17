@@ -67,6 +67,8 @@ export type { LLMAdapter } from "./llm/adapter.js";
 // Gate (Miranda's 6-checkpoint validation layer)
 export {
   createMirandaGate,
+  classifyToolPermissionRequirement,
+  composeMirandaGates,
   transitionAHPLifecycle,
 } from "./gate/mirandaGate.js";
 export type {
@@ -80,6 +82,8 @@ export type {
   LLMCallGateContext,
   ToolGateContext,
   QCGateContext,
+  TaskToolPermissions,
+  ToolPermissionRequirement,
 } from "./gate/mirandaGate.js";
 
 // AHP — Agent Handoff Protocol types

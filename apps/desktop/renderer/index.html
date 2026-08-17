@@ -298,6 +298,30 @@
                   <span class="toggle-track"></span>
                 </label>
               </div>
+              <div class="setting-group setting-group--row mt-14">
+                <div>
+                  <label class="setting-label">Resolve Cargo resources</label>
+                  <p class="setting-hint">
+                    Fetch attached URLs and previous runs, then give Dewey a compact summary.
+                  </p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="set-auto-resolve-cargo" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+              <div class="setting-group setting-group--row mt-14">
+                <div>
+                  <label class="setting-label">Personalized Narrator voice</label>
+                  <p class="setting-hint">
+                    Use the configured Narrator role once to style progress updates. Standard wording remains the fallback.
+                  </p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="set-model-narrator" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
               <div class="setting-group mt-14">
                 <label class="setting-label">Workspace folder</label>
                 <p class="setting-hint">
@@ -408,19 +432,29 @@
       </div>
 
       <div id="input-wrap">
-        <!-- Attachment preview bar — hidden until files are attached -->
-        <div id="attachments-bar"></div>
-        <!-- Input row: attach · textarea · send -->
+        <!-- Cargo commands and persistent context -->
+        <div id="slash-palette" class="cargo-popover hidden" role="listbox" aria-label="Commands"></div>
+        <div id="cargo-add-menu" class="cargo-popover hidden" role="menu" aria-label="Add to Cargo">
+          <button type="button" data-cargo-add="file" role="menuitem">File</button>
+          <button type="button" data-cargo-add="folder" role="menuitem">Folder</button>
+          <button type="button" data-cargo-add="repository" role="menuitem">Repository</button>
+          <button type="button" data-cargo-add="task" role="menuitem">Task</button>
+          <button type="button" data-cargo-add="connector" role="menuitem">Connector</button>
+          <button type="button" data-cargo-add="url" role="menuitem">URL</button>
+          <button type="button" data-cargo-add="previous_run" role="menuitem">Previous Run</button>
+        </div>
+        <div id="context-tray" aria-live="polite">
+          <div class="context-tray-heading">
+            <span>Cargo</span>
+            <span id="context-tray-count"></span>
+          </div>
+          <div id="context-chips"></div>
+        </div>
+        <!-- Input row: Cargo · textarea · send -->
         <div id="input-row">
-          <button id="attach-btn" title="Attach file (image, text, code, PDF…)">
+          <button id="cargo-add-btn" title="Add context to Cargo" aria-label="Add context to Cargo" aria-expanded="false">
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-              <path
-                d="M13.5 6.5L7 13a4.243 4.243 0 01-6-6L7.5 1A2.828 2.828 0 1111.5 5L5 11.5a1.414 1.414 0 01-2-2L9 4"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
+              <path d="M7.5 2v11M2 7.5h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
           </button>
           <textarea
@@ -445,15 +479,21 @@
             </svg>
           </button>
         </div>
-        <!-- Hidden native file picker -->
-        <input
-          type="file"
-          id="file-input"
-          multiple
-          accept="image/*,text/*,.pdf,.md,.ts,.tsx,.js,.jsx,.json,.yaml,.yml,.toml,.env,.csv,.xml,.html,.css,.py,.go,.rs,.java,.c,.cpp,.h,.sh,.bat,.ps1,.sql,.graphql,.prisma,.lock"
-          style="display:none"
-        />
       </div>
+    </div>
+
+    <div id="cargo-dialog" class="cargo-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="cargo-dialog-title">
+      <form id="cargo-dialog-form" class="cargo-dialog-card">
+        <div class="cargo-dialog-title" id="cargo-dialog-title">Add to Cargo</div>
+        <p id="cargo-dialog-description" class="cargo-dialog-description"></p>
+        <input id="cargo-dialog-input" class="cargo-dialog-input" autocomplete="off" />
+        <div id="cargo-dialog-options" class="cargo-dialog-options"></div>
+        <p id="cargo-dialog-error" class="cargo-dialog-error hidden"></p>
+        <div class="cargo-dialog-actions">
+          <button type="button" id="cargo-dialog-cancel">Cancel</button>
+          <button type="submit" id="cargo-dialog-submit" class="save-btn">Add</button>
+        </div>
+      </form>
     </div>
 
     <!-- ── Tool approval dialog ───────────────────────────────────────── -->

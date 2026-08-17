@@ -127,6 +127,41 @@ function createEventRecorder() {
 }
 
 describe("createOrcaRuntime", () => {
+  describe("task-scoped Miranda permissions", () => {
+    it("passes a resource-permission gate to Maestro for file and connector calls", async () => {
+      const decisions: boolean[] = [];
+      const maestro: MaestroPort = {
+        run: async (_task, ctx) => {
+          decisions.push(ctx.gate!.beforeToolRun({
+            tool: "read_file",
+            args: { path: "README.md" },
+          }).allowed);
+          decisions.push(ctx.gate!.beforeToolRun({
+            tool: "github_list_prs",
+            args: { owner: "junkyard22", repo: "Orca" },
+          }).allowed);
+          return { outputText: "Permission checks completed.", summary: "checked" };
+        },
+      };
+      const runtime = createOrcaRuntime({
+        maestro,
+        llm: createMockLLM(),
+        connectorTools: ["github_list_prs"],
+      });
+
+      await runtime.executeTask(createTaskSpec({
+        permissions: {
+          fileRead: false,
+          fileWrite: false,
+          shellExec: false,
+          networkAccess: false,
+        },
+      }));
+
+      expect(decisions).toEqual([false, false]);
+    });
+  });
+
   describe("SUCCESS path — maestro returns output, pappy returns PASS", () => {
     it("returns status SUCCESS with userFacingText", async () => {
       const maestro = createMockMaestro("Task completed successfully");

@@ -125,6 +125,21 @@ export interface ToolGateContext {
   };
 }
 
+export interface TaskToolPermissions {
+  fileRead: boolean;
+  fileWrite: boolean;
+  shellExec: boolean;
+  networkAccess: boolean;
+}
+
+export type ToolPermissionRequirement =
+  | 'file_read'
+  | 'file_write'
+  | 'shell_exec'
+  | 'connector_read'
+  | 'connector_write'
+  | 'none';
+
 export interface QCGateContext {
   /** Run ID for correlating gate events with other trace events */
   taskId: string;
@@ -210,6 +225,14 @@ export interface MirandaGateConfig {
   allowedTools?: string[];
 
   /**
+   * Per-task resource permissions resolved by the conversation boundary.
+   * Connector tools are supplied by the host so Miranda does not hardcode a
+   * provider or MCP naming scheme.
+   */
+  taskPermissions?: TaskToolPermissions;
+  connectorTools?: string[];
+
+  /**
    * Protected path policy for verifier/training/eval/control-plane files.
    * Enabled by default. The only bypass is a runtime-provided maintenanceMode
    * value with userApproved=true; tool arguments cannot self-authorize it.
@@ -288,6 +311,108 @@ export interface ProtectedPathPolicyConfig {
 interface ProtectedPathViolation {
   path: string;
   reason: string;
+}
+
+function runGateChain(
+  gates: MirandaGate[],
+  invoke: (gate: MirandaGate) => GateResult,
+): GateResult {
+  let latest: GateResult = { allowed: true, reason: 'all gates allowed', verdict: 'PASS' };
+  for (const gate of gates) {
+    latest = invoke(gate);
+    if (!latest.allowed) return latest;
+  }
+  return latest;
+}
+
+/** Compose independently-owned policies without giving either gate new authority. */
+export function composeMirandaGates(
+  ...candidates: Array<MirandaGate | undefined>
+): MirandaGate | undefined {
+  const gates = candidates.filter((candidate): candidate is MirandaGate => candidate !== undefined);
+  if (gates.length === 0) return undefined;
+  if (gates.length === 1) return gates[0];
+
+  return {
+    beforeLLMCall: (ctx) => runGateChain(gates, (gate) => gate.beforeLLMCall(ctx)),
+    afterLLMCall: (ctx, output, validation) =>
+      runGateChain(gates, (gate) => gate.afterLLMCall(ctx, output, validation)),
+    beforeToolRun: (ctx) => runGateChain(gates, (gate) => gate.beforeToolRun(ctx)),
+    afterToolRun: (ctx, result) => runGateChain(gates, (gate) => gate.afterToolRun(ctx, result)),
+    beforeQC: (ctx) => runGateChain(gates, (gate) => gate.beforeQC(ctx)),
+    afterQC: (ctx, verdict, issueCount) =>
+      runGateChain(gates, (gate) => gate.afterQC(ctx, verdict, issueCount)),
+  };
+}
+
+const CONNECTOR_MUTATION_PATTERN =
+  /(?:^|_)(?:create|update|delete|write|remove|send|post|put|patch|merge|close|reopen|approve|reject|clone|upload|move|rename|edit|modify)(?:_|$)/i;
+
+function toolMatches(tool: string, names: string[]): boolean {
+  return names.some((name) => tool === name || tool.endsWith(`_${name}`));
+}
+
+export function classifyToolPermissionRequirement(
+  tool: string,
+  connectorTools: readonly string[] = [],
+): ToolPermissionRequirement {
+  if (toolMatches(tool, [
+    'read_file',
+    'read_multiple_files',
+    'list_directory',
+    'search_files',
+    'start_search',
+    'get_file_info',
+    'cargo_read_previous_run',
+  ])) return 'file_read';
+  if (toolMatches(tool, [
+    'write_file',
+    'create_file',
+    'create_directory',
+    'delete_file',
+    'move_file',
+    'modify_file',
+    'edit_block',
+  ])) return 'file_write';
+  if (toolMatches(tool, [
+    'run_command',
+    'execute_command',
+    'start_process',
+    'read_process_output',
+    'interact_with_process',
+    'force_terminate',
+  ])) return 'shell_exec';
+  if (connectorTools.includes(tool)) {
+    return CONNECTOR_MUTATION_PATTERN.test(tool) ? 'connector_write' : 'connector_read';
+  }
+  return 'none';
+}
+
+function evaluateTaskToolPermissions(
+  ctx: ToolGateContext,
+  permissions: TaskToolPermissions | undefined,
+  connectorTools: readonly string[],
+): string[] {
+  if (!permissions) return [];
+  const requirement = classifyToolPermissionRequirement(ctx.tool, connectorTools);
+  switch (requirement) {
+    case 'file_read':
+      return permissions.fileRead ? [] : ['File reads are not permitted for this request'];
+    case 'file_write':
+      return permissions.fileWrite ? [] : ['File writes are not permitted for this request'];
+    case 'shell_exec':
+      return permissions.shellExec ? [] : ['Shell execution is not permitted for this request'];
+    case 'connector_read':
+      return permissions.networkAccess ? [] : ['Connector reads are not permitted for this request'];
+    case 'connector_write': {
+      const violations: string[] = [];
+      if (!permissions.networkAccess) violations.push('Connector access is not permitted for this request');
+      if (!permissions.fileWrite) violations.push('Connector writes are not permitted for this request');
+      return violations;
+    }
+    default:
+      return [];
+  }
 }
 
 function collectExplicitPathArguments(args: Record<string, unknown>): string[] {
@@ -488,6 +613,8 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
   const {
     allowedModels,
     allowedTools,
+    taskPermissions,
+    connectorTools = [],
     protectedPathPolicy,
     verbose = false,
     onGate,
@@ -572,7 +699,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
     // ── Tool gates ───────────────────────────────────────────────────────
 
     beforeToolRun(ctx): GateResult {
-      const violations: string[] = [];
+      const violations = evaluateTaskToolPermissions(ctx, taskPermissions, connectorTools);
 
       const workspaceViolations = evaluateWorkspaceBoundary(ctx);
       if (workspaceViolations.length > 0) {

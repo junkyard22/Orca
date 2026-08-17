@@ -1,4 +1,5 @@
-import type { GateResult, LLMCallGateContext, MirandaGate } from "@clawde/miranda-core";
+import { composeMirandaGates } from "@clawde/miranda-core";
+import type { LLMCallGateContext, MirandaGate } from "@clawde/miranda-core";
 import type { OrcaRunCtx } from "@clawde/orca-core";
 
 export interface GatedLLMCallOptions<T> {
@@ -9,37 +10,7 @@ export interface GatedLLMCallOptions<T> {
   outputOf(result: T): string;
 }
 
-function runGateChain(
-  gates: MirandaGate[],
-  invoke: (gate: MirandaGate) => GateResult,
-): GateResult {
-  let latest: GateResult = { allowed: true, reason: "all gates allowed" };
-  for (const gate of gates) {
-    latest = invoke(gate);
-    if (!latest.allowed) return latest;
-  }
-  return latest;
-}
-
-/** Compose a base runtime gate with a narrower worker-scoped gate. */
-export function composeMirandaGates(
-  ...candidates: Array<MirandaGate | undefined>
-): MirandaGate | undefined {
-  const gates = candidates.filter((candidate): candidate is MirandaGate => candidate !== undefined);
-  if (gates.length === 0) return undefined;
-  if (gates.length === 1) return gates[0];
-
-  return {
-    beforeLLMCall: (ctx) => runGateChain(gates, (gate) => gate.beforeLLMCall(ctx)),
-    afterLLMCall: (ctx, output, validation) =>
-      runGateChain(gates, (gate) => gate.afterLLMCall(ctx, output, validation)),
-    beforeToolRun: (ctx) => runGateChain(gates, (gate) => gate.beforeToolRun(ctx)),
-    afterToolRun: (ctx, result) => runGateChain(gates, (gate) => gate.afterToolRun(ctx, result)),
-    beforeQC: (ctx) => runGateChain(gates, (gate) => gate.beforeQC(ctx)),
-    afterQC: (ctx, verdict, issueCount) =>
-      runGateChain(gates, (gate) => gate.afterQC(ctx, verdict, issueCount)),
-  };
-}
+export { composeMirandaGates };
 
 /**
  * Execute one live desktop model call through Miranda's before/after gates.

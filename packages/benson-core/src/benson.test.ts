@@ -492,6 +492,14 @@ describe("parseIntent", () => {
     }
   });
 
+  it("requests write and network permissions for connector mutations", () => {
+    const result = parseIntent("close the GitHub issue #142");
+    expect(result.kind).toBe("TASK");
+    if (result.kind === "TASK") {
+      expect(result.spec.permissions).toEqual(expect.arrayContaining(["write", "network"]));
+    }
+  });
+
   it("uses bullets output format for bullet summary requests", () => {
     const result = parseIntent("summarize in bullet points");
     expect(result.kind).toBe("TASK");
