@@ -822,7 +822,31 @@ async function runSingleAgent(
     ahpPacket.meta.updatedAt = new Date().toISOString();
   }
 
-  const systemPrompt = getRolePrompt(effectiveRole);
+  // Role-scoped tool filtering — narrows ctx.tools to this role's resolved
+  // capability set before it ever reaches the agent loop / prompt assembly.
+  // Resolved *before* the system prompt is built so getRolePrompt() can
+  // accurately reflect what's actually available for this call (see
+  // resolvedToolNames below) instead of a static, possibly-stale claim.
+  //
+  // Falls back to the unfiltered ctx.tools when settings/allToolNames
+  // weren't threaded in (keeps this additive, not a breaking change to
+  // call sites that predate this feature) — resolvedToolNames stays
+  // undefined in that case too, which getRolePrompt() treats as "unknown,
+  // preserve today's behavior" rather than "known to have zero tools".
+  let scopedTools = ctx.tools;
+  let resolvedToolNames: string[] | undefined;
+  if (ctx.tools && settings && allToolNames) {
+    resolvedToolNames = resolveRoleToolNames(effectiveRole, settings, allToolNames, task);
+    scopedTools = resolvedToolNames.length === 0
+      ? undefined
+      : createFilteredToolService(ctx.tools, resolvedToolNames);
+  } else if (!ctx.tools) {
+    // No tool service at all for this call — definitively zero tools,
+    // regardless of whether role/task filtering ran.
+    resolvedToolNames = [];
+  }
+
+  const systemPrompt = getRolePrompt(effectiveRole, resolvedToolNames);
   const taskPrompt = buildTaskPrompt(task, effectiveRole, isFallback, ctx.workspaceContext, deweyBrief, isSubagent, deweyAdvisory);
 
   ctx.recordTrace?.("maestro.role.call", {
@@ -839,19 +863,6 @@ async function runSingleAgent(
   let metadata: OrcaMaestroResult["metadata"] = {
     role: effectiveRole,
   };
-
-  // Role-scoped tool filtering — narrows ctx.tools to this role's resolved
-  // capability set before it ever reaches the agent loop / prompt assembly.
-  // Falls back to the unfiltered ctx.tools when settings/allToolNames
-  // weren't threaded in (keeps this additive, not a breaking change to
-  // call sites that predate this feature).
-  let scopedTools = ctx.tools;
-  if (ctx.tools && settings && allToolNames) {
-    const allowedToolNames = resolveRoleToolNames(effectiveRole, settings, allToolNames, task);
-    scopedTools = allowedToolNames.length === 0
-      ? undefined
-      : createFilteredToolService(ctx.tools, allowedToolNames);
-  }
 
   if (scopedTools) {
     const toolSchemaText = scopedTools.formatForPrompt();
@@ -1422,7 +1433,11 @@ async function synthesizeResults(
   results: Array<{ role: string; task: string; outputText: string }>,
   llm: OrcaLLMService,
 ): Promise<string> {
-  const brainPrompt = getRolePrompt("brain");
+  // This is a pure text-synthesis call (merges subagent outputs) — llm here
+  // is OrcaLLMService directly, with no tools param at all, so this call
+  // never has tool access. Pass [] explicitly rather than omitting the
+  // argument, so getRolePrompt() knows not to claim tools are available.
+  const brainPrompt = getRolePrompt("brain", []);
 
   const resultBlocks = results
     .map(

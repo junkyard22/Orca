@@ -81,14 +81,20 @@ describe("resolveAllowedToolNames", () => {
     expect(result).not.toContain("desktop-commander_frobnicate");
   });
 
-  it("returns an empty list for an empty group list (e.g. brain)", () => {
-    expect(resolveAllowedToolNames(allToolNames, DEFAULT_ROLE_CAPABILITIES.brain)).toEqual([]);
+  it("returns an empty list for an explicitly empty group list", () => {
+    expect(resolveAllowedToolNames(allToolNames, [])).toEqual([]);
   });
 
   it("narrator's default capabilities exclude filesystem-write", () => {
     const result = resolveAllowedToolNames(allToolNames, DEFAULT_ROLE_CAPABILITIES.narrator);
     expect(result).not.toContain("write_file");
     expect(result).toContain("read_file");
+  });
+
+  it("brain's default capabilities include filesystem-read but not filesystem-write (regression: brain is not always tool-less — see toolCapabilities.ts comment)", () => {
+    const result = resolveAllowedToolNames(allToolNames, DEFAULT_ROLE_CAPABILITIES.brain);
+    expect(result).toContain("read_file");
+    expect(result).not.toContain("write_file");
   });
 });
 

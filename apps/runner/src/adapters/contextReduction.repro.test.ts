@@ -22,6 +22,7 @@ import { describe, it, expect } from "vitest";
 import { ToolRegistry } from "@yakstacks/workbench-core";
 import type { Tool } from "@yakstacks/workbench-core";
 import { createFilteredToolService } from "@clawde/orca-core";
+import { getRolePrompt } from "maestro-core";
 import { resolveRoleToolNames, type OrcaSettings } from "./maestroAdapter.js";
 import type { OrcaTaskSpec } from "@clawde/orca-core";
 
@@ -159,5 +160,47 @@ describe("reproduction: documentation-audit context reduction", () => {
     expect(allowedToolNames.some((n) => n.startsWith("github-mcp_"))).toBe(false);
     expect(allowedToolNames).not.toContain("run_command");
     expect(allowedToolNames.length).toBeLessThan(ALL_TOOLS.length);
+  });
+
+  it("Dynamic Tool Prompt Hygiene companion: the final system prompt for the same task no longer advertises filtered-out tools", () => {
+    // Same documentation-audit scenario as above — this test measures the
+    // ROLE PROMPT itself (packages/maestro-core/src/prompts/rolePrompts.ts),
+    // not just the tool catalog, since that's what this milestone targets:
+    // TOOL_USAGE_REMINDER previously hardcoded all 5 core tool names into
+    // every role's prompt regardless of actual filtered availability.
+    const allToolNames = ALL_TOOLS.map((t) => t.name);
+    const settings: OrcaSettings = { roles: { narrator: { provider: "test", model: "test", label: "narrator" } } };
+    const auditTask: OrcaTaskSpec = {
+      originalUserMessage: "Assess whether the README covers production deployment and rollback.",
+      intent: "answer",
+      goals: ["Assess deployment documentation coverage"],
+      permissions: { fileRead: true, fileWrite: false, shellExec: false },
+    };
+    const allowedToolNames = resolveRoleToolNames("narrator", settings, allToolNames, auditTask);
+
+    // "Before": the legacy call shape (role name only) — every role prompt
+    // unconditionally claimed all 5 core tools were available.
+    const beforePrompt = getRolePrompt("narrator");
+    // "After": the actual resolved allowlist for this invocation.
+    const afterPrompt = getRolePrompt("narrator", allowedToolNames);
+
+    console.log(
+      "[prompt-hygiene repro]\n" +
+        `  before: systemPromptChars=${beforePrompt.length}\n` +
+        `  after:  systemPromptChars=${afterPrompt.length}\n` +
+        `  reduction: ${((1 - afterPrompt.length / beforePrompt.length) * 100).toFixed(1)}%`,
+    );
+
+    // The old blanket claim must be gone.
+    expect(beforePrompt).toContain("You have access to tools (read_file, write_file, run_command");
+    expect(afterPrompt).not.toContain("You have access to tools (read_file, write_file, run_command");
+    // No stale mutation/shell tool reference — write_file/run_command were
+    // filtered out for this read-only narrator task.
+    expect(afterPrompt).not.toContain("write_file");
+    expect(afterPrompt).not.toContain("run_command");
+    // No duplicated tool schema/name list in the role prompt itself — the
+    // dynamic reminder points at the catalog instead of re-naming tools.
+    expect(afterPrompt).toContain("Use the available tools listed in this prompt");
+    expect(afterPrompt.length).toBeLessThanOrEqual(beforePrompt.length);
   });
 });

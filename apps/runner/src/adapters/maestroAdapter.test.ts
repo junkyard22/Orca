@@ -438,9 +438,11 @@ describe("resolveRoleToolNames", () => {
       }
     });
 
-    it("brain gets no tools (it never receives ctx.tools in practice)", () => {
-      const allowed = resolveRoleToolNames("brain", makeSettings(), ALL_TOOL_NAMES, makeTask());
-      expect(allowed).toEqual([]);
+    it("brain gets read-only filesystem access by default (not zero — it IS selected as a direct worker role for investigative tasks, not just the internal routing call)", () => {
+      const allowed = resolveRoleToolNames("brain", makeSettings(), ALL_TOOL_NAMES, makeTaskNoPermissions());
+      expect(allowed).toEqual(expect.arrayContaining(["read_file", "list_directory", "search_files"]));
+      expect(allowed).not.toContain("write_file");
+      expect(allowed).not.toContain("run_command");
     });
   });
 
@@ -544,12 +546,6 @@ describe("role-scoped tool filtering (end-to-end via createMaestroAdapter)", () 
 
     expect(llmStream).toHaveBeenCalledTimes(1);
 
-    // The role-scoped context.budget telemetry is the precise signal here —
-    // asserting on substrings of the full assembled prompt is unreliable
-    // because getRolePrompt() also appends a generic tool-usage reminder
-    // that mentions all core tool names by name regardless of availability
-    // (packages/maestro-core/src/prompts/rolePrompts.ts TOOL_USAGE_REMINDER,
-    // a separate pre-existing staleness this milestone did not scope in).
     const budgetTrace = recordedTraces.find((t) => t.stage === "context.budget");
     expect(budgetTrace).toBeDefined();
     const detail = budgetTrace!.detail as {
@@ -560,5 +556,52 @@ describe("role-scoped tool filtering (end-to-end via createMaestroAdapter)", () 
     expect(detail.role).toBe("narrator");
     expect(detail.toolsExposedCount).toBe(1); // only read_file survives filtering
     expect(detail.toolSchemaChars).toBeLessThan(rawCatalogChars);
+
+    // Dynamic Tool Prompt Hygiene milestone: getRolePrompt() now receives
+    // the resolved allowlist, so — unlike before that milestone — the fully
+    // assembled prompt genuinely never claims write_file/run_command exist
+    // for this read-only narrator invocation. This assertion would have
+    // been unreliable pre-fix (the old static TOOL_USAGE_REMINDER named all
+    // 5 core tools unconditionally); it's meaningful now.
+    const sentPrompt = llmStream.mock.calls[0]![0] as string;
+    expect(sentPrompt).toContain("read_file");
+    expect(sentPrompt).not.toContain("write_file");
+    expect(sentPrompt).not.toContain("run_command");
+    expect(sentPrompt).not.toContain("You have access to tools (read_file, write_file, run_command");
+  });
+
+  it("a role with zero resolved tools gets no tool-usage instruction and no tool-call syntax", async () => {
+    // narrator's baseline is filesystem-read + documentation, but this
+    // catalog contains neither — resolveRoleToolNames() genuinely resolves
+    // to [] here (not via task.permissions.toolsAllowed, which is a
+    // separate orca-core/runtime.ts-level field this adapter-level test
+    // doesn't exercise).
+    const adapter = createMaestroAdapter({ allToolNames: ["write_file", "run_command"] });
+    const tools: OrcaToolService = {
+      execute: vi.fn(async () => ({ ok: true, output: "ok" })),
+      formatForPrompt: vi.fn(
+        () => "**write_file** — writes a file\n  - path (string)\n**run_command** — runs a command\n  - command (string)",
+      ),
+    };
+    const llmStream = vi.fn(async (_prompt: string, _opts: unknown, onChunk: (c: string) => void) => {
+      onChunk("Answered without tools.");
+      return { text: "Answered without tools." };
+    });
+    const ctx = makeRunCtx({
+      tools,
+      llm: { complete: vi.fn(async () => ({ text: "" })), stream: llmStream },
+    });
+
+    const task = makeTask("Explain how this module works");
+    task.permissions = { fileRead: true, fileWrite: false, shellExec: false };
+
+    await adapter.run(task, ctx);
+
+    expect(llmStream).toHaveBeenCalledTimes(1);
+    const sentPrompt = llmStream.mock.calls[0]![0] as string;
+    expect(sentPrompt).not.toContain("You have access to tools");
+    expect(sentPrompt).not.toContain("Use the available tools");
+    expect(sentPrompt).not.toContain("TOOL CALL SYNTAX"); // formatForPrompt()'s own header — only appears when tools exist
+    expect(sentPrompt).not.toMatch(/must (call|use) (a |the )?tool/i);
   });
 });

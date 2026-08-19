@@ -12,10 +12,46 @@
 
 import type { RoleName } from '../roleSelector';
 
+// Preserved verbatim for callers that don't yet pass availableToolNames to
+// getRolePrompt() (desktop app call sites — apps/desktop/orca-tracer.ts,
+// apps/desktop/src/agents/RoleAgentAdapter.ts — build their own, separately
+// dynamic tool-availability text and are out of scope for this change).
+// Hardcodes the 5 core tool names regardless of actual filtered
+// availability — do not use this for any new call site.
 const TOOL_USAGE_REMINDER = `
 You have access to tools (read_file, write_file, run_command, list_directory, search_files).
 Use them whenever the task requires interacting with files or the system.
 Do not simulate or describe tool actions — actually call the tools.`;
+
+// Used when availableToolNames is a non-empty array. Deliberately names no
+// specific tool: the actual catalog (name, description, schema, call
+// syntax) is already appended separately by the agent loop
+// (packages/agent-loop-core/src/loop.ts: tools.formatForPrompt()) right
+// next to this prompt, so restating tool names here would just duplicate
+// it — and duplicating a second, independently-maintained list is exactly
+// how a reminder like TOOL_USAGE_REMINDER above went stale in the first
+// place.
+const DYNAMIC_TOOL_USAGE_REMINDER = `
+Use the available tools listed in this prompt when the task requires interacting with files or the system.
+Do not simulate or describe tool actions — actually call the tools.`;
+
+/**
+ * Resolve the tool-usage guidance block for a role invocation.
+ *
+ *   - availableToolNames === undefined: caller hasn't told us — preserve
+ *     today's behavior verbatim (TOOL_USAGE_REMINDER).
+ *   - availableToolNames.length === 0: this invocation genuinely has no
+ *     tools (e.g. a synthesis/no-tools LLM call, or every tool was filtered
+ *     out) — omit tool guidance entirely. A model must never be told tools
+ *     exist, or instructed to use them, when none are available.
+ *   - availableToolNames.length > 0: tools exist for this call — point at
+ *     the catalog without re-naming anything.
+ */
+function buildToolGuidance(availableToolNames?: string[]): string {
+  if (availableToolNames === undefined) return TOOL_USAGE_REMINDER;
+  if (availableToolNames.length === 0) return '';
+  return DYNAMIC_TOOL_USAGE_REMINDER;
+}
 
 const NO_CHAT_RULES = `
 EXECUTION RULES — NO EXCEPTIONS:
@@ -48,15 +84,15 @@ When asked to count, list, or enumerate items:
 1. State explicitly WHAT you counted and WHERE you looked (e.g. "top-level filenames in the workspace root").
 2. State the exact total found.
 3. If you searched multiple scopes, report each scope separately.
-Never report "I could not access the filesystem" if you successfully ran list_directory or read_file — that claim is FALSE. Report what you actually found.
+Never report "I could not access the filesystem" if you successfully explored it or read a file with your tools — that claim is FALSE. Report what you actually found.
 
 Output contract:
 - Produce a direct, complete answer to the task using concrete findings from your tools.
 - Lead with the answer, then support it with evidence (file paths, line numbers, counts, quotes).
 - For status/deployment tasks: state current state, when it was last changed, and the source of that information.
 - For counting tasks: state the exact count and the list of matching items.
-- When the task names a target file or path (e.g. "save to X.md", "write to X", "create X.txt"), you MUST call write_file to produce it. Do NOT describe the content inline — actually call the tool.
-- For read → analyze → synthesize → write chains: (1) read all relevant files first with read_file/list_directory, (2) form your complete analysis, (3) call write_file with the full output. Execute each step with actual tool calls — do not collapse into a single generation pass.
+- When the task names a target file or path (e.g. "save to X.md", "write to X", "create X.txt") and a write tool is available, you MUST call it to produce the file. Do NOT describe the content inline — actually call the tool.
+- For read → analyze → synthesize → write chains: (1) read all relevant files first with your read/list tools, (2) form your complete analysis, (3) if a write tool is available, call it with the full output. Execute each step with actual tool calls — do not collapse into a single generation pass.
 
 What this role does NOT do:
 - Full feature implementation (use strong_model)
@@ -173,7 +209,7 @@ Responsibilities:
 - Changelogs, migration guides, architecture decision records (ADRs)
 
 Output contract:
-- Write content directly in your response — do NOT use write_file unless the user explicitly names a target file (e.g. "save to readme.md", "write hello world to test.txt", "create a file called X"). When a filename or path is named, you MUST use write_file to produce it.
+- Write content directly in your response — do NOT use a write tool unless the user explicitly names a target file (e.g. "save to readme.md", "write hello world to test.txt", "create a file called X"). When a filename or path is named and a write tool is available, you MUST use it to produce the file.
 - Match the tone and style of the existing documentation in the project
 - Use Markdown for all document output unless told otherwise
 - For JSDoc/TSDoc, cover: purpose, params (with types), return value, throws, example
@@ -267,11 +303,11 @@ const READER = `\
 You are the Document Reader — summarizing and extracting actionable information from large inputs.
 
 IMPORTANT: You have access to file reading tools. When asked to read or analyze a file,
-you MUST use the read_file tool to get the actual file contents. Never summarize a file
+you MUST use a read tool to get the actual file contents. Never summarize a file
 you haven't read. Never make up file contents.
 
 Responsibilities:
-- Always use read_file before summarizing any file
+- Always read a file with your tools before summarizing it
 - Summarize long documents, logs, pastes, or files into the essential points
 - Extract action items, decisions, or next steps from meeting notes, tickets, or threads
 - Identify patterns in large log outputs (repeated errors, anomalies)
@@ -327,8 +363,19 @@ export const ROLE_PROMPTS: Record<RoleName, string> = {
 /**
  * Get the system prompt for a given role.
  * Falls back to BRAIN prompt if the role is unknown.
+ *
+ * @param availableToolNames Tool names actually available to this specific
+ *   invocation, after role/task-aware filtering (see
+ *   apps/runner/src/adapters/maestroAdapter.ts's resolveRoleToolNames()).
+ *   Omit only when the caller genuinely doesn't know (see buildToolGuidance
+ *   above for the exact contract) — new call sites that do have this
+ *   information should always pass it, including an explicit `[]` when
+ *   tools are known to be unavailable for this call.
  */
-export function getRolePrompt(role: RoleName): string {
+export function getRolePrompt(role: RoleName, availableToolNames?: string[]): string {
   const basePrompt = ROLE_PROMPTS[role] ?? BRAIN;
-  return `${basePrompt}\n\n${TOOL_USAGE_REMINDER}\n${NO_CHAT_RULES}`;
+  const toolGuidance = buildToolGuidance(availableToolNames);
+  return toolGuidance
+    ? `${basePrompt}\n\n${toolGuidance}\n${NO_CHAT_RULES}`
+    : `${basePrompt}\n\n${NO_CHAT_RULES}`;
 }
