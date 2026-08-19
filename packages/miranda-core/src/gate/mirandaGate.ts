@@ -81,6 +81,13 @@ export interface GateResult {
   reason: string;
   violations?: string[];
   /**
+   * Non-blocking diagnostics — the gate still allowed the action
+   * (`allowed: true`) but flags a concern, e.g. an oversized tool catalog.
+   * Kept separate from `violations`, which is reserved for block-causing
+   * conditions. Never causes `allowed` to become false.
+   */
+  warnings?: string[];
+  /**
    * Explicit verdict enriching the boolean `allowed` field.
    * Present on every result produced by `createMirandaGate`.
    * Callers should continue to use `allowed` for control flow;
@@ -90,12 +97,14 @@ export interface GateResult {
 }
 
 /**
- * Derive a GateVerdict from the existing boolean + optional violations.
+ * Derive a GateVerdict from the existing boolean + optional violations/warnings.
  * This is used internally by the gate factory to populate `verdict`
- * on every GateResult without changing any decision logic.
+ * on every GateResult without changing any decision logic. A BLOCKing
+ * result always wins; otherwise a non-empty warnings list yields WARN.
  */
-function deriveVerdict(allowed: boolean, _violations?: string[]): GateVerdict {
-  return allowed ? "PASS" : "BLOCK";
+function deriveVerdict(allowed: boolean, _violations?: string[], warnings?: string[]): GateVerdict {
+  if (!allowed) return "BLOCK";
+  return warnings && warnings.length > 0 ? "WARN" : "PASS";
 }
 
 export interface LLMCallGateContext {
@@ -107,6 +116,21 @@ export interface LLMCallGateContext {
   budgetUsed: number;
   /** USD budget cap for this run */
   budgetLimit: number;
+  /**
+   * The following context-size fields are optional and purely diagnostic —
+   * populated by callers that have already computed them for telemetry
+   * (see apps/runner/src/adapters/maestroAdapter.ts's "context.budget" trace
+   * event). Omitting them just skips the size-based WARN checks below;
+   * they never affect PASS/BLOCK decisions.
+   */
+  /** Number of distinct tools mentioned in the formatted tool-catalog prompt. */
+  toolsExposedCount?: number;
+  /** Character length of the formatted tool-catalog prompt block. */
+  toolSchemaChars?: number;
+  /** Character length of the role system prompt. */
+  systemPromptChars?: number;
+  /** Character length of the conversation-history content threaded into this call. */
+  historyChars?: number;
 }
 
 export interface ToolGateContext {
@@ -231,6 +255,19 @@ export interface MirandaGateConfig {
    */
   taskPermissions?: TaskToolPermissions;
   connectorTools?: string[];
+
+  /**
+   * Soft, non-blocking thresholds for the context-size fields on
+   * LLMCallGateContext. Exceeding a threshold sets verdict "WARN" (allowed
+   * stays true) — this never blocks a call. Omit any field to disable that
+   * particular check; defaults are conservative starting points, not
+   * measured limits — tune them once real telemetry is available.
+   */
+  contextBudget?: {
+    maxToolsExposed?: number;
+    maxToolSchemaChars?: number;
+    maxHistoryChars?: number;
+  };
 
   /**
    * Protected path policy for verifier/training/eval/control-plane files.
@@ -623,6 +660,14 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
     onViolation,
   } = config;
 
+  // Conservative starting defaults — visibility-first, not tuned to a
+  // measured limit. WARN-only; never blocks a call.
+  const contextBudget = {
+    maxToolsExposed: config.contextBudget?.maxToolsExposed ?? 40,
+    maxToolSchemaChars: config.contextBudget?.maxToolSchemaChars ?? 20_000,
+    maxHistoryChars: config.contextBudget?.maxHistoryChars ?? 40_000,
+  };
+
   function log(msg: string): void {
     if (verbose) console.error(`[Miranda] ${msg}`);
   }
@@ -663,12 +708,36 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
         return report("before_llm_call", result, ctx);
       }
 
+      // Non-blocking context-size checks. Only run for fields the caller
+      // actually populated — undefined fields skip their check silently.
+      const warnings: string[] = [];
+      if (ctx.toolsExposedCount !== undefined && ctx.toolsExposedCount > contextBudget.maxToolsExposed) {
+        warnings.push(
+          `Specialist received unusually many tools: ${ctx.toolsExposedCount} (budget ${contextBudget.maxToolsExposed})`,
+        );
+      }
+      if (ctx.toolSchemaChars !== undefined && ctx.toolSchemaChars > contextBudget.maxToolSchemaChars) {
+        warnings.push(
+          `Tool schema unusually large: ${ctx.toolSchemaChars} chars (budget ${contextBudget.maxToolSchemaChars})`,
+        );
+      }
+      if (ctx.historyChars !== undefined && ctx.historyChars > contextBudget.maxHistoryChars) {
+        warnings.push(
+          `Context exceeds expected role budget: history ${ctx.historyChars} chars (budget ${contextBudget.maxHistoryChars})`,
+        );
+      }
+
       const result: GateResult = {
         allowed: true,
         reason: `stage=${ctx.stage}  model=${ctx.model}  budget=$${ctx.budgetUsed.toFixed(4)}/$${ctx.budgetLimit}`,
-        verdict: deriveVerdict(true),
+        ...(warnings.length > 0 && { warnings }),
+        verdict: deriveVerdict(true, undefined, warnings),
       };
-      log(`before_llm_call OK  ${result.reason}`);
+      if (warnings.length > 0) {
+        log(`before_llm_call WARN  stage=${ctx.stage}  ${warnings.join(" | ")}`);
+      } else {
+        log(`before_llm_call OK  ${result.reason}`);
+      }
       return report("before_llm_call", result, ctx);
     },
 

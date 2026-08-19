@@ -126,6 +126,16 @@ export type {
   EffectiveConfig,
 } from './modelUtils';
 
+// ── Tool Capability Groups ───────────────────────────────────────────────────
+export {
+  classifyToolCapability,
+  resolveAllowedToolNames,
+  isCapabilityGroup,
+  DEFAULT_ROLE_CAPABILITIES,
+  ALL_CAPABILITY_GROUPS,
+} from './toolCapabilities';
+export type { CapabilityGroup } from './toolCapabilities';
+
 // ── Model Fallback Pools ─────────────────────────────────────────────────────
 export {
   ModelFallbackPoolManager,

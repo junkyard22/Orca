@@ -174,13 +174,49 @@ full unification. See `packages/agent-loop-core/README.md` for roadmap.
 By default (`namespaceTools: true`) each MCP server's tools are prefixed with `${id}_` to avoid
 collisions.  Example: Desktop Commander's `execute_command` → `desktop-commander_execute_command`.
 
-### Role access
+### Role access — capability-scoped by default
 
-MCP tools are visible to all roles by default (same as core tools).  `strong_model` and `cheap_model`
-have no `toolsAllowed` restriction in the default config, so Desktop Commander and GitHub MCP tools
-are available to both.
+Each role's tools are resolved from **named capability groups**
+(`packages/maestro-core/src/toolCapabilities.ts`) rather than every registered tool being visible to
+every role. Groups: `filesystem-read`, `filesystem-write`, `shell`, `github-read`, `github-write`,
+`web`, `documentation`, `document-editing` (reserved — no tools classify into it today).
 
-To restrict a role, set `toolsAllowed` in `orca-settings.json → roles.<role>`:
+`classifyToolCapability(toolName)` matches known static tools (core + ext-github/ext-docs/ext-web) by
+exact name, and namespaced MCP tools by a verb heuristic on the name after the `${serverId}_` prefix —
+destructive/write verbs (`create|write|edit|delete|merge|push|kill|…`) are checked before execution
+verbs (`execute|run|start|…`), which are checked before read verbs (`get|list|read|search|…`), so an
+ambiguous name resolves to the more privileged group, never a guessed "safe" one. A name matching no
+verb at all is **unclassified** and excluded from every role's resolved set — there is no
+"allow by default" fallback. Classification is by what a tool *does*, not which server it came from:
+a role with `filesystem-read` gets both the core `read_file` tool and any MCP tool that classifies as
+a filesystem read (e.g. `desktop-commander_read_file`) — semantic parity across sources, not
+per-server allow/deny.
+
+`DEFAULT_ROLE_CAPABILITIES` gives each role a baseline (e.g. `strong_model`/`cheap_model`/`utility`/
+`debugger` → filesystem-read+write+shell; `reviewer`/`planner_deep`/`vision` → filesystem-read only;
+`narrator`/`reader` → filesystem-read+documentation, **not** filesystem-write; `brain` → none, since
+Brain never receives `ctx.tools`). Override a role's baseline in `orca-settings.json → roles.<role>`:
+
+```jsonc
+"narrator": {
+  "providerId": "...",
+  "model": "...",
+  "toolCapabilities": ["filesystem-read", "filesystem-write", "documentation"]
+}
+```
+
+**Task-aware composition** narrows or narrowly expands that baseline per request, driven only by the
+existing structured `task.permissions` flags — never by inferring intent from prompt wording:
+
+- `permissions.fileWrite === true` may add `filesystem-write`; `permissions.shellExec === true` may
+  add `shell`. These are the *only* two additions ever made.
+- `permissions.fileWrite === false && permissions.shellExec === false` (the same signal already used
+  to gate subagent decomposition) removes `filesystem-write`/`shell`/`github-write`, regardless of
+  the role's baseline.
+- Absent `task.permissions`, nothing changes — the role's baseline is used as-is (safe fallback).
+
+An explicit `toolsAllowed` list (same field as before, still supported) is a **hard upper bound**
+resolved capability groups and task-aware additions can never exceed:
 
 ```jsonc
 "strong_model": {
@@ -190,6 +226,14 @@ To restrict a role, set `toolsAllowed` in `orca-settings.json → roles.<role>`:
 }
 ```
 
+This resolution happens in `apps/runner/src/adapters/maestroAdapter.ts`'s `resolveRoleToolNames()`,
+called once per role invocation from `runSingleAgent()` — it wraps `ctx.tools` with
+`createFilteredToolService()` (`packages/orca-core/src/toolFilter.ts`, shared with the pre-existing
+task-level `taskSpec.permissions.toolsAllowed` filter in `runtime.ts`) before the tool catalog is
+ever formatted into the prompt, so a filtered-out tool's schema is never serialized, not merely
+blocked at execution time. The Electron desktop app has its own, separately-implemented equivalent
+(`apps/desktop/src/main.ts`'s `selectToolsForRole`) — this section describes the runner/CLI path.
+
 ### Miranda tool filtering
 
 Miranda's `before_tool_run` gate checks every tool call against `allowedTools` (if set at gate
@@ -197,8 +241,34 @@ creation) **and** the runtime wraps `OrcaToolService` to enforce `taskSpec.permi
 Both checks apply uniformly to MCP tools — there is no special-casing for MCP tool names.
 
 The filter works on the **namespaced** tool name (e.g. `desktop-commander_execute_command`,
-`github-mcp_create_pull_request`).  See `packages/orca-core/src/runtime.ts` for the wrapping logic
-and `packages/orca-core/src/runtime.stress.test.ts` ("tool permission filtering" suite) for tests.
+`github-mcp_create_pull_request`).  See `packages/orca-core/src/toolFilter.ts` for the shared
+filtering implementation, `packages/orca-core/src/runtime.ts` for the task-level wrapping, and
+`packages/orca-core/src/runtime.stress.test.ts` ("tool permission filtering" suite) /
+`packages/orca-core/src/toolFilter.test.ts` for tests.
+
+### Context-budget telemetry and guardrails
+
+Every tool-bearing role invocation emits a `context.budget` trace event (via the existing
+`ctx.recordTrace`, persisted through `analysisWriter.writeTrace()` — no new storage) recording: role,
+model, tools-exposed count, tool-schema character length, system-prompt and task-prompt character
+lengths, conversation-history message count and character length, and an approximate token count
+(chars ÷ 4, explicitly labeled `estimated: true` — never conflated with provider-reported usage).
+Where a provider *does* report real usage, that's captured separately by the existing
+`ORCA_PROFILE`-gated `llm_call` event in `packages/miranda-core/src/llm/openaiCompat.ts`.
+
+Miranda's `beforeLLMCall` gate (`packages/miranda-core/src/gate/mirandaGate.ts`) accepts the same
+size fields on `LLMCallGateContext` and checks them against configurable, WARN-only thresholds
+(`MirandaGateConfig.contextBudget`, conservative defaults — never block a call, only set
+`verdict: "WARN"` with a `GateResult.warnings` list). This flags an oversized tool catalog or history
+without ever interrupting legitimate large-context work.
+
+### Pipeline handoffs
+
+AHP packets (`AHPPacket` in `packages/miranda-core/src/ahp/types.ts`, threaded through Maestro as
+`ahpPacket`/`ctx.ahpRootPacket`) already carry the structured `objective` / `inputs` / `constraints` /
+`expectedOutput` / `trace` a specialist or repair pass needs, and `repairLoop.ts` already prefers a
+packet's `repairPrompt` over replaying the full prior conversation. No new handoff abstraction was
+added for this milestone — role-scoped tooling and context telemetry compose with AHP as-is.
 
 ### Secrets storage
 

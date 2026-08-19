@@ -271,7 +271,6 @@ async function main(): Promise<void> {
   const gate = createMirandaGate({ verbose: process.env["MIRANDA_VERBOSE"] === "1" });
 
   const pappy = createPappyPort();
-  const maestro = createMaestroAdapter();
 
   const workspaceRoot = process.env["WORKSPACE_ROOT"]?.trim() ?? process.cwd();
 
@@ -284,6 +283,10 @@ async function main(): Promise<void> {
   });
 
   const tools = bootstrap.toolService;
+
+  // allToolNames feeds role-scoped tool capability resolution — see
+  // packages/maestro-core/src/toolCapabilities.ts.
+  const maestro = createMaestroAdapter({ allToolNames: bootstrap.allToolNames });
 
   // Persistent run store — saves every task to ~/.orca/runs.db
   // Override the path with ORCA_DB_PATH if needed.

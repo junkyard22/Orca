@@ -5,7 +5,11 @@
  *   1. Old callers using `allowed` still pass (backward compat)
  *   2. Successful gate results include `verdict: "PASS"`
  *   3. Blocked gate results include `verdict: "BLOCK"`
- *   4. WARN is not emitted yet — reserved for future non-blocking advisory gates
+ *   4. WARN is emitted only by beforeLLMCall's context-size advisories (tools
+ *      exposed / tool schema chars / history chars exceeding contextBudget
+ *      thresholds) — every other checkpoint still only ever returns PASS/BLOCK,
+ *      and beforeLLMCall itself only warns when a caller populates those
+ *      optional context fields; existing callers that don't are unaffected.
  *   5. CONFIRM_REQUIRED is not emitted yet
  *   6. verdict contract: PASS/WARN ↔ allowed:true, BLOCK/CONFIRM_REQUIRED ↔ allowed:false
  *   7. Legacy contexts keep their behavior; receipt inconsistencies are blocked
@@ -492,13 +496,14 @@ describe("Task-scoped resource permissions", () => {
 // WARN and CONFIRM_REQUIRED are not emitted yet
 // ---------------------------------------------------------------------------
 
-describe("GateVerdict: WARN and CONFIRM_REQUIRED not emitted", () => {
+describe("GateVerdict: WARN only for context-size advisories; CONFIRM_REQUIRED not emitted", () => {
   const gate = createMirandaGate();
 
-  it("no gate checkpoint currently emits WARN", () => {
-    // Exhaustive check: every result produced by the gate factory should
-    // be either PASS or BLOCK. WARN is reserved for future non-blocking
-    // advisory gates where allowed:true but a concern is flagged.
+  it("no gate checkpoint emits WARN when context-size fields are absent", () => {
+    // None of these calls populate toolsExposedCount/toolSchemaChars/
+    // historyChars on LLMCallGateContext, so beforeLLMCall's size-based
+    // WARN checks never fire — every result here is still PASS or BLOCK,
+    // exactly as before this field existed.
     const restrictedGate = createMirandaGate({
       allowedModels: ["gpt-4"],
       allowedTools: ["read_file"],
@@ -552,6 +557,68 @@ describe("GateVerdict: WARN and CONFIRM_REQUIRED not emitted", () => {
     };
     expect(hypotheticalWarn.allowed).toBe(true);
     expect(hypotheticalWarn.verdict).toBe("WARN");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Context-size WARN checks — isolated from the model/budget BLOCK checks
+// ---------------------------------------------------------------------------
+
+describe("beforeLLMCall context-size WARN thresholds", () => {
+  it("stays PASS when every size field is under the default thresholds", () => {
+    const gate = createMirandaGate();
+    const r = gate.beforeLLMCall(
+      makeLLMCtx({ toolsExposedCount: 5, toolSchemaChars: 1000, historyChars: 2000 }),
+    );
+    expect(r.allowed).toBe(true);
+    expect(r.verdict).toBe("PASS");
+    expect(r.warnings).toBeUndefined();
+  });
+
+  it("WARNs (without blocking) when toolsExposedCount exceeds the threshold", () => {
+    const gate = createMirandaGate({ contextBudget: { maxToolsExposed: 10 } });
+    const r = gate.beforeLLMCall(makeLLMCtx({ toolsExposedCount: 11 }));
+    expect(r.allowed).toBe(true);
+    expect(r.verdict).toBe("WARN");
+    expect(r.warnings?.some((w) => w.includes("unusually many tools"))).toBe(true);
+  });
+
+  it("WARNs when toolSchemaChars exceeds the threshold", () => {
+    const gate = createMirandaGate({ contextBudget: { maxToolSchemaChars: 500 } });
+    const r = gate.beforeLLMCall(makeLLMCtx({ toolSchemaChars: 501 }));
+    expect(r.allowed).toBe(true);
+    expect(r.verdict).toBe("WARN");
+    expect(r.warnings?.some((w) => w.includes("Tool schema unusually large"))).toBe(true);
+  });
+
+  it("WARNs when historyChars exceeds the threshold", () => {
+    const gate = createMirandaGate({ contextBudget: { maxHistoryChars: 100 } });
+    const r = gate.beforeLLMCall(makeLLMCtx({ historyChars: 101 }));
+    expect(r.allowed).toBe(true);
+    expect(r.verdict).toBe("WARN");
+    expect(r.warnings?.some((w) => w.includes("exceeds expected role budget"))).toBe(true);
+  });
+
+  it("never blocks on a size overrun alone, however large", () => {
+    const gate = createMirandaGate({
+      contextBudget: { maxToolsExposed: 1, maxToolSchemaChars: 1, maxHistoryChars: 1 },
+    });
+    const r = gate.beforeLLMCall(
+      makeLLMCtx({ toolsExposedCount: 999, toolSchemaChars: 999_999, historyChars: 999_999 }),
+    );
+    expect(r.allowed).toBe(true);
+    expect(r.verdict).toBe("WARN");
+    expect(r.warnings).toHaveLength(3);
+  });
+
+  it("budget/model BLOCK still takes priority — no warnings field on a BLOCKed result", () => {
+    const gate = createMirandaGate({ contextBudget: { maxToolsExposed: 1 } });
+    const r = gate.beforeLLMCall(
+      makeLLMCtx({ budgetUsed: 5.0, budgetLimit: 1.0, toolsExposedCount: 999 }),
+    );
+    expect(r.allowed).toBe(false);
+    expect(r.verdict).toBe("BLOCK");
+    expect(r.warnings).toBeUndefined();
   });
 });
 

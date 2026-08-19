@@ -35,6 +35,7 @@ import {
 import { AHPLifecycle } from "./ahp/types.js";
 import { serializeAHPPacketGraph, formatAHPPacketGraphSummary, formatAHPPacketGraphIssuesSummary } from "./ahp/graph.js";
 import type { AHPPacketGraph } from "./ahp/graph.js";
+import { createFilteredToolService } from "./toolFilter.js";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -279,32 +280,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         const allowed = normalizedTaskSpec.permissions?.toolsAllowed;
         if (!allowed) return tools;
         if (allowed.length === 0) return undefined;
-        return {
-          execute(name: string, input: Record<string, unknown>) {
-            if (!allowed.includes(name)) {
-              return Promise.resolve({
-                ok: false,
-                output: "",
-                error: `Tool "${name}" is not permitted for this request. Allowed: ${allowed.join(", ")}. Output the result in your response instead.`,
-              });
-            }
-            return tools.execute(name, input);
-          },
-          formatForPrompt() {
-            const full = tools.formatForPrompt();
-            const allToolNames = [...full.matchAll(/\*\*([\w_]+)\*\*/g)].map((match) => match[1] as string);
-            let filtered = full;
-            for (const toolName of allToolNames) {
-              if (!allowed.includes(toolName)) {
-                filtered = filtered.replace(
-                  new RegExp(`\\*\\*${toolName}\\*\\*[^\\n]*(?:\\n  -[^\\n]*)*\\n?`, "g"),
-                  "",
-                );
-              }
-            }
-            return filtered;
-          },
-        };
+        return createFilteredToolService(tools, allowed);
       })(),
       emit: (event) => emitter.emit(event),
       workspaceContext: effectiveWorkspaceContext,

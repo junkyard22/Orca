@@ -144,6 +144,52 @@ describe("beforeLLMCall PASS", () => {
     expect(detail.allowed).toBe(true);
     expect(detail.verdict).toBe("PASS");
   });
+
+  it("passes tool/prompt size fields to the gate context", async () => {
+    const captured: LLMCallGateContext[] = [];
+    const gate = makePassGate({
+      onBeforeLLMCall: (ctx) => captured.push({ ...ctx }),
+    });
+    const tools: OrcaToolService = {
+      execute: vi.fn(async () => ({ ok: true, output: "done" })),
+      formatForPrompt: () => "**read_file** — reads a file\n  - path (string): the path\n",
+    };
+    const ctx = makeCtx({ gate });
+
+    await runAgentLoop("system prompt text", "task prompt text", tools, ctx);
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.toolsExposedCount).toBe(1);
+    expect(captured[0]!.toolSchemaChars).toBeGreaterThan(0);
+    expect(captured[0]!.systemPromptChars).toBe("system prompt text".length);
+  });
+
+  it("WARN from an oversized-context check still allows the LLM call to run", async () => {
+    // A gate that returns WARN (not BLOCK) for an oversized tool schema —
+    // proves runAgentLoop only stops on !allowed / CONFIRM_REQUIRED, never on WARN.
+    const warnResult: GateResult = {
+      allowed: true,
+      reason: "gate: WARN",
+      warnings: ["Tool schema unusually large: 99999 chars (budget 20000)"],
+      verdict: "WARN",
+    };
+    const gate: MirandaGate = {
+      beforeLLMCall: () => warnResult,
+      afterLLMCall: () => warnResult,
+      beforeToolRun: () => warnResult,
+      afterToolRun: () => warnResult,
+      beforeQC: () => warnResult,
+      afterQC: () => warnResult,
+    };
+    const llm = makeLLMService("Model output despite WARN.");
+    const ctx = makeCtx({ llm, gate });
+
+    const result = await runAgentLoop("system", "task", makeTools(), ctx);
+
+    expect(result.text).toBe("Model output despite WARN.");
+    expect(result.stoppedBecause).toBe("done");
+    expect(llm.stream).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
