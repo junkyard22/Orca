@@ -7,6 +7,7 @@ export {
   normalizeMaestroResult,
 } from "./helpers.js";
 export { extractAuditTargetPath, formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
+export { createFilteredToolService, extractToolNamesFromPrompt } from "./toolFilter.js";
 
 // Concrete adapter factories (convenience — can be swapped for custom impls)
 export { createMirandaLLMService } from "./adapters/mirandaLLM.js";

@@ -36,7 +36,10 @@ import {
   shouldAttemptSubagentDecomposition,
   parseToolCalls,
   formatToolResult,
+  resolveRoleToolNames,
+  type OrcaSettings,
 } from "./maestroAdapter.js";
+import type { OrcaToolService } from "@clawde/orca-core";
 
 function makeTask(message = "Say hello."): OrcaTaskSpec {
   return {
@@ -370,5 +373,192 @@ describe("formatToolResult", () => {
     const formatted = formatToolResult("list_directory", true, "f  main.ts");
     expect(formatted).toMatch(/<tool_result[^>]*>/);
     expect(formatted).toContain("</tool_result>");
+  });
+});
+
+// ─── resolveRoleToolNames — role scoping & task-aware composition ────────────
+
+const ALL_TOOL_NAMES = [
+  "read_file",
+  "write_file",
+  "run_command",
+  "list_directory",
+  "search_files",
+  "github_list_prs",
+  "github_clone_repo",
+  "docs_read",
+  "web_fetch",
+  "desktop-commander_execute_command",
+  "github-mcp_create_pull_request",
+];
+
+function makeSettings(overrides: Record<string, { toolsAllowed?: string[]; toolCapabilities?: string[] }> = {}): OrcaSettings {
+  const roles: OrcaSettings["roles"] = {};
+  for (const [role, extra] of Object.entries(overrides)) {
+    roles[role] = { provider: "test", model: "test", label: role, ...extra };
+  }
+  return { roles };
+}
+
+describe("resolveRoleToolNames", () => {
+  // makeTask()'s default permissions are read-only (fileWrite/shellExec both
+  // false) — appropriate for the no-tools gate tests above, but it would
+  // silently narrow every role baseline below via the read-only removal rule
+  // (step 4 of the design), which is exactly what these "pure baseline"
+  // tests must NOT exercise. Use no permissions at all so baseline resolution
+  // is isolated from task-aware composition (covered separately below).
+  function makeTaskNoPermissions(message?: string): ReturnType<typeof makeTask> {
+    const task = makeTask(message);
+    task.permissions = undefined;
+    return task;
+  }
+
+  describe("role defaults (baseline)", () => {
+    it("strong_model gets filesystem read/write + shell by default", () => {
+      const allowed = resolveRoleToolNames("strong_model", makeSettings(), ALL_TOOL_NAMES, makeTaskNoPermissions());
+      expect(allowed).toEqual(expect.arrayContaining(["read_file", "write_file", "run_command"]));
+    });
+
+    it("narrator does NOT get filesystem-write or shell by default", () => {
+      const allowed = resolveRoleToolNames("narrator", makeSettings(), ALL_TOOL_NAMES, makeTaskNoPermissions());
+      expect(allowed).toContain("read_file");
+      expect(allowed).toContain("docs_read");
+      expect(allowed).not.toContain("write_file");
+      expect(allowed).not.toContain("run_command");
+      expect(allowed).not.toContain("github-mcp_create_pull_request");
+      expect(allowed).not.toContain("desktop-commander_execute_command");
+    });
+
+    it("reviewer/planner_deep/vision stay read-only by default", () => {
+      for (const role of ["reviewer", "planner_deep", "vision"] as const) {
+        const allowed = resolveRoleToolNames(role, makeSettings(), ALL_TOOL_NAMES, makeTaskNoPermissions());
+        expect(allowed).toContain("read_file");
+        expect(allowed).not.toContain("write_file");
+        expect(allowed).not.toContain("run_command");
+      }
+    });
+
+    it("brain gets no tools (it never receives ctx.tools in practice)", () => {
+      const allowed = resolveRoleToolNames("brain", makeSettings(), ALL_TOOL_NAMES, makeTask());
+      expect(allowed).toEqual([]);
+    });
+  });
+
+  describe("task-aware composition", () => {
+    it("explicit permissions.fileWrite === true adds filesystem-write to narrator", () => {
+      const task = makeTask();
+      task.permissions = { fileRead: true, fileWrite: true, shellExec: false };
+      const allowed = resolveRoleToolNames("narrator", makeSettings(), ALL_TOOL_NAMES, task);
+      expect(allowed).toContain("write_file");
+    });
+
+    it('wording alone ("update the README") without explicit fileWrite:true does NOT add filesystem-write', () => {
+      const task = makeTask("Please update the README with the new deployment steps");
+      task.permissions = { fileRead: true, fileWrite: false, shellExec: false };
+      const allowed = resolveRoleToolNames("narrator", makeSettings(), ALL_TOOL_NAMES, task);
+      expect(allowed).not.toContain("write_file");
+    });
+
+    it("permissions.fileWrite === false && shellExec === false narrows a mutation-capable role to read-only", () => {
+      const task = makeTask();
+      task.permissions = { fileRead: true, fileWrite: false, shellExec: false };
+      const allowed = resolveRoleToolNames("strong_model", makeSettings(), ALL_TOOL_NAMES, task);
+      expect(allowed).toContain("read_file");
+      expect(allowed).not.toContain("write_file");
+      expect(allowed).not.toContain("run_command");
+    });
+
+    it("absent task.permissions changes nothing — role baseline used as-is", () => {
+      const task = makeTask();
+      task.permissions = undefined;
+      const allowed = resolveRoleToolNames("narrator", makeSettings(), ALL_TOOL_NAMES, task);
+      expect(allowed).toContain("read_file");
+      expect(allowed).not.toContain("write_file");
+    });
+  });
+
+  describe("explicit toolsAllowed — hard upper bound", () => {
+    it("narrows below whatever capability resolution would otherwise allow", () => {
+      const settings = makeSettings({
+        strong_model: { toolsAllowed: ["read_file"] },
+      });
+      const allowed = resolveRoleToolNames("strong_model", settings, ALL_TOOL_NAMES, makeTask());
+      expect(allowed).toEqual(["read_file"]);
+    });
+
+    it("is never exceeded even when task permissions would add a capability", () => {
+      const settings = makeSettings({
+        narrator: { toolsAllowed: ["read_file", "docs_read"] },
+      });
+      const task = makeTask();
+      task.permissions = { fileRead: true, fileWrite: true, shellExec: false };
+      const allowed = resolveRoleToolNames("narrator", settings, ALL_TOOL_NAMES, task);
+      expect(allowed).not.toContain("write_file");
+      expect(allowed.every((name) => ["read_file", "docs_read"].includes(name))).toBe(true);
+    });
+
+    it("configured toolCapabilities override the built-in default baseline", () => {
+      const settings = makeSettings({
+        narrator: { toolCapabilities: ["filesystem-read", "filesystem-write"] },
+      });
+      const task = makeTask();
+      task.permissions = undefined; // isolate baseline resolution — see makeTaskNoPermissions() above
+      const allowed = resolveRoleToolNames("narrator", settings, ALL_TOOL_NAMES, task);
+      expect(allowed).toContain("write_file");
+    });
+  });
+});
+
+// ─── Role-scoped filtering wired end-to-end through createMaestroAdapter ─────
+
+describe("role-scoped tool filtering (end-to-end via createMaestroAdapter)", () => {
+  function makeToolServiceSpy(): OrcaToolService {
+    const names = ["read_file", "write_file", "run_command"];
+    return {
+      execute: vi.fn(async () => ({ ok: true, output: "ok" })),
+      formatForPrompt: vi.fn(() =>
+        names.map((n) => `**${n}** — does something\n  - arg (string)`).join("\n"),
+      ),
+    };
+  }
+
+  it("a read-only narrator task exposes only its filtered tool set, not the raw catalog", async () => {
+    const adapter = createMaestroAdapter({ allToolNames: ["read_file", "write_file", "run_command"] });
+    const tools = makeToolServiceSpy();
+    const rawCatalogChars = tools.formatForPrompt().length; // all 3 tools, unfiltered
+    const llmStream = vi.fn(async (_prompt: string, _opts: unknown, onChunk: (c: string) => void) => {
+      onChunk("Done, no tool calls needed.");
+      return { text: "Done, no tool calls needed." };
+    });
+    const recordedTraces: Array<{ stage: string; detail: unknown }> = [];
+    const ctx = makeRunCtx({
+      tools,
+      llm: { complete: vi.fn(async () => ({ text: "" })), stream: llmStream },
+      recordTrace: (stage, detail) => recordedTraces.push({ stage, detail }),
+    });
+
+    const task = makeTask("Explain how this module works");
+    task.permissions = { fileRead: true, fileWrite: false, shellExec: false };
+
+    await adapter.run(task, ctx);
+
+    expect(llmStream).toHaveBeenCalledTimes(1);
+
+    // The role-scoped context.budget telemetry is the precise signal here —
+    // asserting on substrings of the full assembled prompt is unreliable
+    // because getRolePrompt() also appends a generic tool-usage reminder
+    // that mentions all core tool names by name regardless of availability
+    // (packages/maestro-core/src/prompts/rolePrompts.ts TOOL_USAGE_REMINDER,
+    // a separate pre-existing staleness this milestone did not scope in).
+    const budgetTrace = recordedTraces.find((t) => t.stage === "context.budget");
+    expect(budgetTrace).toBeDefined();
+    const detail = budgetTrace!.detail as {
+      toolsExposedCount: number;
+      toolSchemaChars: number;
+      role: string;
+    };
+    expect(detail.role).toBe("narrator");
+    expect(detail.toolsExposedCount).toBe(1); // only read_file survives filtering
+    expect(detail.toolSchemaChars).toBeLessThan(rawCatalogChars);
   });
 });

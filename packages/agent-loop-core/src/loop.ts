@@ -1,5 +1,6 @@
 import {
   extractFilesChangedFromCommandOutput,
+  extractToolNamesFromPrompt,
   type OrcaFileChange,
   type OrcaMaestroResult,
   type OrcaRunCtx,
@@ -120,9 +121,18 @@ export async function runAgentLoop(
   const toolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
   const filesChanged: OrcaFileChange[] = [];
 
+  // Computed once — reused for Miranda's context-size WARN checks at every
+  // beforeLLMCall site below rather than re-deriving per iteration.
+  const toolSchemaText = tools.formatForPrompt();
+  const llmCallSizeContext = {
+    toolsExposedCount: extractToolNamesFromPrompt(toolSchemaText).length,
+    toolSchemaChars: toolSchemaText.length,
+    systemPromptChars: systemPrompt.length,
+  };
+
   // Full conversation grows with each turn so the model always has context.
   let conversation =
-    `${systemPrompt}\n\n${tools.formatForPrompt()}\n\n---\n\n${taskPrompt}`;
+    `${systemPrompt}\n\n${toolSchemaText}\n\n---\n\n${taskPrompt}`;
 
   let lastText = "";
   let iterations = 0;
@@ -159,6 +169,7 @@ export async function runAgentLoop(
         stage: "agent_loop_main_stream",
         model: ctx.model ?? "unknown",
         ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...llmCallSizeContext,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,
@@ -370,6 +381,7 @@ export async function runAgentLoop(
         stage: "agent_loop_rescue_stream",
         model: ctx.model ?? "unknown",
         ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...llmCallSizeContext,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,

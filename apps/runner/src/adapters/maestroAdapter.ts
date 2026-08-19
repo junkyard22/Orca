@@ -7,6 +7,9 @@ import {
   pickCoreRole as pickCoreRoleFromTask,
   BRAIN_DECOMPOSE_SYSTEM,
   parseBrainDecision,
+  resolveAllowedToolNames,
+  isCapabilityGroup,
+  DEFAULT_ROLE_CAPABILITIES,
 } from "maestro-core";
 import type {
   RoleName,
@@ -14,6 +17,7 @@ import type {
   TaskContext as RoleSelectorContext,
   OrchestrationResult,
   CoreRoleName,
+  CapabilityGroup,
 } from "maestro-core";
 import type {
   MaestroPort,
@@ -25,6 +29,7 @@ import type {
   OrcaLLMService,
   WorkspaceContext,
 } from "@clawde/orca-core";
+import { createFilteredToolService, extractToolNamesFromPrompt } from "@clawde/orca-core";
 import type { AHPPacket, GateResult } from "@clawde/miranda-core";
 import { runAgentLoop } from "@clawde/agent-loop-core";
 export { formatToolResult, normalizeToolText, parseToolCalls } from "@clawde/agent-loop-core";
@@ -68,6 +73,18 @@ export interface RoleSettings {
   provider: string;
   model: string;
   label: string;
+  /**
+   * Named capability groups (see @clawde/maestro-core toolCapabilities) this
+   * role gets by default, e.g. ["filesystem-read", "filesystem-write"].
+   * Omit to use DEFAULT_ROLE_CAPABILITIES for the role.
+   */
+  toolCapabilities?: string[];
+  /**
+   * Explicit tool-name allowlist. When set, this is a hard upper bound that
+   * capability-group resolution and task-permission narrowing/expansion can
+   * never exceed — mirrors apps/desktop's RoleEntry.toolsAllowed.
+   */
+  toolsAllowed?: string[];
 }
 
 export interface OrcaSettings {
@@ -108,12 +125,21 @@ function loadRoleSettings(): OrcaSettings {
       const raw = JSON.parse(fs.readFileSync(desktopPath, "utf-8")) as Record<string, unknown>;
       if (Array.isArray(raw["providers"]) && raw["roles"] && typeof raw["roles"] === "object") {
         const providers = raw["providers"] as Array<{ id: string; type?: string }>;
-        const rawRoles = raw["roles"] as Record<string, { providerId?: string; model?: string }>;
+        const rawRoles = raw["roles"] as Record<
+          string,
+          { providerId?: string; model?: string; toolsAllowed?: unknown; toolCapabilities?: unknown }
+        >;
         const roles: Record<string, RoleSettings> = {};
         for (const [roleName, roleEntry] of Object.entries(rawRoles)) {
           if (roleEntry.providerId && roleEntry.model) {
             const prov = providers.find((p) => p.id === roleEntry.providerId);
-            roles[roleName] = { provider: prov?.type ?? "custom", model: roleEntry.model, label: roleName };
+            roles[roleName] = {
+              provider: prov?.type ?? "custom",
+              model: roleEntry.model,
+              label: roleName,
+              ...(Array.isArray(roleEntry.toolsAllowed) && { toolsAllowed: roleEntry.toolsAllowed as string[] }),
+              ...(Array.isArray(roleEntry.toolCapabilities) && { toolCapabilities: roleEntry.toolCapabilities as string[] }),
+            };
           }
         }
         if (Object.keys(roles).length > 0) {
@@ -160,10 +186,22 @@ function formatAvailableRoles(settings: OrcaSettings): string {
   return getAvailableCoreRoles(settings).join(", ");
 }
 
-export function createMaestroAdapter(): MaestroPort {
+export interface MaestroAdapterConfig {
+  /**
+   * Every currently-registered tool name (core + static extensions + any
+   * connected MCP servers), from buildToolBootstrap().allToolNames. Used to
+   * resolve role capability groups into a concrete allowlist. Omit to skip
+   * role-scoped tool filtering entirely (falls back to today's unfiltered
+   * behavior).
+   */
+  allToolNames?: string[];
+}
+
+export function createMaestroAdapter(config: MaestroAdapterConfig = {}): MaestroPort {
   const maestro = createMaestroCore();
   const dewey = new Dewey();
   const settings = loadRoleSettings();
+  const allToolNames = config.allToolNames;
 
   // Start the Dewey session asynchronously — non-blocking at startup.
   dewey.startSession().catch((err: unknown) => {
@@ -240,7 +278,7 @@ export function createMaestroAdapter(): MaestroPort {
       traceEvent({ type: "ahp:lifecycle", data: { lifecycle: AHPLifecycle.RUNNING, id: ahpPacket.id } });
 
       if (routing.path === "decompose") {
-        const decomposeResult = await runSubagentPool(task, routing.subtasks, orch, ctx, ahpPacket);
+        const decomposeResult = await runSubagentPool(task, routing.subtasks, orch, ctx, ahpPacket, settings, allToolNames);
         const allFailed = decomposeResult.subagentRuns?.every((r) => r.status === "failed") ?? false;
         const decomposeState = allFailed ? AHPLifecycle.FAILED : AHPLifecycle.COMPLETE;
         transitionAHPLifecycle(AHPLifecycle.RUNNING, decomposeState);
@@ -325,6 +363,8 @@ export function createMaestroAdapter(): MaestroPort {
         collectedSuggestions.length > 0 ? collectedSuggestions : undefined,
         ahpPacket,
         routing.done_criteria,
+        settings,
+        allToolNames,
       );
 
       // Transition the packet RUNNING → COMPLETE/FAILED after execution.
@@ -698,6 +738,54 @@ export function normalizeConversationHistory(
 }
 
 // ---------------------------------------------------------------------------
+// Role-scoped tool resolution
+//
+// Final allowlist = role capability baseline, then narrow task-permission
+// add/remove, then an explicit toolsAllowed hard cap (never exceeded). See
+// packages/maestro-core/src/toolCapabilities.ts for the capability taxonomy.
+// ---------------------------------------------------------------------------
+
+export function resolveRoleToolNames(
+  effectiveRole: RoleName,
+  settings: OrcaSettings,
+  allToolNames: string[],
+  task: OrcaTaskSpec,
+): string[] {
+  const roleSettings = settings.roles[effectiveRole];
+
+  const configuredGroups = roleSettings?.toolCapabilities?.filter(isCapabilityGroup) as
+    | CapabilityGroup[]
+    | undefined;
+  const baseline = configuredGroups ?? DEFAULT_ROLE_CAPABILITIES[effectiveRole] ?? [];
+  const groups = new Set<CapabilityGroup>(baseline);
+
+  // Task-permission composition. Only these two narrow, explicit additions
+  // are ever made — never inferred from prompt wording — and the read-only
+  // removal mirrors the isReadOnly signal already used for decompose gating
+  // below. Absent task.permissions changes nothing (safe fallback).
+  const perms = task.permissions;
+  if (perms) {
+    if (perms.fileWrite) groups.add("filesystem-write");
+    if (perms.shellExec) groups.add("shell");
+    if (!perms.fileWrite && !perms.shellExec) {
+      groups.delete("filesystem-write");
+      groups.delete("shell");
+      groups.delete("github-write");
+    }
+  }
+
+  let allowed = resolveAllowedToolNames(allToolNames, [...groups]);
+
+  // Explicit toolsAllowed is a hard upper bound — intersect, never expand.
+  if (roleSettings?.toolsAllowed) {
+    const hardCap = new Set(roleSettings.toolsAllowed);
+    allowed = allowed.filter((name) => hardCap.has(name));
+  }
+
+  return allowed;
+}
+
+// ---------------------------------------------------------------------------
 // Single-agent execution — the shared workhorse used both for top-level tasks
 // (when no decomposition fires) and for individual subagents.
 // ---------------------------------------------------------------------------
@@ -713,6 +801,8 @@ async function runSingleAgent(
   deweyAdvisory?: string[],
   ahpPacket?: AHPPacket,
   doneCriteria?: string[],
+  settings?: OrcaSettings,
+  allToolNames?: string[],
 ): Promise<OrcaMaestroResult> {
   // Subagents may carry a forcedRole in context (set by runSubagentPool).
   const effectiveRole = (
@@ -750,9 +840,50 @@ async function runSingleAgent(
     role: effectiveRole,
   };
 
-  if (ctx.tools) {
+  // Role-scoped tool filtering — narrows ctx.tools to this role's resolved
+  // capability set before it ever reaches the agent loop / prompt assembly.
+  // Falls back to the unfiltered ctx.tools when settings/allToolNames
+  // weren't threaded in (keeps this additive, not a breaking change to
+  // call sites that predate this feature).
+  let scopedTools = ctx.tools;
+  if (ctx.tools && settings && allToolNames) {
+    const allowedToolNames = resolveRoleToolNames(effectiveRole, settings, allToolNames, task);
+    scopedTools = allowedToolNames.length === 0
+      ? undefined
+      : createFilteredToolService(ctx.tools, allowedToolNames);
+  }
+
+  if (scopedTools) {
+    const toolSchemaText = scopedTools.formatForPrompt();
+    const conversationHistory = task.context?.["conversationHistory"];
+    const historyMessages = Array.isArray(conversationHistory) ? conversationHistory : [];
+    const historyChars = historyMessages.reduce(
+      (sum: number, m: unknown) =>
+        sum + (m && typeof m === "object" && "content" in m ? String((m as { content: unknown }).content).length : 0),
+      0,
+    );
+    const systemPromptChars = systemPrompt.length;
+    const taskPromptChars = taskPrompt.length;
+    const toolSchemaChars = toolSchemaText.length;
+    const totalCharsApprox = systemPromptChars + taskPromptChars + toolSchemaChars;
+    ctx.recordTrace?.("context.budget", {
+      role: effectiveRole,
+      model: ctx.model ?? "unknown",
+      toolsExposedCount: extractToolNamesFromPrompt(toolSchemaText).length,
+      toolSchemaChars,
+      systemPromptChars,
+      taskPromptChars,
+      historyMessageCount: historyMessages.length,
+      historyChars,
+      totalCharsApprox,
+      approxTokens: Math.round(totalCharsApprox / 4),
+      estimated: true,
+    });
+  }
+
+  if (scopedTools) {
     const writeHints = doneCriteria ?? task.goals;
-    const result = await runAgentLoop(systemPrompt, taskPrompt, ctx.tools, ctx, writeHints);
+    const result = await runAgentLoop(systemPrompt, taskPrompt, scopedTools, ctx, writeHints);
     outputText = result.text;
     toolEvents = result.toolEvents;
     filesChanged = result.filesChanged;
@@ -1078,6 +1209,8 @@ async function runSubagentPool(
   orch: OrchestrationResult,
   ctx: OrcaRunCtx,
   ahpPacket?: AHPPacket,
+  settings?: OrcaSettings,
+  allToolNames?: string[],
 ): Promise<OrcaMaestroResult> {
   const allToolEvents: NonNullable<OrcaMaestroResult["toolEvents"]> = [];
   const subagentRuns: NonNullable<OrcaMaestroResult["subagentRuns"]> = [];
@@ -1177,6 +1310,9 @@ async function runSubagentPool(
         undefined, // deweyBrief
         undefined, // deweyAdvisory
         ahpPacket,
+        undefined, // doneCriteria
+        settings,
+        allToolNames,
       );
 
       ctx.emit?.({
