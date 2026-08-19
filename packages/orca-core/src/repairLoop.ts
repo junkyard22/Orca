@@ -186,8 +186,13 @@ export async function handleRepairLoop(
         `Call write_file NOW. Nothing else is acceptable.`
       : hasToolMissing
       ? `\n\nCRITICAL: The previous attempt completed WITHOUT calling any tools. ` +
-        `You MUST use your available tools (read_file, write_file, list_directory, etc.) ` +
-        `to actually perform the work. Do NOT just describe what you would do — ` +
+        // Deliberately doesn't name specific tools — the repair pass re-runs
+        // through the normal role-scoped agent loop, which appends the
+        // actual, currently-filtered tool catalog fresh. Naming tools here
+        // risked claiming availability of something filtered out for this
+        // role/task (see the Dynamic Tool Prompt Hygiene milestone).
+        `You MUST use your available tools to actually perform the work. ` +
+        `Do NOT just describe what you would do — ` +
         `call the tools and do it. Use <tool_call> blocks to invoke tools.`
       : '';
 

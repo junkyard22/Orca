@@ -194,8 +194,12 @@ per-server allow/deny.
 
 `DEFAULT_ROLE_CAPABILITIES` gives each role a baseline (e.g. `strong_model`/`cheap_model`/`utility`/
 `debugger` → filesystem-read+write+shell; `reviewer`/`planner_deep`/`vision` → filesystem-read only;
-`narrator`/`reader` → filesystem-read+documentation, **not** filesystem-write; `brain` → none, since
-Brain never receives `ctx.tools`). Override a role's baseline in `orca-settings.json → roles.<role>`:
+`narrator`/`reader` → filesystem-read+documentation, **not** filesystem-write; `brain` →
+filesystem-read only — Brain's internal *routing* LLM call (direct-vs-decompose) never sees tools,
+but `pickCoreRole()`/`selectRole()` can also select `brain` as the direct *worker* role for
+investigative/status tasks, in which case it runs through the normal tool-bearing agent loop like any
+other role, and its own prompt text assumes read access). Override a role's baseline in
+`orca-settings.json → roles.<role>`:
 
 ```jsonc
 "narrator": {
@@ -233,6 +237,21 @@ task-level `taskSpec.permissions.toolsAllowed` filter in `runtime.ts`) before th
 ever formatted into the prompt, so a filtered-out tool's schema is never serialized, not merely
 blocked at execution time. The Electron desktop app has its own, separately-implemented equivalent
 (`apps/desktop/src/main.ts`'s `selectToolsForRole`) — this section describes the runner/CLI path.
+
+### Role prompts describe behavior, not a static tool list
+
+Role prompts (`packages/maestro-core/src/prompts/rolePrompts.ts`) contain behavioral guidance —
+what the role does, its output contract, what it does NOT do. They do not assert which specific
+tools exist: `getRolePrompt(role, availableToolNames)` takes the same resolved allowlist computed by
+`resolveRoleToolNames()` above and adjusts its tool-usage reminder accordingly — omitted entirely
+when the list is empty (a model must never be told to use tools it doesn't have), a generic,
+tool-name-agnostic reminder when tools exist (the actual catalog — names, schemas, call syntax — is
+already appended separately by the agent loop's `tools.formatForPrompt()`, so the role prompt doesn't
+duplicate it), and only a fixed legacy reminder (naming the 5 core tools unconditionally) for the
+small number of call sites that don't yet pass a resolved list (`apps/desktop`'s adapters, which
+build their own separately-dynamic tool-availability text). Actual tool availability for any given
+invocation is always the post-filter tool service constructed above — no role prompt or static list
+should be treated as authoritative about what's callable.
 
 ### Miranda tool filtering
 

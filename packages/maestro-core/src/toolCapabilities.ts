@@ -158,8 +158,21 @@ export function classifyToolCapability(toolName: string): CapabilityGroup | null
 // ============================================================================
 
 export const DEFAULT_ROLE_CAPABILITIES: Record<RoleName, CapabilityGroup[]> = {
-  // Brain never receives ctx.tools — it only makes the routing LLM call.
-  brain: [],
+  // Correctness fix (found during the Dynamic Tool Prompt Hygiene
+  // milestone): brain is not always tool-less. routeRequest() only skips
+  // tools for its own internal Brain *routing* LLM call (direct-vs-decompose
+  // decision) — but pickCoreRole()/selectRole() can also choose 'brain' as
+  // the *worker* role for direct investigative/status tasks, in which case
+  // it runs through the normal runSingleAgent()/runAgentLoop() tool-bearing
+  // path like any other role. BRAIN's own prompt text (rolePrompts.ts)
+  // explicitly assumes read access ("use tools to gather the information
+  // you need", "ran list_directory or read_file"). The previous milestone
+  // set this to [] on a false premise, which — now that role-scoped
+  // filtering is actually wired into apps/runner/src/index.ts — silently
+  // zeroed brain's tool access for every investigative task. filesystem-read
+  // matches its designed (read-only) behavior; write access still requires
+  // explicit task.permissions.fileWrite === true, same as every other role.
+  brain: ['filesystem-read'],
   strong_model: ['filesystem-read', 'filesystem-write', 'shell'],
   cheap_model: ['filesystem-read', 'filesystem-write', 'shell'],
   utility: ['filesystem-read', 'filesystem-write', 'shell'],
