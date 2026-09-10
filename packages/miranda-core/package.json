@@ -25,7 +25,7 @@
   "devDependencies": {
     "typescript": "^5.7.3",
     "@types/node": "^22.12.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.1.11"
   },
   "license": "PolyForm-Noncommercial-1.0.0"
 }

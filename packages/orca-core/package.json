@@ -29,7 +29,7 @@
     "@types/node": "^22.12.0",
     "@types/sql.js": "^1.4.9",
     "typescript": "^5.7.3",
-    "vitest": "^4.0.0"
+    "vitest": "^4.1.11"
   },
   "license": "PolyForm-Noncommercial-1.0.0"
 }
