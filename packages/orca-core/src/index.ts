@@ -96,6 +96,9 @@ export {
   appendAHPTrace, isTerminalAHPLifecycle,
 } from "./ahp/types.js";
 
+// Task classification shared with Pappy (keeps worker guidance and verification aligned)
+export { isDefectFixTask, prohibitsTestEdits } from "@clawde/pappy-core";
+
 // Workspace snapshots — runtime evidence for verification
 export {
   captureWorkspaceSnapshot,

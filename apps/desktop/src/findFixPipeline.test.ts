@@ -48,7 +48,7 @@ function workspace(): string {
 const npmTest = (fixture: string) => {
   const output = fx(fixture);
   const ok = !output.startsWith("[Exit code");
-  return { tool: "run_command", ok, summary: ok ? "run_command: ok" : "run_command: failed", raw: { command: "npm test", _outputForProof: output } };
+  return { tool: "run_command", ok, summary: ok ? "run_command: ok" : "run_command: failed - Command failed with exit code 1", raw: { command: "npm test", _outputForProof: output } };
 };
 const writeEvent = (path: string, content: string) =>
   ({ tool: "write_file", ok: true, summary: "write_file: ok", raw: { path, content, _contentForDiff: content } });
@@ -73,12 +73,12 @@ describe("Find & Fix: routing → criteria → Pappy (Brain unavailable)", () =>
     expect(input.goals).toEqual([FIND_FIX]);
   });
 
-  it("A: a real fix with a passing full suite is VERIFIED", async () => {
+  it("A: reproduce the failure, fix it, full suite passes → VERIFIED", async () => {
     const root = workspace();
     const { qc } = await verify(root, () => {
       writeFileSync(join(root, "src", "bookings.js"), fx("bookings.fixed.txt"));
       return {
-        toolEvents: [writeEvent("src/bookings.js", fx("bookings.fixed.txt")), npmTest("fixed_npmtest.out")],
+        toolEvents: [npmTest("base_npmtest.out"), writeEvent("src/bookings.js", fx("bookings.fixed.txt")), npmTest("fixed_npmtest.out")],
         agentText: "Root cause: overlaps() used <= so touching meetings conflicted. Changed to < in src/bookings.js. npm test: 8 passed, 0 failed.",
       };
     });

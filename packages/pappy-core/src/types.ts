@@ -220,6 +220,12 @@ export interface PappyInput {
    * `available: false` when it could not snapshot it (too large, unreadable).
    */
   workspace?: WorkspaceEvidence;
+  /**
+   * Genuine tool receipts from earlier passes of the same task (e.g. the
+   * initial pass, when judging a repair pass), oldest first. Recorded by the
+   * runtime, so a reproduction run before the fix is not lost on repair.
+   */
+  priorToolEvents?: ToolEvent[];
 }
 
 export interface WorkspaceFileChange {

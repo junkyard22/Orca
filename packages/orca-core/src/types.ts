@@ -309,6 +309,12 @@ export interface OrcaRunCtx {
    */
   collectWorkspaceEvidence?: () => Promise<import("@clawde/pappy-core").WorkspaceEvidence>;
   /**
+   * Tool receipts from earlier passes of this task, oldest first. The runtime
+   * appends each pass's receipts after verifying it, so a repair pass is judged
+   * with the reproduction evidence gathered before it.
+   */
+  verificationReceipts?: OrcaToolEvent[];
+  /**
    * Absolute path to the user's configured workspace folder.
    * Passed through to tool execution so write_file resolves relative paths
    * against the workspace root rather than process.cwd().

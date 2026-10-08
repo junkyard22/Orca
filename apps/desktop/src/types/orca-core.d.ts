@@ -5,6 +5,8 @@
  * to ensure type compatibility across the codebase.
  */
 declare module '@clawde/orca-core' {
+  export function isDefectFixTask(task: string): boolean;
+  export function prohibitsTestEdits(task: string): boolean;
   import type { LLMAdapter, LLMMessage } from '@clawde/miranda-core';
   import type { MirandaGate } from '@clawde/miranda-core';
   import type { RoleName } from 'maestro-core';

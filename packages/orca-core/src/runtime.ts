@@ -307,6 +307,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       await evidence.ready;
       ctx.collectWorkspaceEvidence = evidence.collect;
     }
+    ctx.verificationReceipts = [];
     recordTrace("task.permissions", {
       toolsAllowed: normalizedTaskSpec.permissions?.toolsAllowed ?? null,
       fileRead: normalizedTaskSpec.permissions?.fileRead ?? true,
@@ -437,7 +438,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         });
 
         if (qcEnabled) {
-          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.());
+          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+          ctx.verificationReceipts?.push(...(auditMaestroResult.toolEvents ?? []));
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
           const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText });
           if (beforeQcGate) {
@@ -616,7 +618,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           });
         }
 
-        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.());
+        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+        ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
 
         const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });

@@ -76,21 +76,22 @@ describe("runtime → Pappy with workspace evidence (end to end, real Pappy)", (
   const testRun = (fixture: string) => {
     const output = fx(fixture);
     const ok = !output.startsWith("[Exit code");
-    return { tool: "run_command", ok, summary: ok ? "run_command: ok" : "run_command: failed", raw: { command: "npm test", _outputForProof: output } };
+    return { tool: "run_command", ok, summary: ok ? "run_command: ok" : "run_command: failed - Command failed with exit code 1", raw: { command: "npm test", _outputForProof: output } };
   };
 
   /** Runs the real runtime + real Pappy; returns Pappy's verdict on the run. */
-  async function run(root: string, worker: () => { toolEvents: unknown[]; filesChanged?: unknown[]; outputText: string }) {
+  async function run(root: string, worker: (pass: number) => { toolEvents: unknown[]; filesChanged?: unknown[]; outputText: string }, maxRepairPasses = 0) {
+    let pass = 0;
     const maestro: MaestroPort = {
       run: async () => {
-        const r = worker();
+        const r = worker(pass++);
         return { summary: "debugger agent", doneCriteria: [TASK], ...r } as never;
       },
     };
     const real = createPappyPort();
     const verdicts: PappyResult[] = [];
     const pappy = { evaluate: (input: Parameters<typeof real.evaluate>[0]) => { const r = real.evaluate(input); verdicts.push(r); return r; } };
-    const runtime = createOrcaRuntime({ maestro, pappy, llm: { complete: async () => ({ text: "" }) } as never, workspaceRoot: root, maxRepairPasses: 0 });
+    const runtime = createOrcaRuntime({ maestro, pappy, llm: { complete: async () => ({ text: "" }) } as never, workspaceRoot: root, maxRepairPasses });
     const result = await runtime.executeTask(spec());
     return { result, qc: verdicts[verdicts.length - 1]! };
   }
@@ -100,7 +101,7 @@ describe("runtime → Pappy with workspace evidence (end to end, real Pappy)", (
     const { result, qc } = await run(root, () => {
       writeFileSync(join(root, "src", "bookings.js"), fx("bookings.fixed.txt"));
       return {
-        toolEvents: [{ tool: "write_file", ok: true, summary: "write_file: ok", raw: { path: "src/bookings.js", content: fx("bookings.fixed.txt"), _contentForDiff: fx("bookings.fixed.txt") } }, testRun("fixed_npmtest.out")],
+        toolEvents: [testRun("base_npmtest.out"), { tool: "write_file", ok: true, summary: "write_file: ok", raw: { path: "src/bookings.js", content: fx("bookings.fixed.txt"), _contentForDiff: fx("bookings.fixed.txt") } }, testRun("fixed_npmtest.out")],
         outputText: "Root cause: overlaps() used <= so touching meetings conflicted. Changed to < in src/bookings.js. npm test: 8 passed, 0 failed.",
       };
     });
@@ -131,5 +132,37 @@ describe("runtime → Pappy with workspace evidence (end to end, real Pappy)", (
     expect(qc.verdict).toBe("FAIL");
     expect(result.status).toBe("FAIL");
     expect(qc.issues.map((i) => i.code)).toEqual(expect.arrayContaining(["TEST_FILES_MODIFIED_WEAKENED", "TEST_EDIT_PROHIBITED"]));
+  });
+
+  it("a reproduction recorded in the first pass counts when the repair pass is judged", async () => {
+    const root = demoWorkspace();
+    const fixWrite = { tool: "write_file", ok: true, summary: "write_file: ok", raw: { path: "src/bookings.js", content: fx("bookings.fixed.txt"), _contentForDiff: fx("bookings.fixed.txt") } };
+    const { result, qc } = await run(root, (pass) => {
+      if (pass === 0) {
+        // First pass: reproduces the failure, then stops without fixing.
+        return { toolEvents: [testRun("base_npmtest.out")], outputText: "Reproduced: 1 test fails (back-to-back booking rejected)." };
+      }
+      writeFileSync(join(root, "src", "bookings.js"), fx("bookings.fixed.txt"));
+      return {
+        toolEvents: [fixWrite, testRun("fixed_npmtest.out")],
+        outputText: "Root cause: overlaps() used <= so touching meetings conflicted. Changed to < in src/bookings.js. npm test: 8 passed, 0 failed.",
+      };
+    }, 1);
+    expect(qc.issues.map((i) => i.code)).not.toContain("FIX_REPRODUCTION_MISSING");
+    expect(qc.verdict).toBe("PASS");
+    expect(result.status).toBe("SUCCESS");
+  });
+
+  it("a fix that never showed the failure is not verified, even after a repair pass", async () => {
+    const root = demoWorkspace();
+    const { qc } = await run(root, () => {
+      writeFileSync(join(root, "src", "bookings.js"), fx("bookings.fixed.txt"));
+      return {
+        toolEvents: [{ tool: "write_file", ok: true, summary: "write_file: ok", raw: { path: "src/bookings.js", content: fx("bookings.fixed.txt") } }, testRun("fixed_npmtest.out")],
+        outputText: "Changed < in src/bookings.js. npm test: 8 passed, 0 failed.",
+      };
+    }, 1);
+    expect(qc.verdict).toBe("FAIL");
+    expect(qc.issues.map((i) => i.code)).toContain("FIX_REPRODUCTION_MISSING");
   });
 });

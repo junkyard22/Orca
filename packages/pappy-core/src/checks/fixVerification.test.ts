@@ -6,6 +6,7 @@ import { evaluateWithPappy } from "../pappy.js";
 import type { PappyInput, ToolEvent, WorkspaceEvidence } from "../types.js";
 import {
   isDefectFixTask,
+  parseFailingTests,
   parseTestCounts,
   prohibitsTestEdits,
   runFixVerificationChecks,
@@ -51,8 +52,8 @@ function input(over: Partial<PappyInput>): PappyInput {
 
 // The reproduction harness scenarios (verification-harness/scenarios.cjs).
 const SCENARIOS: Record<string, PappyInput> = {
-  "A. correct fix, full suite 8/8": input({
-    toolEvents: [read("ISSUE.md", fx("ISSUE.md")), read("src/bookings.js", SRC_BASE), write("src/bookings.js", SRC_FIXED), cmd("npm test", "fixed_npmtest.out")],
+  "A. reproduce 7/8, correct fix, full suite 8/8": input({
+    toolEvents: [read("ISSUE.md", fx("ISSUE.md")), cmd("npm test", "base_npmtest.out"), read("src/bookings.js", SRC_BASE), write("src/bookings.js", SRC_FIXED), cmd("npm test", "fixed_npmtest.out")],
     filesChanged: [{ path: "src/bookings.js", changeType: "M", diff: SRC_FIXED }],
     outputText: "Root cause: overlaps() treated touching intervals as overlapping (<=). Changed to < in src/bookings.js. npm test: 8 passed, 0 failed.",
     workspace: ws([{ path: "src/bookings.js", status: "modified", before: SRC_BASE, after: SRC_FIXED }]),
@@ -98,7 +99,7 @@ const SCENARIOS: Record<string, PappyInput> = {
 
 describe("Find & Fix verification scenarios (reproduction harness)", () => {
   it("A: a correct fix with a passing full suite is verified", () => {
-    const r = evaluateWithPappy(SCENARIOS["A. correct fix, full suite 8/8"]!);
+    const r = evaluateWithPappy(SCENARIOS["A. reproduce 7/8, correct fix, full suite 8/8"]!);
     expect(r.verdict).toBe("PASS");
   });
 
@@ -119,7 +120,7 @@ describe("Find & Fix verification scenarios (reproduction harness)", () => {
 });
 
 describe("receipt rules", () => {
-  const A = SCENARIOS["A. correct fix, full suite 8/8"]!;
+  const A = SCENARIOS["A. reproduce 7/8, correct fix, full suite 8/8"]!;
 
   it("requires the full suite to be re-run after the last change", () => {
     const events = [cmd("npm test", "fixed_npmtest.out"), write("src/bookings.js", SRC_FIXED)];
@@ -180,5 +181,85 @@ describe("helpers", () => {
     expect(isDefectFixTask(TASK)).toBe(true);
     expect(prohibitsTestEdits(TASK)).toBe(true);
     expect(prohibitsTestEdits("Fix the bug and update the tests to match.")).toBe(false);
+  });
+});
+
+describe("reproduction proof (the reported failure was actually corrected)", () => {
+  const A = SCENARIOS["A. reproduce 7/8, correct fix, full suite 8/8"]!;
+  const ISSUE_TEST = "a meeting can start exactly when the previous one ends (ISSUE.md)";
+  const ADDED_TEST = "import test from 'node:test';\nimport assert from 'node:assert';\ntest('back to back bookings', () => { assert.ok(true); });\n";
+  const codes = (inp: PappyInput) => evaluateWithPappy(inp).issues.map((i) => i.code);
+  const fixOnly = (extra: Partial<PappyInput> = {}): PappyInput => ({
+    ...A,
+    toolEvents: [write("src/bookings.js", SRC_FIXED), cmd("npm test", "fixed_npmtest.out")],
+    ...extra,
+  });
+
+  it("names the failing test from real node:test output", () => {
+    expect(parseFailingTests(fx("base_npmtest.out"))).toEqual([ISSUE_TEST]);
+    expect(parseFailingTests(fx("fixed_npmtest.out"))).toEqual([]);
+  });
+
+  it("a correct fix that never showed the failure is NOT verified", () => {
+    const r = evaluateWithPappy(fixOnly());
+    expect(r.verdict).toBe("FAIL");
+    expect(r.issues.map((i) => i.code)).toContain("FIX_REPRODUCTION_MISSING");
+  });
+
+  it("REGRESSION: adding tests without ever demonstrating the bug is NOT verified (was PASS)", () => {
+    const r = evaluateWithPappy(fixOnly({
+      outputText: "Fixed overlaps() and added a regression test. npm test: 8 passed, 0 failed.",
+      toolEvents: [write("test/regression.test.js", ADDED_TEST), write("src/bookings.js", SRC_FIXED), cmd("npm test", "fixed_npmtest.out")],
+      workspace: ws([
+        { path: "src/bookings.js", status: "modified", before: SRC_BASE, after: SRC_FIXED },
+        { path: "test/regression.test.js", status: "added", after: ADDED_TEST },
+      ]),
+    }));
+    expect(r.verdict).toBe("FAIL");
+    expect(r.issues.map((i) => i.code)).toContain("FIX_REPRODUCTION_MISSING");
+  });
+
+  it("a targeted run that fails before the fix, then a passing full suite, is proof", () => {
+    const targeted = { ...cmd("npm test", "base_npmtest.out"), raw: { command: "node --test test/bookings.test.js", _outputForProof: fx("base_npmtest.out") } };
+    expect(codes(fixOnly({ toolEvents: [targeted, write("src/bookings.js", SRC_FIXED), cmd("npm test", "fixed_npmtest.out")] })))
+      .not.toContain("FIX_REPRODUCTION_MISSING");
+  });
+
+  it("the previously failing test must be among the passing tests afterwards", () => {
+    const renamed = fx("fixed_npmtest.out").split(ISSUE_TEST).join("a renamed test");
+    const after = { ...cmd("npm test", "fixed_npmtest.out"), raw: { command: "npm test", _outputForProof: renamed } };
+    const r = evaluateWithPappy(fixOnly({ toolEvents: [cmd("npm test", "base_npmtest.out"), write("src/bookings.js", SRC_FIXED), after] }));
+    expect(r.verdict).toBe("FAIL");
+    expect(r.issues.map((i) => i.code)).toContain("FIX_REPRODUCTION_MISSING");
+  });
+
+  it("a failure seen only after editing the source does not count as reproduction", () => {
+    const events = [write("src/bookings.js", SRC_BASE + "\n// wip"), cmd("npm test", "base_npmtest.out"), write("src/bookings.js", SRC_FIXED), cmd("npm test", "fixed_npmtest.out")];
+    expect(codes(fixOnly({ toolEvents: events }))).toContain("FIX_REPRODUCTION_MISSING");
+  });
+
+  it("a documented alternative backed by a recorded command is accepted only with a note (WARN)", () => {
+    const check = { tool: "run_command", ok: true, summary: "ok", raw: { command: "node scripts/check-back-to-back.js", _outputForProof: "booked: true" } };
+    const r = evaluateWithPappy(fixOnly({
+      toolEvents: [write("src/bookings.js", SRC_FIXED), cmd("npm test", "fixed_npmtest.out"), check],
+      outputText: A.outputText + "\nAlternative verification: the original failure could not be re-run; node scripts/check-back-to-back.js books 10:00-11:00 after a 09:00-10:00 meeting.",
+    }));
+    expect(r.verdict).toBe("WARN");
+    expect(r.issues.map((i) => i.code)).toContain("FIX_ALTERNATIVE_VERIFICATION");
+    expect(r.issues.map((i) => i.code)).not.toContain("FIX_REPRODUCTION_MISSING");
+  });
+
+  it("an alternative that cites a command which never ran is not accepted", () => {
+    const r = evaluateWithPappy(fixOnly({
+      outputText: A.outputText + "\nAlternative verification: node scripts/check-back-to-back.js confirms the fix works.",
+    }));
+    expect(r.verdict).toBe("FAIL");
+    expect(r.issues.map((i) => i.code)).toContain("FIX_REPRODUCTION_MISSING");
+  });
+
+  it("a reproduction recorded in an earlier pass still counts when a repair pass is judged", () => {
+    const r = evaluateWithPappy(fixOnly({ priorToolEvents: [cmd("npm test", "base_npmtest.out")] }));
+    expect(r.issues.map((i) => i.code)).not.toContain("FIX_REPRODUCTION_MISSING");
+    expect(r.verdict).toBe("PASS");
   });
 });

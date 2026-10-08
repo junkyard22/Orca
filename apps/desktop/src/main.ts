@@ -81,6 +81,7 @@ import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import { buildAdapterForProvider } from "./providerAdapter";
 import { enforceToolAuthorization } from "./toolAuthorization";
+import { fixVerificationGuidance } from "./fixGuidance";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
@@ -920,6 +921,11 @@ function buildMaestroAdapter(
     },
   ): Promise<DecomposeWorkerRun> => {
     throwIfAborted(ctx.abortSignal);
+    // Bug fixes: tell the worker the evidence verification will require.
+    const guidance = fixVerificationGuidance(task.originalUserMessage ?? task.intent ?? "");
+    if (guidance.length > 0) {
+      agentTask = { ...agentTask, goals: [...agentTask.goals, ...guidance.filter((g) => !agentTask.goals.includes(g))] };
+    }
     const subagentId = `${ctx.runId}:${role}:${options.workerIndex}`;
     const childPacket = createWorkerPacket(
       task,

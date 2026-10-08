@@ -9,8 +9,10 @@
  *   - existing tests not deleted, weakened, or — when the user said so — edited
  *   - a full-suite test run after the last change, with a readable result,
  *     zero failures, and no fewer tests than earlier full runs reported
- *   - the originally failing behaviour resolved: either an earlier failing run
- *     now passes, or the pre-existing tests are untouched and all pass
+ *   - the reported failure resolved: a run before the first source change
+ *     shows failing tests, and those tests pass in the final run — or an
+ *     explicitly documented alternative verification backed by a recorded
+ *     command (accepted with a MEDIUM note, never silently)
  *
  * It applies only when the runtime supplied workspace evidence (`input.workspace`);
  * if the runtime could not snapshot the workspace, a fix cannot be verified and
@@ -100,6 +102,24 @@ export function parseTestCounts(output: string): TestCounts | null {
   return null;
 }
 
+/** Names of failing tests, where the runner reports them (node:test, jest, vitest, pytest). */
+export function parseFailingTests(output: string): string[] {
+  const names = new Set<string>();
+  const add = (re: RegExp) => {
+    for (const m of output.matchAll(re)) {
+      const name = m[1]?.trim();
+      if (name) names.add(name);
+    }
+  };
+  add(/^[ \t]*not ok \d+ - (.+?)[ \t]*(?:#.*)?$/gm);           // node:test TAP
+  add(/^[ \t]*✖ (.+?)(?: \([\d.]+ ?ms\))?[ \t]*$/gm);            // node:test spec
+  add(/^[ \t]*✕ (.+?)(?: \([\d.]+ ?ms\))?[ \t]*$/gm);            // jest
+  add(/^[ \t]*[×✗] (.+?)(?: [\d.]+ ?ms)?[ \t]*$/gm);             // vitest
+  add(/^FAILED (\S+?)(?: - .*)?$/gm);                             // pytest
+  for (const name of [...names]) if (/^(?:tests?|suites?|pass|fail(?:ing)?)\b/i.test(name)) names.delete(name);
+  return [...names];
+}
+
 interface TestRun { index: number; command: string; full: boolean; ok: boolean; output: string }
 
 function rawRecord(event: ToolEvent): Record<string, unknown> {
@@ -177,6 +197,46 @@ function issue(severity: Issue["severity"], code: string, category: Issue["categ
   };
 }
 
+/** Index of the first mutation of a non-test file (adding a regression test may precede reproduction). */
+function firstSourceMutationIndex(events: readonly ToolEvent[]): number {
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i]!;
+    if (!event.ok) continue;
+    const raw = rawRecord(event);
+    const command = typeof raw["command"] === "string" ? raw["command"] : "";
+    if (command && MUTATING_COMMAND.test(command) && !testSegment(command)) return i;
+    if (MUTATING_TOOL.test(event.tool)) {
+      const path = String(raw["path"] ?? raw["file_path"] ?? raw["filePath"] ?? "");
+      if (!path || !isTestPath(path)) return i;
+    }
+  }
+  return events.length;
+}
+
+const ALTERNATIVE_VERIFICATION =
+  /^[ \t>*#-]*(?:\*\*)?(?:alternative verification|verification method)(?:\*\*)?[ \t]*:[ \t]*(.{20,})$/im;
+
+/**
+ * An explicit "Alternative verification: …" statement that names a command
+ * which actually ran successfully after the last change.
+ */
+function documentedAlternative(
+  outputText: string,
+  events: readonly ToolEvent[],
+  lastChange: number,
+): { statement: string; command: string } | null {
+  const match = outputText.match(ALTERNATIVE_VERIFICATION);
+  if (!match) return null;
+  const statement = match[1]!.trim();
+  for (let i = lastChange + 1; i < events.length; i++) {
+    const event = events[i]!;
+    const raw = rawRecord(event);
+    const command = typeof raw["command"] === "string" ? raw["command"].trim() : "";
+    if (event.ok && command && statement.includes(command)) return { statement, command };
+  }
+  return null;
+}
+
 export function runFixVerificationChecks(input: PappyInput): RawIssue[] {
   const workspace = input.workspace;
   if (!workspace) return [];
@@ -237,7 +297,9 @@ export function runFixVerificationChecks(input: PappyInput): RawIssue[] {
   if (!testsExpected) return issues;
 
   // ── Real, full-suite test receipt after the last change ──────────────────
-  const events = input.toolEvents ?? [];
+  // Receipts from earlier passes of this task come first, so a reproduction
+  // run in the initial pass still counts when a repair pass is judged.
+  const events = [...(input.priorToolEvents ?? []), ...(input.toolEvents ?? [])];
   const runs = collectTestRuns(events, workspace.testCommand);
   const lastChange = lastMutationIndex(events);
   const after = runs.filter((r) => r.index > lastChange);
@@ -291,14 +353,37 @@ export function runFixVerificationChecks(input: PappyInput): RawIssue[] {
       "Restore the missing tests; the suite must not shrink to pass."));
   }
 
-  // ── The originally failing behaviour is resolved ─────────────────────────
-  const reproducedEarlier = earlierFull.some((r) => r.counts.failed > 0 || !r.run.ok);
-  const testsUntouched = existingTestChanges.length === 0;
-  if (!reproducedEarlier && !testsUntouched) {
-    issues.push(issue("MEDIUM", "FIX_REPRODUCTION_UNPROVEN", "Proof",
-      "Existing tests were changed and no earlier run showed the failure, so it is unproven that the passing suite covers the reported bug.",
-      `earlier full runs: ${earlierFull.length}; changed tests: ${existingTestChanges.map((c) => c.path).join(", ")}`,
-      "Run the tests before the fix to show the failure, then again after."));
+  // ── The originally reported failure is resolved ──────────────────────────
+  // Proof is a run before the first source change that shows failing tests,
+  // and those same tests (by name, where the runner reports names) passing in
+  // the final full run. Without it, the only acceptable substitute is an
+  // explicitly documented alternative verification backed by a recorded
+  // command — never a silent pass on weaker evidence.
+  const firstSourceChange = firstSourceMutationIndex(events);
+  const reproductions = runs
+    .filter((r) => r.index < firstSourceChange)
+    .map((r) => ({ run: r, counts: parseTestCounts(r.output), failing: parseFailingTests(r.output) }))
+    .filter((x) => (x.counts?.failed ?? 0) > 0 || x.failing.length > 0);
+  const resolved = reproductions.find((x) =>
+    x.failing.length > 0
+      ? x.failing.every((name) => final.output.includes(name))
+      : (x.counts?.total ?? Number.POSITIVE_INFINITY) <= counts.total,
+  );
+  if (!resolved) {
+    const alternative = documentedAlternative(input.outputText ?? "", events, lastChange);
+    if (alternative) {
+      issues.push(issue("MEDIUM", "FIX_ALTERNATIVE_VERIFICATION", "Proof",
+        `The reported failure was not reproduced before the fix; the agent documented an alternative verification instead: "${alternative.statement.slice(0, 160)}"`,
+        `alternative verification cites: ${alternative.command}`,
+        "Prefer reproducing the failure before the fix; the documented alternative is accepted with this note."));
+    } else {
+      issues.push(issue("HIGH", "FIX_REPRODUCTION_MISSING", "Proof",
+        reproductions.length > 0
+          ? "Tests that failed before the fix do not all appear as passing in the final run, so it is unproven that the reported failure was corrected."
+          : "No test run showed the reported failure before the source was changed, so it is unproven that the passing suite covers the reported bug.",
+        `runs before first source change: ${runs.filter((r) => r.index < firstSourceChange).length}; failing tests before: ${reproductions.flatMap((x) => x.failing).join("; ") || "none"}`,
+        "Run the tests before changing the code to show the failure, then again after the fix. If reproduction is impossible, add a line \"Alternative verification: <method>\" that names a command you ran after the fix."));
+    }
   }
 
   // Agent-reported writes that left the file unchanged are not changes.
