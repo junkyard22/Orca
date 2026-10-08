@@ -179,8 +179,20 @@ export function authorizeToolCall(
     case "workspace_read":
     case "workspace_write":
       return { capability, decision: "allow", reason: "workspace-confined file operation" };
-    case "shell_policy":
+    case "shell_policy": {
+      // A working directory outside the workspace is never allowed.
+      const cwd = typeof args["cwd"] === "string" ? args["cwd"] : undefined;
+      if (cwd !== undefined && !isInsideWorkspace(options.workspaceRoot, cwd)) {
+        return { capability, decision: "deny", reason: `working directory outside the workspace: ${cwd}` };
+      }
+      if (options.strict) {
+        const command = typeof args["command"] === "string" ? args["command"] : "";
+        const verdict = evaluateStrictCommand(command, cwd ?? options.workspaceRoot, options.workspaceRoot);
+        if (!verdict.ok) return { capability, decision: "deny", reason: `strict mode: ${verdict.reason}` };
+        return { capability, decision: "allow", reason: `strict mode: ${verdict.reason}; run_command's own policy still applies` };
+      }
       return { capability, decision: "allow", reason: "run_command enforces its own command policy and approval" };
+    }
     case "process_read":
     case "external_read":
       return { capability, decision: "allow", reason: "read-only operation" };
@@ -194,6 +206,60 @@ export function authorizeToolCall(
     default:
       return approveOrDeny(`"${tool}" is not a recognised tool capability`);
   }
+}
+
+// ── Strict-mode command policy ──────────────────────────────────────────────
+//
+// In strict mode run_command may only run the project's tests or read-only
+// inspection commands, entirely inside the workspace. Test commands still pass
+// through run_command's own policy, which asks the presenter to approve them —
+// they execute code the agent may have written. Everything else is refused.
+
+/** Project test runners. node may only carry test-runner flags (no --require/--import/-e). */
+const STRICT_TEST_COMMAND = /^(?:(?:npm|pnpm|yarn)\s+(?:run\s+)?test|node(?:\s+--(?:test|experimental-test)[\w-]*(?:=\S+)?)*\s+--test(?:\s+--(?:test|experimental-test)[\w-]*(?:=\S+)?)*)(?=\s|$)/i;
+const STRICT_READ_COMMAND = /^(?:ls|dir|cat|type|head|tail|wc|grep|rg|findstr|tree|stat|diff|git\s+(?:status|diff|log|show|ls-files))(?=\s|$)/i;
+const SHELL_META = /`|\$\(|\$\{|\$[A-Za-z_]|%[A-Za-z_]+%|[<>]|(?:^|[^&])&(?!&)/;
+
+function shellTokens(segment: string): string[] {
+  return (segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^["']|["']$/g, ""));
+}
+
+function looksLikePath(token: string): boolean {
+  return /[\\/]/.test(token) || /^~/.test(token) || /^[A-Za-z]:/.test(token) || /^\.\.?$/.test(token);
+}
+
+export function evaluateStrictCommand(
+  command: string,
+  cwd: string,
+  workspaceRoot: string,
+): { ok: true; reason: string } | { ok: false; reason: string } {
+  const normalized = command.replace(/\s+2>&1\b/g, "").replace(/\s+2>\s*(?:nul|\/dev\/null)\b/gi, "").trim();
+  if (!normalized) return { ok: false, reason: "empty command" };
+  if (SHELL_META.test(normalized)) {
+    return { ok: false, reason: "redirection, substitution, variable expansion and background execution are not allowed" };
+  }
+  if (!isInsideWorkspace(workspaceRoot, cwd)) return { ok: false, reason: `working directory outside the workspace: ${cwd}` };
+  const absCwd = isAbsolute(cwd) ? cwd : resolve(workspaceRoot, cwd);
+
+  let kind = "read-only inspection";
+  for (const raw of normalized.split(/&&|\|\||;|\|/)) {
+    const segment = raw.trim();
+    if (!segment) return { ok: false, reason: "empty command segment" };
+    const isTest = STRICT_TEST_COMMAND.test(segment);
+    if (!isTest && !STRICT_READ_COMMAND.test(segment)) {
+      return { ok: false, reason: `"${segment.split(/\s+/)[0]}" is not a test or read-only inspection command` };
+    }
+    if (isTest) kind = "project test command";
+    for (const token of shellTokens(segment).slice(1)) {
+      const value = token.includes("=") && token.startsWith("-") ? token.slice(token.indexOf("=") + 1) : token;
+      // "~" is expanded by the shell to the home directory — never inside the workspace.
+      if (value.startsWith("~")) return { ok: false, reason: `path outside the workspace: ${value}` };
+      if (looksLikePath(value) && !isInsideWorkspace(workspaceRoot, isAbsolute(value) ? value : resolve(absCwd, value))) {
+        return { ok: false, reason: `path outside the workspace: ${value}` };
+      }
+    }
+  }
+  return { ok: true, reason: kind };
 }
 
 export type ApprovalRequester = (tool: string, args: Record<string, unknown>) => Promise<boolean>;

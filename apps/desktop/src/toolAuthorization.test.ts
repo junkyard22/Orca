@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   authorizeToolCall,
   classifyTool,
   collectLocalPathArguments,
   enforceToolAuthorization,
+  evaluateStrictCommand,
 } from "./toolAuthorization";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createSandboxPolicy, evaluateCommandPolicy, runCommandTool } from "@yakstacks/workbench-core";
 
 const WS = process.platform === "win32"
   ? "C:\\Users\\demo\\AppData\\Roaming\\@clawde\\desktop\\orca-demo\\workspace"
@@ -151,5 +156,112 @@ describe("workspace boundary for core tools", () => {
   it("collects arrays, nested objects and source/destination pairs", () => {
     expect(collectLocalPathArguments({ paths: ["a", "b"], source: "c", destination: "d", options: { cwd: "e" }, content: "not-a-path" }))
       .toEqual(["a", "b", "c", "d", "e"]);
+  });
+});
+
+// ── Strict (public Demo Mode) command policy ────────────────────────────────
+
+describe("strict mode: run_command", () => {
+  const strict = (command: string, extra: Record<string, unknown> = {}) =>
+    authorizeToolCall("run_command", { command, ...extra }, { workspaceRoot: WS, strict: true });
+
+  it.each(["npm test", "npm run test", "pnpm test", "node --test", "node --test --test-name-pattern=overlap", "npm test 2>&1", "npm test | tail -20", "cat src/bookings.js", "git diff", "ls test"])(
+    "permits %s (tests or read-only inspection inside the workspace)", (command) => {
+      expect(strict(command).decision).toBe("allow");
+    });
+
+  it.each([
+    ["git push origin main", /not a test or read-only/],
+    ["npx some-package", /not a test or read-only/],
+    ["npm install left-pad", /not a test or read-only/],
+    ["curl https://example.com", /not a test or read-only/],
+    ["node -e \"require('fs').rmSync('/', {recursive:true})\"", /not a test or read-only/],
+    ["node --require ./x.js --test", /not a test or read-only/],
+    ["npm test && rm -rf src", /not a test or read-only/],
+    ["npm test > out.txt", /redirection/],
+    ["cat $HOME/.ssh/id_rsa", /variable expansion/],
+    ["cat %USERPROFILE%\.ssh\id_rsa", /variable expansion/],
+    ["cat ~/.ssh/id_rsa", /outside the workspace/],
+    ["cat ../../orca-settings.json", /outside the workspace/],
+    [`cat ${OUTSIDE}`, /outside the workspace/],
+    ["npm test & calc", /background/],
+  ])("refuses %s", (command, reason) => {
+    const r = strict(command);
+    expect(r.decision).toBe("deny");
+    expect(r.reason).toMatch(reason);
+  });
+
+  it("refuses a working directory outside the workspace, in every mode", () => {
+    expect(strict("npm test", { cwd: "../.." }).decision).toBe("deny");
+    expect(authorizeToolCall("run_command", { command: "npm test", cwd: OUTSIDE_DIR }, { workspaceRoot: WS }).decision).toBe("deny");
+  });
+
+  it("a relative cwd inside the workspace is resolved against the workspace", () => {
+    expect(evaluateStrictCommand("cat bookings.js", "src", WS).ok).toBe(true);
+    expect(evaluateStrictCommand("cat ../../../x", "src", WS).ok).toBe(false);
+  });
+
+  it("test commands still require presenter approval from run_command's own policy", () => {
+    // Strict mode narrows what may run; it does not auto-approve test execution.
+    expect(evaluateCommandPolicy("npm test", createSandboxPolicy()).requiresApproval).toBe(true);
+    expect(evaluateCommandPolicy("node --test", createSandboxPolicy()).requiresApproval).toBe(true);
+    expect(evaluateCommandPolicy("cat src/bookings.js", createSandboxPolicy()).requiresApproval).toBe(false);
+  });
+});
+
+describe("strict mode: everything else", () => {
+  const strictDecision = (tool: string, args: Record<string, unknown> = {}) =>
+    authorizeToolCall(tool, args, { workspaceRoot: WS, strict: true }).decision;
+
+  it("denies every GitHub write, Desktop Commander process tool, and unknown tool outright", () => {
+    for (const [tool, args] of [...GITHUB_WRITES, ...DC_PROCESS]) expect(strictDecision(tool, args)).toBe("deny");
+    for (const tool of ["acme_frobnicate", "desktop-commander_some_future_tool", "linear_do_thing"]) expect(strictDecision(tool)).toBe("deny");
+    expect(strictDecision("desktop-commander_set_config_value", { key: "allowedDirectories", value: [] })).toBe("deny");
+  });
+
+  it("keeps workspace file work and read-only lookups available", () => {
+    expect(strictDecision("write_file", { path: "src/bookings.js", content: "x" })).toBe("allow");
+    expect(strictDecision("desktop-commander_edit_block", { file_path: `${WS}/src/bookings.js` })).toBe("allow");
+    expect(strictDecision("github-mcp_get_file_contents", { owner: "o", repo: "r", path: "README.md" })).toBe("allow");
+  });
+});
+
+describe("strict mode end to end: a real test run in the demo workspace", () => {
+  const FIX = join(__dirname, "..", "..", "..", "packages", "pappy-core", "src", "checks", "__fixtures__", "find-fix");
+  let root = "";
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "orca-strict-"));
+    mkdirSync(join(root, "src")); mkdirSync(join(root, "test"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "room-booking", type: "module", scripts: { test: "node --test" } }));
+    writeFileSync(join(root, "src", "bookings.js"), readFileSync(join(FIX, "bookings.fixed.txt"), "utf8"));
+    writeFileSync(join(root, "test", "bookings.test.js"), readFileSync(join(FIX, "bookings.test.base.txt"), "utf8"));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  async function guardedRun(command: string, approve: boolean) {
+    const approvals: string[] = [];
+    const requestApproval = async (tool: string, args: Record<string, unknown>) => { approvals.push(String(args["command"])); return approve; };
+    const refused = await enforceToolAuthorization("run_command", { command }, { workspaceRoot: root, strict: true, requestApproval });
+    if (refused) return { result: refused, approvals };
+    const result = await runCommandTool.execute({ command }, { workspaceRoot: root, runId: "t", requestApproval: (t: string, a: Record<string, unknown>) => requestApproval(t, a) });
+    return { result, approvals };
+  }
+
+  it("runs npm test after presenter approval", async () => {
+    const { result, approvals } = await guardedRun("npm test", true);
+    expect(approvals).toEqual(["npm test"]);
+    expect(result.ok).toBe(true);
+    expect(result.output).toMatch(/# pass 8/);
+  }, 60_000);
+
+  it("does not run npm test when the presenter declines", async () => {
+    const { result } = await guardedRun("npm test", false);
+    expect(result.ok).toBe(false);
+  });
+
+  it("refuses a non-test command before asking anyone", async () => {
+    const { result, approvals } = await guardedRun("git push origin main", true);
+    expect(result.ok).toBe(false);
+    expect(approvals).toEqual([]);
   });
 });

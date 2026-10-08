@@ -1765,6 +1765,10 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
     }
 
     const gate = createMirandaGate({ verbose: s.verbose === true });
+    // Public Demo Mode: approval-required tools are refused outright and
+    // run_command is limited to tests and read-only inspection in the workspace.
+    // (demoMode exists only in Summit builds; elsewhere this stays false.)
+    const strictTools = (s as { demoMode?: unknown }).demoMode === true;
 
     // Map BootstrappedTool[] → AgentTool[], threading abort + approval through
     const availableTools: AgentTool[] = bootstrap.allTools.map((tool: BootstrappedTool) => ({
@@ -1776,6 +1780,7 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
         const normalizedInput = absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot);
         const refused = await enforceToolAuthorization(tool.name, normalizedInput, {
           workspaceRoot: effectiveWorkspaceRoot,
+          strict: strictTools,
           requestApproval: requestToolApproval,
         });
         if (refused) return refused;
@@ -1805,6 +1810,7 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
         }
         const refused = await enforceToolAuthorization(name, normalizedInput, {
           workspaceRoot,
+          strict: strictTools,
           requestApproval: requestToolApproval,
         });
         if (refused) return refused;
@@ -1935,6 +1941,8 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
       const gateContext = { tool: toolName, args, workspaceRoot, schema };
       const before = resourceGate?.beforeToolRun(gateContext);
       if (before && !before.allowed) return { ok: false, output: '', error: before.reason };
+      const refused = await enforceToolAuthorization(toolName, args, { workspaceRoot, strict: strictTools });
+      if (refused) return refused;
       const result = await invoke();
       const after = resourceGate?.afterToolRun(gateContext, {
         ok: result.ok,
