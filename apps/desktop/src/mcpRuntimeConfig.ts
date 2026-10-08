@@ -40,3 +40,36 @@ export function normalizeMcpServersForRuntime(settings: OrcaSettings): McpServer
     };
   });
 }
+
+/**
+ * The MCP servers Orca may launch for these settings.
+ *
+ * Summit Demo Mode launches none: the demo needs only the built-in file and
+ * command tools, and starting GitHub MCP or Desktop Commander (docker/npx,
+ * possibly downloading packages) would put external-write and process-control
+ * tools in front of a public audience. Execution-time authorization still
+ * blocks such tools in Demo Mode; this keeps them from starting at all.
+ * Outside Demo Mode, the saved configuration applies unchanged. The saved
+ * settings are not modified — the same servers start again when Demo Mode is off.
+ */
+export function mcpServersForRuntime(settings: OrcaSettings): McpServerConfig[] {
+  if (settings.demoMode === true) return [];
+  return normalizeMcpServersForRuntime(settings);
+}
+
+/**
+ * The GITHUB_TOKEN exported to the process for the ext-github tools.
+ * Demo Mode exports none, so a demo run cannot read private repositories
+ * with the presenter's token. Elsewhere: the dedicated setting first, then
+ * the GitHub MCP server's PAT.
+ */
+export function githubTokenForRuntime(settings: OrcaSettings, servers: McpServerConfig[]): string | undefined {
+  if (settings.demoMode === true) return undefined;
+  const gh = servers.find((srv) => srv.id === "github-mcp");
+  return (
+    settings.githubToken ||
+    gh?.env?.["GITHUB_TOKEN"] ||
+    gh?.env?.["GITHUB_PERSONAL_ACCESS_TOKEN"] ||
+    undefined
+  );
+}

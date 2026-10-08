@@ -70,7 +70,7 @@ describe("Anthropic request bodies — temperature", () => {
         // Everything else about the request is preserved.
         expect(body.model).toBe(model);
         expect(body.max_tokens).toBe(8192);
-        expect(body.enable_thinking).toBe(true);
+        expect(body).not.toHaveProperty("enable_thinking");
         expect(headers.Authorization).toBe("Bearer test-key");
         expect(url).toBe("https://api.anthropic.com/v1/chat/completions");
       }
@@ -98,6 +98,38 @@ describe("Other providers — request bodies unchanged", () => {
     await buildAdapterForProvider(openrouter, "anthropic/claude-opus-5-5").complete(workerRequest);
     await buildAdapterForProvider(openrouter, "openai/gpt-4o-mini").stream!(workerRequest, () => {});
     expect(calls.map((c) => c.body.temperature)).toEqual([0.7, 0.7]);
+  });
+});
+
+describe("Anthropic thinking compatibility", () => {
+  it.each([true, false, undefined])("omits unsupported thinking fields for role toggle %s", async (enableThinking) => {
+    const calls = captureRequests();
+    for (const provider of [anthropic, { ...anthropic, type: "custom" as const }]) {
+      const adapter = buildAdapterForProvider(provider, "claude-opus-5-5", enableThinking);
+      await adapter.complete({ ...workerRequest, enableThinking });
+      await adapter.stream!({ ...workerRequest, enableThinking }, () => {});
+    }
+    expect(calls).toHaveLength(4);
+    for (const { body } of calls) {
+      expect(body).not.toHaveProperty("enable_thinking");
+      expect(body).not.toHaveProperty("thinking");
+    }
+  });
+
+  it("does not allow a request override to inject enable_thinking into Anthropic", async () => {
+    const calls = captureRequests();
+    const adapter = buildAdapterForProvider(anthropic, "claude-sonnet-4-6", false);
+    await adapter.complete({ ...workerRequest, enableThinking: true });
+    await adapter.stream!({ ...workerRequest, enableThinking: true }, () => {});
+    for (const { body } of calls) expect(body).not.toHaveProperty("enable_thinking");
+  });
+
+  it.each([true, false])("preserves other providers' enable_thinking=%s", async (enableThinking) => {
+    const calls = captureRequests();
+    const adapter = buildAdapterForProvider(openrouter, "anthropic/claude-opus-5-5", enableThinking);
+    await adapter.complete(workerRequest);
+    await adapter.stream!(workerRequest, () => {});
+    expect(calls.map(({ body }) => body.enable_thinking)).toEqual([enableThinking, enableThinking]);
   });
 });
 

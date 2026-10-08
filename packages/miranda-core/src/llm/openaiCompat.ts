@@ -54,6 +54,8 @@ export interface OpenAICompatConfig {
    * that default to deep thinking. Omit to leave provider default unchanged.
    */
   enableThinking?: boolean;
+  /** False for endpoints that do not support the nonstandard enable_thinking field. */
+  supportsEnableThinking?: boolean;
   /**
    * Whether `stream()` asks the provider to append a usage chunk to the SSE
    * stream (`stream_options.include_usage`). Without it a streamed call reports
@@ -90,6 +92,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
   private readonly defaultModel: string;
   private readonly extraHeaders: Record<string, string>;
   private readonly defaultEnableThinking?: boolean;
+  private readonly supportsEnableThinking: boolean;
   private readonly includeStreamUsage: boolean;
   private readonly supportsTemperature?: (model: string) => boolean;
   /**
@@ -108,6 +111,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
     this.defaultModel         = config.defaultModel ?? "";
     this.extraHeaders         = config.extraHeaders ?? {};
     this.defaultEnableThinking = config.enableThinking;
+    this.supportsEnableThinking = config.supportsEnableThinking ?? true;
     this.includeStreamUsage   = config.includeStreamUsage ?? true;
     this.supportsTemperature  = config.supportsTemperature;
   }
@@ -136,7 +140,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
       body["temperature"] = request.temperature;
     }
 
-    if (resolvedThinking !== undefined) {
+    if (this.supportsEnableThinking && resolvedThinking !== undefined) {
       body["enable_thinking"] = resolvedThinking;
     }
 
@@ -233,7 +237,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
       body["stream_options"] = STREAM_USAGE_OPTIONS;
     }
 
-    if (resolvedThinking !== undefined) {
+    if (this.supportsEnableThinking && resolvedThinking !== undefined) {
       body["enable_thinking"] = resolvedThinking;
     }
 

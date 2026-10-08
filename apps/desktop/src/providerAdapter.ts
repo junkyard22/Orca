@@ -1,7 +1,7 @@
 import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
 import type { LLMAdapter } from "@clawde/miranda-core";
 import type { ProviderEntry } from "./settings";
-import { providerAcceptsTemperature } from "./samplingPolicy";
+import { isAnthropicProvider, providerAcceptsTemperature } from "./samplingPolicy";
 
 /**
  * Build the LLM adapter for a configured provider. Every role (Brain, workers,
@@ -25,6 +25,9 @@ export function buildAdapterForProvider(
     apiKey:         provider.apiKey || undefined,
     defaultModel:   model,
     enableThinking,
+    // Anthropic documents `thinking`, not `enable_thinking`. Leave its default
+    // intact rather than inventing model-specific modes or token budgets.
+    supportsEnableThinking: !isAnthropicProvider(provider),
     supportsTemperature: (requestModel) => providerAcceptsTemperature(provider, requestModel),
   });
 }

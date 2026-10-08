@@ -3,7 +3,7 @@ import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, shell } f
 import { mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
   Dewey,
@@ -84,7 +84,7 @@ import { enforceToolAuthorization } from "./toolAuthorization";
 import { fixVerificationGuidance } from "./fixGuidance";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
-import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
+import { githubTokenForRuntime, mcpServersForRuntime } from "./mcpRuntimeConfig";
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
 import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
@@ -115,6 +115,16 @@ import {
   resetDemoWorkspace,
   type DemoExecutionMode,
 } from "./demoMode";
+
+// The staging build supplies this productName through electron-builder's
+// extraMetadata. Set the profile before any settings reads or instance lock.
+// Its sibling profile stays beside the unpacked staging app, even after moving it.
+if (app.isPackaged && app.getName() === "Orca Summit Staging") {
+  const stagingProfile = resolve(dirname(app.getPath("exe")), "..", "profile");
+  mkdirSync(stagingProfile, { recursive: true });
+  app.setPath("userData", stagingProfile);
+  app.setPath("sessionData", stagingProfile);
+}
 
 type AgentTool = {
   name: string;
@@ -1745,12 +1755,9 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
     // Inject GITHUB_TOKEN for the ext-github static extension (github_clone_repo, etc.).
     // Primary source: settings.githubToken (dedicated field, always visible in Settings).
     // Fallback: GitHub MCP server PAT (for users who configured it there first).
-    const mcpServers = normalizeMcpServersForRuntime(s);
-    const ghMcpServer = mcpServers.find((srv) => srv.id === "github-mcp");
-    const ghToken =
-      s.githubToken ||
-      ghMcpServer?.env?.["GITHUB_TOKEN"] ||
-      ghMcpServer?.env?.["GITHUB_PERSONAL_ACCESS_TOKEN"];
+    // Summit Demo Mode starts no MCP servers and exports no GitHub token.
+    const mcpServers = mcpServersForRuntime(s);
+    const ghToken = githubTokenForRuntime(s, mcpServers);
     if (ghToken) {
       process.env["GITHUB_TOKEN"] = ghToken;
     } else {

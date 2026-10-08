@@ -63,7 +63,8 @@ export interface RoleEntry {
    */
   fallbacks?: Array<{ providerId: string; model: string }>;
   /**
-   * Controls the provider's `enable_thinking` parameter.
+   * Controls `enable_thinking` on providers that support it. Anthropic uses
+   * its API default; this nonstandard parameter is omitted there.
    * Set to `false` to suppress deep thinking on models like qwen3.5-plus.
    * Set to `true` to force it on. Omit to use the provider's default.
    */
