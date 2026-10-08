@@ -390,3 +390,87 @@ describe("OpenAICompatAdapter stream_options rejection fallback", () => {
     expect(call).toBe(1);
   });
 });
+
+describe("OpenAICompatAdapter temperature handling", () => {
+  function captureBodies(response: () => Response) {
+    const calls: Array<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }> = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        headers: init?.headers as Record<string, string>,
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      });
+      return response();
+    }) as typeof fetch;
+    return calls;
+  }
+  const okJson = () => createJsonResponse({ choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }] });
+  const okStream = () => createStreamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', "data: [DONE]\n\n"]);
+  const request = {
+    model: "",
+    messages: [{ role: "user" as const, content: "hi" }],
+    temperature: 0.7,
+    maxTokens: 8192,
+  };
+
+  it("sends temperature by default (no supportsTemperature predicate)", async () => {
+    const calls = captureBodies(okJson);
+    const adapter = new OpenAICompatAdapter({ baseUrl: "https://example.test/v1", defaultModel: "m" });
+    await adapter.complete(request);
+    expect(calls[0].body.temperature).toBe(0.7);
+  });
+
+  it("omits temperature entirely in complete() when the model does not support it", async () => {
+    const calls = captureBodies(okJson);
+    const adapter = new OpenAICompatAdapter({
+      baseUrl: "https://example.test/v1",
+      apiKey: "secret",
+      defaultModel: "no-temp-model",
+      enableThinking: true,
+      supportsTemperature: (model) => model !== "no-temp-model",
+    });
+    await adapter.complete(request);
+
+    const { body, headers, url } = calls[0];
+    expect("temperature" in body).toBe(false);
+    expect(body.model).toBe("no-temp-model");
+    expect(body.max_tokens).toBe(8192);
+    expect(body.enable_thinking).toBe(true);
+    expect(headers.Authorization).toBe("Bearer secret");
+    expect(url).toBe("https://example.test/v1/chat/completions");
+  });
+
+  it("omits temperature in stream(), including on the stream_options retry", async () => {
+    let first = true;
+    const calls = captureBodies(() => {
+      if (first) { first = false; return new Response("bad stream_options", { status: 400 }); }
+      return okStream();
+    });
+    const adapter = new OpenAICompatAdapter({
+      baseUrl: "https://example.test/v1",
+      defaultModel: "no-temp-model",
+      supportsTemperature: () => false,
+    });
+    await adapter.stream(request, () => {});
+
+    expect(calls).toHaveLength(2);
+    for (const { body } of calls) {
+      expect("temperature" in body).toBe(false);
+      expect(body.max_tokens).toBe(8192);
+      expect(body.stream).toBe(true);
+    }
+  });
+
+  it("evaluates the predicate against the per-request model override", async () => {
+    const calls = captureBodies(okJson);
+    const adapter = new OpenAICompatAdapter({
+      baseUrl: "https://example.test/v1",
+      defaultModel: "temp-ok",
+      supportsTemperature: (model) => model === "temp-ok",
+    });
+    await adapter.complete({ ...request, model: "no-temp-model" });
+    await adapter.complete(request);
+    expect("temperature" in calls[0].body).toBe(false);
+    expect(calls[1].body.temperature).toBe(0.7);
+  });
+});

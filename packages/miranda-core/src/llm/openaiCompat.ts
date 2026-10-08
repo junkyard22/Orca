@@ -63,6 +63,14 @@ export interface OpenAICompatConfig {
    * request bodies containing `stream_options`.
    */
   includeStreamUsage?: boolean;
+  /**
+   * Whether `model` accepts a `temperature` field. When this returns `false`,
+   * `temperature` is omitted from the request body entirely (the provider then
+   * uses its own default) — some models reject the field outright with a 400.
+   *
+   * Omit to always send `request.temperature` (the historical behaviour).
+   */
+  supportsTemperature?: (model: string) => boolean;
 }
 
 interface OpenAIChatResponse {
@@ -83,6 +91,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
   private readonly extraHeaders: Record<string, string>;
   private readonly defaultEnableThinking?: boolean;
   private readonly includeStreamUsage: boolean;
+  private readonly supportsTemperature?: (model: string) => boolean;
   /**
    * Set when the endpoint has rejected `stream_options`, so the retry below
    * happens at most once per adapter instead of on every streamed call.
@@ -100,6 +109,11 @@ export class OpenAICompatAdapter implements LLMAdapter {
     this.extraHeaders         = config.extraHeaders ?? {};
     this.defaultEnableThinking = config.enableThinking;
     this.includeStreamUsage   = config.includeStreamUsage ?? true;
+    this.supportsTemperature  = config.supportsTemperature;
+  }
+
+  private sendsTemperature(model: string): boolean {
+    return this.supportsTemperature ? this.supportsTemperature(model) : true;
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
@@ -115,9 +129,12 @@ export class OpenAICompatAdapter implements LLMAdapter {
         role: m.role,
         content: m.content,
       })),
-      temperature: request.temperature,
       max_tokens: request.maxTokens,
     };
+
+    if (this.sendsTemperature(model)) {
+      body["temperature"] = request.temperature;
+    }
 
     if (resolvedThinking !== undefined) {
       body["enable_thinking"] = resolvedThinking;
@@ -203,10 +220,13 @@ export class OpenAICompatAdapter implements LLMAdapter {
     const body: Record<string, unknown> = {
       model,
       messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
-      temperature: request.temperature,
       max_tokens: request.maxTokens,
       stream: true,
     };
+
+    if (this.sendsTemperature(model)) {
+      body["temperature"] = request.temperature;
+    }
 
     const sendStreamUsage = this.includeStreamUsage && !this.streamUsageRejected;
     if (sendStreamUsage) {

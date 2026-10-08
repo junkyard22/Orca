@@ -54,6 +54,9 @@ declare module '@clawde/miranda-core' {
     apiKey?: string;
     defaultModel?: string;
     extraHeaders?: Record<string, string>;
+    enableThinking?: boolean;
+    includeStreamUsage?: boolean;
+    supportsTemperature?: (model: string) => boolean;
   }
 
   export class OpenAICompatAdapter implements LLMAdapter {

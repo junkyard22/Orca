@@ -20,7 +20,6 @@ import {
 } from "@clawde/benson-core";
 import type { CargoSlashCommand } from "@clawde/benson-core";
 import { createMirandaGate } from "@clawde/miranda-core";
-import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
 import type { LLMAdapter, LLMMessage as Message } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
@@ -80,6 +79,7 @@ import type {
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
+import { buildAdapterForProvider } from "./providerAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
@@ -1534,26 +1534,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   );
   error.name = "AbortError";
   throw error;
-}
-
-function buildAdapterForProvider(
-  provider: ProviderEntry,
-  model: string,
-  enableThinking?: boolean,
-): LLMAdapter {
-  if (provider.type === 'ollama') {
-    return new OllamaAdapter({
-      baseUrl:      provider.baseUrl || 'http://localhost:11434',
-      defaultModel: model,
-    });
-  }
-  // openrouter, deepseek, siliconflow, openai, anthropic, zai, custom
-  return new OpenAICompatAdapter({
-    baseUrl:        provider.baseUrl,
-    apiKey:         provider.apiKey || undefined,
-    defaultModel:   model,
-    enableThinking,
-  });
 }
 
 /**
