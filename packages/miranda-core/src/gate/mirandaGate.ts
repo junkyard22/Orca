@@ -383,7 +383,7 @@ export function composeMirandaGates(
 }
 
 const CONNECTOR_MUTATION_PATTERN =
-  /(?:^|_)(?:create|update|delete|write|remove|send|post|put|patch|merge|close|reopen|approve|reject|clone|upload|move|rename|edit|modify)(?:_|$)/i;
+  /(?:^|_)(?:create|update|delete|write|remove|send|post|put|patch|merge|close|reopen|approve|reject|clone|upload|move|rename|edit|modify|push|fork|add|set|comment|assign|label|star|dispatch|trigger|transfer|archive|lock|unlock|publish|release|tag|invite)(?:_|$)/i;
 
 function toolMatches(tool: string, names: string[]): boolean {
   return names.some((name) => tool === name || tool.endsWith(`_${name}`));
@@ -456,7 +456,7 @@ function collectExplicitPathArguments(args: Record<string, unknown>): string[] {
   const paths: string[] = [];
   const visit = (value: unknown, key: string): void => {
     if (typeof value === "string") {
-      if (/(?:^|_)(?:path|file|filename|target|destination|cwd|dir|directory)(?:$|_)/i.test(key)) {
+      if (/(?:^|_)(?:paths?|files?|file_?path|filename|target|destination|dest|source|src|cwd|dir|directory)(?:$|_)/i.test(key)) {
         paths.push(value);
       }
       return;

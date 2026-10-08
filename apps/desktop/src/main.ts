@@ -80,6 +80,7 @@ import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import { buildAdapterForProvider } from "./providerAdapter";
+import { enforceToolAuthorization } from "./toolAuthorization";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
@@ -1761,10 +1762,16 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
       name: tool.name,
       description: tool.description,
       schema: tool.schema,
-      execute(input, context) {
+      async execute(input, context) {
         const effectiveWorkspaceRoot = context.workspaceRoot ?? workspaceRoot;
+        const normalizedInput = absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot);
+        const refused = await enforceToolAuthorization(tool.name, normalizedInput, {
+          workspaceRoot: effectiveWorkspaceRoot,
+          requestApproval: requestToolApproval,
+        });
+        if (refused) return refused;
         return tool.execute(
-          absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot),
+          normalizedInput,
           {
             workspaceRoot: effectiveWorkspaceRoot,
             runId: context.runId ?? '',
@@ -1787,6 +1794,11 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
             error: beforeGate.reason || `Tool "${name}" blocked by Miranda`,
           };
         }
+        const refused = await enforceToolAuthorization(name, normalizedInput, {
+          workspaceRoot,
+          requestApproval: requestToolApproval,
+        });
+        if (refused) return refused;
 
         const result = await bootstrap.toolService.execute(name, normalizedInput);
         gate.afterToolRun(gateCtx, {

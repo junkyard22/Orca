@@ -736,3 +736,37 @@ describe("AHP lifecycle transitions (unchanged)", () => {
     expect(() => transitionAHPLifecycle(AHPLifecycle.RUNNING, AHPLifecycle.COMPLETE)).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// MCP bypass regressions (Orca 1.6.0 Live AI investigation)
+// ---------------------------------------------------------------------------
+
+describe("MCP path and write classification", () => {
+  const workspaceRoot = path.resolve("workspace");
+
+  it("checks every entry of a `paths` array against the workspace", () => {
+    const r = createMirandaGate().beforeToolRun(makeToolCtx({
+      tool: "desktop-commander_read_multiple_files",
+      workspaceRoot,
+      args: { paths: [path.join(workspaceRoot, "a.js"), path.resolve("outside", ".ssh", "id_rsa")] },
+    }));
+    expect(r.allowed).toBe(false);
+    expect(r.violations?.join(" ")).toMatch(/outside.*workspace/i);
+  });
+
+  it("checks the source of a move, not only the destination", () => {
+    const r = createMirandaGate().beforeToolRun(makeToolCtx({
+      tool: "desktop-commander_move_file",
+      workspaceRoot,
+      args: { source: path.resolve("outside", "a.txt"), destination: path.join(workspaceRoot, "a.txt") },
+    }));
+    expect(r.allowed).toBe(false);
+  });
+
+  it("classifies GitHub push/fork/comment connector tools as writes", () => {
+    for (const tool of ["github-mcp_push_files", "github-mcp_fork_repository", "github-mcp_add_issue_comment"]) {
+      expect(classifyToolPermissionRequirement(tool, [tool])).toBe("connector_write");
+    }
+    expect(classifyToolPermissionRequirement("github-mcp_get_file_contents", ["github-mcp_get_file_contents"])).toBe("connector_read");
+  });
+});
