@@ -106,6 +106,11 @@ export interface OrcaSettings {
   /** Use the configured Narrator role to style the fixed progress vocabulary. */
   narratorProgressMode?: 'standard' | 'model';
   /**
+   * Summit Demo Mode: Orca works in the isolated <userData>/orca-demo/workspace
+   * and starts every launch in Offline Demo (no provider calls).
+   */
+  demoMode?: boolean;
+  /**
    * GitHub Personal Access Token. Injected as GITHUB_TOKEN for the
    * github_clone_repo tool and other GitHub API calls. Requires `repo` scope
    * for private repos. Stored encrypted on disk.

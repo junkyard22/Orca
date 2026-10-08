@@ -57,6 +57,7 @@ export type OrcaSettings = {
   showPipeline?:   boolean;
   autoResolveCargo?: boolean;
   narratorProgressMode?: "standard" | "model";
+  demoMode?:       boolean;
 };
 
 export type SessionSummary = {
@@ -182,6 +183,16 @@ contextBridge.exposeInMainWorld("orca", {
 
   // Abort the currently running task (if any).
   abortTask: (): void => ipcRenderer.send("task:abort"),
+  // ── Demo Mode ────────────────────────────────────────────────────────────
+  // Clears Benson's conversation and restores <userData>/orca-demo/workspace
+  // from the packaged baseline. Touches nothing else.
+  demoReset: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("demo:reset"),
+  // Opens the first video in <userData>/orca-demo/recordings with the OS player.
+  openDemoRecording: (): Promise<{ ok: boolean; found: boolean; error?: string }> => ipcRenderer.invoke("demo:open-recording"),
+  openDemoRecordingsFolder: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("demo:open-recordings-folder"),
+  // "offline" (default each launch) never initialises providers; "live" runs Orca normally.
+  setDemoExecutionMode: (mode: "offline" | "live"): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("demo:set-execution-mode", mode),
 
   // ── Streaming output ─────────────────────────────────────────────────────
   // Dedicated channels for streaming answer output to the renderer.

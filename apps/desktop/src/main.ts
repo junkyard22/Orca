@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, shell } from "electron";
 import { mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -101,6 +101,18 @@ import {
 } from "./narratorProgress";
 import type { NarratorProgressLexicon } from "./narratorProgress";
 import { resolveCargoResources } from "./cargoResolution";
+import {
+  OFFLINE_DEMO_REFUSAL,
+  assertProviderPathAllowed,
+  demoPaths,
+  effectiveSettings,
+  ensureDemoWorkspace,
+  findDemoRecording,
+  isOfflineDemo,
+  parseDemoExecutionMode,
+  resetDemoWorkspace,
+  type DemoExecutionMode,
+} from "./demoMode";
 
 type AgentTool = {
   name: string;
@@ -1609,7 +1621,47 @@ function initOrca(s: OrcaSettings): Promise<string | null> {
   return _initOrcaChain;
 }
 
-async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
+// ── Summit Demo Mode ───────────────────────────────────────────────────────
+// "offline" (the default on every launch) never initialises providers;
+// "live" runs Orca normally against the isolated demo workspace.
+let demoExecutionMode: DemoExecutionMode = "offline";
+
+function sendInitStatus(status: Record<string, unknown>): void {
+  const contents = win?.webContents;
+  if (!contents || contents.isDestroyed()) return;
+  if (contents.isLoading()) contents.once("did-finish-load", () => contents.send("init-status", status));
+  else contents.send("init-status", status);
+}
+
+/** Initialise for the current demo execution mode; Offline Demo skips providers entirely. */
+async function initForCurrentMode(s: OrcaSettings): Promise<string | null> {
+  if (isOfflineDemo(s, demoExecutionMode)) {
+    sendInitStatus({ ok: true, error: null, tools: { all: [], mcp: [] }, warnings: [], offlineDemo: true });
+    return null;
+  }
+  const err = await initOrca(s);
+  sendInitStatus({ ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+  return err;
+}
+
+/** The packaged meeting-room demo project (resources/demo/summit-app). */
+function demoBaselineDir(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "demo", "summit-app")
+    : join(app.getAppPath(), "demo", "summit-app");
+}
+
+async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
+  assertProviderPathAllowed(saved, demoExecutionMode, "initOrca");
+  if (saved.demoMode) {
+    const prepared = await ensureDemoWorkspace(demoBaselineDir(), app.getPath("userData"));
+    if (!prepared.ok) {
+      runtime = null;
+      claire = null;
+      return `Demo Mode could not prepare the demo project: ${prepared.error ?? "unknown error"}`;
+    }
+  }
+  const s = effectiveSettings(saved, app.getPath("userData"));
   const narratorLexiconGeneration = ++_narratorLexiconGeneration;
   _currentSettings = s;
   runtime = null;
@@ -2125,8 +2177,7 @@ function createWindow(): void {
     win!.focus();
     try {
       const settings = await loadSettings();
-      const err = await initOrca(settings);
-      win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+      await initForCurrentMode(settings);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       win?.webContents.send("init-status", { ok: false, error: `Startup error: ${msg}`, tools: _bootstrapTools, warnings: _initWarnings });
@@ -2449,8 +2500,8 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
 
   try {
     await saveSettings(s);
-    const err = await initOrca(s);
-    win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+    if (!s.demoMode) demoExecutionMode = "offline";
+    await initForCurrentMode(s);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -2508,6 +2559,54 @@ ipcMain.handle(
     return { ok: true, count: safe.length };
   },
 );
+
+// ── Summit Demo Mode IPC ────────────────────────────────────────────────────
+
+// Clears Benson's conversation and restores <userData>/orca-demo/workspace
+// from the packaged baseline. Touches nothing else.
+ipcMain.handle("demo:reset", async () => {
+  if (isAppLocked()) return { ok: false, error: lockedError() };
+  if (!(await loadSettings()).demoMode) return { ok: false, error: "Demo Mode is not enabled." };
+  if (activeAbortController) {
+    return { ok: false, error: "The demo run is still stopping. Try Reset Demo again." };
+  }
+  claire?.setHistory([]);
+  return resetDemoWorkspace(demoBaselineDir(), app.getPath("userData"));
+});
+
+// "offline" never initialises providers; switching to "live" initialises Orca normally.
+ipcMain.handle("demo:set-execution-mode", async (_ev, value: unknown) => {
+  if (isAppLocked()) return { ok: false, error: lockedError() };
+  const mode = parseDemoExecutionMode(value);
+  if (!mode) return { ok: false, error: "Unknown demo execution mode." };
+  if (mode === demoExecutionMode) return { ok: true };
+  if (activeAbortController) return { ok: false, error: "Stop the current run before switching." };
+  demoExecutionMode = mode;
+  const err = mode === "live" ? await initForCurrentMode(await loadSettings()) : null;
+  return err ? { ok: false, error: err } : { ok: true };
+});
+
+// Opens the first video in <userData>/orca-demo/recordings with the OS player.
+ipcMain.handle("demo:open-recording", async () => {
+  try {
+    const recording = await findDemoRecording(app.getPath("userData"));
+    if (!recording.found) return { ok: false, found: false };
+    const error = await shell.openPath(recording.file);
+    return error ? { ok: false, found: true, error } : { ok: true, found: true };
+  } catch (err) {
+    return { ok: false, found: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle("demo:open-recordings-folder", async () => {
+  try {
+    await findDemoRecording(app.getPath("userData"));
+    const error = await shell.openPath(demoPaths(app.getPath("userData")).recordings);
+    return { ok: !error };
+  } catch {
+    return { ok: false };
+  }
+});
 
 // ── Abort control for the active task ──────────────────────────────────────
 ipcMain.on("task:abort", () => {
@@ -2577,6 +2676,11 @@ async function handleCargoCommand(command: CargoSlashCommand) {
 ipcMain.handle("send-message", async (_ev, text: string) => {
   if (isAppLocked()) {
     return { ok: false, error: lockedError() };
+  }
+  try {
+    assertProviderPathAllowed(await loadSettings(), demoExecutionMode, "send-message");
+  } catch {
+    return { ok: false, error: OFFLINE_DEMO_REFUSAL };
   }
 
   // Reject concurrent requests — the agent loop is stateful and cannot safely
