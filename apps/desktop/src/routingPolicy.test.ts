@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OrcaTaskSpec } from "@clawde/orca-core";
 import type { DecomposeDecision } from "maestro-core";
-import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
+import { normalizeDesktopRoutingForExecution, requestsChanges } from "./routingPolicy";
 
 function task(goals: string[] = []): OrcaTaskSpec {
   return {
@@ -123,4 +123,41 @@ describe("normalizeDesktopRoutingForExecution", () => {
     expect(result.remappedBrainExecution).toBe(true);
     expect(result.remapReason).toBe("command_verification");
   });
+
+  // ── Orca 1.6.0 Live AI regression: "run the tests" replaced the objective ──
+  const FIND_FIX =
+    "Users reported a bug in this meeting-room booking app (see ISSUE.md). Investigate the repository, identify the root cause, " +
+    "and implement the smallest correct fix in the source code. Then run the project's test suite and verify that the reported " +
+    "problem is actually resolved. Do not change unrelated behavior or modify the existing tests.";
+  const findFixTask = (): OrcaTaskSpec => ({ ...task([FIND_FIX]), originalUserMessage: FIND_FIX, intent: FIND_FIX });
+
+  it("keeps Brain's plan for a fix request that also asks to run the tests", () => {
+    const brain: DecomposeDecision = { routing: "direct", role: "debugger", done_criteria: ["overlaps() allows back-to-back bookings", "full test suite passes"] };
+    const result = normalizeDesktopRoutingForExecution(findFixTask(), brain, null);
+    expect(result.decision).toEqual(brain);
+    expect(result.remapReason).toBeUndefined();
+  });
+
+  it("when Brain fails, a fix request keeps the user's objective and goes to a role that can edit code", () => {
+    const result = normalizeDesktopRoutingForExecution(findFixTask(), null, null);
+    expect(result.decision).toEqual({ routing: "direct", role: "debugger", done_criteria: [FIND_FIX] });
+    expect(result.remapReason).toBe("missing_decision");
+  });
+
+  it("non-defect change requests fall back to a code-writing role, not narrator", () => {
+    const t = { ...task(["Add a findFreeSlots function, then run the tests."]), originalUserMessage: "Add a findFreeSlots function, then run the tests." };
+    expect(normalizeDesktopRoutingForExecution(t, null, null).decision).toMatchObject({ role: "strong_model" });
+  });
+
+  it("still routes pure command runs to command verification", () => {
+    const t = { ...task(), originalUserMessage: "Run the tests and report the results. Do not modify any files." };
+    expect(normalizeDesktopRoutingForExecution(t, null, null).remapReason).toBe("command_verification");
+  });
+
+  it("ignores prohibitions when detecting change intent", () => {
+    expect(requestsChanges("Run npm test. Do not modify the existing tests.")).toBe(false);
+    expect(requestsChanges("Fix the failing build, then run npm test.")).toBe(true);
+    expect(requestsChanges(FIND_FIX)).toBe(true);
+  });
 });
+

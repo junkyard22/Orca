@@ -96,6 +96,15 @@ export {
   appendAHPTrace, isTerminalAHPLifecycle,
 } from "./ahp/types.js";
 
+// Workspace snapshots — runtime evidence for verification
+export {
+  captureWorkspaceSnapshot,
+  diffWorkspaceSnapshots,
+  createWorkspaceEvidenceCollector,
+  DEFAULT_SNAPSHOT_LIMITS,
+} from "./workspaceSnapshot.js";
+export type { WorkspaceSnapshot, SnapshotLimits } from "./workspaceSnapshot.js";
+
 // AHP Packet Graph — serialization and inspection helpers
 export type { AHPPacketGraph, AHPPacketGraphNode, AHPGraphSummaryMode } from "./ahp/graph.js";
 export {

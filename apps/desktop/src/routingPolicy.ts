@@ -3,6 +3,9 @@ import type { DecomposeDecision, DepartmentTask, RoleName } from "maestro-core";
 
 export const DEFAULT_EXECUTION_ROLE: RoleName = "narrator";
 const COMMAND_VERIFICATION_ROLE: RoleName = "debugger";
+/** Fallback executors for requests that change code (narrator cannot write files). */
+const DEFECT_FIX_ROLE: RoleName = "debugger";
+const CHANGE_ROLE: RoleName = "strong_model";
 
 export type RoutingPolicyResult = {
   decision: DecomposeDecision;
@@ -38,7 +41,10 @@ export function normalizeDesktopRoutingForExecution(
   decision: DecomposeDecision | null,
   auditFallback: DecomposeDecision | null,
 ): RoutingPolicyResult {
-  if (asksForCommandVerification(task)) {
+  // Command verification replaces the plan only when running commands IS the
+  // whole request. "Fix the bug, then run the tests" is a change request whose
+  // objective (and acceptance criteria) must survive to Pappy.
+  if (asksForCommandVerification(task) && !requestsChanges(taskText(task))) {
     const requestedCommands = extractRequestedCommands(task);
     const commandCriteria = requestedCommands.length > 0
       ? [
@@ -64,10 +70,14 @@ export function normalizeDesktopRoutingForExecution(
   }
 
   if (!decision) {
+    const text = taskText(task);
+    const fallbackRole = !requestsChanges(text)
+      ? DEFAULT_EXECUTION_ROLE
+      : DEFECT_NOUN.test(text) ? DEFECT_FIX_ROLE : CHANGE_ROLE;
     return {
       decision: auditFallback ?? {
         routing: "direct",
-        role: DEFAULT_EXECUTION_ROLE,
+        role: fallbackRole,
         done_criteria: task.goals ?? [],
       },
       remappedBrainExecution: !auditFallback,
@@ -114,8 +124,23 @@ export function normalizeDesktopRoutingForExecution(
   };
 }
 
+function taskText(task: OrcaTaskSpec): string {
+  return [task.originalUserMessage, task.intent, ...(task.goals ?? [])].join(" ");
+}
+
+const CHANGE_INTENT =
+  /\b(?:fix|fixes|fixing|repair|resolve|correct|implement|add|create|write|change|modify|update|refactor|rename|remove|delete|migrate|patch|edit|replace|rewrite|improve|optimi[sz]e)\b/i;
+// Clauses that forbid a change ("do not modify the tests") are not change requests.
+const PROHIBITION_CLAUSE = /\b(?:do not|don't|never|without|must not|should not|avoid)\b[^.;\n]*/gi;
+const DEFECT_NOUN = /\b(?:bugs?|issues?|defects?|regressions?|broken|incorrect|wrong|failing|fails?|errors?|crash\w*)\b/i;
+
+/** True when the request asks Orca to change something (not just run or report). */
+export function requestsChanges(text: string): boolean {
+  return CHANGE_INTENT.test(text.replace(PROHIBITION_CLAUSE, " "));
+}
+
 function asksForCommandVerification(task: OrcaTaskSpec): boolean {
-  const text = [task.originalUserMessage, task.intent, ...(task.goals ?? [])].join(" ");
+  const text = taskText(task);
   return (
     /\b(?:actually\s+)?run\b.{0,120}\b(?:commands?|tests?|build|lint|verification|contract:check)\b/i.test(text) ||
     /\bdo\s+not\s+do\s+a\s+read[-\s]?only\s+(?:project\s+)?audit\b/i.test(text) ||
