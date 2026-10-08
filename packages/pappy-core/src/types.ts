@@ -214,6 +214,28 @@ export interface PappyInput {
     modelReview?: ModelReviewProvenance;
   };
   constraints?: Constraints;
+  /**
+   * Before/after workspace contents captured by the runtime from disk (not
+   * reported by the agent). Absent when the runtime has no workspace;
+   * `available: false` when it could not snapshot it (too large, unreadable).
+   */
+  workspace?: WorkspaceEvidence;
+}
+
+export interface WorkspaceFileChange {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  before?: string;
+  after?: string;
+}
+
+export interface WorkspaceEvidence {
+  available: boolean;
+  reason?: string;
+  /** Files whose content actually differs from the task-start baseline. */
+  changes: WorkspaceFileChange[];
+  /** Test command declared by the project at task start (e.g. package.json scripts.test). */
+  testCommand?: string;
 }
 
 export interface PappyResult {

@@ -26,6 +26,7 @@ import { runStructureChecks }    from "./checks/structure.js";
 import { runClaimProofChecks } from "./checks/claimProof.js";
 import { runBrainChecks }      from "./checks/brain.js";
 import { runIntegrityChecks }  from "./checks/integrity.js";
+import { runFixVerificationChecks } from "./checks/fixVerification.js";
 import { extractCriterionSymbols, findCriterionSymbols } from "./checks/criterionSymbols.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
 
@@ -643,6 +644,9 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
     // for tampering with tests or with Pappy's own source, so no amount of
     // semantic correctness in the checks above can redeem it.
     ...runIntegrityChecks(input),
+    // Defect-fix tasks: real source change, intact tests, and a passing
+    // full-suite receipt after the last change — from runtime evidence.
+    ...runFixVerificationChecks(input),
   ];
 
   // Step 4: build receipt ledger (criteria + claim entries merged).

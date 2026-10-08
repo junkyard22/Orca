@@ -36,6 +36,7 @@ import { AHPLifecycle } from "./ahp/types.js";
 import { serializeAHPPacketGraph, formatAHPPacketGraphSummary, formatAHPPacketGraphIssuesSummary } from "./ahp/graph.js";
 import type { AHPPacketGraph } from "./ahp/graph.js";
 import { createFilteredToolService } from "./toolFilter.js";
+import { createWorkspaceEvidenceCollector } from "./workspaceSnapshot.js";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -298,6 +299,14 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       explicit: explicitWorkspaceRoot ?? null,
       effective: effectiveWorkspaceRoot ?? null,
     });
+
+    // Baseline the workspace before any agent runs, so verification compares
+    // real before/after contents rather than what the agent reports.
+    if (effectiveWorkspaceRoot) {
+      const evidence = createWorkspaceEvidenceCollector(effectiveWorkspaceRoot);
+      await evidence.ready;
+      ctx.collectWorkspaceEvidence = evidence.collect;
+    }
     recordTrace("task.permissions", {
       toolsAllowed: normalizedTaskSpec.permissions?.toolsAllowed ?? null,
       fileRead: normalizedTaskSpec.permissions?.fileRead ?? true,
@@ -427,7 +436,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         });
 
         if (qcEnabled) {
-          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult);
+          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.());
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
           const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText });
           if (beforeQcGate) {
@@ -605,7 +614,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           });
         }
 
-        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult);
+        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.());
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
 
         const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });

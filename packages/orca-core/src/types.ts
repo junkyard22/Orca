@@ -303,6 +303,12 @@ export interface OrcaRunCtx {
    */
   requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
   /**
+   * Compares the workspace on disk with its task-start baseline. Set by the
+   * runtime when a workspace root is known; Pappy uses it as evidence the
+   * agent cannot author.
+   */
+  collectWorkspaceEvidence?: () => Promise<import("@clawde/pappy-core").WorkspaceEvidence>;
+  /**
    * Absolute path to the user's configured workspace folder.
    * Passed through to tool execution so write_file resolves relative paths
    * against the workspace root rather than process.cwd().

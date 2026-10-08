@@ -1,0 +1,83 @@
+[Exit code 1]
+
+> room-booking@1.0.0 test
+> node --test
+
+TAP version 13
+# Subtest: parses 24-hour times
+ok 1 - parses 24-hour times
+  ---
+  duration_ms: 1.0088
+  type: 'test'
+  ...
+# Subtest: rejects malformed times
+ok 2 - rejects malformed times
+  ---
+  duration_ms: 0.2783
+  type: 'test'
+  ...
+# Subtest: books a free slot
+ok 3 - books a free slot
+  ---
+  duration_ms: 0.3657
+  type: 'test'
+  ...
+# Subtest: rejects a booking that overlaps an existing meeting
+ok 4 - rejects a booking that overlaps an existing meeting
+  ---
+  duration_ms: 0.2403
+  type: 'test'
+  ...
+# Subtest: rejects a booking inside an existing meeting
+ok 5 - rejects a booking inside an existing meeting
+  ---
+  duration_ms: 0.2152
+  type: 'test'
+  ...
+# Subtest: the same time in a different room is fine
+ok 6 - the same time in a different room is fine
+  ---
+  duration_ms: 0.1257
+  type: 'test'
+  ...
+# Subtest: a meeting can start exactly when the previous one ends (ISSUE.md)
+not ok 7 - a meeting can start exactly when the previous one ends (ISSUE.md)
+  ---
+  duration_ms: 0.793
+  type: 'test'
+  location: 'C:\\Users\\james\\AppData\\Local\\Temp\\claude\\c--Orca\\634c48a6-7984-4008-aed2-2dad0f0ace9f\\scratchpad\\pappy160\\ws\\base\\test\\bookings.test.js:46:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Room Hangar is already booked: "Standup" (09:00-10:00).
+    
+    false !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/james/AppData/Local/Temp/claude/c--Orca/634c48a6-7984-4008-aed2-2dad0f0ace9f/scratchpad/pappy160/ws/base/test/bookings.test.js:48:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: rejects bookings that end before they start
+ok 8 - rejects bookings that end before they start
+  ---
+  duration_ms: 0.2175
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 7
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 112.4323

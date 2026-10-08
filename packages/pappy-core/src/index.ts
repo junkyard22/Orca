@@ -30,4 +30,6 @@ export type {
   ModelReviewProvenance,
   ReviewIndependenceStatus,
   ReviewIndependence,
+  WorkspaceEvidence,
+  WorkspaceFileChange,
 } from "./types.js";

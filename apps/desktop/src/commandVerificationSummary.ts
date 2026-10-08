@@ -95,7 +95,10 @@ export function buildCommandVerificationSummary(params: {
     lines.push("Reported completion status for each requested command - NOT RUN");
   }
 
-  const overall = missingCommands.length > 0
+  // Nothing executed is never a pass: with no named commands and no command
+  // events, the result is INCOMPLETE, not a vacuous PASS.
+  const nothingRan = requestedCommands.length === 0 && commandEvents.length === 0;
+  const overall = missingCommands.length > 0 || nothingRan
     ? "INCOMPLETE"
     : failedCommands.length > 0
       ? "FAIL"

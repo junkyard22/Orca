@@ -45,6 +45,19 @@ describe("commandVerificationSummary", () => {
     expect(summary).toContain("Reported overall verification result: INCOMPLETE");
   });
 
+  it("never reports PASS when no command ran (regression: 'NOT RUN ... PASS')", () => {
+    const summary = buildCommandVerificationSummary({
+      doneCriteria: ["Reported completion status for each requested command", "Reported overall verification result"],
+      toolEvents: [],
+      stoppedBecause: "error",
+      errorMessage: "API error 400",
+    });
+
+    expect(summary).toContain("Reported completion status for each requested command - NOT RUN");
+    expect(summary).toContain("Reported overall verification result: INCOMPLETE");
+    expect(summary).not.toContain("result: PASS");
+  });
+
   it("detects command verification criteria", () => {
     expect(isCommandVerificationCriteria(doneCriteria)).toBe(true);
     expect(isCommandVerificationCriteria(["Output explains the answer"])).toBe(false);

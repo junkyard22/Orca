@@ -1165,7 +1165,10 @@ export class ReactAgentAdapter implements AgentAdapter {
           if (result.ok && isWriteToolName(toolName) && typeof toolInput.content === "string") {
             enrichedRaw["_contentForDiff"] = toolInput.content;
           }
-          if (result.ok && result.output.trim().length > 0) {
+          // Failed runs keep their real output too (e.g. "# fail 1"), so the
+          // verifier can see a failing test suite. Proof of success still
+          // requires ok:true on the event.
+          if (result.output.trim().length > 0) {
             enrichedRaw["_outputForProof"] = result.output.slice(0, 4000);
           }
 
