@@ -390,7 +390,7 @@ function demoClearRunUi() {
 
 const DEMO_STEP_ICONS = {
   pending: "○", active: "●", complete: "✓",
-  failed: "✕", halted: "‖", unverified: "–",
+  failed: "✕", halted: "‖", unverified: "–", fallback: "!",
 };
 
 function renderDemoStrip() {

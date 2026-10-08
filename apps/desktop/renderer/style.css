@@ -2637,7 +2637,8 @@ body.demo-mode #welcome .demo-home {
 .demo-step.is-complete { border-color: var(--success); color: var(--success); }
 .demo-step.is-failed { border-color: var(--danger); color: var(--danger); background: rgba(204, 68, 102, 0.1); }
 .demo-step.is-halted,
-.demo-step.is-unverified { border-color: var(--warn-text); color: var(--warn-text); }
+.demo-step.is-unverified,
+.demo-step.is-fallback { border-color: var(--warn-text); color: var(--warn-text); }
 .demo-step.is-verify { padding: 7px 18px; font-size: 17px; }
 
 @keyframes demo-pulse {

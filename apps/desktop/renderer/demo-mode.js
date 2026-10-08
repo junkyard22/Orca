@@ -88,7 +88,9 @@
       taskStatus: null,       // SUCCESS | WARN | FAIL — from task:done
       repairPass: 0,
       maxRepairPasses: 0,
-      workerError: false,
+      workerError: false,     // a worker in the latest build pass stopped on an error
+      planFallback: false,    // Brain could not plan; a deterministic route ran instead
+      blockingIssues: 0,      // HIGH/CRITICAL issues in Pappy's latest result
       timeline: [],           // Pappy story: [{ kind, label }]
     };
   }
@@ -122,6 +124,9 @@
         case "subagent:failed":
           state.workerError = true;
           break;
+        case "brain:fallback":
+          state.planFallback = true;
+          break;
         case "maestro:done":
           if (state.stage === "done") break;
           state.stage = "verify";
@@ -137,6 +142,9 @@
           if (!verdict) break;
           state.stage = "verify";
           state.lastVerdict = verdict;
+          state.blockingIssues = Array.isArray(e.issues)
+            ? e.issues.filter((i) => i && (i.severity === "HIGH" || i.severity === "CRITICAL")).length
+            : 0;
           if (verdict === "PASS") {
             state.verification = "passed";
             pushTimeline(state, "passed", "Verification passed");
@@ -153,6 +161,7 @@
         case "repair:start":
           state.stage = "build";
           state.verification = "repairing";
+          state.workerError = false; // judged afresh for this repair pass
           state.repairPass = Number(e.pass) || state.repairPass + 1;
           state.maxRepairPasses = Number(e.maxPasses) || state.maxRepairPasses;
           pushTimeline(state, "repairing", `Repair pass ${state.repairPass} started`);
@@ -179,6 +188,8 @@
     return !!state
       && state.stage === "done"
       && (state.lastVerdict === "PASS" || state.lastVerdict === "WARN")
+      // Never "Verified" while a critical acceptance requirement is unmet.
+      && !state.blockingIssues
       && state.taskStatus !== "FAIL";
   }
 
@@ -225,6 +236,7 @@
     // A worker that died on a provider call produces nothing for Pappy to pass;
     // report the provider, not a verification failure.
     if (verdict !== "PASS" && verdict !== "WARN" && isProviderError(summaryError)) return "provider_error";
+    if ((verdict === "PASS" || verdict === "WARN") && state.blockingIssues > 0) return "not_verified";
     if (verdict === "PASS") return "verified";
     if (verdict === "WARN") return "verified_with_warnings";
     if (verdict === "FAIL") return "not_verified";
@@ -254,7 +266,7 @@
     const idx = STAGES.indexOf(state.stage);
     const accepted = !outcome || outcome === "verified" || outcome === "verified_with_warnings";
     return STAGES.map((stage, i) => {
-      // pending | active | complete | failed | halted | unverified
+      // pending | active | complete | failed | halted | unverified | fallback
       let status = idx > i ? "complete" : idx === i ? "active" : "pending";
 
       if (stage === "verify" && idx >= i) {
@@ -270,6 +282,12 @@
         else if (outcome && HALTED_OUTCOMES.has(outcome)) status = "halted";
         else status = state.lastVerdict === "FAIL" ? "failed" : "unverified";
       }
+      // Moving past BUILD only means the stage ended, not that the work
+      // succeeded: a worker that stopped on an error (e.g. a provider 400)
+      // produced nothing, so BUILD is shown as failed rather than complete.
+      if (stage === "build" && idx > i && state.workerError) status = "failed";
+      // PLAN ran, but Brain did not produce the plan: show the fallback.
+      if (stage === "plan" && idx > i && state.planFallback) status = "fallback";
       // A run cut short (provider error, stop) freezes on the step it reached.
       if (!accepted && idx === i && status === "active") status = "halted";
       return { stage, status };
