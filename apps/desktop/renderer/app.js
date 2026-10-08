@@ -2532,14 +2532,9 @@ function renderProviders() {
 
 // ── Render roles ───────────────────────────────────────────────────────────
 
+// Resolved by stable provider id, matching the main-process lookup — see provider-options.js.
 function buildProviderOptions(currentProviderId) {
-  if (!editingSettings?.providers?.length) {
-    return '<option value="">— add a provider first —</option>';
-  }
-  const blank = currentProviderId ? "" : '<option value="">— select —</option>';
-  return blank + editingSettings.providers
-    .map((p) => `<option value="${p.id}"${p.id === currentProviderId ? " selected" : ""}>${escHtml(p.name)}</option>`)
-    .join("");
+  return ProviderOptions.buildProviderOptions(editingSettings?.providers, currentProviderId);
 }
 
 function renderRoleList(containerId, roles, badgeClass) {
