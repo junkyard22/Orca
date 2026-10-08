@@ -131,7 +131,8 @@ export async function handleRepairLoop(
   for (let pass = 1; pass <= maxPasses; pass++) {
     throwIfAborted(ctx.abortSignal);
     // ── Budget guard — abort before spending more ──────────────────────────
-    if (budgetUsd && budgetUsd > 0 && spentUsd >= budgetUsd) {
+    const ledger = ctx.getBudgetSnapshot?.();
+    if (ledger?.blockedReason || (budgetUsd && budgetUsd > 0 && (ledger ? ledger.spentUsd + ledger.reservedUsd : spentUsd) >= budgetUsd)) {
       ctx.recordTrace?.("repair.budget_stop", {
         pass,
         maxPasses,
@@ -142,7 +143,7 @@ export async function handleRepairLoop(
       return {
         status: "FAIL",
         userFacingText: lastOutputText,
-        summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${spentUsd.toFixed(4)} spent). Skipped ${maxPasses - pass + 1} repair pass(es).`,
+        summary: ledger?.blockedReason ?? `Budget cap $${(budgetUsd ?? ledger?.limitUsd ?? 0).toFixed(4)} reached ($${(ledger?.spentUsd ?? spentUsd).toFixed(4)} spent). Skipped ${maxPasses - pass + 1} repair pass(es).`,
         ...(currentArtifacts ? { artifacts: currentArtifacts } : {}),
         qcResult: currentQC,
       };
@@ -293,7 +294,10 @@ export async function handleRepairLoop(
     }
 
     verifyRepairPackets(maestroResult, ctx);
-    const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]));
+    const qcInput = buildPappyInput(originalTask, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+    throwIfAborted(ctx.abortSignal);
+    const nextQC = pappy.evaluate(qcInput);
+    throwIfAborted(ctx.abortSignal);
     ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
     ctx.recordTrace?.("repair.pass.qc_result", {
       pass,

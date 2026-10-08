@@ -9,6 +9,7 @@ declare module '@clawde/miranda-core' {
     maxTokens?: number;
     enableThinking?: boolean;
     signal?: AbortSignal;
+    requireUsage?: boolean;
   }
 
   export interface LLMResponse {
@@ -55,6 +56,7 @@ declare module '@clawde/miranda-core' {
     defaultModel?: string;
     extraHeaders?: Record<string, string>;
     enableThinking?: boolean;
+    supportsEnableThinking?: boolean;
     includeStreamUsage?: boolean;
     supportsTemperature?: (model: string) => boolean;
   }

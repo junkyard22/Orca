@@ -181,6 +181,21 @@ export interface LLMOptions {
   abortSignal?: AbortSignal;
 }
 
+export interface OrcaLLMResult {
+  text: string;
+  usage?: import('@clawde/miranda-core').TokenUsage | null;
+  model?: string;
+  durationMs?: number;
+}
+export interface ExecutionBudgetSnapshot {
+  limitUsd: number | null;
+  spentUsd: number;
+  reservedUsd: number;
+  uncertainUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  blockedReason?: string;
+}
 export interface OrcaLLMService {
   /**
    * Generate text for a prompt.
@@ -193,7 +208,7 @@ export interface OrcaLLMService {
    * from the LLM. Falls back to a single buffered response when the adapter
    * does not support SSE streaming.
    */
-  complete(prompt: string, opts?: LLMOptions): Promise<{ text: string }>;
+  complete(prompt: string, opts?: LLMOptions): Promise<OrcaLLMResult>;
 
   /**
    * Streaming variant — fires onChunk for every incremental token and
@@ -206,7 +221,7 @@ export interface OrcaLLMService {
     prompt: string,
     options: LLMOptions,
     onChunk: (chunk: string) => void,
-  ): Promise<{ text: string }>;
+  ): Promise<OrcaLLMResult>;
 }
 
 /**
@@ -234,6 +249,7 @@ export interface OrcaToolService {
 }
 
 export interface OrcaRunCtx {
+  getBudgetSnapshot?: () => ExecutionBudgetSnapshot | undefined;
   llm: OrcaLLMService;
   runId: string;
   abortSignal?: AbortSignal;
@@ -388,6 +404,8 @@ export interface OrcaRuntimeDeps {
    * Undefined or 0 means no limit.
    */
   budgetUsd?: number;
+  /** Host-owned ledger shared by planning, workers, repairs and fallbacks. */
+  getBudgetSnapshot?: () => ExecutionBudgetSnapshot | undefined;
   /**
    * Miranda's gate — the compliance and governance layer.
    * Wraps every LLM call, tool execution, and QC run with validation checkpoints.

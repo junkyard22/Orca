@@ -51,14 +51,16 @@ export const STREAM_USAGE_OPTIONS = { include_usage: true } as const;
 export function toTokenUsage(
   payload: OpenAIUsagePayload | null | undefined,
 ): TokenUsage | null {
-  if (!payload) return null;
+  if (!payload || ![payload.prompt_tokens, payload.completion_tokens].every(n => Number.isSafeInteger(n) && n! >= 0)) return null;
+  const total = payload.total_tokens ?? payload.prompt_tokens! + payload.completion_tokens!;
+  if (!Number.isSafeInteger(total) || total !== payload.prompt_tokens! + payload.completion_tokens!) return null;
 
   const cachedTokens = payload.prompt_tokens_details?.cached_tokens;
 
   return {
     promptTokens: payload.prompt_tokens ?? 0,
     completionTokens: payload.completion_tokens ?? 0,
-    totalTokens: payload.total_tokens ?? 0,
+    totalTokens: total,
     ...(cachedTokens !== undefined && { cachedPromptTokens: cachedTokens }),
   };
 }

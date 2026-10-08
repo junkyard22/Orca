@@ -232,7 +232,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
       body["temperature"] = request.temperature;
     }
 
-    const sendStreamUsage = this.includeStreamUsage && !this.streamUsageRejected;
+    const sendStreamUsage = request.requireUsage || (this.includeStreamUsage && !this.streamUsageRejected);
     if (sendStreamUsage) {
       body["stream_options"] = STREAM_USAGE_OPTIONS;
     }
@@ -270,7 +270,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
       // endpoint costs one wasted request per adapter rather than failing every
       // streamed call. A 400 thrown for some other reason simply fails again
       // below, at the price of that one retry.
-      if (!response.ok && response.status === 400 && sendStreamUsage) {
+      if (!response.ok && response.status === 400 && sendStreamUsage && !request.requireUsage) {
         await response.text().catch(() => "");   // release the connection
         this.streamUsageRejected = true;
         delete body["stream_options"];
@@ -287,6 +287,7 @@ export class OpenAICompatAdapter implements LLMAdapter {
       let finalModel = model;
       let deltaCount = 0;
       let reportedUsage: OpenAIUsagePayload | undefined;
+      let streamCompleted = false;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -295,15 +296,15 @@ export class OpenAICompatAdapter implements LLMAdapter {
       try {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          buffer += value ? decoder.decode(value, { stream: true }) : decoder.decode();
+          if (done && buffer) buffer += '\n'; // process an unterminated final SSE line.
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
           for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed.startsWith("data: ")) continue;
             const data = trimmed.slice(6);
-            if (data === "[DONE]") break;
+            if (data === "[DONE]") { streamCompleted = true; break; }
             try {
               const chunk = JSON.parse(data) as {
                 choices: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
@@ -321,19 +322,14 @@ export class OpenAICompatAdapter implements LLMAdapter {
               if (chunk.usage) reportedUsage = chunk.usage;
             } catch { /* skip malformed chunks */ }
           }
+          if (done) break;
         }
       } finally {
         reader.releaseLock();
       }
 
-      // Real counts when the provider sent the usage chunk. Otherwise fall back
-      // to the delta count, which approximates completion tokens only — the
-      // prompt side is genuinely unknown on that path, not zero.
-      const usage: TokenUsage = toTokenUsage(reportedUsage) ?? {
-        promptTokens: 0,
-        completionTokens: deltaCount,
-        totalTokens: deltaCount,
-      };
+      // SSE deltas are chunks, not tokens. Unknown usage stays unknown.
+      const usage = request.requireUsage && !streamCompleted ? null : toTokenUsage(reportedUsage);
 
       const streamDurationMs = Date.now() - startMs;
       if (process.env["ORCA_PROFILE"] === "1") {
@@ -342,10 +338,10 @@ export class OpenAICompatAdapter implements LLMAdapter {
           method: "stream",
           model: finalModel,
           durationMs: streamDurationMs,
-          promptTokens: usage.promptTokens,
-          completionTokens: usage.completionTokens,
-          totalTokens: usage.totalTokens,
-          cachedPromptTokens: usage.cachedPromptTokens,
+          promptTokens: usage?.promptTokens,
+          completionTokens: usage?.completionTokens,
+          totalTokens: usage?.totalTokens,
+          cachedPromptTokens: usage?.cachedPromptTokens,
           // Marks the counts above as provider-reported rather than estimated,
           // so the analyzer never mixes delta counts into token totals.
           usageReported: reportedUsage !== undefined,

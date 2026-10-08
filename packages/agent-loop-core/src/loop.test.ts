@@ -97,6 +97,53 @@ function makeCtx(overrides: Partial<OrcaRunCtx> = {}): OrcaRunCtx {
 // beforeLLMCall PASS — stream runs normally
 // ---------------------------------------------------------------------------
 
+describe('cancellation at the real shared-loop boundaries', () => {
+  it('passes cancellation to the model and refuses tools returned after Stop', async () => {
+    const controller = new AbortController();
+    const llm = makeLLMService('unused');
+    llm.stream = vi.fn(async (_prompt, options) => {
+      expect(options.abortSignal).toBe(controller.signal);
+      controller.abort('stopped during worker model request');
+      return { text: '<tool_call>{"tool":"write_file","input":{"path":"x.js","content":"bad"}}</tool_call>' };
+    });
+    const tools = makeTools();
+    await expect(runAgentLoop('system', 'task', tools, makeCtx({ llm, abortSignal: controller.signal }))).rejects.toThrow('stopped during worker');
+    expect(tools.execute).not.toHaveBeenCalled();
+    expect(llm.stream).toHaveBeenCalledOnce();
+  });
+
+  it('refuses the next write and model request after cancellation during a tool', async () => {
+    const controller = new AbortController();
+    const llm = makeLLMService('<tool_call>{"tool":"read_file","input":{"path":"x.js"}}</tool_call>\n<tool_call>{"tool":"write_file","input":{"path":"x.js","content":"bad"}}</tool_call>');
+    const tools = makeTools();
+    tools.execute = vi.fn(async () => {
+      controller.abort('stopped during tool execution');
+      return { ok: true, output: 'stale output' };
+    });
+    await expect(runAgentLoop('system', 'task', tools, makeCtx({ llm, abortSignal: controller.signal }))).rejects.toThrow('stopped during tool');
+    expect(tools.execute).toHaveBeenCalledOnce();
+    expect(llm.stream).toHaveBeenCalledOnce();
+  });
+
+  it('does not execute an approval returned after the run was cancelled', async () => {
+    const controller = new AbortController();
+    const llm = makeLLMService('<tool_call>{"tool":"run_command","input":{"command":"npm test"}}</tool_call>');
+    const tools = makeTools();
+    await expect(runAgentLoop('system', 'task', tools, makeCtx({ llm, abortSignal: controller.signal, requestToolApproval: async () => {
+      controller.abort('stopped while approval was pending');
+      return true;
+    } }))).rejects.toThrow('stopped while approval');
+    expect(tools.execute).not.toHaveBeenCalled();
+    expect(llm.stream).toHaveBeenCalledOnce();
+  });
+
+  it('reports the effective ledger and in-flight exposure to its trace gate', async () => {
+    const before = vi.fn();
+    await runAgentLoop('system', 'task', makeTools(), makeCtx({ gate: makePassGate({ onBeforeLLMCall: before }), getBudgetSnapshot: () => ({ limitUsd: 3, spentUsd: 0.1, reservedUsd: 2, uncertainUsd: 0, inputTokens: 1, outputTokens: 1 }) }));
+    expect(before).toHaveBeenCalledWith(expect.objectContaining({ budgetLimit: 3, budgetUsed: 2.1 }));
+  });
+});
+
 describe("beforeLLMCall PASS", () => {
   it("allows ctx.llm.stream to run", async () => {
     const llm = makeLLMService("Model output.");

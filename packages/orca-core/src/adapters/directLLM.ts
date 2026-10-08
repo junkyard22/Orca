@@ -50,11 +50,11 @@ export function createDirectLLMService(
 
       if (opts?.onToken && adapter.stream) {
         const response = await adapter.stream(request, opts.onToken);
-        return { text: response.content };
+        return { text: response.content, usage: response.usage, model: response.model, durationMs: response.durationMs };
       }
 
       const response = await adapter.complete(request);
-      return { text: response.content };
+      return { text: response.content, usage: response.usage, model: response.model, durationMs: response.durationMs };
     },
 
     async stream(prompt, options, onChunk) {
@@ -62,14 +62,14 @@ export function createDirectLLMService(
 
       if (adapter.stream) {
         const response = await adapter.stream(request, onChunk);
-        return { text: response.content };
+        return { text: response.content, usage: response.usage, model: response.model, durationMs: response.durationMs };
       }
 
       // Adapter does not support SSE — fall back to a single buffered call
       // and fire onChunk once with the full response.
       const response = await adapter.complete(request);
       onChunk(response.content);
-      return { text: response.content };
+      return { text: response.content, usage: response.usage, model: response.model, durationMs: response.durationMs };
     },
   };
 }

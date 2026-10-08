@@ -1,6 +1,7 @@
 import { composeMirandaGates } from "@clawde/miranda-core";
 import type { LLMCallGateContext, MirandaGate } from "@clawde/miranda-core";
 import type { OrcaRunCtx } from "@clawde/orca-core";
+import { currentExecutionBudget } from './executionBudget';
 
 export interface GatedLLMCallOptions<T> {
   stage: string;
@@ -22,6 +23,9 @@ export async function runGatedLLMCall<T>(
   invoke: () => Promise<T>,
 ): Promise<T> {
   const gate = ctx.gate;
+  const budget = currentExecutionBudget();
+  budget?.assertActive();
+  budget?.attachTrace(ctx.recordTrace);
   if (!gate) {
     throw new Error(`Miranda gate is required for live LLM stage "${options.stage}".`);
   }
@@ -29,8 +33,8 @@ export async function runGatedLLMCall<T>(
   const gateContext: LLMCallGateContext = {
     stage: options.stage,
     model: options.model ?? ctx.model ?? "unknown",
-    budgetUsed: options.budgetUsed ?? 0,
-    budgetLimit: options.budgetLimit ?? Infinity,
+    budgetUsed: budget ? budget.snapshot().spentUsd + budget.snapshot().reservedUsd : options.budgetUsed ?? 0,
+    budgetLimit: budget ? budget.limit ?? Infinity : options.budgetLimit ?? Infinity,
   };
   const beforeGate = gate.beforeLLMCall(gateContext);
   ctx.recordTrace?.("miranda.before_llm_call", {
@@ -44,6 +48,8 @@ export async function runGatedLLMCall<T>(
   }
 
   const result = await invoke();
+  budget?.assertActive();
+  if (budget) gateContext.budgetUsed = budget.snapshot().spentUsd + budget.snapshot().reservedUsd;
   const output = options.outputOf(result);
   const valid = output.trim().length > 0;
   const afterGate = gate.afterLLMCall(

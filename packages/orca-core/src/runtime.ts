@@ -22,7 +22,7 @@ import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./he
 import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
-import { isAbortError, throwIfAborted } from "./abort.js";
+import { createAbortError, isAbortError, throwIfAborted } from "./abort.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
 import { composeMirandaGates, createMirandaGate } from "@clawde/miranda-core";
 import {
@@ -272,6 +272,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     };
 
     const ctx: OrcaRunCtx = {
+      getBudgetSnapshot: deps.getBudgetSnapshot,
       llm,
       runId: taskId,
       abortSignal: options?.abortSignal,
@@ -439,6 +440,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
         if (qcEnabled) {
           const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+          throwIfAborted(options?.abortSignal);
           ctx.verificationReceipts?.push(...(auditMaestroResult.toolEvents ?? []));
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
           const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText });
@@ -467,6 +469,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             };
           } else {
           const qcResult = pappy.evaluate(qcInput);
+          throwIfAborted(options?.abortSignal);
           persistedQcResult = qcResult;
           const afterQcContext = buildQCGateContext({
             taskId,
@@ -536,7 +539,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
       const maestroResult = normalizeMaestroResult(await maestro.run(normalizedTaskSpec, ctx));
       persistedMaestroResult = maestroResult;
-      const initialSpendUsd = maestroResult.metadata?.costUsd ?? 0;
+      const initialSpendUsd = ctx.getBudgetSnapshot?.()?.spentUsd ?? maestroResult.metadata?.costUsd ?? 0;
 
       // Detect tools the agent tried to call but weren't available.
       unknownTools = [
@@ -619,6 +622,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         }
 
         const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+        throwIfAborted(options?.abortSignal);
         ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
 
@@ -647,6 +651,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           };
         } else {
         const qcResult = pappy.evaluate(qcInput);
+        throwIfAborted(options?.abortSignal);
         persistedQcResult = qcResult;
 
         const afterQcContext = buildQCGateContext({
@@ -873,6 +878,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       ahpGraph = serializeAHPPacketGraph(ahpRootPacket, ahpChildPackets);
     }
 
+    const finalBudget = ctx.getBudgetSnapshot?.();
+    if (finalBudget) {
+      recordTrace('budget.final', finalBudget);
+      if (persistedMaestroResult) persistedMaestroResult.metadata = { ...persistedMaestroResult.metadata, inputTokens: finalBudget.inputTokens, outputTokens: finalBudget.outputTokens, costUsd: finalBudget.spentUsd };
+    }
     const trace: OrcaPipelineTrace = {
       version: 1,
       taskId,
@@ -899,6 +909,17 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       }
     } catch (error) {
       console.error("[orca-core] writeTrace failed:", error);
+    }
+
+    // Persisting the trace can yield while Stop is pressed. Do not publish
+    // task:done or start response synthesis from that stale completion.
+    if (!abortError && options?.abortSignal?.aborted) {
+      abortError = createAbortError(options.abortSignal.reason);
+      recordTrace('task.aborted', { name: abortError.name, message: abortError.message });
+      ahpRootPacket.lifecycle = AHPLifecycle.INCONCLUSIVE;
+      appendAHPTrace(ahpRootPacket, { timestamp: new Date().toISOString(), state: AHPLifecycle.INCONCLUSIVE, actor: 'orca-runtime', note: abortError.message });
+      trace.finalResult = { ...trace.finalResult!, status: 'ABORTED', summary: abortError.message, userFacingText: undefined, durationMs: Date.now() - startTime, ahpPacketGraph: serializeAHPPacketGraph(ahpRootPacket, ahpChildPackets) };
+      try { await deps.writeTrace?.(trace); } catch(error) { console.error('[orca-core] writeTrace cancellation update failed:', error); }
     }
 
     if (abortError) {

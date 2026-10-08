@@ -148,9 +148,12 @@ contextBridge.exposeInMainWorld("orca", {
     return () => ipcRenderer.removeListener("tool:request", handler);
   },
 
-  // Send the user's approve/deny decision back to main.
-  approveToolCall: (id: string, approved: boolean): void =>
-    ipcRenderer.send("tool:approve", { id, approved }),
+  // Status only. Renderer code has no capability to grant an approval.
+  onToolApprovalStatus: (cb: (data: { id: string; outcome: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { id: string; outcome: string }) => cb(data);
+    ipcRenderer.on('tool:approval-status', handler);
+    return () => ipcRenderer.removeListener('tool:approval-status', handler);
+  },
 
   // ── Workspace selection ──────────────────────────────────────────────────
   // Opens a native folder picker and returns the chosen path (empty string if

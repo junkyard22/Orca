@@ -25,7 +25,7 @@ if (!window.orca) {
     minimize:          () => {},
     maximize:          () => {},
     close:             () => {},
-    approveToolCall:   () => {},
+    onToolApprovalStatus: () => () => {},
     selectWorkspace:   async () => "",
     fetchModels:       async () => ({ ok: false, models: [] }),
     listSessions:      async () => [],
@@ -532,7 +532,7 @@ function demoDismissApprovalDialog() {
   if (dialog && dialog.style.display === "flex") {
     clearApprovalTimer();
     const id = dialog.dataset.approvalId;
-    if (id) orca.approveToolCall(id, false);
+    if (id && busy) orca.abortTask();
     dialog.style.display = "none";
   }
 }
@@ -1941,6 +1941,9 @@ async function sendMessage() {
   let finalStatus = "ready";
   try {
     const result = await orca.sendMessage(text);
+    if (statusbarCost && result.budget) {
+      statusbarCost.textContent = `Estimated upper cost: $${result.budget.spentUsd.toFixed(6)}${result.budget.uncertainUsd > 0 ? ' (usage incomplete)' : ''}`;
+    }
     if (result.cargoManifest) {
       cargoManifest = result.cargoManifest;
       renderContextTray();
@@ -2974,82 +2977,44 @@ orca.onMaximizeChange((maximized) => {
 
 // ── Tool approval dialog ────────────────────────────────────────────
 
-// Tools the user has permanently approved for this session
-const sessionApprovedTools = new Set();
-
+// The native main-process dialog owns decisions. This renderer only displays
+// pending/status receipts and supplies a Stop control; it cannot approve.
 let approvalTimerInterval = null;
-const APPROVAL_TIMEOUT_S  = 60;
-
+const APPROVAL_TIMEOUT_S = 60;
 function clearApprovalTimer() {
   if (approvalTimerInterval) { clearInterval(approvalTimerInterval); approvalTimerInterval = null; }
-  const el = document.getElementById("approval-timer");
-  if (el) el.textContent = "";
+  const el = document.getElementById('approval-timer');
+  if (el) el.textContent = '';
 }
-
-function startApprovalTimer(onTimeout) {
+orca.onToolRequest((id, tool, args) => {
+  if (!tool) return;
+  toolCallCards.set(id, appendToolCard(id, tool, args));
+  const dialog = document.getElementById('tool-approval-dialog');
+  document.getElementById('approval-tool-name').textContent = tool;
+  document.getElementById('approval-args').textContent = formatToolRequestSummary(tool, args);
+  dialog.dataset.approvalId = id;
+  dialog.style.display = 'flex';
+  demoWatchdogPause();
   clearApprovalTimer();
   let remaining = APPROVAL_TIMEOUT_S;
-  const el = document.getElementById("approval-timer");
-  const tick = () => {
-    if (el) el.textContent = `${remaining}s`;
-    if (remaining <= 0) { clearApprovalTimer(); onTimeout(); }
-    remaining--;
-  };
-  tick();
-  approvalTimerInterval = setInterval(tick, 1000);
-}
-
-function resolveApproval(approved) {
-  clearApprovalTimer();
-  const dialog = document.getElementById("tool-approval-dialog");
-  const id   = dialog.dataset.approvalId;
-  const tool = document.getElementById("approval-tool-name").textContent;
+  const tick = () => { document.getElementById('approval-timer').textContent = remaining > 0 ? `${remaining--}s` : 'Approval timed out — stopping'; };
+  tick(); approvalTimerInterval = setInterval(tick, 1000);
+});
+orca.onToolApprovalStatus(({ id, outcome }) => {
   const card = toolCallCards.get(id);
-
-  if (approved && document.getElementById("chk-always-approve").checked) {
-    sessionApprovedTools.add(tool);
-  }
-
   if (card) {
-    card.classList.replace("pending", approved ? "approved" : "denied");
-    card.querySelector(".tool-card-status").textContent = approved ? "\u2713 Approved" : "\u2717 Denied";
+    card.classList.replace('pending', outcome === 'approved' ? 'approved' : 'denied');
+    card.querySelector('.tool-card-status').textContent = outcome === 'timeout' ? 'Approval timed out — command did not execute' : outcome;
   }
   toolCallCards.delete(id);
-  orca.approveToolCall(id, approved);
-  dialog.style.display = "none";
-  document.getElementById("chk-always-approve").checked = false;
+  const dialog = document.getElementById('tool-approval-dialog');
+  if (dialog.dataset.approvalId === id) { clearApprovalTimer(); dialog.style.display = 'none'; }
   demoHeartbeat();
-}
-
-orca.onToolRequest((id, tool, args) => {
-  if (!tool || !String(tool).trim()) return;
-
-  const card = appendToolCard(id, tool, args);
-  toolCallCards.set(id, card);
-
-  // Auto-approve if the user approved this tool for the session
-  if (sessionApprovedTools.has(tool)) {
-    card.classList.replace("pending", "approved");
-    card.querySelector(".tool-card-status").textContent = "\u2713 Auto-approved";
-    toolCallCards.delete(id);
-    orca.approveToolCall(id, true);
-    return;
-  }
-
-  const dialog = document.getElementById("tool-approval-dialog");
-  document.getElementById("approval-tool-name").textContent  = tool;
-  document.getElementById("approval-tool-name-2").textContent = tool;
-  document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
-  dialog.dataset.approvalId = id;
-  dialog.style.display      = "flex";
-  // Waiting on the presenter is not a provider stall.
-  demoWatchdogPause();
-
-  startApprovalTimer(() => resolveApproval(false));
 });
-
-document.getElementById("btn-approve-tool").addEventListener("click", () => resolveApproval(true));
-document.getElementById("btn-deny-tool").addEventListener("click",    () => resolveApproval(false));
+document.getElementById('btn-deny-tool').addEventListener('click', () => orca.abortTask());
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && busy) { event.preventDefault(); orca.abortTask(); }
+});
 
 // ── Chat session sidebar ──────────────────────────────────────────────────
 

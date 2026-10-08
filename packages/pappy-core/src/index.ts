@@ -1,5 +1,6 @@
 export { evaluateWithPappy } from "./pappy.js";
 export { isDefectFixTask, prohibitsTestEdits } from "./checks/fixVerification.js";
+export { parseTestCounts, parseFailingTests } from "./checks/fixVerification.js";
 export { buildRepairTask } from "./repair.js";
 export { traceEvaluation } from "./pappy-trace.js";
 export { verifyAHPPacket } from "./ahp/evaluator.js";

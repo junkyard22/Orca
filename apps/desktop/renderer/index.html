@@ -556,7 +556,7 @@
     </div>
 
     <!-- ── Tool approval dialog ───────────────────────────────────────── -->
-    <div id="tool-approval-dialog">
+    <div id="tool-approval-dialog" role="alertdialog" aria-live="assertive" aria-label="Presenter command approval pending">
       <div class="approval-card">
         <div class="approval-header">
           <div class="approval-title">Tool call request</div>
@@ -573,13 +573,9 @@
           </div>
         </div>
         <div class="approval-footer">
-          <label class="approval-always-row">
-            <input type="checkbox" id="chk-always-approve" />
-            <span>Always approve <code id="approval-tool-name-2"></code> this session</span>
-          </label>
+          <p>Waiting for your decision in the native Orca approval window. Each call requires a separate approval.</p>
           <div class="approval-actions">
-            <button class="btn-deny" id="btn-deny-tool">Deny</button>
-            <button class="btn-approve" id="btn-approve-tool">Approve</button>
+            <button class="btn-deny" id="btn-deny-tool">Stop run</button>
           </div>
         </div>
       </div>

@@ -12,6 +12,7 @@ export { createFilteredToolService, extractToolNamesFromPrompt } from "./toolFil
 // Concrete adapter factories (convenience — can be swapped for custom impls)
 export { createMirandaLLMService } from "./adapters/mirandaLLM.js";
 export { createDirectLLMService } from "./adapters/directLLM.js";
+export { parseTestCounts, parseFailingTests } from '@clawde/pappy-core';
 export { createPappyPort, createDebugPappyPort, createLoggingPappyPort } from "./adapters/pappyPort.js";
 
 // Workspace context — capture git + file state for prompt grounding
@@ -83,6 +84,7 @@ export type { ExportOptions, TrainingRecord, ExportSummary } from "./export/expo
 
 // Run analysis artifacts (run-analysis.md + run-events.json)
 export { createRunAnalysisWriter } from "./analysis/runAnalysis.js";
+export { redactValue } from "./analysis/redact.js";
 export type { RunAnalysisWriter } from "./analysis/runAnalysis.js";
 
 // Agent Handoff Protocol (re-exported from miranda-core — canonical home)

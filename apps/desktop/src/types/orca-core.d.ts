@@ -7,6 +7,9 @@
 declare module '@clawde/orca-core' {
   export function isDefectFixTask(task: string): boolean;
   export function prohibitsTestEdits(task: string): boolean;
+  export function parseTestCounts(output: string): { total: number; passed: number; failed: number } | null;
+  export function parseFailingTests(output: string): string[];
+  export function redactValue(value: unknown): unknown;
   import type { LLMAdapter, LLMMessage } from '@clawde/miranda-core';
   import type { MirandaGate } from '@clawde/miranda-core';
   import type { RoleName } from 'maestro-core';
@@ -179,13 +182,28 @@ declare module '@clawde/orca-core' {
     abortSignal?: AbortSignal;
   }
 
+  export interface OrcaLLMResult {
+    text: string;
+    usage?: import('@clawde/miranda-core').TokenUsage | null;
+    model?: string;
+    durationMs?: number;
+  }
+  export interface ExecutionBudgetSnapshot {
+    limitUsd: number | null;
+    spentUsd: number;
+    reservedUsd: number;
+    uncertainUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+    blockedReason?: string;
+  }
   export interface OrcaLLMService {
-    complete(prompt: string, opts?: LLMOptions): Promise<{ text: string }>;
+    complete(prompt: string, opts?: LLMOptions): Promise<OrcaLLMResult>;
     stream(
       prompt: string,
       options: LLMOptions,
       onChunk: (chunk: string) => void,
-    ): Promise<{ text: string }>;
+    ): Promise<OrcaLLMResult>;
   }
 
   export interface OrcaToolService {
@@ -197,6 +215,7 @@ declare module '@clawde/orca-core' {
   }
 
   export interface OrcaRunCtx {
+    getBudgetSnapshot?: () => ExecutionBudgetSnapshot | undefined;
     llm: OrcaLLMService;
     runId: string;
     abortSignal?: AbortSignal;
@@ -234,6 +253,7 @@ declare module '@clawde/orca-core' {
   }
 
   export interface OrcaRuntimeDeps {
+    getBudgetSnapshot?: () => ExecutionBudgetSnapshot | undefined;
     maestro: MaestroPort;
     pappy?: PappyPort;
     llm: OrcaLLMService;

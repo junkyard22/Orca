@@ -15,11 +15,13 @@ function isGateStop(gateResult: GateResult): boolean {
   return !gateResult.allowed || gateResult.verdict === "CONFIRM_REQUIRED";
 }
 
-// Neutral placeholders until live per-call cost accounting is threaded here.
-const NEUTRAL_LLM_BUDGET_CONTEXT = {
-  budgetUsed: 0,
-  budgetLimit: Infinity,
-} as const;
+function throwIfCancelled(ctx: OrcaRunCtx): void {
+  if (ctx.abortSignal?.aborted) { const e = new Error(String(ctx.abortSignal.reason?.message ?? ctx.abortSignal.reason ?? 'Cancelled.')); e.name = 'AbortError'; throw e; }
+}
+function budgetContext(ctx: OrcaRunCtx) {
+  const budget = ctx.getBudgetSnapshot?.();
+  return { budgetUsed: budget ? budget.spentUsd + budget.reservedUsd : 0, budgetLimit: budget?.limitUsd ?? Infinity };
+}
 
 export function parseToolCalls(text: string): ParsedCall[] {
   const calls: ParsedCall[] = [];
@@ -148,6 +150,7 @@ export async function runAgentLoop(
   let loopComplete = false;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    throwIfCancelled(ctx);
     // Completion contract: stop immediately when the runtime has already
     // observed a terminal condition — do not call the model again.
     if (loopComplete) break;
@@ -168,7 +171,7 @@ export async function runAgentLoop(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "agent_loop_main_stream",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetContext(ctx),
         ...llmCallSizeContext,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
@@ -192,9 +195,10 @@ export async function runAgentLoop(
 
     const { text } = await ctx.llm.stream(
       activeConversation,
-      { maxTokens: 4096, simple: true },
+      { maxTokens: 4096, simple: true, abortSignal: ctx.abortSignal },
       (chunk) => ctx.emit?.({ type: "stream:token", taskId: ctx.runId, chunk }),
     );
+    throwIfCancelled(ctx);
     lastText = text;
     iterations = i + 1;
 
@@ -274,7 +278,8 @@ export async function runAgentLoop(
       }
 
       ctx.recordTrace?.("tool.call", { tool: call.tool, input: call.input });
-      const result = await tools.execute(call.tool, call.input);
+      const result = await (throwIfCancelled(ctx), tools.execute(call.tool, call.input));
+      throwIfCancelled(ctx);
       const outputText = normalizeToolText(result.output);
       const errorText = result.error === undefined ? undefined : normalizeToolText(result.error);
       const commandFileChanges = result.ok
@@ -301,8 +306,9 @@ export async function runAgentLoop(
       if (call.tool === "write_file" && result.ok && typeof call.input["content"] === "string") {
         enrichedRaw["_contentForDiff"] = call.input["content"];
       }
-      if (result.ok && outputText.trim().length > 0) {
-        enrichedRaw["_outputForProof"] = outputText.slice(0, 4000);
+      if (outputText.trim().length > 0) {
+        enrichedRaw["_outputForProof"] = outputText;
+        if ('exitCode' in result) enrichedRaw["_exitCodeForProof"] = result.exitCode;
       }
 
       toolEvents.push({
@@ -380,7 +386,7 @@ export async function runAgentLoop(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "agent_loop_rescue_stream",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetContext(ctx),
         ...llmCallSizeContext,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
@@ -402,11 +408,13 @@ export async function runAgentLoop(
         };
       }
     }
+    throwIfCancelled(ctx);
     const { text: rescueText } = await ctx.llm.stream(
       rescuePrompt,
-      { maxTokens: 8192, simple: true },
+      { maxTokens: 8192, simple: true, abortSignal: ctx.abortSignal },
       (chunk) => ctx.emit?.({ type: "stream:token", taskId: ctx.runId, chunk }),
     );
+    throwIfCancelled(ctx);
     const rescueCalls = parseToolCalls(rescueText);
     for (const call of rescueCalls) {
       if (call.tool !== "write_file") continue;
@@ -428,7 +436,7 @@ export async function runAgentLoop(
         });
         break;
       }
-      const result = await tools.execute(call.tool, call.input);
+      const result = await (throwIfCancelled(ctx), tools.execute(call.tool, call.input));
       const outputText = normalizeToolText(result.output);
       ctx.gate?.afterToolRun(
         makeToolGateContext(call.tool, call.input, taskPrompt, ctx.workspaceRoot),

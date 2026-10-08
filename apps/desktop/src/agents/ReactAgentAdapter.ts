@@ -11,6 +11,7 @@ import { formatToolResult as sharedFormatToolResult, runAgentLoop } from "@clawd
 import type { AgentAdapter, AgentTask, AgentResult, ThoughtRecord, AgentRunContext } from "./AgentAdapter";
 import type { RoleName } from "maestro-core";
 import { runGatedLLMCall } from "../llmGate";
+import { BudgetError } from '../executionBudget';
 
 type Tool = {
   name: string;
@@ -659,6 +660,7 @@ function toSharedRunCtx(
     runId: ctx.runId,
     abortSignal: ctx.abortSignal,
     recordTrace: ctx.recordTrace,
+    getBudgetSnapshot: ctx.getBudgetSnapshot,
     tools,
     toolNamesAllowed: ctx.toolNamesAllowed,
     emit: ctx.emit,
@@ -728,7 +730,8 @@ export class ReactAgentAdapter implements AgentAdapter {
       toolsUsed: result.toolEvents,
       filesChanged: result.filesChanged,
       iterationCount: 0,
-      stoppedBecause: "done",
+      stoppedBecause: result.stoppedBecause === 'gate_blocked' ? 'error' : result.stoppedBecause,
+      error: result.error,
     };
   }
 
@@ -870,6 +873,9 @@ export class ReactAgentAdapter implements AgentAdapter {
           role: this.role,
           iteration: iterationCount,
           output: modelOutput,
+          usage: response.usage,
+          model: response.model,
+          durationMs: response.durationMs,
         });
 
         const thoughtMatch = modelOutput.match(/Thought:\s*([\s\S]*?)(?:\n|$)/i);
@@ -1169,7 +1175,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           // verifier can see a failing test suite. Proof of success still
           // requires ok:true on the event.
           if (result.output.trim().length > 0) {
-            enrichedRaw["_outputForProof"] = result.output.slice(0, 4000);
+            enrichedRaw["_outputForProof"] = result.output;
           }
 
           toolsUsed.push({
@@ -1318,7 +1324,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             ctx.recordTrace?.("agent.postloop_write_rescue", { targetPath, contentLength: lastRejectedFinalAnswer.length });
             const writeResult = await writeTool.execute(
               { path: targetPath, content: lastRejectedFinalAnswer },
-              { workspaceRoot: ctx.workspaceRoot },
+              { workspaceRoot: ctx.workspaceRoot, abortSignal: ctx.abortSignal, requestApproval: ctx.requestToolApproval },
             );
             toolsUsed.push({
               tool: writeTool.name,
@@ -1335,6 +1341,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               currentOutputText = lastRejectedFinalAnswer;
             }
           } catch (rescueErr) {
+            if (isAbortError(rescueErr) || rescueErr instanceof BudgetError) throw rescueErr;
             ctx.recordTrace?.("agent.postloop_write_rescue.error", { error: String(rescueErr) });
           }
         }
@@ -1398,7 +1405,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             });
           }
         } catch (finalizationErr) {
-          if (isAbortError(finalizationErr)) throw finalizationErr;
+          if (isAbortError(finalizationErr) || finalizationErr instanceof BudgetError) throw finalizationErr;
           ctx.recordTrace?.("agent.finalization.error", {
             role: this.role,
             error: finalizationErr instanceof Error ? finalizationErr.message : String(finalizationErr),
@@ -1451,6 +1458,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         loopEvidence,
       };
     } catch (err) {
+      if (err instanceof BudgetError) throw err;
       if (isAbortError(err)) {
         ctx.recordTrace?.("agent.run.aborted", {
           role: this.role,

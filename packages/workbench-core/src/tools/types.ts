@@ -28,6 +28,8 @@ export interface ToolResult {
   output: string;
   /** Present only when ok === false. */
   error?: string;
+  /** Process exit status, only when a process actually completed. */
+  exitCode?: number;
 }
 
 export interface ToolParameterSchema {

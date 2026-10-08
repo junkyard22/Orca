@@ -126,6 +126,26 @@ function collectEvents<T extends OrcaEvent["type"]>(
 // ===========================================================================
 
 describe("budget guard", () => {
+  it('uses ledger exposure instead of missing Maestro cost and preserves Pappy FAIL', async () => {
+    const maestro={run:vi.fn(async()=>({outputText:'partial work',metadata:{role:'debugger'}}))};
+    const pappy={evaluate:vi.fn(()=>makePappyResult('FAIL'))};
+    const trace=vi.fn();
+    const snapshot={limitUsd:3,spentUsd:2.9,reservedUsd:0.1,uncertainUsd:0,inputTokens:100,outputTokens:10};
+    const runtime=createOrcaRuntime(makeBasicDeps(maestro,pappy,{budgetUsd:3,getBudgetSnapshot:()=>snapshot,writeTrace:trace}));
+    const result=await runtime.executeTask(makeTaskSpec());
+    expect(result.status).toBe('FAIL');expect(result.qcResult?.verdict).toBe('FAIL');
+    expect(maestro.run).toHaveBeenCalledOnce();
+    expect(trace.mock.calls[0]![0].entries).toContainEqual(expect.objectContaining({stage:'budget.final',detail:snapshot}));
+  });
+
+  it('refuses automatic repair after a ledger becomes uncertain below its cap', async () => {
+    const maestro={run:vi.fn(async()=>({outputText:'partial work',metadata:{role:'debugger'}}))};
+    const pappy={evaluate:vi.fn(()=>makePappyResult('FAIL'))};
+    const runtime=createOrcaRuntime(makeBasicDeps(maestro,pappy,{budgetUsd:20,getBudgetSnapshot:()=>({limitUsd:20,spentUsd:2.01,reservedUsd:0,uncertainUsd:2.01,inputTokens:0,outputTokens:0,blockedReason:'Usage unavailable; further requests refused.'})}));
+    const result=await runtime.executeTask(makeTaskSpec());
+    expect(result.status).toBe('FAIL');expect(result.qcResult?.verdict).toBe('FAIL');
+    expect(result.summary).toContain('Usage unavailable');expect(maestro.run).toHaveBeenCalledOnce();
+  });
   it("skips repair without downgrading Pappy FAIL when initial spend >= budgetUsd", async () => {
     // Initial Maestro pass costs $0.05 — budget is $0.04 → no repair should run
     const maestro: MaestroPort = {

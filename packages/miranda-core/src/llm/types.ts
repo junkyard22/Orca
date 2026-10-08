@@ -28,6 +28,8 @@ export interface LLMRequest {
   temperature: number;
   maxTokens: number;
   signal?: AbortSignal;
+  /** Host budget policy: require genuine usage and disable usage-dropping retries. */
+  requireUsage?: boolean;
   /**
    * When set, injects `enable_thinking` into the request body.
    * Use `false` to suppress chain-of-thought on models that default to deep

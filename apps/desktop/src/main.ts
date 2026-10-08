@@ -88,6 +88,10 @@ import { githubTokenForRuntime, mcpServersForRuntime } from "./mcpRuntimeConfig"
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
 import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
+import { BudgetError, ExecutionBudget, currentExecutionBudget, withExecutionBudget } from './executionBudget';
+import { DemoFixContract, FIND_FIX_PRESET, executeControlledTool, withDemoFixContract } from './demoFixContract';
+import { PresenterApprovals, assertManualLiveWindow } from './presenterApproval';
+import { serializeExecutionAudit } from './executionAudit';
 import {
   cargoReferenceAction,
   configuredCargoConnectors,
@@ -593,6 +597,7 @@ async function brainRoute(
       brainDecision = responseText.trim();
       break;
     } catch (err) {
+      if (isAbortError(err) || err instanceof BudgetError) throw err;
       if (err instanceof BrainDecisionValidationError) {
         repairReason = err.reason;
         ctx.recordTrace?.("brain.route.validation_error", {
@@ -900,7 +905,7 @@ function buildMaestroAdapter(
         const entry = modelEntries.get(selectedModel.id);
         const isPrimary = selectedModel.id === `${role}_primary`;
         if (entry && !isPrimary) {
-          const fallbackAdapter = buildAdapterForProvider(entry.provider, entry.model);
+          const fallbackAdapter = buildAdapterForProvider(entry.provider, entry.model, undefined, true);
           const rs = roleSettings?.get(role);
           agent = new RoleAgentAdapter(role, fallbackAdapter, undefined, rs?.maxTokens, rs?.temperature);
           logger.info(`[Maestro] Pool selected fallback model ${selectedModel.id} for role ${role}`);
@@ -1038,7 +1043,7 @@ function buildMaestroAdapter(
     try {
       result = await agent.run(agentTask, taskTools, agentCtx);
     } catch (err) {
-      if (isAbortError(err)) throw err;
+      if (isAbortError(err) || err instanceof BudgetError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       result = {
         outputText: "",
@@ -1167,7 +1172,7 @@ function buildMaestroAdapter(
           outputText = text.trim();
           synthesisProducedOutput = outputText.length > 0 && !isNonDeliverableOutput(outputText);
         } catch (err) {
-          if (isAbortError(err)) throw err;
+          if (isAbortError(err) || err instanceof BudgetError) throw err;
           synthesisError = err instanceof Error ? err.message : String(err);
         }
 
@@ -1633,6 +1638,7 @@ function initOrca(s: OrcaSettings): Promise<string | null> {
 // "offline" (the default on every launch) never initialises providers;
 // "live" runs Orca normally against the isolated demo workspace.
 let demoExecutionMode: DemoExecutionMode = "offline";
+let warmNarratorLexicon: (() => Promise<void>) | undefined;
 
 function sendInitStatus(status: Record<string, unknown>): void {
   const contents = win?.webContents;
@@ -1678,6 +1684,7 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
   _bootstrapTools = { all: [], mcp: [] };
   _initWarnings = [];
   _narratorProgressLexicon = {};
+  warmNarratorLexicon = undefined;
 
   // Dispose any previous MCP connections before re-initialising
   if (mcpDispose) {
@@ -1719,7 +1726,7 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
 
     // Brain is the fallback LLM used by ctx.llm for any role without a
     // dedicated entry in roleAdapters.
-    const brainAdapter = buildAdapterForProvider(provider, model);
+    const brainAdapter = buildAdapterForProvider(provider, model, undefined, true);
     const llm = createDirectLLMService(
       brainAdapter,
       model,
@@ -1738,7 +1745,7 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
       const roleProv = s.providers?.find((p) => p.id === roleEntry.providerId);
       if (!roleProv) continue;
       if (roleProv.type !== 'ollama' && !roleProv.apiKey) continue;
-      adapterMap.set(roleName, buildAdapterForProvider(roleProv, roleEntry.model, roleEntry.enableThinking));
+      adapterMap.set(roleName, buildAdapterForProvider(roleProv, roleEntry.model, roleEntry.enableThinking, true));
     }
 
     // Warn if core routing roles are not configured — tasks will silently fall back to brain.
@@ -1791,6 +1798,7 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
       description: tool.description,
       schema: tool.schema,
       async execute(input, context) {
+        return executeControlledTool(tool.name, input, context.abortSignal, async (abortSignal) => {
         const effectiveWorkspaceRoot = context.workspaceRoot ?? workspaceRoot;
         const normalizedInput = absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot);
         const refused = await enforceToolAuthorization(tool.name, normalizedInput, {
@@ -1799,19 +1807,22 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
           requestApproval: requestToolApproval,
         });
         if (refused) return refused;
+        throwIfAborted(abortSignal);
         return tool.execute(
           normalizedInput,
           {
             workspaceRoot: effectiveWorkspaceRoot,
             runId: context.runId ?? '',
-            abortSignal: context.abortSignal,
+            abortSignal,
             requestApproval: context.requestApproval,
           },
         );
+        });
       },
     }));
     const toolService: OrcaToolService = {
       async execute(name, input) {
+        return executeControlledTool(name, input, undefined, async (abortSignal) => {
         const normalizedInput = absolutizeDesktopCommanderInput(name, input, workspaceRoot);
         const toolSchema = bootstrap.allTools.find((tool) => tool.name === name)?.schema;
         const gateCtx = { tool: name, args: normalizedInput, workspaceRoot, schema: toolSchema };
@@ -1829,13 +1840,17 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
           requestApproval: requestToolApproval,
         });
         if (refused) return refused;
+        throwIfAborted(abortSignal);
 
-        const result = await bootstrap.toolService.execute(name, normalizedInput);
+        const selectedTool = bootstrap.allTools.find(tool => tool.name === name);
+        if (!selectedTool) return { ok: false, output: '', error: `Unknown tool: ${name}` };
+        const result = await selectedTool.execute(normalizedInput, { workspaceRoot, runId: '', abortSignal, requestApproval: requestToolApproval });
         gate.afterToolRun(gateCtx, {
           ok: result.ok,
           output: result.output || result.error || "",
         });
         return result;
+        });
       },
       formatForPrompt() {
         return bootstrap.toolService.formatForPrompt();
@@ -1884,6 +1899,7 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
       writeTrace: writePipelineTrace,
       requestToolApproval,
       budgetUsd: s.budgetUsd,
+      getBudgetSnapshot: () => currentExecutionBudget()?.snapshot(),
       gate,
       model,
     });
@@ -1897,7 +1913,8 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
       const configuredNarrator = adapterMap.get('narrator');
       const configuredNarratorModel = s.roles?.['narrator']?.model;
       if (configuredNarrator && configuredNarratorModel) {
-        void runGatedLLMCall(
+        // Lazy: initialization must not make an unbudgeted/background request.
+        warmNarratorLexicon = () => runGatedLLMCall(
           { gate, model: configuredNarratorModel },
           {
             stage: 'narrator_progress_lexicon',
@@ -1917,8 +1934,7 @@ async function _initOrcaImpl(saved: OrcaSettings): Promise<string | null> {
         ).then((result) => {
           if (narratorLexiconGeneration !== _narratorLexiconGeneration) return;
           _narratorProgressLexicon = parseNarratorLexicon(result.content);
-        }).catch((error) => {
-          console.warn('[Narrator] Could not prepare personalized progress copy; using standard wording.', error);
+          warmNarratorLexicon = undefined;
         });
       } else {
         _initWarnings.push(
@@ -2240,18 +2256,27 @@ ipcMain.on("win:close",    () => {
 // ── Tool approval: renderer approves/denies each tool call before it runs ──
 // When the desktop app runs tools (agent-loop mode), each call sends a
 // "tool:request" event to the renderer and blocks until the user responds.
-const pendingApprovals = new Map<string, (approved: boolean) => void>();
-let approvalQueue: Promise<void> = Promise.resolve();
-let approvalEpoch = 0;
+const presenterApprovals = new PresenterApprovals({
+  visible: () => !!win && !win.isDestroyed() && win.isVisible() && !isAppLocked(),
+  show: async (tool, args, signal) => {
+    if (!win) return 'denied';
+    win.show(); win.focus();
+    const result = await dialog.showMessageBox(win, {
+      type: 'question', title: 'Orca — presenter command approval',
+      message: `Approve this ${tool} call only?`,
+      detail: JSON.stringify(args, null, 2).slice(0, 8000),
+      buttons: ['Deny', 'Approve this call', 'Stop run'], defaultId: 0, cancelId: 0,
+      noLink: true, signal,
+    });
+    return result.response === 1 ? 'approved' : result.response === 2 ? 'stop' : 'denied';
+  },
+  notify: (id, tool, args, outcome) => {
+    win?.webContents.send(outcome ? 'tool:approval-status' : 'tool:request', { id, tool, args, outcome });
+  },
+  stop: reason => { activeAbortResolve?.(reason); },
+});
 
-function resolvePendingApprovals(approved: boolean): void {
-  approvalEpoch++;
-  for (const resolve of pendingApprovals.values()) {
-    resolve(approved);
-  }
-  pendingApprovals.clear();
-  approvalQueue = Promise.resolve();
-}
+function resolvePendingApprovals(_approved: boolean): void { presenterApprovals.cancel(); }
 
 function lockApp(): AppAuthStatus {
   resolvePendingApprovals(false);
@@ -2274,55 +2299,18 @@ function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: 
   return { ok: true, auth: refreshAuthStatus(false) };
 }
 
-ipcMain.on("tool:approve", (_ev, { id, approved }: { id: string; approved: boolean }) => {
-  pendingApprovals.get(id)?.(approved);
-  pendingApprovals.delete(id);
-});
+// Renderer/agents cannot grant presenter approvals. Decisions come only from
+// the main-owned native dialog; the former tool:approve IPC is intentionally gone.
 
 /**
- * Ask the renderer to approve a tool call. Returns true if approved.
+ * Ask the presenter through the native dialog. Returns true only for this call.
  * Used by the tool service wiring when tools are added to the desktop adapter.
  */
 export function requestToolApproval(
   tool: string,
   args: Record<string, unknown>,
 ): Promise<boolean> {
-  if (isAppLocked()) {
-    return Promise.resolve(false);
-  }
-
-  const epoch = approvalEpoch;
-  const queued = approvalQueue.then(
-    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
-    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
-  );
-  approvalQueue = queued.then(
-    () => undefined,
-    () => undefined,
-  );
-  return queued;
-}
-
-function requestSingleToolApproval(
-  tool: string,
-  args: Record<string, unknown>,
-): Promise<boolean> {
-  if (!win || win.isDestroyed()) {
-    return Promise.resolve(false);
-  }
-
-  return new Promise((resolve) => {
-    const id = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    pendingApprovals.set(id, resolve);
-    win?.webContents.send("tool:request", { id, tool, args });
-    // Auto-deny after 60 s if the user doesn't respond
-    setTimeout(() => {
-      if (pendingApprovals.has(id)) {
-        pendingApprovals.delete(id);
-        resolve(false);
-      }
-    }, 60_000);
-  });
+  return presenterApprovals.request(tool, args, currentExecutionBudget()?.signal ?? activeAbortController?.signal);
 }
 
 ipcMain.handle("auth:status", () => appAuthStatus);
@@ -2518,6 +2506,7 @@ ipcMain.handle("models:fetch", async (_ev, p: { type: string; baseUrl: string; a
 });
 
 ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
+  if (activeAbortController) return { ok: false, error: 'Stop the active run before changing settings.' };
   if (isAppLocked()) {
     return { ok: false, error: lockedError("Unlock Orca before saving settings.") };
   }
@@ -2750,18 +2739,39 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!claire || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
+  // Initialization and Cargo reads above can yield to another IPC invocation.
+  if (activeAbortController) return { ok: false, error: 'A task is already running. Stop it before sending a new message.' };
   const abortController = new AbortController();
   activeAbortController = abortController;
+  activeAbortResolve = (reason='Stopped by presenter.') => abortController.abort(new Error(reason));
+  const approvalEventStart = presenterApprovals.events.length;
+  let budget: ExecutionBudget;
+  let fixContract: DemoFixContract | undefined;
+  try {
+    if (_currentSettings?.demoMode) {
+      assertManualLiveWindow({ visible: !!win?.isVisible(), focused: !!win?.isFocused(), debugging: process.argv.some(a => /^--(?:remote-debugging|inspect)/.test(a)) || !!win?.webContents.debugger.isAttached() });
+      const confirmation = await dialog.showMessageBox(win!, {
+        type: 'question', title: 'Orca — supervised Live AI readiness',
+        message: 'I can see Orca and am ready to supervise this Live AI run.',
+        detail: 'Start this run manually only when you can see this window. Review each command in the native approval dialog. API charges may occur. A conservative reservation can block execution before any request.',
+        buttons: ['Cancel', 'I am visible and ready — start once'], defaultId: 0, cancelId: 0, noLink: true, signal: abortController.signal,
+      });
+      if (confirmation.response !== 1 || !win?.isVisible()) throw new Error('Presenter readiness was not confirmed. No model request was made.');
+    }
+    budget = new ExecutionBudget(_currentSettings?.budgetUsd ?? NaN, abortController.signal);
+    if (_currentSettings?.demoMode && normalizedText === FIND_FIX_PRESET) fixContract = new DemoFixContract(_currentSettings.workspaceRoot, demoBaselineDir());
+  } catch (error) {
+    activeAbortController = null;
+    activeAbortResolve = null;
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 
-  // Build a promise that resolves when the user hits Stop.
-  const abortPromise = new Promise<{ ok: false; error: string }>((resolve) => {
-    activeAbortResolve = (error = "Stopped.") => {
+  // Abort the entire request scope when the presenter hits Stop.
+  activeAbortResolve = (error = "Stopped by presenter.") => {
       if (!abortController.signal.aborted) {
         abortController.abort(new Error(error));
       }
-      resolve({ ok: false, error });
-    };
-  });
+  };
 
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
@@ -2846,9 +2856,16 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   );
 
   try {
-    const taskPromise = claire.handleUserMessage(cargoSyntax.message, {
+    const taskPromise = withExecutionBudget(budget, () => withDemoFixContract(fixContract, async () => {
+      await warmNarratorLexicon?.();
+      throwIfAborted(abortController.signal);
+      const response = await claire!.handleUserMessage(cargoSyntax.message, {
       abortSignal: abortController.signal,
-    })
+      });
+      throwIfAborted(abortController.signal);
+      fixContract?.assertComplete();
+      return response;
+    }))
       .then((text) => ({ ok: true as const, reply: { text } }))
       .catch((err) => {
         if (isAbortError(err)) {
@@ -2860,16 +2877,22 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
         };
       });
 
-    const result = await Promise.race([
-      taskPromise,
-      abortPromise,
-    ]);
+    // Keep the task lock until cancellation has actually unwound the pipeline.
+    // Returning on the abort race used to allow a new run beside stale work.
+    const result = await taskPromise;
     return {
       ...result,
+      budget: budget.snapshot(),
       pipelineSummary: capturedPipelineSummary,
       cargoManifest: await getDewey().getManifest(),
     };
   } finally {
+    try {
+      const auditDir = join(app.getPath('userData'), 'execution-audits');
+      mkdirSync(auditDir, { recursive: true });
+      const secrets=[...(_currentSettings?.providers ?? []).map(p=>p.apiKey), ...(_currentSettings?.mcpServers ?? []).flatMap(s=>Object.values(s.env ?? {}).filter((value):value is string=>typeof value==='string'))];
+      await writeFile(join(auditDir, `execution-${Date.now()}.json`), serializeExecutionAudit({ budget: budget.snapshot(), budgetEvents: budget.events, fixContract: fixContract?.snapshot(), approvals: presenterApprovals.events.slice(approvalEventStart), cancellationReason: abortController.signal.aborted ? String(abortController.signal.reason?.message ?? abortController.signal.reason) : null }, secrets));
+    } catch(error) { console.error('[Orca] Failed to persist execution audit', error); }
     if (isStreaming) {
       isStreaming = false;
       win?.webContents.send("orca:stream-end", { runId: streamRunId });
@@ -2878,10 +2901,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     if (activeAbortController === abortController) {
       activeAbortController = null;
     }
-    // Deny any tool approvals that the renderer never responded to.
-    // These are orphaned because the task is over and their tool calls
-    // will never execute — leaving them in the map wastes memory and
-    // would cause the next task's abort handler to resolve stale entries.
+    // Close native dialogs and release any queued approval waiters.
     resolvePendingApprovals(false);
     unsubs.forEach((u) => u());
   }

@@ -232,7 +232,7 @@ describe("OpenAICompatAdapter streaming usage reporting", () => {
     expect(result.usage?.cachedPromptTokens).toBeUndefined();
   });
 
-  it("falls back to the delta count when no usage chunk arrives", async () => {
+  it("keeps usage unknown when no provider usage chunk arrives", async () => {
     globalThis.fetch = vi.fn(async () =>
       createStreamResponse([
         'data: {"choices":[{"delta":{"content":"one"}}]}\n\n',
@@ -243,9 +243,7 @@ describe("OpenAICompatAdapter streaming usage reporting", () => {
 
     const result = await makeAdapter().stream(streamRequest(), vi.fn());
 
-    expect(result.usage?.completionTokens).toBe(2);
-    expect(result.usage?.promptTokens).toBe(0);
-    expect(result.usage?.cachedPromptTokens).toBeUndefined();
+    expect(result.usage).toBeNull();
   });
 
   it("emits streamed cache metrics on the ORCA_PROFILE llm_call event", async () => {
