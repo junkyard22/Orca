@@ -254,7 +254,7 @@ export async function handleRepairLoop(
       spentUsd,
       maestroResult,
     });
-    emitter.emit({ type: "maestro:done", taskId: ctx.runId, attempt: pass, isRepair: true, hasOutput: !!maestroResult.outputText });
+    emitter.emit({ type: "maestro:done", taskId: ctx.runId, attempt: pass, isRepair: true, hasOutput: !!maestroResult.outputText, stoppedBecause: maestroResult.metadata?.stoppedBecause });
 
     // Evaluate THIS pass's maestroResult (latest artifacts) against the
     // ORIGINAL task constraints — the benchmark is always the user's goal,

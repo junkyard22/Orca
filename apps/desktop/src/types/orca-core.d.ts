@@ -255,7 +255,7 @@ declare module '@clawde/orca-core' {
   export type OrcaEvent =
     | { type: "task:start"; taskId: string; intent: string }
     | { type: "maestro:start"; taskId: string; attempt: number; isRepair: boolean }
-    | { type: "maestro:done"; taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean }
+    | { type: "maestro:done"; taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean; stoppedBecause?: string }
     | {
         type: "qc:result";
         taskId: string;
@@ -272,6 +272,7 @@ declare module '@clawde/orca-core' {
     | { type: "subagent:spawned"; taskId: string; subagentId: string; role: string; task: string }
     | { type: "subagent:done"; taskId: string; subagentId: string; role: string; ok: boolean }
     | { type: "subagent:failed"; taskId: string; subagentId: string; role: string; error: string }
+    | { type: "brain:fallback"; taskId: string; reason: string; error?: string; role?: string }
     | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
     | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
     | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }

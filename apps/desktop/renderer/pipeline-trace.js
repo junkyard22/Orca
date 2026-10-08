@@ -261,16 +261,32 @@
 
       case "maestro:done": {
         const hasOutput = !!e.hasOutput;
-        const summary   = e.isRepair
-          ? (hasOutput
-              ? "Repair pass " + safeCount(e.attempt) + " complete"
-              : "Repair pass " + safeCount(e.attempt) + " produced no output")
-          : (hasOutput ? "Synthesis complete" : "Synthesis incomplete");
+        // The stage finishing is not the work succeeding: a worker that
+        // stopped on an error still "completes" the stage with error text.
+        const stopped   = typeof e.stoppedBecause === "string" ? e.stoppedBecause : "";
+        const workFailed = stopped !== "" && stopped !== "done";
+        const label     = e.isRepair ? "Repair pass " + safeCount(e.attempt) : "Synthesis";
+        const summary   = workFailed
+          ? label + " finished — work " + humanizeStopReason(stopped)
+          : hasOutput
+            ? (e.isRepair ? label + " complete" : "Synthesis complete")
+            : (e.isRepair ? label + " produced no output" : "Synthesis incomplete");
         return makeRow(Object.assign({}, base, {
           component: COMPONENT_MAESTRO,
           stage:     "synthesis",
-          status:    hasOutput ? STATUS_OK : STATUS_WARN,
+          status:    workFailed ? (stopped === "error" ? STATUS_FAIL : STATUS_WARN) : (hasOutput ? STATUS_OK : STATUS_WARN),
           summary:   summary,
+        }));
+      }
+
+      case "brain:fallback": {
+        const role = e.role ? safeRole(e.role) : "";
+        return makeRow(Object.assign({}, base, {
+          component: COMPONENT_BRAIN,
+          stage:     "planning",
+          status:    STATUS_WARN,
+          summary:   "Brain unavailable — fallback route" + (role ? " (" + role + ")" : ""),
+          details:   e.error ? safeString(e.error, 160) : safeString(e.reason || "", 160),
         }));
       }
 

@@ -554,6 +554,7 @@ async function brainRoute(
   // Small, fast JSON call to decide routing. One repair pass on schema validation failure.
   const basePrompt = `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`;
   let decision: DecomposeDecision | null = null;
+  let lastBrainError: string | undefined;
   let repairReason: string | null = null;
   let brainDecision: string | undefined;
 
@@ -588,6 +589,7 @@ async function brainRoute(
         });
         // Loop continues for one repair attempt.
       } else {
+        lastBrainError = err instanceof Error ? err.message : String(err);
         ctx.recordTrace?.("brain.route.error", {
           attempt,
           error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
@@ -601,10 +603,17 @@ async function brainRoute(
   const routingPolicy = normalizeDesktopRoutingForExecution(task, decision, fallbackDecision);
   let resolved: DecomposeDecision = routingPolicy.decision;
   if (!decision) {
-    ctx.recordTrace?.("brain.route.fallback", {
-      reason: fallbackDecision
-        ? "brain routing did not yield a valid decision; using deterministic audit decomposition"
-        : "brain routing did not yield a valid decision; defaulting to non-brain execution role",
+    const reason = fallbackDecision
+      ? "brain routing did not yield a valid decision; using deterministic audit decomposition"
+      : "brain routing did not yield a valid decision; defaulting to non-brain execution role";
+    ctx.recordTrace?.("brain.route.fallback", { reason });
+    // Make the fallback visible: PLAN did not succeed, a deterministic route did.
+    ctx.emit?.({
+      type: "brain:fallback",
+      taskId: ctx.runId,
+      reason,
+      ...(lastBrainError ? { error: lastBrainError } : {}),
+      ...(resolved.routing === "direct" ? { role: resolved.role } : {}),
     });
   }
   if (routingPolicy.remappedBrainExecution) {
@@ -2738,6 +2747,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     "pipeline:summary",
     "dewey:brief", "miranda:checkpoint",
     "subagent:spawned", "subagent:done", "subagent:failed",
+    "brain:fallback",
   ];
   // Capture pipeline:summary so it can be embedded in the IPC reply — the
   // renderer may receive the invoke response before the orca-event message

@@ -430,7 +430,14 @@ export type OrcaEvent =
   */
   | { type: "task:start";         taskId: string; intent: string }
   | { type: "maestro:start";      taskId: string; attempt: number; isRepair: boolean }
-  | { type: "maestro:done";       taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean }
+  /**
+   * hasOutput only says the stage produced text. stoppedBecause says whether
+   * the work finished ("done") or stopped early ("error", ...) — a stage can
+   * complete without succeeding.
+   */
+  | { type: "maestro:done";       taskId: string; attempt: number; isRepair: boolean; hasOutput: boolean; stoppedBecause?: string }
+  /** Brain could not plan the task (provider error, invalid output); a deterministic route was used instead. */
+  | { type: "brain:fallback";     taskId: string; reason: string; error?: string; role?: string }
   | {
       type: "qc:result";
       taskId: string;

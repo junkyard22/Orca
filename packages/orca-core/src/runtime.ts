@@ -433,6 +433,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           attempt: 0,
           isRepair: false,
           hasOutput: !!auditMaestroResult.outputText,
+          stoppedBecause: auditMaestroResult.metadata?.stoppedBecause,
         });
 
         if (qcEnabled) {
@@ -550,6 +551,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         attempt: 0,
         isRepair: false,
         hasOutput: !!maestroResult.outputText,
+        stoppedBecause: maestroResult.metadata?.stoppedBecause,
       });
       recordTrace("maestro.run.result", {
         attempt: 0,

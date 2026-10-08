@@ -1643,6 +1643,7 @@ function appendPipelineBadge(summary) {
       if (e.type === "subagent:spawned")  label = `worker ${e.role} started`;
       if (e.type === "subagent:done")     label = `worker ${e.role} done (${e.ok ? "ok" : "incomplete"})`;
       if (e.type === "subagent:failed")   label = `worker ${e.role} failed`;
+      if (e.type === "brain:fallback")    label = `Brain unavailable — fallback route${e.role ? ` (${e.role})` : ""}`;
       if (e.type === "qc:result") {
         const issueSummary = summarizePipelineIssues(e.issues);
         if (issueSummary) label += ` â€” ${issueSummary}`;
@@ -1651,6 +1652,7 @@ function appendPipelineBadge(summary) {
       const cls = e.type === "qc:result" && e.verdict === "FAIL" ? " log-fail"
                 : e.type === "qc:result" && e.verdict === "WARN" ? " log-warn"
                 : e.type === "subagent:failed" ? " log-fail"
+                : e.type === "brain:fallback" ? " log-warn"
                 : e.type === "subagent:done" && !e.ok ? " log-warn"
                 : e.type === "maestro:agent_done" && e.stoppedBecause === "error" ? " log-fail"
                 : e.type === "maestro:agent_done" && e.stoppedBecause !== "done" ? " log-warn"

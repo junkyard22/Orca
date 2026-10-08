@@ -990,3 +990,41 @@ describe("badgeRoleLabel — overall badge header role mapping", () => {
     expect(badgeRoleLabel({ role: "brain" })).toBe("analysis");
   });
 });
+
+describe("stage completion vs. success (Orca 1.6.0 Live AI regression)", () => {
+  it("a stage that finished after its worker errored is not shown as successful", () => {
+    const row = mapOrcaEventToTraceRow({
+      type: "maestro:done", taskId: "t1", attempt: 0, isRepair: false, hasOutput: true, stoppedBecause: "error",
+    });
+    expect(row?.status).toBe("fail");
+    expect(row?.summary).not.toBe("Synthesis complete");
+    expect(row?.summary).toMatch(/finished/);
+  });
+
+  it("a repair pass whose worker errored is not shown as complete", () => {
+    const row = mapOrcaEventToTraceRow({
+      type: "maestro:done", taskId: "t1", attempt: 1, isRepair: true, hasOutput: true, stoppedBecause: "error",
+    });
+    expect(row?.status).toBe("fail");
+    expect(row?.summary).not.toMatch(/ complete$/);
+  });
+
+  it("successful work is still shown as complete", () => {
+    const row = mapOrcaEventToTraceRow({
+      type: "maestro:done", taskId: "t1", attempt: 0, isRepair: false, hasOutput: true, stoppedBecause: "done",
+    });
+    expect(row?.status).toBe("ok");
+    expect(row?.summary).toBe("Synthesis complete");
+  });
+
+  it("shows a Brain fallback as a warning on the planning stage, with the error", () => {
+    const row = mapOrcaEventToTraceRow({
+      type: "brain:fallback", taskId: "t1", reason: "brain routing did not yield a valid decision",
+      error: "API error 400: temperature is deprecated for this model.", role: "debugger",
+    });
+    expect(row?.component).toBe("Brain");
+    expect(row?.status).toBe("warn");
+    expect(row?.summary).toMatch(/fallback/i);
+    expect(row?.details).toMatch(/API error 400/);
+  });
+});
