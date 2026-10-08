@@ -23,8 +23,11 @@
           </button>
           <img src="orca-logo-dark.png" class="brand-logo" id="logo-brand" alt="" />
           <span id="topbar-title" class="topbar-title">orca</span>
+          <span id="demo-badge" class="demo-badge" hidden>DEMO MODE</span>
+          <span id="demo-exec-badge" class="demo-exec-badge" hidden></span>
         </div>
         <div class="win-controls">
+          <button class="demo-reset-btn" id="btn-demo-reset" type="button" title="Clear the demo and restore the demo project" hidden>Reset Demo</button>
           <button class="win-btn" id="btn-theme" title="Toggle light / dark mode">
             <!-- sun icon (shown in dark mode) -->
             <svg class="icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -119,7 +122,42 @@
               Plan, generate, and quality-check &mdash; all in one pass.
             </p>
             <p id="welcome-workspace" class="welcome-workspace"></p>
+
+            <!-- Demo home (replaces the welcome content while Demo Mode is on) -->
+            <div id="demo-home" class="demo-home">
+              <div class="demo-intro">
+                <img src="orca-welcome-dark-r.png" class="welcome-logo demo-logo" alt="" />
+                <h1 class="demo-title">Orca</h1>
+                <p class="demo-tagline">Coding You Can Trust</p>
+                <p class="demo-copy">Multi-agent AI orchestration with independent verification.</p>
+              </div>
+              <div class="demo-modes" role="radiogroup" aria-label="How the demo runs">
+                <button type="button" class="demo-mode-option" data-demo-exec="offline" role="radio" aria-checked="true">
+                  <span class="demo-mode-title">Offline Demo</span>
+                  <span class="demo-mode-desc">Interactive demonstration using simulated AI responses. No internet or API calls required.</span>
+                </button>
+                <button type="button" class="demo-mode-option" data-demo-exec="live" role="radio" aria-checked="false">
+                  <span class="demo-mode-title">Live AI</span>
+                  <span class="demo-mode-desc">Runs Orca normally using your configured AI providers. Internet and API usage required.</span>
+                </button>
+              </div>
+              <div id="demo-presets" class="demo-presets"></div>
+              <label class="demo-repair-toggle" id="demo-repair-row">
+                <input type="checkbox" id="demo-with-repair" />
+                <span>Offline Demo: include a repair round (Pappy rejects the first attempt)</span>
+              </label>
+              <div class="demo-recorded">
+                <button type="button" id="btn-demo-recorded" class="demo-recorded-btn">
+                  <span class="demo-recorded-tag">RECORDED DEMO</span>
+                  <span>Play the recorded video &mdash; not a live run</span>
+                </button>
+                <div id="demo-recorded-notice" class="demo-notice" hidden></div>
+              </div>
+            </div>
           </div>
+
+          <!-- Demo Mode: high-level PLAN → BUILD → VERIFY → DONE strip -->
+          <div id="demo-strip" class="demo-strip" hidden aria-live="polite"></div>
 
           <!-- Message feed -->
           <div id="messages"></div>
@@ -341,6 +379,27 @@
               </div>
             </div>
 
+            <!-- Demo Mode ───────────────────────────────────────────────── -->
+            <div class="settings-section">
+              <div class="settings-section-header">
+                <span class="settings-section-title">Demo Mode</span>
+              </div>
+              <div class="setting-group setting-group--row">
+                <div>
+                  <label class="setting-label" for="set-demo-mode">Demo Mode</label>
+                  <p class="setting-hint">
+                    For events and product demos. Shows preset demos, keeps the pipeline visible,
+                    hides chat history, and runs in a disposable demo project. Your providers,
+                    models, and workspace setting are not changed.
+                  </p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="set-demo-mode" />
+                  <span class="toggle-track"></span>
+                </label>
+              </div>
+            </div>
+
             <div class="settings-section">
               <div class="settings-section-header">
                 <span class="settings-section-title">Privacy &amp; App Lock</span>
@@ -527,6 +586,8 @@
     </div>
 
     <script src="pipeline-trace.js"></script>
+    <script src="demo-mode.js"></script>
+    <script src="offline-demo.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

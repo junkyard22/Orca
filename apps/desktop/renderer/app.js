@@ -35,6 +35,10 @@ if (!window.orca) {
     onStreamStart:     () => () => {},
     onStreamChunk:     () => () => {},
     onStreamEnd:       () => () => {},
+    demoReset:         async () => ({ ok: false, error: "No Electron context" }),
+    openDemoRecording: async () => ({ ok: false, found: false }),
+    openDemoRecordingsFolder: async () => ({ ok: false }),
+    setDemoExecutionMode: async () => ({ ok: true }),
   };
 }
 
@@ -84,11 +88,21 @@ let authKnown = false;
 let authState = { enabled: false, hasPassword: false, locked: false };
 // ID of the session currently displayed in the chat view (null = new/unsaved chat)
 let activeSessionId = null;
+// Demo Mode (Settings → Demo Mode). See the "Demo Mode" section below.
+let demoMode = false;
 
 // ── Pipeline visibility ────────────────────────────────────────────────────
 
+// Last saved "Show pipeline" preference. Demo Mode forces the pipeline on for
+// display only and never writes this value back to settings.
+let savedShowPipeline = true;
+
 function applyPipelineVisibility(show) {
-  document.body.classList.toggle("hide-pipeline", !show);
+  savedShowPipeline = show !== false;
+  const effective = window.DemoMode
+    ? window.DemoMode.resolveShowPipeline(savedShowPipeline, demoMode)
+    : savedShowPipeline;
+  document.body.classList.toggle("hide-pipeline", !effective);
 }
 
 // ── Live pipeline trace panel ─────────────────────────────────────────────
@@ -130,7 +144,9 @@ function pushLiveTraceEvent(e) {
 function finishLiveTracePanel(finalLabel) {
   if (!livePanel) return;
   livePanel.finish(finalLabel || "");
-  if (livePanel.scheduleRemoval) {
+  // In Demo Mode the presenter walks visitors through the finished trace, so
+  // it stays until Reset Demo.
+  if (livePanel.scheduleRemoval && !demoMode) {
     livePanel.scheduleRemoval(LIVE_PANEL_STICKY_MS);
   }
 }
@@ -140,6 +156,617 @@ function destroyLiveTracePanel() {
   livePanel.destroy();
   livePanel = null;
 }
+
+// ── Demo Mode ─────────────────────────────────────────────────────────────
+// Exhibit presentation layer (renderer/demo-mode.js holds the logic). It only
+// reads real OrcaEvents; it never changes what Brain, workers, or Pappy do.
+
+const demoBadge        = document.getElementById("demo-badge");
+const demoResetBtn     = document.getElementById("btn-demo-reset");
+const demoStripEl      = document.getElementById("demo-strip");
+const demoPresetsEl    = document.getElementById("demo-presets");
+const demoRecordedBtn  = document.getElementById("btn-demo-recorded");
+const demoRecordedNote = document.getElementById("demo-recorded-notice");
+
+const demoTracker = window.DemoMode ? window.DemoMode.createDemoStageTracker() : null;
+const demoWatchdog = window.DemoMode
+  ? window.DemoMode.createStallWatchdog({
+      onStall:   () => renderDemoStrip(),
+      onRecover: () => renderDemoStrip(),
+    })
+  : null;
+let demoRunVisible = false;     // strip shown for the current demo run
+let demoOutcome = null;         // set when the run's sendMessage resolves
+let demoLastPrompt = "";
+let demoPendingRetry = null;    // prompt to resend once the aborted run settles
+let demoResetting = false;
+let demoIdleWaiters = [];
+let demoRunTimer = null;        // Demo Mode run time limit (RUN_LIMIT_MS)
+let demoTimedOut = false;
+
+// Offline Demo (renderer/offline-demo.js): a prerecorded scenario played in
+// this window. It never calls window.orca.sendMessage — main also refuses
+// send-message and skips runtime init while the Offline Demo is selected.
+const demoExecBadge   = document.getElementById("demo-exec-badge");
+const demoRepairRow   = document.getElementById("demo-repair-row");
+const demoWithRepair  = document.getElementById("demo-with-repair");
+let demoExecution = "offline";  // "offline" (default) | "live"
+let demoLiveAcknowledged = false;
+let demoRunIsOffline = false;
+let offlineRunner = null;
+let offlineRunActive = false;
+const offlinePappyCards = new Map();
+
+function isOfflineDemo() {
+  return demoMode && demoExecution === "offline";
+}
+
+function demoClearRunTimer() {
+  if (demoRunTimer) clearTimeout(demoRunTimer);
+  demoRunTimer = null;
+}
+
+function applyDemoMode(enabled) {
+  const wasDemo = demoMode;
+  demoMode = !!enabled && !!window.DemoMode;
+  // Every entry into Demo Mode starts on the Offline Demo (main does the same).
+  if (demoMode !== wasDemo) demoExecution = "offline";
+  document.body.classList.toggle("demo-mode", demoMode);
+  if (demoBadge) demoBadge.hidden = !demoMode;
+  if (demoResetBtn) demoResetBtn.hidden = !demoMode;
+  if (!demoMode) {
+    demoWatchdog?.stop();
+    demoClearRunUi();
+  }
+  renderDemoExecution();
+  applyPipelineVisibility(savedShowPipeline);
+}
+
+function renderDemoExecution() {
+  const offline = isOfflineDemo();
+  document.querySelectorAll("[data-demo-exec]").forEach((btn) => {
+    const selected = btn.getAttribute("data-demo-exec") === demoExecution;
+    btn.classList.toggle("selected", selected);
+    btn.setAttribute("aria-checked", String(selected));
+  });
+  document.body.classList.toggle("demo-offline", offline);
+  document.body.classList.toggle("demo-live", demoMode && !offline);
+  if (demoExecBadge) {
+    demoExecBadge.hidden = !demoMode;
+    demoExecBadge.textContent = offline ? window.OfflineDemo.OFFLINE_LABEL : "LIVE AI — real providers";
+    demoExecBadge.className = "demo-exec-badge " + (offline ? "is-offline" : "is-live");
+  }
+  if (demoRepairRow) demoRepairRow.hidden = !offline;
+  renderDemoPresets();
+  syncComposerState();
+}
+
+async function selectDemoExecution(mode, confirmed = false) {
+  if (!demoMode || busy || demoResetting || mode === demoExecution) return;
+  if (mode === "live" && !demoLiveAcknowledged && !confirmed) {
+    showDemoNotice("Live AI uses your configured providers and may incur API charges.", "warn", {
+      label: "Use Live AI",
+      onClick: () => { demoLiveAcknowledged = true; selectDemoExecution("live", true); },
+    });
+    return;
+  }
+  demoExecution = mode;
+  renderDemoExecution();
+  showDemoNotice(mode === "live" ? "Starting Live AI with your configured providers…" : "");
+  let result;
+  try {
+    result = await orca.setDemoExecutionMode(mode);
+  } catch (err) {
+    result = { ok: false, error: String(err) };
+  }
+  if (mode === "live") {
+    if (result?.ok) showDemoNotice("");
+    else showDemoNotice(`Live AI is not available: ${demoSafeErrorText(result?.error ?? "unknown error")}`, "warn");
+  }
+}
+
+document.querySelectorAll("[data-demo-exec]").forEach((btn) => {
+  btn.addEventListener("click", () => selectDemoExecution(btn.getAttribute("data-demo-exec")));
+});
+
+function renderDemoPresets() {
+  if (!demoPresetsEl || !window.DemoMode) return;
+  demoPresetsEl.innerHTML = "";
+  for (const preset of window.DemoMode.DEMO_PRESETS) {
+    const card = document.createElement("button");
+    card.type = "button";
+    const liveOnly = isOfflineDemo() && preset.id !== "fix-bug";
+    card.className = "demo-preset" + (preset.primary ? " primary" : "") + (liveOnly ? " live-only" : "");
+    card.disabled = liveOnly;
+    card.innerHTML =
+      `<span class="demo-preset-title">${escapeHtml(preset.title)}</span>` +
+      `<span class="demo-preset-desc">${escapeHtml(preset.description)}</span>` +
+      (liveOnly ? '<span class="demo-preset-note">Live AI only</span>' : "") +
+      (preset.primary ? '<span class="demo-preset-cta">Run Demo →</span>' : "");
+    card.addEventListener("click", () => runDemoPreset(preset.id));
+    demoPresetsEl.appendChild(card);
+  }
+}
+
+function runDemoPreset(id) {
+  const preset = window.DemoMode?.findPreset(id);
+  if (!preset || busy || demoResetting) return;
+  if (isOfflineDemo()) {
+    if (id === "fix-bug") runOfflineScenario();
+    return;
+  }
+  inputEl.value = preset.prompt;
+  autoResize();
+  sendMessage();
+}
+
+function demoHeartbeat() {
+  if (demoMode && busy) demoWatchdog?.heartbeat();
+}
+
+function demoWatchdogPause() {
+  if (demoMode) demoWatchdog?.pause();
+}
+
+function demoConsumeEvent(e) {
+  if (!demoMode || !busy || !demoTracker) return;
+  demoHeartbeat();
+  demoTracker.consume(e);
+  renderDemoStrip();
+}
+
+function demoRunStarted(text) {
+  if (!demoMode || !demoTracker) return;
+  demoLastPrompt = text;
+  demoOutcome = null;
+  demoTracker.reset();
+  demoRunIsOffline = false;
+  demoRunVisible = true;
+  demoWatchdog?.start();
+  demoTimedOut = false;
+  demoClearRunTimer();
+  demoRunTimer = setTimeout(() => {
+    demoRunTimer = null;
+    if (!demoMode || !busy) return;
+    // Same path as the Stop button; the outcome card says "took too long".
+    demoTimedOut = true;
+    demoDismissApprovalDialog();
+    orca.abortTask();
+  }, window.DemoMode.RUN_LIMIT_MS);
+  renderDemoStrip();
+}
+
+function demoRunFinished(result, summary) {
+  if (!demoMode || !demoTracker || !demoRunVisible) return;
+  demoWatchdog?.stop();
+  demoClearRunTimer();
+  // A Reset or Retry aborted this run on purpose — no outcome card for it.
+  if (demoResetting || demoPendingRetry) return;
+  demoOutcome = window.DemoMode.classifyRunOutcome({
+    result,
+    timedOut: demoTimedOut,
+    state: demoTracker.getState(),
+    summary,
+  });
+  renderDemoStrip();
+  appendDemoOutcomeCard(demoOutcome, result, summary);
+}
+
+function demoAfterIdle() {
+  const waiters = demoIdleWaiters;
+  demoIdleWaiters = [];
+  waiters.forEach((resolve) => resolve());
+  if (demoPendingRetry && demoMode && !demoResetting) {
+    const prompt = demoPendingRetry;
+    demoPendingRetry = null;
+    inputEl.value = prompt;
+    autoResize();
+    sendMessage();
+  } else {
+    demoPendingRetry = null;
+  }
+}
+
+function demoWaitForIdle(timeoutMs) {
+  if (!busy) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    demoIdleWaiters.push(() => { clearTimeout(timer); resolve(); });
+  });
+}
+
+function demoClearRunUi() {
+  demoClearRunTimer();
+  demoRunVisible = false;
+  demoRunIsOffline = false;
+  offlinePappyCards.clear();
+  demoOutcome = null;
+  demoTracker?.reset();
+  if (demoStripEl) {
+    demoStripEl.hidden = true;
+    demoStripEl.innerHTML = "";
+  }
+}
+
+const DEMO_STEP_ICONS = {
+  pending: "○", active: "●", complete: "✓",
+  failed: "✕", halted: "‖", unverified: "–",
+};
+
+function renderDemoStrip() {
+  if (!demoStripEl || !demoTracker || !window.DemoMode) return;
+  if (!demoMode || !demoRunVisible) {
+    demoStripEl.hidden = true;
+    return;
+  }
+  const DM = window.DemoMode;
+  const state = demoTracker.getState();
+  const steps = DM.stripSteps(state, demoOutcome);
+  const tone = demoOutcome
+    ? DM.outcomeCopy(demoOutcome).tone
+    : state.verification === "failed" ? "fail"
+    : state.verification === "passed" || state.verification === "warned" ? "pass"
+    : state.stage === "verify" ? "verify"
+    : "neutral";
+  const pappyActive = !demoOutcome && (state.stage === "verify" || state.verification === "repairing");
+
+  const stepsHtml = steps.map((s, i) =>
+    (i > 0 ? '<span class="demo-step-arrow" aria-hidden="true">→</span>' : "") +
+    `<div class="demo-step is-${s.status}${s.stage === "verify" ? " is-verify" : ""}">` +
+      `<span class="demo-step-icon" aria-hidden="true">${DEMO_STEP_ICONS[s.status] || ""}</span>` +
+      `<span class="demo-step-label">${DM.STAGE_LABELS[s.stage]}</span>` +
+    "</div>",
+  ).join("");
+
+  const timelineHtml = state.timeline.length
+    ? '<div class="demo-timeline">' + state.timeline.map((t) =>
+        `<span class="demo-chip is-${escapeHtml(t.kind)}">${escapeHtml(t.label)}</span>`,
+      ).join('<span class="demo-chip-sep" aria-hidden="true">›</span>') + "</div>"
+    : "";
+
+  const stalled = !!demoWatchdog?.isStalled() && busy;
+  const stallHtml = stalled
+    ? '<div class="demo-stall" role="alert">' +
+        `<span>No response from the AI provider for ${Math.round(DM.STALL_TIMEOUT_MS / 1000)} seconds. The run is still open — nothing has been verified.</span>` +
+        '<span class="demo-actions">' +
+          '<button type="button" data-demo-action="stop">Stop</button>' +
+          '<button type="button" data-demo-action="retry">Retry</button>' +
+          '<button type="button" data-demo-action="reset">Reset Demo</button>' +
+        "</span>" +
+      "</div>"
+    : "";
+
+  demoStripEl.innerHTML =
+    (demoRunIsOffline ? `<div class="demo-offline-banner">${escapeHtml(window.OfflineDemo.OFFLINE_LABEL)}</div>` : "") +
+    `<div class="demo-steps">${stepsHtml}</div>` +
+    `<div class="demo-headline tone-${tone}">` +
+      (pappyActive ? '<span class="demo-pappy-tag">PAPPY</span>' : "") +
+      `<span>${escapeHtml(DM.headline(state, demoOutcome))}</span>` +
+    "</div>" +
+    timelineHtml +
+    stallHtml;
+  demoStripEl.hidden = false;
+}
+
+function demoSafeErrorText(text) {
+  return redactToolText(String(text ?? ""))
+    .replace(/[A-Za-z]:[\\/](?:Users|home)[\\/][^\\/\s"']+/gi, "~")
+    .replace(/\/(?:Users|home)\/[^/\s"']+/g, "~")
+    .slice(0, 200);
+}
+
+function appendDemoOutcomeCard(outcome, result, summary, opts = {}) {
+  const DM = window.DemoMode;
+  const base = DM.outcomeCopy(outcome);
+  const copy = opts.simulated
+    ? { ...base, detail: outcome === "stopped"
+        ? "The Offline Demo scenario was stopped."
+        : "Simulated Pappy verification from the Offline Demo scenario. No AI model or network was used." }
+    : base;
+  const state = demoTracker.getState();
+  const facts = [];
+
+  if (outcome === "verified" || outcome === "verified_with_warnings" || outcome === "not_verified") {
+    const criteria = Array.isArray(summary?.acceptanceCriteria) ? summary.acceptanceCriteria : [];
+    if (criteria.length) {
+      const met = criteria.filter((c) => c.met).length;
+      facts.push(`Acceptance criteria met: ${met} of ${criteria.length}`);
+    }
+    if (state.repairPass > 0) {
+      facts.push(outcome === "not_verified"
+        ? `Repair passes tried: ${state.repairPass}`
+        : `Pappy rejected the first attempt — passed after ${state.repairPass} repair pass${state.repairPass === 1 ? "" : "es"}`);
+    } else if (outcome !== "not_verified") {
+      facts.push("Passed on the first verification");
+    }
+    if (outcome === "not_verified" && summary?.issueCount) {
+      facts.push(`Open issues: ${summary.issueCount}`);
+    }
+  }
+  if ((outcome === "provider_error" || outcome === "error") && result?.error) {
+    facts.push(demoSafeErrorText(result.error));
+  }
+
+  const canRetry = outcome === "provider_error" || outcome === "error" || outcome === "stopped" || outcome === "timed_out";
+  const icon = copy.tone === "pass" ? "✓" : copy.tone === "fail" ? "✕" : copy.tone === "provider" ? "!" : "–";
+
+  const card = document.createElement("div");
+  card.className = `demo-outcome tone-${copy.tone}`;
+  card.setAttribute("role", "status");
+  card.innerHTML =
+    `<div class="demo-outcome-icon" aria-hidden="true">${icon}</div>` +
+    '<div class="demo-outcome-body">' +
+      (opts.simulated ? `<span class="demo-sim-tag">${escapeHtml(window.OfflineDemo.OFFLINE_LABEL)}</span>` : "") +
+      `<div class="demo-outcome-title">${escapeHtml(copy.title)}</div>` +
+      `<div class="demo-outcome-detail">${escapeHtml(copy.detail)}</div>` +
+      (facts.length ? `<ul class="demo-outcome-facts">${facts.map((f) => `<li>${escapeHtml(f)}</li>`).join("")}</ul>` : "") +
+      '<div class="demo-actions">' +
+        (canRetry ? '<button type="button" data-demo-action="retry">Retry</button>' : "") +
+        '<button type="button" data-demo-action="reset">Reset Demo</button>' +
+      "</div>" +
+    "</div>";
+  messages.appendChild(card);
+  showMessages();
+  scrollToBottom();
+  requestAnimationFrame(() => card.scrollIntoView({ block: "end" }));
+}
+
+function demoRetry() {
+  if (demoRunIsOffline && isOfflineDemo()) {
+    if (!busy && !demoResetting) runOfflineScenario();
+    return;
+  }
+  if (!demoMode || demoResetting || !demoLastPrompt) return;
+  if (busy) {
+    demoPendingRetry = demoLastPrompt;
+    orca.abortTask();
+    return;
+  }
+  inputEl.value = demoLastPrompt;
+  autoResize();
+  sendMessage();
+}
+
+function demoDismissApprovalDialog() {
+  const dialog = document.getElementById("tool-approval-dialog");
+  if (dialog && dialog.style.display === "flex") {
+    clearApprovalTimer();
+    const id = dialog.dataset.approvalId;
+    if (id) orca.approveToolCall(id, false);
+    dialog.style.display = "none";
+  }
+}
+
+// ── Offline Demo run ──────────────────────────────────────────────────────
+
+function runOfflineScenario() {
+  const OD = window.OfflineDemo;
+  const preset = window.DemoMode?.findPreset("fix-bug");
+  if (!OD || !preset || !isOfflineDemo() || busy || demoResetting) return;
+
+  busy = true;
+  offlineRunActive = true;
+  setInputEnabled(false);
+  showDemoNotice("");
+  appendUserMsg(preset.prompt, []);
+  setTopbarTitle(preset.title);
+  startLiveTracePanel(OD.TASK_ID);
+
+  demoOutcome = null;
+  demoTracker.reset();
+  offlinePappyCards.clear();
+  demoRunIsOffline = true;
+  demoRunVisible = true;
+  renderDemoStrip();
+  setStatus(OD.OFFLINE_LABEL, true);
+
+  offlineRunner = OD.createOfflineRunner({
+    onEvent: offlineOnEvent,
+    onCard: appendOfflineCard,
+    onFinish: offlineOnFinish,
+  });
+  offlineRunner.start(OD.buildFindAndFixScenario({ withRepair: !!demoWithRepair?.checked }));
+}
+
+function offlineOnEvent(e) {
+  if (!offlineRunActive) return;
+  demoTracker.consume(e);
+  pushLiveTraceEvent(e);
+  const message = e.narratorProgress?.message;
+  if (message) setStatus(`${message}  ·  simulated`, e.type !== "task:done");
+  renderDemoStrip();
+  scrollToBottom();
+}
+
+function offlineSimHeader(role, title) {
+  return '<div class="demo-sim-head">' +
+    `<span class="demo-sim-role">${escapeHtml(role)}</span>` +
+    `<span class="demo-sim-title">${escapeHtml(title)}</span>` +
+    '<span class="demo-sim-tag">SIMULATED</span>' +
+  "</div>";
+}
+
+function appendOfflineCard(c) {
+  if (!offlineRunActive) return;
+  if (c.kind === "pappy-check") {
+    const body = offlinePappyCards.get(c.id);
+    if (!body) return;
+    const row = document.createElement("div");
+    row.className = "demo-pappy-check " + (c.ok ? "ok" : "fail");
+    row.innerHTML = `<span class="demo-pappy-mark">${c.ok ? "✓" : "✕"}</span>` +
+      `<span class="demo-pappy-name">${escapeHtml(c.name)}</span>` +
+      `<span class="demo-pappy-detail">${escapeHtml(c.detail)}</span>`;
+    body.appendChild(row);
+    scrollToBottom();
+    return;
+  }
+
+  const el = document.createElement("div");
+  el.className = `demo-sim-card kind-${c.kind}`;
+  if (c.kind === "plan") {
+    el.innerHTML = offlineSimHeader(c.role, c.title) +
+      `<ol class="demo-sim-list">${c.items.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ol>`;
+  } else if (c.kind === "tool") {
+    el.innerHTML = offlineSimHeader(c.role, `${c.tool} · ${c.target}`) +
+      `<div class="demo-sim-detail">${escapeHtml(c.detail)}</div>`;
+  } else if (c.kind === "finding") {
+    el.innerHTML = offlineSimHeader(c.role, c.title) +
+      `<div class="demo-sim-detail">${escapeHtml(c.detail)}</div>` +
+      `<pre class="demo-sim-code">${escapeHtml(c.code)}</pre>`;
+  } else if (c.kind === "tests") {
+    el.innerHTML = offlineSimHeader(c.role, `${c.label} · ${c.command}`) +
+      `<pre class="demo-sim-code ${c.passed ? "pass" : "fail"}">${escapeHtml(c.output)}</pre>` +
+      '<div class="demo-sim-note">Simulated output — matches the bundled demo project’s tests.</div>';
+  } else if (c.kind === "diff") {
+    el.innerHTML = offlineSimHeader(c.role, `${c.tool} · ${c.target}`) +
+      `<pre class="demo-sim-code"><span class="demo-diff-del">- ${escapeHtml(c.removed)}</span>\n<span class="demo-diff-add">+ ${escapeHtml(c.added)}</span></pre>`;
+  } else if (c.kind === "pappy") {
+    el.classList.add("demo-pappy-card");
+    el.innerHTML = offlineSimHeader("Pappy", c.title);
+    const body = document.createElement("div");
+    body.className = "demo-pappy-checks";
+    el.appendChild(body);
+    offlinePappyCards.set(c.id, body);
+  }
+  messages.appendChild(el);
+  showMessages();
+  scrollToBottom();
+}
+
+function offlineOnFinish(f) {
+  if (!offlineRunActive) return;
+  offlineRunActive = false;
+  offlineRunner = null;
+  busy = false;
+  finishLiveTracePanel("Work complete");
+  appendMsg("orca", f.answer);
+  appendPipelineBadge(f.summary);
+  demoOutcome = window.DemoMode.classifyRunOutcome({
+    result: { ok: true },
+    state: demoTracker.getState(),
+    summary: f.summary,
+  });
+  renderDemoStrip();
+  appendDemoOutcomeCard(demoOutcome, { ok: true }, f.summary, { simulated: true });
+  syncIdleStatus();
+  syncComposerState();
+}
+
+/** Stop button: halt now, drop pending steps, show a neutral stopped state. */
+function stopOfflineRun() {
+  if (!offlineRunActive) return;
+  cancelOfflineRun();
+  finishLiveTracePanel("Stopped");
+  demoOutcome = "stopped";
+  renderDemoStrip();
+  appendDemoOutcomeCard("stopped", { ok: false, error: "Stopped." }, null, { simulated: true });
+}
+
+/** Cancel silently (Reset Demo). No step from this run can arrive afterwards. */
+function cancelOfflineRun() {
+  offlineRunner?.stop();
+  offlineRunner = null;
+  if (offlineRunActive) {
+    offlineRunActive = false;
+    busy = false;
+    syncIdleStatus();
+    syncComposerState();
+  }
+}
+
+async function resetDemo() {
+  if (!demoMode || demoResetting) return;
+  demoResetting = true;
+  demoPendingRetry = null;
+  if (demoResetBtn) {
+    demoResetBtn.disabled = true;
+    demoResetBtn.textContent = "Resetting…";
+  }
+  try {
+    // 1. Stop any active run safely. The Offline Demo stops instantly and its
+    //    pending steps are dropped; a live run is aborted (denying any pending
+    //    tool approval).
+    cancelOfflineRun();
+    if (busy) {
+      demoDismissApprovalDialog();
+      orca.abortTask();
+      await demoWaitForIdle(10_000);
+    }
+    // 2 + 3. Clear the conversation and restore the demo project (main process).
+    let result;
+    try {
+      result = await orca.demoReset();
+    } catch (err) {
+      result = { ok: false, error: String(err) };
+    }
+    // 4. Back to the demo home.
+    destroyLiveTracePanel();
+    newChat();
+    if (!result?.ok) {
+      showDemoNotice(`Reset could not restore the demo project: ${demoSafeErrorText(result?.error ?? "unknown error")}`, "warn");
+    } else {
+      showDemoNotice("");
+    }
+  } finally {
+    demoResetting = false;
+    if (demoResetBtn) {
+      demoResetBtn.disabled = false;
+      demoResetBtn.textContent = "Reset Demo";
+    }
+  }
+}
+
+function showDemoNotice(text, tone = "info", action = null) {
+  if (!demoRecordedNote) return;
+  demoRecordedNote.innerHTML = "";
+  demoRecordedNote.hidden = !text;
+  demoRecordedNote.className = `demo-notice tone-${tone}`;
+  if (!text) return;
+  const span = document.createElement("span");
+  span.textContent = text;
+  demoRecordedNote.appendChild(span);
+  if (action) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = action.label;
+    btn.addEventListener("click", action.onClick);
+    demoRecordedNote.appendChild(btn);
+  }
+}
+
+async function openRecordedDemo() {
+  let result;
+  try {
+    result = await orca.openDemoRecording();
+  } catch {
+    result = { ok: false, found: false };
+  }
+  const label = window.DemoMode?.RECORDED_DEMO_LABEL ?? "RECORDED DEMO";
+  if (result?.ok) {
+    showDemoNotice(`${label} — playing a recording of an earlier run in your video player. This is not a live run.`, "recorded");
+  } else if (result?.found === false) {
+    showDemoNotice(
+      `${label} — no recording found. Add a video file to the demo recordings folder.`,
+      "warn",
+      { label: "Open recordings folder", onClick: () => orca.openDemoRecordingsFolder() },
+    );
+  } else {
+    showDemoNotice(`${label} — the recording could not be opened. ${demoSafeErrorText(result?.error ?? "")}`, "warn");
+  }
+}
+
+demoResetBtn?.addEventListener("click", () => { resetDemo(); });
+demoRecordedBtn?.addEventListener("click", () => { openRecordedDemo(); });
+// Retry / Stop / Reset buttons live inside the strip and outcome cards.
+document.addEventListener("click", (e) => {
+  const btn = e.target instanceof Element ? e.target.closest("[data-demo-action]") : null;
+  if (!btn || !demoMode) return;
+  const action = btn.getAttribute("data-demo-action");
+  if (action === "retry") demoRetry();
+  else if (action === "reset") resetDemo();
+  else if (action === "stop" && offlineRunActive) stopOfflineRun();
+  else if (action === "stop" && busy) orca.abortTask();
+});
 
 // ── Persistent Cargo context ───────────────────────────────────────────────
 let cargoManifest = null;
@@ -276,18 +903,28 @@ function handleInitStatus(s) {
     if (!hasRealMsgs && sysMsgs.length) {
       sysMsgs.forEach((el) => el.remove());
     }
-    if (s.warnings?.length) {
+    if (s.warnings?.length && demoMode) {
+      // Don't let startup warnings push the demo home off screen.
+      showDemoNotice(s.warnings.map((w) => demoSafeErrorText(w)).join(" "), "warn");
+      if (!messages.hasChildNodes()) { welcome.style.display = ""; messages.style.display = "none"; }
+    } else if (s.warnings?.length) {
       s.warnings.forEach((w) => appendSys(w, "warn"));
     } else if (!messages.hasChildNodes()) {
       welcome.style.display  = "";
       messages.style.display = "none";
       updateWelcomeWorkspace();
     }
-    orca.getSettings().then((s) => applyPipelineVisibility(s?.showPipeline !== false)).catch(() => {});
+    orca.getSettings().then((s) => {
+      applyDemoMode(!!s?.demoMode);
+      applyPipelineVisibility(s?.showPipeline !== false);
+    }).catch(() => {});
   } else {
     const existing = messages.querySelector(".sys-msg.warn");
     const msg = s.error ?? "Initialization failed. Click Settings to configure.";
-    if (existing) {
+    if (demoMode) {
+      // Only Live AI initialises Orca in Demo Mode; report it on the demo home.
+      showDemoNotice(`Live AI is not available: ${demoSafeErrorText(msg)}`, "warn");
+    } else if (existing) {
       existing.textContent = msg;
     } else {
       appendSys(msg, "warn");
@@ -311,6 +948,9 @@ syncComposerState();
 syncIdleStatus();
 
 orca.onOrcaEvent((e) => {
+  // Demo Mode: every real pipeline event is a heartbeat and drives the strip.
+  demoConsumeEvent(e);
+
   // Role selection — cache it and annotate the thinking indicator.
   if (e.type === "role:selected") {
     currentRole = { role: e.role, isFallback: e.isFallback };
@@ -379,6 +1019,7 @@ orca.onStreamStart((_data) => {
 
 orca.onStreamChunk(({ chunk }) => {
   if (!busy) return;
+  demoHeartbeat();
   streamText += chunk;
   // Suppress ReAct internal monologue — drop tool_call blocks and thinking
   // patterns from the fallback buffer so they never flash in the UI during
@@ -434,7 +1075,7 @@ function setInputEnabled(enabled) {
       inputEl.placeholder = "Open Settings to finish setup…";
     } else {
       sendBtn.title = "Send  (Enter)";
-      inputEl.placeholder = "Ask Orca anything…";
+      inputEl.placeholder = isOfflineDemo() ? window.OfflineDemo.FREEFORM_REFUSAL : "Ask Orca anything…";
     }
   }
 }
@@ -831,7 +1472,9 @@ function appendPipelineBadge(summary) {
 
   // ── Dewey brief ─────────────────────────────────────────────────────────
   let deweyHtml = "";
-  if (summary.deweyBrief) {
+  // Demo Mode: the brief holds the user's name, personal context, and local
+  // paths — never put it on a booth screen.
+  if (summary.deweyBrief && !demoMode) {
     const d = summary.deweyBrief;
     const toneHtml = `<span class="pb-tone-chip">${escapeHtml(d.suggestedTone)}</span>`;
     const prefsHtml = (d.relevantPreferences ?? []).map(p => `<li>${escapeHtml(p)}</li>`).join("");
@@ -1147,6 +1790,9 @@ function appendPipelineBadge(summary) {
   detailsBtn?.addEventListener("click", toggleDetails);
   header?.addEventListener("click", toggleDetails);
   applyDetailVisibility(true);
+  // Demo Mode: keep the technical detail one click away so the verdict card
+  // below stays on screen.
+  if (demoMode) setExpanded(false);
 
   messages.appendChild(div);
   requestAnimationFrame(() => {
@@ -1252,6 +1898,12 @@ async function sendMessage() {
   const text = inputEl.value.replace(/\r\n?/g, "\n").trim();
   if (!text) return;
   if (busy) return;
+  if (isOfflineDemo()) {
+    // Offline Demo plays prepared scenarios only; never answer a custom prompt.
+    if (messages.style.display === "none") showDemoNotice(window.OfflineDemo.FREEFORM_REFUSAL, "warn");
+    else appendSys(window.OfflineDemo.FREEFORM_REFUSAL, "info");
+    return;
+  }
   if (!canUseApp()) {
     if (authKnown && authState.locked) {
       showAuthError("Unlock Orca before sending a message.");
@@ -1281,6 +1933,7 @@ async function sendMessage() {
   // The Narrator stays visible for general progress. The existing Show
   // Pipeline setting controls only its expandable technical details.
   startLiveTracePanel("");
+  demoRunStarted(text);
   setStatus("Getting started…", true);
 
   let finalStatus = "ready";
@@ -1315,7 +1968,8 @@ async function sendMessage() {
       if (currentRole) attachRoleBadge(msgDiv, currentRole);
     } else if (result.error === "Stopped." || result.error === "Locked.") {
       appendSys("Stopped.", "info");
-    } else {
+    } else if (!demoMode) {
+      // Demo Mode shows the failure in its outcome card (with Retry / Reset).
       appendSys(result.error ?? "Unknown error.", "error");
     }
     finalReplyRendered = true;
@@ -1335,12 +1989,15 @@ async function sendMessage() {
       });
     }
 
+    demoRunFinished(result, summaryToRender);
+
     if (!result.ok) finalStatus = "error";
   } catch (err) {
     removeThinking();
     finishLiveTracePanel("Could not complete");
     if (streamBubble) { streamBubble.remove(); streamBubble = null; streamText = ""; }
-    appendSys(String(err), "error");
+    if (demoMode) demoRunFinished({ ok: false, error: String(err) }, null);
+    else appendSys(String(err), "error");
     finalStatus = "error";
   } finally {
     currentRole  = null;
@@ -1355,6 +2012,7 @@ async function sendMessage() {
     syncIdleStatus();
     syncComposerState();
     if (!authState.locked) inputEl.focus();
+    demoAfterIdle();
   }
 }
 
@@ -1686,6 +2344,7 @@ const setBudget       = document.getElementById("set-budget");
 const setRepairs      = document.getElementById("set-repairs");
 const setVerbose      = document.getElementById("set-verbose");
 const setShowPipeline = document.getElementById("set-show-pipeline");
+const setDemoMode     = document.getElementById("set-demo-mode");
 const setAutoResolveCargo = document.getElementById("set-auto-resolve-cargo");
 const setModelNarrator = document.getElementById("set-model-narrator");
 const setWorkspace    = document.getElementById("set-workspace");
@@ -2160,6 +2819,7 @@ function openSettings() {
     setRepairs.value       = String(s.maxRepairPasses ?? 2);
     setVerbose.checked        = !!s.verbose;
     setShowPipeline.checked   = s.showPipeline !== false;
+    setDemoMode.checked       = !!s.demoMode;
     setAutoResolveCargo.checked = s.autoResolveCargo !== false;
     setModelNarrator.checked = s.narratorProgressMode === "model";
     setWorkspace.value        = s.workspaceRoot ?? "";
@@ -2211,6 +2871,7 @@ setSaveBtn.addEventListener("click", async () => {
     maxRepairPasses: parseInt(setRepairs.value, 10) || 0,
     verbose:         setVerbose.checked,
     showPipeline:    setShowPipeline.checked,
+    demoMode:        setDemoMode.checked,
     autoResolveCargo: setAutoResolveCargo.checked,
     narratorProgressMode: setModelNarrator.checked ? "model" : "standard",
     workspaceRoot:   setWorkspace.value.trim(),
@@ -2247,7 +2908,15 @@ setSaveBtn.addEventListener("click", async () => {
     return;
   }
 
+  const demoChanged = demoMode !== setDemoMode.checked;
+  applyDemoMode(setDemoMode.checked);
   applyPipelineVisibility(setShowPipeline.checked);
+  if (demoChanged) {
+    // Entering or leaving Demo Mode starts from a clean screen.
+    closeSettings();
+    newChat();
+    return;
+  }
   setStatus2.textContent = authResult.auth.enabled
     ? "Saved \u2014 settings updated and the local app lock is ready."
     : "Saved \u2014 Orca re-initialized.";
@@ -2265,7 +2934,9 @@ document.getElementById("btn-pick-workspace").addEventListener("click", async ()
 // ── Button wiring ─────────────────────────────────────────────────────────
 
 sendBtn.addEventListener("click", () => {
-  if (busy) {
+  if (offlineRunActive) {
+    stopOfflineRun();
+  } else if (busy) {
     orca.abortTask();
   } else {
     sendMessage();
@@ -2350,6 +3021,7 @@ function resolveApproval(approved) {
   orca.approveToolCall(id, approved);
   dialog.style.display = "none";
   document.getElementById("chk-always-approve").checked = false;
+  demoHeartbeat();
 }
 
 orca.onToolRequest((id, tool, args) => {
@@ -2373,6 +3045,8 @@ orca.onToolRequest((id, tool, args) => {
   document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
   dialog.dataset.approvalId = id;
   dialog.style.display      = "flex";
+  // Waiting on the presenter is not a provider stall.
+  demoWatchdogPause();
 
   startApprovalTimer(() => resolveApproval(false));
 });
@@ -2538,6 +3212,7 @@ function newChat() {
   chatView.style.display     = "flex";
   if (statusbarCost) statusbarCost.textContent = "";
   setTopbarTitle(null);
+  demoClearRunUi();
   inputEl.focus();
 }
 
