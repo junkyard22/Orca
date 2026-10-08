@@ -119,7 +119,8 @@ import {
 // The staging build supplies this productName through electron-builder's
 // extraMetadata. Set the profile before any settings reads or instance lock.
 // Its sibling profile stays beside the unpacked staging app, even after moving it.
-if (app.isPackaged && app.getName() === "Orca Summit Staging") {
+const isStagingApp = app.isPackaged && app.getName() === "Orca Summit Staging";
+if (isStagingApp) {
   const stagingProfile = resolve(dirname(app.getPath("exe")), "..", "profile");
   mkdirSync(stagingProfile, { recursive: true });
   app.setPath("userData", stagingProfile);
@@ -324,8 +325,9 @@ function getPipelineTracePath(taskId: string): string {
 }
 
 // Run analysis artifacts — written to ORCA_RUNS_DIR (default ~/.orca/runs/)
-const runsDir = process.env["ORCA_RUNS_DIR"]?.trim() ??
-  join(homedir(), ".orca", "runs");
+const runsDir = isStagingApp
+  ? join(app.getPath("userData"), "runs")
+  : process.env["ORCA_RUNS_DIR"]?.trim() ?? join(homedir(), ".orca", "runs");
 const analysisWriter = createRunAnalysisWriter(runsDir);
 
 async function writePipelineTrace(trace: OrcaPipelineTrace): Promise<void> {
@@ -1518,7 +1520,7 @@ let _narratorLexiconGeneration = 0;
 
 function getDewey(): InstanceType<typeof Dewey> {
   if (!dewey) {
-    dewey = new Dewey();
+    dewey = new Dewey(isStagingApp ? join(app.getPath("userData"), "userContext.json") : undefined);
   }
   return dewey;
 }
