@@ -62,4 +62,8 @@ declare module '@clawde/miranda-core' {
     complete(request: LLMRequest): Promise<LLMResponse>;
     stream?(request: LLMRequest, onToken: (chunk: string) => void): Promise<LLMResponse>;
   }
+
+  export type ToolVerbClass = "read" | "write" | "unknown";
+  /** Verb-based read/write classification of an MCP tool name (shared with Miranda's gate). */
+  export function classifyToolVerb(tool: string): ToolVerbClass;
 }

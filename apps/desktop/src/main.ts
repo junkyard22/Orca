@@ -83,6 +83,7 @@ import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
+import { enforceToolAuthorization } from "./toolAuthorization";
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
 import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
@@ -1723,16 +1724,30 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     }
 
     const gate = createMirandaGate({ verbose: s.verbose === true });
+    // Execution-time authorization sits directly in front of every tool.execute:
+    // external writes, process control and unrecognised tools need the user's
+    // approval per call, sandbox reconfiguration is refused, and every local
+    // path argument must resolve inside the workspace. Server ids let the
+    // classifier read the operation's verbs without the user-chosen prefix.
+    const mcpServerIds = mcpServers.map((srv) => srv.id);
 
     // Map BootstrappedTool[] → AgentTool[], threading abort + approval through
     const availableTools: AgentTool[] = bootstrap.allTools.map((tool: BootstrappedTool) => ({
       name: tool.name,
       description: tool.description,
       schema: tool.schema,
-      execute(input, context) {
+      async execute(input, context) {
         const effectiveWorkspaceRoot = context.workspaceRoot ?? workspaceRoot;
+        const normalizedInput = absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot);
+        const refused = await enforceToolAuthorization(tool.name, normalizedInput, {
+          workspaceRoot: effectiveWorkspaceRoot,
+          mcpServerIds,
+          requestApproval: context.requestApproval ?? requestToolApproval,
+        });
+        if (refused) return refused;
+        throwIfAborted(context.abortSignal);
         return tool.execute(
-          absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot),
+          normalizedInput,
           {
             workspaceRoot: effectiveWorkspaceRoot,
             runId: context.runId ?? '',
@@ -1745,8 +1760,8 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     const toolService: OrcaToolService = {
       async execute(name, input) {
         const normalizedInput = absolutizeDesktopCommanderInput(name, input, workspaceRoot);
-        const toolSchema = bootstrap.allTools.find((tool) => tool.name === name)?.schema;
-        const gateCtx = { tool: name, args: normalizedInput, workspaceRoot, schema: toolSchema };
+        const selectedTool = bootstrap.allTools.find((tool) => tool.name === name);
+        const gateCtx = { tool: name, args: normalizedInput, workspaceRoot, schema: selectedTool?.schema };
         const beforeGate = gate.beforeToolRun(gateCtx);
         if (!beforeGate.allowed) {
           return {
@@ -1755,8 +1770,22 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
             error: beforeGate.reason || `Tool "${name}" blocked by Miranda`,
           };
         }
+        if (!selectedTool) return { ok: false, output: "", error: `Unknown tool: ${name}` };
+        const refused = await enforceToolAuthorization(name, normalizedInput, {
+          workspaceRoot,
+          mcpServerIds,
+          requestApproval: requestToolApproval,
+        });
+        if (refused) return refused;
 
-        const result = await bootstrap.toolService.execute(name, normalizedInput);
+        // Call the tool directly so this path carries the approval handler too
+        // (bootstrap.toolService.execute passed none, so run_command calls that
+        // need approval failed with "no approval handler" instead of asking).
+        const result = await selectedTool.execute(normalizedInput, {
+          workspaceRoot,
+          runId: "",
+          requestApproval: requestToolApproval,
+        });
         gate.afterToolRun(gateCtx, {
           ok: result.ok,
           output: result.output || result.error || "",
@@ -1882,6 +1911,10 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       const gateContext = { tool: toolName, args, workspaceRoot, schema };
       const before = resourceGate?.beforeToolRun(gateContext);
       if (before && !before.allowed) return { ok: false, output: '', error: before.reason };
+      // Cargo pre-flight reads run with the same execution-time authorization as
+      // worker tools; nothing that needs approval runs here unattended.
+      const refused = await enforceToolAuthorization(toolName, args, { workspaceRoot, mcpServerIds, requestApproval: requestToolApproval });
+      if (refused) return refused;
       const result = await invoke();
       const after = resourceGate?.afterToolRun(gateContext, {
         ok: result.ok,
