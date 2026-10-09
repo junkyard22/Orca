@@ -21,6 +21,9 @@ const NEUTRAL_LLM_BUDGET_CONTEXT = {
   budgetLimit: Infinity,
 } as const;
 
+/** Characters of tool output kept as proof; long enough for a full test summary. */
+const PROOF_OUTPUT_LIMIT = 64_000;
+
 export function parseToolCalls(text: string): ParsedCall[] {
   const calls: ParsedCall[] = [];
   // Reset lastIndex before each use since the regex has the /g flag.
@@ -301,8 +304,15 @@ export async function runAgentLoop(
       if (call.tool === "write_file" && result.ok && typeof call.input["content"] === "string") {
         enrichedRaw["_contentForDiff"] = call.input["content"];
       }
-      if (result.ok && outputText.trim().length > 0) {
-        enrichedRaw["_outputForProof"] = outputText.slice(0, 4000);
+      // Failed runs keep their real output too (a failing test suite is
+      // evidence), and the exit code when the tool reports one. Proof of
+      // success still requires ok:true on the event.
+      if (outputText.trim().length > 0) {
+        enrichedRaw["_outputForProof"] = outputText.slice(0, PROOF_OUTPUT_LIMIT);
+      }
+      const exitCode = (result as { exitCode?: unknown }).exitCode;
+      if (typeof exitCode === "number") {
+        enrichedRaw["_exitCodeForProof"] = exitCode;
       }
 
       toolEvents.push({

@@ -291,13 +291,14 @@ export const runCommandTool: Tool = {
             ok: false,
             output: outputWithCode,
             error: `Command failed with exit code ${exitCode}`,
+            exitCode,
           });
         } else {
           // Include file changes in the output for the caller to parse
           const outputWithChanges = fileChanges.length > 0
             ? `${combined}\n\n<!-- Files changed: ${JSON.stringify(fileChanges)} -->`
             : combined;
-          finish({ ok: true, output: outputWithChanges });
+          finish({ ok: true, output: outputWithChanges, exitCode: 0 });
         }
       });
     });
