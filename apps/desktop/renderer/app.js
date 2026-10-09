@@ -497,7 +497,8 @@ function buildPipelineSummaryFromEvents(result) {
       taskId: qcEvent.taskId,
       role: currentRole?.role ?? "unknown",
       verdict: qcEvent.verdict,
-      confidence: qcEvent.verdict === "PASS" ? 1 : qcEvent.verdict === "WARN" ? 0.8 : 0.5,
+      // Only Pappy produces its heuristic score; never invent one here.
+      confidence: typeof qcEvent.confidence === "number" ? qcEvent.confidence : undefined,
       issueCount: qcEvent.issueCount ?? 0,
       issues: normalizePipelineIssues(qcEvent.issues),
       acceptanceCriteria: [],
@@ -524,7 +525,7 @@ function buildPipelineSummaryFromEvents(result) {
     taskId: taskId,
     role: currentRole?.role ?? "unknown",
     verdict: result?.ok ? "PASS" : "FAIL",
-    confidence: result?.ok ? 1 : 0.5,
+    confidence: undefined,
     issueCount: 0,
     issues: [],
     acceptanceCriteria: [],
@@ -788,7 +789,12 @@ function appendPipelineBadge(summary) {
     : String(summary.role ?? "unknown");
 
   const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : "fail";
-  const confidencePct = Math.round((summary.confidence ?? 1) * 100);
+  // Pappy's confidence is a heuristic issue-count score, not a calibrated
+  // probability. Label it as such, and show nothing when Pappy did not run.
+  const heuristicScore = typeof summary.confidence === "number" ? `${Math.round(summary.confidence * 100)}%` : null;
+  const scoreBadgeHtml = heuristicScore
+    ? `<span class="pb-confidence" title="Heuristic issue score from Pappy (not a calibrated probability)">score ${heuristicScore}</span>`
+    : "";
   const durationSec   = ((summary.durationMs ?? 0) / 1000).toFixed(2);
   const repairText    = summary.repairPasses > 0
     ? ` · ${summary.repairPasses} repair${summary.repairPasses !== 1 ? "s" : ""}`
@@ -812,7 +818,7 @@ function appendPipelineBadge(summary) {
   const outcomeRows = [
     ["Role", displayRole],
     ["Verdict", summary.verdict ?? "unknown"],
-    ["Confidence", `${confidencePct}%`],
+    ...(heuristicScore ? [["Heuristic score", `${heuristicScore} (issue-count heuristic, not calibrated)`]] : []),
     ["Issues", String(summary.issueCount ?? 0)],
     ["Duration", `${durationSec}s`],
     ["Repairs", String(summary.repairPasses ?? 0)],
@@ -1053,7 +1059,7 @@ function appendPipelineBadge(summary) {
     <div class="pipeline-badge-header">
       <span class="pb-role">${escapeHtml(displayRole)}</span>
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
-      <span class="pb-confidence">${confidencePct}%</span>
+      ${scoreBadgeHtml}
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
       <button class="pb-details-btn" type="button" aria-expanded="true">Hide <span class="pb-chevron">›</span></button>
     </div>
@@ -1090,7 +1096,7 @@ function appendPipelineBadge(summary) {
   header.innerHTML = `
       <span class="pb-role">${escapeHtml(displayRole)}</span>
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
-      <span class="pb-confidence">${confidencePct}%</span>
+      ${scoreBadgeHtml}
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
       <button class="pb-details-btn" type="button" aria-expanded="true">Hide <span class="pb-chevron">›</span></button>
     `;
@@ -2494,7 +2500,7 @@ async function loadSession(id) {
     appendPipelineBadge({
       role: session.role ?? "unknown",
       verdict: session.verdict,
-      confidence: session.confidence ?? 1,
+      confidence: typeof session.confidence === "number" ? session.confidence : undefined,
       issueCount: session.issueCount ?? 0,
       issues: [],
       acceptanceCriteria: [],
