@@ -53,12 +53,20 @@ export function toTokenUsage(
 ): TokenUsage | null {
   if (!payload) return null;
 
+  // A usage object with missing or inconsistent counts is not a measurement.
+  // Report it as unknown rather than filling the gaps with zeros.
+  const prompt = payload.prompt_tokens;
+  const completion = payload.completion_tokens;
+  if (!Number.isSafeInteger(prompt) || !Number.isSafeInteger(completion) || prompt! < 0 || completion! < 0) return null;
+  const total = payload.total_tokens ?? prompt! + completion!;
+  if (!Number.isSafeInteger(total) || total !== prompt! + completion!) return null;
+
   const cachedTokens = payload.prompt_tokens_details?.cached_tokens;
 
   return {
-    promptTokens: payload.prompt_tokens ?? 0,
-    completionTokens: payload.completion_tokens ?? 0,
-    totalTokens: payload.total_tokens ?? 0,
+    promptTokens: prompt!,
+    completionTokens: completion!,
+    totalTokens: total,
     ...(cachedTokens !== undefined && { cachedPromptTokens: cachedTokens }),
   };
 }

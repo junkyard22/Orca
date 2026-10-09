@@ -15,8 +15,9 @@
  */
 
 import type { LLMAdapter } from "./adapter.js";
-import type { LLMRequest, LLMResponse, TokenUsage } from "./types.js";
+import type { LLMRequest, LLMResponse } from "./types.js";
 import { createRequestSignal, throwIfAborted } from "./requestSignal.js";
+import { ProviderRequestError } from "./errors.js";
 import {
   STREAM_USAGE_OPTIONS,
   toTokenUsage,
@@ -55,6 +56,13 @@ export interface OpenAICompatConfig {
    */
   enableThinking?: boolean;
   /**
+   * Whether the endpoint accepts the nonstandard `enable_thinking` field at
+   * all. `false` (e.g. Anthropic, which documents `thinking` instead) omits the
+   * field even when a role or request asks for it, leaving the provider's own
+   * default intact. Defaults to `true`.
+   */
+  supportsEnableThinking?: boolean;
+  /**
    * Whether `stream()` asks the provider to append a usage chunk to the SSE
    * stream (`stream_options.include_usage`). Without it a streamed call reports
    * no token counts at all, so cache metrics would only ever cover `complete()`.
@@ -63,6 +71,16 @@ export interface OpenAICompatConfig {
    * request bodies containing `stream_options`.
    */
   includeStreamUsage?: boolean;
+  /**
+   * Whether `model` accepts a `temperature` field. When this returns `false`,
+   * `temperature` is omitted from the request body entirely (the provider then
+   * uses its own default) — some models reject the field outright with a 400.
+   *
+   * Omit to always send `request.temperature` (the historical behaviour).
+   */
+  supportsTemperature?: (model: string) => boolean;
+  /** Human-readable provider name for error messages (never the key or URL secrets). */
+  providerName?: string;
 }
 
 interface OpenAIChatResponse {
@@ -82,7 +100,10 @@ export class OpenAICompatAdapter implements LLMAdapter {
   private readonly defaultModel: string;
   private readonly extraHeaders: Record<string, string>;
   private readonly defaultEnableThinking?: boolean;
+  private readonly supportsEnableThinking: boolean;
   private readonly includeStreamUsage: boolean;
+  private readonly supportsTemperature?: (model: string) => boolean;
+  private readonly providerName: string;
   /**
    * Set when the endpoint has rejected `stream_options`, so the retry below
    * happens at most once per adapter instead of on every streamed call.
@@ -99,7 +120,19 @@ export class OpenAICompatAdapter implements LLMAdapter {
     this.defaultModel         = config.defaultModel ?? "";
     this.extraHeaders         = config.extraHeaders ?? {};
     this.defaultEnableThinking = config.enableThinking;
+    this.supportsEnableThinking = config.supportsEnableThinking ?? true;
     this.includeStreamUsage   = config.includeStreamUsage ?? true;
+    this.supportsTemperature  = config.supportsTemperature;
+    this.providerName         = config.providerName ?? "openai-compat";
+  }
+
+  private sendsTemperature(model: string): boolean {
+    return this.supportsTemperature ? this.supportsTemperature(model) : true;
+  }
+
+  private async requestError(response: Response, model: string): Promise<ProviderRequestError> {
+    const body = await response.text().catch(() => "unknown error");
+    return new ProviderRequestError({ provider: this.providerName, model, url: this.url, status: response.status, body });
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
@@ -115,11 +148,14 @@ export class OpenAICompatAdapter implements LLMAdapter {
         role: m.role,
         content: m.content,
       })),
-      temperature: request.temperature,
       max_tokens: request.maxTokens,
     };
 
-    if (resolvedThinking !== undefined) {
+    if (this.sendsTemperature(model)) {
+      body["temperature"] = request.temperature;
+    }
+
+    if (this.supportsEnableThinking && resolvedThinking !== undefined) {
       body["enable_thinking"] = resolvedThinking;
     }
 
@@ -145,11 +181,18 @@ export class OpenAICompatAdapter implements LLMAdapter {
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "unknown error");
-        throw new Error(`API error ${response.status}: ${errorText}`);
+        throw await this.requestError(response, model);
       }
 
-      const data = (await response.json()) as OpenAIChatResponse;
+      let data: OpenAIChatResponse;
+      try {
+        data = (await response.json()) as OpenAIChatResponse;
+      } catch {
+        throw new Error(`API error from ${this.providerName} (model ${model}): response was not valid JSON`);
+      }
+      if (!data || !Array.isArray(data.choices)) {
+        throw new Error(`API error from ${this.providerName} (model ${model}): response has no choices array`);
+      }
       const durationMs = Date.now() - startMs;
 
       if (process.env["ORCA_PROFILE"] === "1") {
@@ -166,8 +209,8 @@ export class OpenAICompatAdapter implements LLMAdapter {
       }
 
       const firstChoice = data.choices[0];
-      if (!firstChoice) {
-        throw new Error("API returned no choices");
+      if (!firstChoice || !firstChoice.message) {
+        throw new Error(`API error from ${this.providerName} (model ${model}): response contained no choices`);
       }
 
       const usage = toTokenUsage(data.usage);
@@ -203,17 +246,20 @@ export class OpenAICompatAdapter implements LLMAdapter {
     const body: Record<string, unknown> = {
       model,
       messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
-      temperature: request.temperature,
       max_tokens: request.maxTokens,
       stream: true,
     };
+
+    if (this.sendsTemperature(model)) {
+      body["temperature"] = request.temperature;
+    }
 
     const sendStreamUsage = this.includeStreamUsage && !this.streamUsageRejected;
     if (sendStreamUsage) {
       body["stream_options"] = STREAM_USAGE_OPTIONS;
     }
 
-    if (resolvedThinking !== undefined) {
+    if (this.supportsEnableThinking && resolvedThinking !== undefined) {
       body["enable_thinking"] = resolvedThinking;
     }
 
@@ -254,14 +300,12 @@ export class OpenAICompatAdapter implements LLMAdapter {
       }
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "unknown error");
-        throw new Error(`API error ${response.status}: ${errorText}`);
+        throw await this.requestError(response, model);
       }
-      if (!response.body) throw new Error("Response body is null");
+      if (!response.body) throw new Error(`API error from ${this.providerName} (model ${model}): response body is null`);
 
       let fullContent = "";
       let finalModel = model;
-      let deltaCount = 0;
       let reportedUsage: OpenAIUsagePayload | undefined;
 
       const reader = response.body.getReader();
@@ -271,8 +315,9 @@ export class OpenAICompatAdapter implements LLMAdapter {
       try {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          buffer += value ? decoder.decode(value, { stream: true }) : decoder.decode();
+          // A final SSE line without a trailing newline must still be processed.
+          if (done && buffer) buffer += "\n";
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
           for (const line of lines) {
@@ -282,34 +327,29 @@ export class OpenAICompatAdapter implements LLMAdapter {
             if (data === "[DONE]") break;
             try {
               const chunk = JSON.parse(data) as {
-                choices: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
+                choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
                 model?: string;
                 usage?: OpenAIUsagePayload;
               };
               // Some thinking models (e.g. Alibaba qwen3.5-plus) stream actual
               // output via `reasoning_content` while `content` is empty/null.
-              const delta = chunk.choices[0]?.delta;
+              const delta = chunk.choices?.[0]?.delta;
               const token = delta?.content || delta?.reasoning_content || "";
-              if (token) { fullContent += token; deltaCount++; onToken(token); }
+              if (token) { fullContent += token; onToken(token); }
               if (chunk.model) finalModel = chunk.model;
               // With stream_options.include_usage the provider appends a final
               // chunk carrying usage and an empty `choices` array.
               if (chunk.usage) reportedUsage = chunk.usage;
             } catch { /* skip malformed chunks */ }
           }
+          if (done) break;
         }
       } finally {
         reader.releaseLock();
       }
 
-      // Real counts when the provider sent the usage chunk. Otherwise fall back
-      // to the delta count, which approximates completion tokens only — the
-      // prompt side is genuinely unknown on that path, not zero.
-      const usage: TokenUsage = toTokenUsage(reportedUsage) ?? {
-        promptTokens: 0,
-        completionTokens: deltaCount,
-        totalTokens: deltaCount,
-      };
+      // SSE deltas are chunks, not tokens. Unknown usage stays unknown (null).
+      const usage = toTokenUsage(reportedUsage);
 
       const streamDurationMs = Date.now() - startMs;
       if (process.env["ORCA_PROFILE"] === "1") {
@@ -318,13 +358,13 @@ export class OpenAICompatAdapter implements LLMAdapter {
           method: "stream",
           model: finalModel,
           durationMs: streamDurationMs,
-          promptTokens: usage.promptTokens,
-          completionTokens: usage.completionTokens,
-          totalTokens: usage.totalTokens,
-          cachedPromptTokens: usage.cachedPromptTokens,
+          promptTokens: usage?.promptTokens,
+          completionTokens: usage?.completionTokens,
+          totalTokens: usage?.totalTokens,
+          cachedPromptTokens: usage?.cachedPromptTokens,
           // Marks the counts above as provider-reported rather than estimated,
           // so the analyzer never mixes delta counts into token totals.
-          usageReported: reportedUsage !== undefined,
+          usageReported: usage !== null,
         });
       }
       return {

@@ -222,13 +222,10 @@ export class OllamaAdapter implements LLMAdapter {
         }
       }
 
-      // Delta count only approximates completion tokens; it is the fallback for
-      // an Ollama build old enough to ignore stream_options.
-      const usage: TokenUsage = toTokenUsage(reportedUsage) ?? {
-        promptTokens: 0,
-        completionTokens: deltaCount,
-        totalTokens: deltaCount,
-      };
+      // SSE deltas are chunks, not tokens. An Ollama build old enough to ignore
+      // stream_options reports no usage, and that stays unknown (null).
+      void deltaCount;
+      const usage: TokenUsage | null = toTokenUsage(reportedUsage);
 
       return {
         content: fullContent,

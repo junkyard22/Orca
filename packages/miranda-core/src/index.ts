@@ -117,6 +117,21 @@ export { OpenAICompatAdapter } from "./llm/openaiCompat.js";
 export type { OpenAICompatConfig } from "./llm/openaiCompat.js";
 export { STREAM_USAGE_OPTIONS, toTokenUsage } from "./llm/usage.js";
 export type { OpenAIUsagePayload } from "./llm/usage.js";
+// Provider request policy: which models accept which request fields, and
+// structured errors for the caller to explain. Never changes model choice.
+export {
+  anthropicModelAcceptsTemperature,
+  claudeGeneration,
+  isAnthropicEndpoint,
+  providerAcceptsEnableThinking,
+  providerAcceptsTemperature,
+  LAST_ANTHROPIC_TEMPERATURE_GENERATION,
+} from "./llm/samplingPolicy.js";
+export type { SamplingProvider } from "./llm/samplingPolicy.js";
+export { ANTHROPIC_CATALOG_REVIEWED, KNOWN_ANTHROPIC_MODELS, anthropicModelIdStatus } from "./llm/modelCatalog.js";
+export type { ModelIdStatus } from "./llm/modelCatalog.js";
+export { ProviderRequestError, extractProviderMessage, providerHint } from "./llm/errors.js";
+export type { ProviderErrorDetails } from "./llm/errors.js";
 
 // Metrics
 export { estimateTokens, resolveTokenUsage } from "./metrics/tokens.js";
