@@ -181,6 +181,17 @@ export interface LLMOptions {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * Text plus whatever the provider reported about the call. `usage` is null
+ * when the provider sent no (or inconsistent) token counts — never estimated.
+ */
+export interface OrcaLLMResult {
+  text: string;
+  usage?: import("@clawde/miranda-core").TokenUsage | null;
+  model?: string;
+  durationMs?: number;
+}
+
 export interface OrcaLLMService {
   /**
    * Generate text for a prompt.
@@ -193,7 +204,7 @@ export interface OrcaLLMService {
    * from the LLM. Falls back to a single buffered response when the adapter
    * does not support SSE streaming.
    */
-  complete(prompt: string, opts?: LLMOptions): Promise<{ text: string }>;
+  complete(prompt: string, opts?: LLMOptions): Promise<OrcaLLMResult>;
 
   /**
    * Streaming variant — fires onChunk for every incremental token and
@@ -206,7 +217,7 @@ export interface OrcaLLMService {
     prompt: string,
     options: LLMOptions,
     onChunk: (chunk: string) => void,
-  ): Promise<{ text: string }>;
+  ): Promise<OrcaLLMResult>;
 }
 
 /**

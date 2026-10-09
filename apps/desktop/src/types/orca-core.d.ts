@@ -177,13 +177,20 @@ declare module '@clawde/orca-core' {
     abortSignal?: AbortSignal;
   }
 
+  export interface OrcaLLMResult {
+    text: string;
+    usage?: import('@clawde/miranda-core').TokenUsage | null;
+    model?: string;
+    durationMs?: number;
+  }
+
   export interface OrcaLLMService {
-    complete(prompt: string, opts?: LLMOptions): Promise<{ text: string }>;
+    complete(prompt: string, opts?: LLMOptions): Promise<OrcaLLMResult>;
     stream(
       prompt: string,
       options: LLMOptions,
       onChunk: (chunk: string) => void,
-    ): Promise<{ text: string }>;
+    ): Promise<OrcaLLMResult>;
   }
 
   export interface OrcaToolService {

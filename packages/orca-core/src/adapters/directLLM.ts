@@ -1,6 +1,6 @@
 import type { LLMAdapter } from "@clawde/miranda-core";
-import type { LLMRequest, LLMMessage } from "@clawde/miranda-core";
-import type { OrcaLLMService } from "../types.js";
+import type { LLMRequest, LLMMessage, LLMResponse } from "@clawde/miranda-core";
+import type { OrcaLLMResult, OrcaLLMService } from "../types.js";
 
 /**
  * createDirectLLMService — single-call LLM transport.
@@ -44,32 +44,38 @@ export function createDirectLLMService(
     } as LLMRequest;
   }
 
+  // Provider-reported usage, model and timing travel with the text so callers
+  // can report real token counts instead of estimates.
+  const result = (response: LLMResponse): OrcaLLMResult => ({
+    text: response.content,
+    usage: response.usage ?? null,
+    model: response.model,
+    durationMs: response.durationMs,
+  });
+
   return {
     async complete(prompt, opts) {
       const request = buildRequest(prompt, opts);
 
       if (opts?.onToken && adapter.stream) {
-        const response = await adapter.stream(request, opts.onToken);
-        return { text: response.content };
+        return result(await adapter.stream(request, opts.onToken));
       }
 
-      const response = await adapter.complete(request);
-      return { text: response.content };
+      return result(await adapter.complete(request));
     },
 
     async stream(prompt, options, onChunk) {
       const request = buildRequest(prompt, options);
 
       if (adapter.stream) {
-        const response = await adapter.stream(request, onChunk);
-        return { text: response.content };
+        return result(await adapter.stream(request, onChunk));
       }
 
       // Adapter does not support SSE — fall back to a single buffered call
       // and fire onChunk once with the full response.
       const response = await adapter.complete(request);
       onChunk(response.content);
-      return { text: response.content };
+      return result(response);
     },
   };
 }
