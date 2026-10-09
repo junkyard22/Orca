@@ -5,7 +5,7 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-10-09 (core reliability, phase 2) · **Machine:** dev desktop · **By:** Claude Code session
+**Last updated:** 2026-10-09 (core reliability, phase 3) · **Machine:** dev desktop · **By:** Claude Code session
 
 ---
 
@@ -14,7 +14,7 @@
 | Branch | Where | Head | Pushed? | Status |
 |---|---|---|---|---|
 | `main` | origin | `7b62cce` | yes | Production baseline. Carries the shared-component defects listed in the audit (`docs/ORCA-CORE-RELIABILITY-AUDIT.md`). Local `main` in `C:\Orca\Orca` is 10 commits behind. |
-| **`integration/core-reliability`** | dev desktop worktree `C:\Orca\worktrees\core-reliability` | this commit | **no** | **Source-only production integration branch, from `origin/main`.** Phase 0 (docs), phase 1 (core security) and phase 2 (Pappy verification integrity) done. No Demo Mode code. |
+| **`integration/core-reliability`** | dev desktop worktree `C:\Orca\worktrees\core-reliability` | this commit | **no** | **Source-only production integration branch, from `origin/main`.** Phases 0 (docs), 1 (core security), 2 (Pappy verification integrity) and 3 (provider compatibility) done; none approved for merge. No Demo Mode code. |
 | `integration/1.6.1-clean` | dev desktop worktree `C:\Orca\worktrees\integration-1.6.1-clean` | `4191c00` + uncommitted `PROJECT_STATE.md` edit and untracked `ORCA-CORE-RELIABILITY-AUDIT.md` (the audit's original copy) | no | Summit 1.6.1 line (Demo Mode, staging build). Reference for later phases; not merged. |
 | `fix/live-rehearsal-remediation-1.6.1` | origin (to `58e447e`); worktree `C:\Orca\worktrees\remediation-1.6.1` | `28125ee` | local commits not pushed | Contains the 774 MB build archive. **Never merge.** |
 | `wip/live-demo-verification-parallel` | dev desktop | `43edfda` | no | Snapshot of the unreviewed 10/7 parallel verification work (see `docs/ORCA_PARALLEL_WORK_COMPARISON.md`). Reference only. |
@@ -52,6 +52,22 @@ Not included (by design): Demo Mode strict mode, the native presenter-approval d
 
 Adversarial before/after (real Pappy, 20 synthetic cases with runtime evidence; `%TEMP%\orca-audit\phase2-compare.mjs`): should-reject n=15 — false acceptances **7 → 0**; should-accept n=5 — false rejections **1 → 0**. Eval corpus (no workspace evidence by construction): reference 23/23, raw 11/23 (was 14 — three evidence-less runs are no longer training-eligible), hardened 14/23; cheat catch 100 %, false accept 0 %, false reject 57.1 % on all three, unchanged.
 
+### Phase 3 — provider compatibility (+ phase 2 follow-ups)
+
+| Area | Change | Verified by |
+|---|---|---|
+| `miranda-core/src/llm/samplingPolicy.ts` (new) | Adapter-layer request policy: Anthropic endpoints (by type or `api.anthropic.com` host) receive `temperature` only for Claude generations ≤ 4.6 and never the nonstandard `enable_thinking`; every other provider unchanged. Never changes which model a role uses. | `providerPolicy.test.ts` |
+| `miranda-core/src/llm/modelCatalog.ts` (new) | Documented current Anthropic IDs (reviewed 2026-09-25) + legacy pattern; advisory only (`anthropicModelIdStatus`), never blocks a configured ID | same |
+| `miranda-core/src/llm/errors.ts` (new) | `ProviderRequestError`: provider, model, status, the provider's own message and a hint (auth / unknown model / rejected sampling field / thinking field / limits / rate limit / 5xx); keys never included | same + `openaiCompat.test.ts` |
+| `miranda-core/src/llm/openaiCompat.ts`, `ollama.ts`, `usage.ts` | `supportsTemperature`, `supportsEnableThinking`, `providerName` config; structured errors; invalid/non-JSON bodies are errors; a final SSE line without a newline is processed; streamed usage is no longer fabricated from chunk counts (null when unknown); usage objects with inconsistent counts are null | `openaiCompat.test.ts` (+17), existing Ollama tests |
+| `orca-core/src/adapters/directLLM.ts`, `types.ts` (`OrcaLLMResult`) | Provider usage, model and timing pass through to callers | `directLLM.test.ts` (new) |
+| `apps/desktop/src/providerAdapter.ts` (new), `providerResolution.ts` (new), `main.ts` | One place builds every role's adapter with the policy applied; roles are resolved by stable id and every role whose provider is missing, keyless or whose Anthropic model ID is unrecognised is named in the init warnings (nothing reassigned); Brain blocker messages name the stale id; `models:fetch` offline fallback uses the catalog | `providerAdapter.test.ts` (new, request bodies for Anthropic / OpenRouter / OpenAI / DashScope / custom / Ollama), `providerResolution.test.ts` (new), `settingsPersistence.test.ts` (new) |
+| `apps/desktop/renderer/provider-options.js` (new), `app.js`, `index.html` | Role `<select>` shows "⚠ provider missing" for a stale id instead of the first provider; the configured providers stay available to reassign | `providerOptions.test.ts` |
+| `apps/runner/src/index.ts` | Settings-based providers get the same request policy (adapter config only; no output change) | runner suite |
+| `packages/pappy-eval/src/evidence/*` (new), `pnpm pappy:eval:evidence` | Supplementary evidence-bearing corpus: 26 fixtures with runtime evidence (debugging 10, feature 4, refactoring 4, documentation 3, inspection 2, evidence availability 3), separate FA / FR / status / eligibility metrics, known-gap list (`docs/ORCA_EVIDENCE_CORPUS.md`). Original 23-case corpus and its expectations untouched. | `evidence.test.ts` |
+
+Follow-up A (investigation only, no Pappy change): confirmed gaps — (1) a bug fix, feature or refactor in a project without a test command is labelled `verified` on the strength of the on-disk change alone (PASS, not trainable); (2) a required criterion that is `PARTIAL` stays MEDIUM → WARN when runtime evidence exists; (3) the named-file receipt for documentation proves the file changed, not that its content satisfies the request. Git inventory: untracked new files are captured (`--others --exclude-standard`), deletions and renames (as delete + add) are seen, pre-existing uncommitted edits form the baseline rather than being attributed to the task; ignored paths (`build/`, `*.log`) are excluded by design.
+
 ## Unverified
 
 - Behaviour inside the packaged Electron app (the approval dialog flow with real MCP servers) — unit tests use spy executors; the main-process bundle builds (`build-main.mjs`) but no live run was made.
@@ -63,7 +79,11 @@ Adversarial before/after (real Pappy, 20 synthetic cases with runtime evidence; 
 
 | # | Problem | Notes |
 |---|---|---|
-| 1 | **Phases 3–7 of the integration plan** (providers, budget, routing/cancellation, UI, Pappy false rejects) | Not started; each needs its own authorization. |
+| 1 | **Phases 4–7 of the integration plan** (budget, routing/cancellation, UI, Pappy false rejects) | Not started; each needs its own authorization. |
+| 1e | **Follow-up A gaps (need approval before changing Pappy):** change-only "verified" status for behavioural tasks without tests; `PARTIAL` required criteria stay WARN with evidence present; docs receipts do not judge content | Smallest correction proposed in the phase 3 report: require a behavioural receipt (host-recorded post-change command naming the criterion's terms, or a documented alternative backed by a recorded command) for bugfix/feature; a build/typecheck receipt for refactors without tests; `PARTIAL` → HIGH when runtime evidence exists; docs receipts require the criterion's distinctive terms in the final content. |
+| 1f | **Evidence corpus known gaps** (8 of 26 fixtures; `docs/ORCA_EVIDENCE_CORPUS.md`) | 4 false rejections from pre-existing keyword heuristics (phase 7); `SUCCESS_CLAIM_PATTERN` misses "tests pass"/"Documented …"; claimProof rejects an honestly reported failed run; inspection status alignment. 0 false acceptances. |
+| 1g | `claude-haiku-5-5` is not in Orca's Anthropic catalog (reviewed 2026-09-25) and could not be checked live | The 1.6.1 staging profile and docs use it; on this branch it only produces an init warning and is sent as configured. Verify against Anthropic's live model list before any Live run. |
+| 1h | Contract check REVIEW REQUIRED: 12 × Rule 4 (phase 2) + Rule 5 on `apps/runner/src/index.ts` (adapter config fields only; no user-facing output changed) | Needs explicit approval before merge. |
 | 1b | **Contract check: REVIEW REQUIRED, 12 Rule 4 findings** (`pappy.ts`, `workspaceVerification.ts` + test, 9 fixtures) | Additive checks and ledger statuses only; nothing downgrades a FAIL. Needs explicit approval before merge. |
 | 1c | Ledger criteria without an anchor (no symbol, no named file, not about the output) stay MISSING | Pre-existing; the audit's §6.5 diff-backed receipts are phase 7. |
 | 1d | Eval corpus eligibility expectations for evidence-less runs no longer match (raw judge 14 → 11) | Loophole closed by design; the corpus fixtures were not changed. A corpus with runtime evidence is needed to measure the new gate. |
@@ -79,6 +99,12 @@ Adversarial before/after (real Pappy, 20 synthetic cases with runtime evidence; 
 
 | Date | Commit | Machine | Command | Result |
 |---|---|---|---|---|
+| 2026-10-09 | phase 3 head | dev desktop (Node 24.11.1) | `pnpm -r --no-bail test` | **1,695 passed · 0 failed · 1 skipped** (packages 1,348; runner 107; desktop 240) |
+| 2026-10-09 | phase 3 head | dev desktop | `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts` | 0 errors |
+| 2026-10-09 | phase 3 head | dev desktop | `pnpm contract:check` | REVIEW REQUIRED (12 × Rule 4 from phase 2, 1 × Rule 5 runner) |
+| 2026-10-09 | phase 3 head | dev desktop | `pnpm pappy:eval` / `:raw-real-pappy` / `:pappy-plus-hardening` | 23/23 · 11/23 · 14/23; cheat 100 % · false accept 0 % · false reject 57.1 % (unchanged) |
+| 2026-10-09 | phase 3 head | dev desktop | `pnpm pappy:eval:evidence` | 18/26 fully matched; false acceptances 0/18; false rejections 4/7 (all known heuristics); status accuracy 96.2 %; eligibility accuracy 69.2 % |
+| 2026-10-09 | phase 3 head | dev desktop | `apps/desktop`: `node build-main.mjs`, `node --check` renderer | OK |
 | 2026-10-09 | phase 2 head | dev desktop (Node 24.11.1) | `pnpm -r --no-bail test` | **1,597 passed · 0 failed · 1 skipped** (packages 1,287; runner 107; desktop 203) |
 | 2026-10-09 | phase 2 head | dev desktop | `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts` | 0 errors |
 | 2026-10-09 | phase 2 head | dev desktop | `pnpm contract:check` | REVIEW REQUIRED (12 × Rule 4) |
@@ -93,6 +119,7 @@ Adversarial before/after (real Pappy, 20 synthetic cases with runtime evidence; 
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-10-09 (core phase 3)** (dev desktop) — Provider compatibility: adapter-layer sampling/thinking policy, model catalog, structured provider errors, honest usage reporting, stable provider resolution with warnings, renderer stale-provider fix, runner policy; evidence-bearing eval corpus (26 fixtures, 0 false acceptances, 8 documented known gaps); follow-up A investigation (no Pappy change). No push, merge, build, paid call.
 - **2026-10-09 (core phase 2)** (dev desktop) — Audited Pappy's confidence (heuristic, display-only, uncalibrated); implemented runtime workspace evidence, task-aware verification, evidence-strength ledger, evidence status and the training-eligibility gate; adversarial before/after 7→0 false acceptances, 1→0 false rejections; corpus verdict metrics unchanged; full suite 1,597 passed. No push, merge, build, paid call.
 - **2026-10-09 (core phase 1)** (dev desktop) — Created `integration/core-reliability` from `origin/main`; preserved the audit and the parallel-work comparison; reviewed the 14 contract findings individually (they belong to the 1.6.1 branch; this branch is CLEAR); implemented Miranda verb classification + path keys and desktop execution-time authorization with regression tests; full suite 1,548 passed. No push, merge, build, paid call.
 - **2026-10-09 (audit)** (dev desktop) — Read-only core reliability audit of `origin/main` vs `integration/1.6.1-clean` (`docs/ORCA-CORE-RELIABILITY-AUDIT.md`).
