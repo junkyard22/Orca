@@ -17,7 +17,8 @@
     "test:watch": "vitest",
     "eval": "tsx src/cli.ts",
     "eval:raw-real-pappy": "tsx src/cli.ts --judge=raw-real-pappy",
-    "eval:pappy-plus-hardening": "tsx src/cli.ts --judge=pappy-plus-hardening"
+    "eval:pappy-plus-hardening": "tsx src/cli.ts --judge=pappy-plus-hardening",
+    "eval:evidence": "tsx src/cli-evidence.ts"
   },
   "engines": {
     "node": ">=20.0.0"
