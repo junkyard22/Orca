@@ -68,10 +68,12 @@ export type { LLMAdapter } from "./llm/adapter.js";
 export {
   createMirandaGate,
   classifyToolPermissionRequirement,
+  classifyToolVerb,
   composeMirandaGates,
   transitionAHPLifecycle,
 } from "./gate/mirandaGate.js";
 export type {
+  ToolVerbClass,
   MirandaGate,
   MirandaGateConfig,
   GateVerdict,
