@@ -308,6 +308,8 @@ export function normalizeMaestroResult(maestroResult: OrcaMaestroResult): OrcaMa
 export function buildPappyInput(
   taskSpec: OrcaTaskSpec,
   maestroResult: OrcaMaestroResult,
+  workspace?: PappyInput["workspace"],
+  priorToolEvents?: PappyInput["priorToolEvents"],
 ): PappyInput {
   const raw = taskSpec.constraints ?? {};
   const normalizedResult = normalizeMaestroResult(maestroResult);
@@ -340,6 +342,8 @@ export function buildPappyInput(
       : ahpNonCompleteChildren.length > 0
         ? { ahpNonCompleteChildren }
         : undefined,
+    ...(workspace ? { workspace } : {}),
+    ...(priorToolEvents && priorToolEvents.length > 0 ? { priorToolEvents } : {}),
     constraints: {
       forbidDeletes:   raw["forbidDeletes"]   as boolean  | undefined,
       requireFiles:    raw["requireFiles"]    as string[] | undefined,

@@ -293,7 +293,10 @@ export async function handleRepairLoop(
     }
 
     verifyRepairPackets(maestroResult, ctx);
-    const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
+    // Judge this pass with the runtime's workspace evidence and the receipts of
+    // every earlier pass, so a reproduction run before the first fix still counts.
+    const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]));
+    ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
     ctx.recordTrace?.("repair.pass.qc_result", {
       pass,
       verdict: nextQC.verdict,

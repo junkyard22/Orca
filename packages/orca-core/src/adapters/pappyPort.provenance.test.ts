@@ -16,7 +16,10 @@ describe("PappyPort — model review provenance", () => {
     const result = createPappyPort().evaluate(cleanInput());
 
     expect(result.verdict).toBe("PASS");
-    expect(result.trainingEligibility).toBe("eligible");
+    // No runtime workspace evidence was supplied, so the run is accepted but
+    // never training-eligible (evidence-integrity gate, core reliability phase 2).
+    expect(result.verification?.status).toBe("not_applicable");
+    expect(result.trainingEligibility).toBe("accepted_but_not_trainable");
     expect(result.reviewIndependence).toMatchObject({
       status: "not_applicable",
       fallbackUsed: false,
@@ -89,7 +92,10 @@ describe("PappyPort — model review provenance", () => {
       fallbackUsed: true,
       independentRequired: true,
     });
-    expect(result.trainingEligibility).toBe("eligible");
+    // No runtime workspace evidence was supplied, so the run is accepted but
+    // never training-eligible (evidence-integrity gate, core reliability phase 2).
+    expect(result.verification?.status).toBe("not_applicable");
+    expect(result.trainingEligibility).toBe("accepted_but_not_trainable");
   });
 
   it("never weakens an existing rejected training decision", () => {

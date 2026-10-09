@@ -308,6 +308,18 @@ export interface OrcaRunCtx {
    * against the workspace root rather than process.cwd().
    */
   workspaceRoot?: string;
+  /**
+   * Compares the workspace on disk with its task-start baseline and reports
+   * the test commands the host observed. Set by the runtime when a workspace
+   * root is known; Pappy uses it as evidence the worker cannot author.
+   */
+  collectWorkspaceEvidence?: () => Promise<import("@clawde/pappy-core").WorkspaceEvidence>;
+  /**
+   * Tool receipts from earlier passes of this task, oldest first. The runtime
+   * appends each pass's receipts after verifying it, so a repair pass is judged
+   * with the reproduction evidence gathered before it.
+   */
+  verificationReceipts?: OrcaToolEvent[];
 }
 
 // ---------------------------------------------------------------------------

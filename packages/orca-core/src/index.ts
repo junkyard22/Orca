@@ -17,6 +17,16 @@ export { createPappyPort, createDebugPappyPort, createLoggingPappyPort } from ".
 // Workspace context — capture git + file state for prompt grounding
 export { getWorkspaceContext } from "./workspaceContext.js";
 
+// Workspace evidence — the runtime's own record of what a task changed and
+// which test commands ran, handed to Pappy as evidence the worker cannot author
+export {
+  captureWorkspaceInventory,
+  createWorkspaceEvidenceCollector,
+  diffWorkspaceInventories,
+  DEFAULT_EVIDENCE_LIMITS,
+} from "./workspaceEvidence.js";
+export type { EvidenceLimits, WorkspaceEvidenceCollector, WorkspaceInventory } from "./workspaceEvidence.js";
+
 // Extension / adapter system (Phase 7)
 export {
   ExtensionRegistry,

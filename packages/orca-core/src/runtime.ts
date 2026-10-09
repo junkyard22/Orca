@@ -36,6 +36,7 @@ import { AHPLifecycle } from "./ahp/types.js";
 import { serializeAHPPacketGraph, formatAHPPacketGraphSummary, formatAHPPacketGraphIssuesSummary } from "./ahp/graph.js";
 import type { AHPPacketGraph } from "./ahp/graph.js";
 import { createFilteredToolService } from "./toolFilter.js";
+import { createWorkspaceEvidenceCollector } from "./workspaceEvidence.js";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -262,7 +263,15 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     const startTime = Date.now();
     const traceEntries: OrcaPipelineTraceEntry[] = [];
 
+    // Baseline the workspace before any worker runs, so verification compares
+    // real before/after contents and host-observed test runs rather than what
+    // the worker reports. The collector also watches the trace for test
+    // commands and fingerprints the source as each one finishes.
+    const evidence = effectiveWorkspaceRoot ? createWorkspaceEvidenceCollector(effectiveWorkspaceRoot) : undefined;
+    if (evidence) await evidence.ready;
+
     const recordTrace = (stage: string, detail?: unknown): void => {
+      evidence?.observeTrace(stage, detail);
       traceEntries.push({
         at: new Date().toISOString(),
         stage,
@@ -288,6 +297,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       gate: effectiveGate,
       model: deps.model,
       requestToolApproval: deps.requestToolApproval,
+      collectWorkspaceEvidence: evidence?.collect,
+      verificationReceipts: [],
     };
 
     recordTrace("task.received", { taskSpec: normalizedTaskSpec });
@@ -427,7 +438,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         });
 
         if (qcEnabled) {
-          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult);
+          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+          ctx.verificationReceipts?.push(...(auditMaestroResult.toolEvents ?? []));
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
           const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText });
           if (beforeQcGate) {
@@ -605,7 +617,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           });
         }
 
-        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult);
+        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+        ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
 
         const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
