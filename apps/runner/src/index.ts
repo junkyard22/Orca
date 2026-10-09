@@ -20,7 +20,7 @@ import "dotenv/config";
 
 import * as os from "os";
 import * as path from "path";
-import { OpenRouterAdapter, OllamaAdapter, OpenAICompatAdapter, createMirandaGate } from "@clawde/miranda-core";
+import { OpenRouterAdapter, OllamaAdapter, OpenAICompatAdapter, createMirandaGate, providerAcceptsEnableThinking, providerAcceptsTemperature } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createDirectLLMService,
@@ -231,6 +231,10 @@ async function main(): Promise<void> {
         apiKey:         cfg.apiKey,
         defaultModel:   cfg.model,
         enableThinking: false,
+        // Anthropic endpoints reject sampling fields on newer generations and the
+        // nonstandard enable_thinking field; every other endpoint is unchanged.
+        supportsTemperature: (model) => providerAcceptsTemperature({ type: "custom", baseUrl: cfg.baseUrl }, model),
+        supportsEnableThinking: providerAcceptsEnableThinking({ type: "custom", baseUrl: cfg.baseUrl }),
       });
     } else if (provider === "settings") {
       console.error(
