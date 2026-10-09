@@ -54,6 +54,30 @@ declare module '@clawde/miranda-core' {
     apiKey?: string;
     defaultModel?: string;
     extraHeaders?: Record<string, string>;
+    enableThinking?: boolean;
+    supportsEnableThinking?: boolean;
+    includeStreamUsage?: boolean;
+    supportsTemperature?: (model: string) => boolean;
+    providerName?: string;
+  }
+
+  export interface SamplingProvider { type: string; baseUrl?: string }
+  export function isAnthropicEndpoint(provider: SamplingProvider): boolean;
+  export function claudeGeneration(model: string): [number, number] | null;
+  export function anthropicModelAcceptsTemperature(model: string): boolean;
+  export function providerAcceptsTemperature(provider: SamplingProvider, model: string): boolean;
+  export function providerAcceptsEnableThinking(provider: SamplingProvider): boolean;
+  export const KNOWN_ANTHROPIC_MODELS: readonly string[];
+  export const ANTHROPIC_CATALOG_REVIEWED: string;
+  export type ModelIdStatus = "known" | "legacy" | "unknown";
+  export function anthropicModelIdStatus(model: string): ModelIdStatus;
+  export class ProviderRequestError extends Error {
+    readonly provider: string;
+    readonly model: string;
+    readonly url: string;
+    readonly status: number;
+    readonly providerMessage: string;
+    readonly hint: string | undefined;
   }
 
   export class OpenAICompatAdapter implements LLMAdapter {

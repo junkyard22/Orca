@@ -19,8 +19,7 @@ import {
   parseCargoSyntax,
 } from "@clawde/benson-core";
 import type { CargoSlashCommand } from "@clawde/benson-core";
-import { createMirandaGate } from "@clawde/miranda-core";
-import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
+import { createMirandaGate, KNOWN_ANTHROPIC_MODELS } from "@clawde/miranda-core";
 import type { LLMAdapter, LLMMessage as Message } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
@@ -79,6 +78,8 @@ import type {
 } from "./auth";
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
+import { buildAdapterForProvider } from "./providerAdapter";
+import { brainBlocker, providerWarnings } from "./providerResolution";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
@@ -1525,26 +1526,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   throw error;
 }
 
-function buildAdapterForProvider(
-  provider: ProviderEntry,
-  model: string,
-  enableThinking?: boolean,
-): LLMAdapter {
-  if (provider.type === 'ollama') {
-    return new OllamaAdapter({
-      baseUrl:      provider.baseUrl || 'http://localhost:11434',
-      defaultModel: model,
-    });
-  }
-  // openrouter, deepseek, siliconflow, openai, anthropic, zai, custom
-  return new OpenAICompatAdapter({
-    baseUrl:        provider.baseUrl,
-    apiKey:         provider.apiKey || undefined,
-    defaultModel:   model,
-    enableThinking,
-  });
-}
-
 /**
  * Build fallback pool configuration from settings.
  * Each role can have a primary model and fallback models.
@@ -1637,19 +1618,14 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     );
   }
 
-  const brainRole = s.roles?.['brain'];
-  if (!brainRole?.providerId || !brainRole?.model) {
-    return "Brain role not configured.\nClick ⚙ Settings → add a provider and assign it to the Brain role.";
-  }
+  const brainBlocked = brainBlocker(s);
+  if (brainBlocked) return brainBlocked;
+  const brainRole = s.roles!['brain']!;
+  const provider = s.providers.find((p) => p.id === brainRole.providerId)!;
 
-  const provider = s.providers?.find((p) => p.id === brainRole.providerId);
-  if (!provider) {
-    return "Brain role points to an unknown provider.\nClick ⚙ Settings to re-configure.";
-  }
-
-  if (provider.type !== 'ollama' && !provider.apiKey) {
-    return `Provider "${provider.name}" has no API key.\nClick ⚙ Settings to add it.`;
-  }
+  // Every role that cannot run as configured is named here; nothing is
+  // reassigned on the user's behalf.
+  _initWarnings.push(...providerWarnings(s));
 
   try {
     const model = brainRole.model;
@@ -2431,15 +2407,8 @@ async function fetchModelsFromProvider(
         if (ids.length) return ids;
       }
     } catch { /* fall through to static list */ }
-    return [
-      "claude-opus-4-6",
-      "claude-sonnet-4-6",
-      "claude-haiku-4-5-20251001",
-      "claude-3-7-sonnet-20250219",
-      "claude-3-5-sonnet-20241022",
-      "claude-3-5-haiku-20241022",
-      "claude-3-opus-20240229",
-    ];
+    // Offline fallback: the documented current IDs (see modelCatalog.ts for the review date).
+    return [...KNOWN_ANTHROPIC_MODELS];
   }
 
   // Alibaba Coding Plan: no /models endpoint — return known model list directly.
