@@ -1,0 +1,10 @@
+Debugger listening on ws://127.0.0.1:19462/66162773-9053-460f-aaa3-cd94a3314b71
+For help, see: https://nodejs.org/learn/getting-started/debugging
+[RunnerRegistry] Registered runner: shell
+Debugger attached.
+
+DevTools listening on ws://127.0.0.1:19461/devtools/browser/28119665-fb19-4d52-810d-74ed3bb2274f
+[Dewey] Context file not found, creating default at C:\Orca\.claude\worktrees\summit-recovery\apps\desktop\release\Orca-Summit-Staging-1.6.1\profile\userContext.json
+[Dewey] Context saved to C:\Orca\.claude\worktrees\summit-recovery\apps\desktop\release\Orca-Summit-Staging-1.6.1\profile\userContext.json
+Debugger ending on ws://127.0.0.1:19462/66162773-9053-460f-aaa3-cd94a3314b71
+For help, see: https://nodejs.org/learn/getting-started/debugging

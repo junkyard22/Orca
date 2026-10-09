@@ -1,0 +1,68 @@
+{
+  "providers": {
+    "alibaba_coding_plan": {
+      "type": "openai-compatible",
+      "apiKey": "YOUR_ALIBABA_API_KEY_HERE",
+      "baseURL": "https://coding-intl.dashscope.aliyuncs.com/v1"
+    },
+    "openrouter": {
+      "type": "openai-compatible",
+      "apiKey": "YOUR_OPENROUTER_API_KEY_HERE",
+      "baseURL": "https://openrouter.ai/api/v1"
+    }
+  },
+  "roles": {
+    "brain": {
+      "provider": "alibaba_coding_plan",
+      "model": "qwen3.5-plus",
+      "label": "Alibaba Coding Plan: Qwen3.5 Plus"
+    },
+    "strong_model": {
+      "provider": "alibaba_coding_plan",
+      "model": "qwen3-coder-plus",
+      "label": "Alibaba Coding Plan: Qwen3 Coder Plus"
+    },
+    "cheap_model": {
+      "provider": "alibaba_coding_plan",
+      "model": "qwen3-coder-plus",
+      "label": "Alibaba Coding Plan: Qwen3 Coder Plus"
+    },
+    "utility": {
+      "provider": "alibaba_coding_plan",
+      "model": "qwen3.5-plus",
+      "label": "Alibaba Coding Plan: Qwen3.5 Plus"
+    },
+    "reviewer": {
+      "provider": "alibaba_coding_plan",
+      "model": "qwen3.5-plus",
+      "label": "Alibaba Coding Plan: Qwen3.5 Plus"
+    },
+    "narrator": {
+      "provider": "alibaba_coding_plan",
+      "model": "qwen3.5-plus",
+      "label": "Alibaba Coding Plan: Qwen3.5 Plus"
+    }
+  },
+  "autoResolveCargo": true,
+  "narratorProgressMode": "standard",
+  "mcpServers": [
+    {
+      "id": "desktop-commander",
+      "name": "Desktop Commander",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@wonderwhy-er/desktop-commander"],
+      "enabled": false
+    },
+    {
+      "id": "github-mcp",
+      "name": "GitHub MCP",
+      "transport": "stdio",
+      "comment": "Option A (Docker, requires Docker Desktop): command=docker, args=[\"run\",\"-i\",\"--rm\",\"-e\",\"GITHUB_PERSONAL_ACCESS_TOKEN\",\"ghcr.io/github/github-mcp-server\"], env={\"GITHUB_PERSONAL_ACCESS_TOKEN\":\"\"}",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "YOUR_GITHUB_PAT_HERE" },
+      "enabled": false
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+
+[tools] Core tools: read_file, write_file, run_command, list_directory, search_files
+[tools] Total tools registered: 14 (0 from MCP)
+
+[Orca] ▶ task:start  intent="[REDACTED CONTEXT]s reported a"  id=run_1791481269839_hskqtl
+[Orca]   maestro:start  attempt=0  repair=false
+[Maestro] Passing 14 tools to debugger agent: read_file, write_file, run_command, list_directory, search_files, github_list_prs, github_get_pr, github_list_issues, github_list_repos, github_clone_repo, docs_read, docs_list, web_fetch, web_search
+[ReactAgent] No Thought block found in iteration 1 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 2 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 3 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 4 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 6 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 7 - model may have skipped format
+[Orca]   maestro:done   attempt=0  repair=false  hasOutput=true
+[Orca]   qc:result      attempt=0  verdict=FAIL  issues=7
+[Orca]   repair:start   pass=1/2
+[Orca]   maestro:start  attempt=1  repair=true
+[Maestro] Passing 14 tools to debugger agent: read_file, write_file, run_command, list_directory, search_files, github_list_prs, github_get_pr, github_list_issues, github_list_repos, github_clone_repo, docs_read, docs_list, web_fetch, web_search
+[ReactAgent] No Thought block found in iteration 1 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 2 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 3 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 4 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 5 - model may have skipped format
+[ReactAgent] No Thought block found in iteration 6 - model may have skipped format
+[Orca] ✖ task:abort requested by user
+[Orca]   maestro:done   attempt=1  repair=true  hasOutput=false
+[Orca]   pipeline:trace    C:\Orca\.claude\worktrees\summit-recovery\apps\desktop\release\Orca-Summit-Staging-1.6.1\profile\pipeline-traces\run_1791481269839_hskqtl.json

@@ -1,0 +1,64 @@
+
+> orca@1.0.0 contract:check:strict C:\Orca\.claude\worktrees\summit-recovery
+> tsx scripts/contract-check.ts --strict
+
+══════════════════════════════════════════════════════════════
+  ORCA CONTRACT CHECK
+══════════════════════════════════════════════════════════════
+
+  Status: REVIEW REQUIRED  ⚠
+
+  Findings (1):
+
+  [REVIEW REQUIRED] Rule 7 — gate_blocked outside diagnostic/runtime/test context
+    File:   apps/desktop/src/agents/ReactAgentAdapter.ts
+    Detail: The gate_blocked status code appears in a file outside the known internal runtime or test contexts. Verify this does not allow the internal gate status to surface in user-facing output.
+
+  Comparing against: HEAD (plus uncommitted changes)
+  Changed files scanned (34):
+    apps/desktop/renderer/app.js
+    apps/desktop/renderer/index.html
+    apps/desktop/src/agents/ReactAgentAdapter.ts
+    apps/desktop/src/llmGate.ts
+    apps/desktop/src/main.ts
+    apps/desktop/src/preload.ts
+    apps/desktop/src/providerAdapter.ts
+    apps/desktop/src/types/miranda-core.d.ts
+    apps/desktop/src/types/orca-core.d.ts
+    packages/agent-loop-core/src/loop.test.ts
+    packages/agent-loop-core/src/loop.ts
+    packages/miranda-core/src/llm/openaiCompat.test.ts
+    packages/miranda-core/src/llm/openaiCompat.ts
+    packages/miranda-core/src/llm/types.ts
+    packages/miranda-core/src/llm/usage.ts
+    packages/orca-core/src/adapters/directLLM.ts
+    packages/orca-core/src/index.ts
+    packages/orca-core/src/repairLoop.ts
+    packages/orca-core/src/runtime.stress.test.ts
+    packages/orca-core/src/runtime.ts
+    packages/orca-core/src/types.ts
+    packages/pappy-core/src/index.ts
+    packages/workbench-core/src/tools/runCommandTool.ts
+    packages/workbench-core/src/tools/types.ts
+    apps/desktop/src/demoFixContract.test.ts
+    apps/desktop/src/demoFixContract.ts
+    apps/desktop/src/executionAudit.test.ts
+    apps/desktop/src/executionAudit.ts
+    apps/desktop/src/executionBudget.test.ts
+    apps/desktop/src/executionBudget.ts
+    apps/desktop/src/preloadApproval.test.ts
+    apps/desktop/src/presenterApproval.test.ts
+    apps/desktop/src/presenterApproval.ts
+    packages/orca-core/src/cancellation.test.ts
+
+──────────────────────────────────────────────────────────────
+  REQUIRED ACTION: REVIEW REQUIRED
+  Ask the user before continuing.
+  Summarise the findings above and wait for explicit approval.
+
+  Required reading before continuing:
+    docs/ORCA_UNIVERSAL_TRUTHS.md
+    docs/ORCA_SYSTEM_CONTRACT.md
+    docs/ORCA_CONTRACT_CHECK.md
+══════════════════════════════════════════════════════════════
+

@@ -1,0 +1,191 @@
+{
+  "at": "2026-10-08T17:36:51.007Z",
+  "identity": {
+    "name": "Orca Summit Staging",
+    "version": "1.6.1",
+    "userData": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\profile",
+    "sessionData": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\profile"
+  },
+  "audit": {
+    "providers": [
+      {
+        "id": "prov_d833",
+        "type": "anthropic",
+        "baseUrl": "https://api.anthropic.com/v1",
+        "keyPresent": true,
+        "keyUnchanged": true
+      },
+      {
+        "id": "prov_edd8",
+        "type": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "keyPresent": true,
+        "keyUnchanged": true
+      }
+    ],
+    "roles": {
+      "brain": {
+        "providerId": "prov_d833",
+        "model": "claude-opus-5-5",
+        "enableThinking": true
+      },
+      "coder_strong": {
+        "providerId": "prov_b942",
+        "model": "qwen/qwen3.5-flash-02-23"
+      },
+      "coder_cheap": {
+        "providerId": "prov_d833",
+        "model": "openai/gpt-4o-mini-2024-07-18"
+      },
+      "utility": {
+        "providerId": "prov_d833",
+        "model": "claude-sonnet-5-5"
+      },
+      "reviewer": {
+        "providerId": "prov_d833",
+        "model": "claude-opus-5-5"
+      },
+      "narrator": {
+        "providerId": "prov_d833",
+        "model": "claude-haiku-5-5"
+      },
+      "strong_model": {
+        "providerId": "prov_d833",
+        "model": "claude-sonnet-5-5"
+      },
+      "cheap_model": {
+        "providerId": "prov_d833",
+        "model": "claude-haiku-5-5"
+      },
+      "debugger": {
+        "providerId": "prov_d833",
+        "model": "claude-sonnet-5-5"
+      }
+    },
+    "budgetUsd": "3",
+    "demoMode": true,
+    "workspace": "",
+    "mcp": [
+      {
+        "id": "github-mcp",
+        "enabled": false
+      },
+      {
+        "id": "desktop-commander",
+        "enabled": false
+      }
+    ]
+  },
+  "baselineFiles": [
+    {
+      "path": "ISSUE.md",
+      "sha256": "3f1fb1bc1a66cfbbb4912573384322a1b94de9e89974025cc43e86fafd57710a"
+    },
+    {
+      "path": "package.json",
+      "sha256": "4bce89868a63c42194cde08641aec44681d93a7864e5faabe1973c846d99313f"
+    },
+    {
+      "path": "README.md",
+      "sha256": "b397e77214014e4a489a7c2453b0d28f7be12b3ffffd3630d36e6a35a39dfecb"
+    },
+    {
+      "path": "src\\bookings.js",
+      "sha256": "d726528d2676936907a8ac2475bbb6a21d7f857254450bc4bad8445de9c9c306"
+    },
+    {
+      "path": "test\\bookings.test.js",
+      "sha256": "23c4f3527fc60fbbaaa422c3b19f224a1ceb7c574fae1c7ce85324dc29e4f1b6"
+    }
+  ],
+  "processes": [
+    {
+      "ProcessId": 7192,
+      "ParentProcessId": 6652,
+      "Name": "Orca.exe",
+      "ExecutablePath": "C:\\Program Files\\Orca\\Orca.exe",
+      "mcp": null
+    },
+    {
+      "ProcessId": 20784,
+      "ParentProcessId": 7192,
+      "Name": "Orca.exe",
+      "ExecutablePath": "C:\\Program Files\\Orca\\Orca.exe",
+      "mcp": null
+    },
+    {
+      "ProcessId": 13072,
+      "ParentProcessId": 7192,
+      "Name": "Orca.exe",
+      "ExecutablePath": "C:\\Program Files\\Orca\\Orca.exe",
+      "mcp": null
+    },
+    {
+      "ProcessId": 7412,
+      "ParentProcessId": 7192,
+      "Name": "Orca.exe",
+      "ExecutablePath": "C:\\Program Files\\Orca\\Orca.exe",
+      "mcp": null
+    },
+    {
+      "ProcessId": 21172,
+      "ParentProcessId": 7300,
+      "Name": "Orca Summit Staging.exe",
+      "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+      "mcp": null
+    },
+    {
+      "ProcessId": 19424,
+      "ParentProcessId": 21172,
+      "Name": "Orca Summit Staging.exe",
+      "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+      "mcp": null
+    },
+    {
+      "ProcessId": 17160,
+      "ParentProcessId": 21172,
+      "Name": "Orca Summit Staging.exe",
+      "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+      "mcp": null
+    },
+    {
+      "ProcessId": 19772,
+      "ParentProcessId": 21172,
+      "Name": "Orca Summit Staging.exe",
+      "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+      "mcp": null
+    }
+  ],
+  "state": {
+    "at": "2026-10-08T17:36:51.006Z",
+    "demoMode": true,
+    "demoExecution": "offline",
+    "busy": false,
+    "initState": {
+      "ok": true,
+      "error": null
+    },
+    "authLocked": false,
+    "selectedOffline": "true",
+    "tracker": {
+      "stage": "idle",
+      "verification": "pending",
+      "lastVerdict": null,
+      "taskStatus": null,
+      "repairPass": 0,
+      "maxRepairPasses": 0,
+      "workerError": false,
+      "planFallback": false,
+      "blockingIssues": 0,
+      "timeline": []
+    },
+    "approvalVisible": false,
+    "approvalTool": "",
+    "approvalArgs": "",
+    "approvalTimer": "",
+    "alwaysApprove": false,
+    "settingsStatus": "Saved — Orca re-initialized.",
+    "notice": "",
+    "messageText": ""
+  }
+}

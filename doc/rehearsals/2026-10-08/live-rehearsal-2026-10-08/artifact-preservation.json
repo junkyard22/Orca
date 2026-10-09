@@ -1,0 +1,14 @@
+[
+  {
+    "path": "release/Orca-Summit-Staging-1.6.1/win-unpacked/Orca Summit Staging.exe",
+    "sha256": "4ca724aaa0ad850a915e7eaf7d63766ea8a8a33fe45668a9db7bd2b0941a67fa",
+    "currentSha256": "4ca724aaa0ad850a915e7eaf7d63766ea8a8a33fe45668a9db7bd2b0941a67fa",
+    "unchanged": true
+  },
+  {
+    "path": "release/Orca-Summit-Staging-1.6.1/win-unpacked/resources/app.asar",
+    "sha256": "b48691c6d725c77723a05f2ee65902661c4c5eabf2a32f7afe4f764d8c8cfc5c",
+    "currentSha256": "b48691c6d725c77723a05f2ee65902661c4c5eabf2a32f7afe4f764d8c8cfc5c",
+    "unchanged": true
+  }
+]

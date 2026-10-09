@@ -1,0 +1,2 @@
+# Preserve archived evidence and application bytes across Git checkouts.
+* -text -diff

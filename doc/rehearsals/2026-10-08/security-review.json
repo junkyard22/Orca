@@ -1,0 +1,47 @@
+{
+  "reviewedAt": "2026-10-09",
+  "scope": "New rehearsal archive committed on fix/live-rehearsal-remediation-1.6.1",
+  "credentialPatternScan": {
+    "status": "passed after candidate review",
+    "filesScannedIncludingRestoredExecutables": 243,
+    "patterns": [
+      "OpenAI and Anthropic API keys",
+      "GitHub and Slack tokens",
+      "AWS access keys",
+      "Bearer tokens",
+      "Credential-bearing URLs",
+      "Private key blocks",
+      "Google API keys",
+      "npm, GitLab, Hugging Face, and Stripe tokens"
+    ],
+    "actualCredentialsFound": 0,
+    "reviewedNonCredentialCandidates": [
+      "Official AWS example key in bundled Pappy integrity tests",
+      "Dummy credential URL in bundled Zod tests",
+      "Chromium diagnostic messages describing example credential URLs",
+      "Adjacent Chromium strings joined by the broad null-stripping scan; native UTF-16 scan found no Bearer tokens"
+    ]
+  },
+  "structuredEvidence": {
+    "filesScanned": 23,
+    "unredactedCredentialOrPersonalContextFields": 0
+  },
+  "privacy": {
+    "profilesExcluded": true,
+    "encryptedSettingsSnapshotExcluded": true,
+    "browserEncryptionMetadataExcluded": true,
+    "privateUserContextBackupExcluded": true,
+    "reportPersonalContextAndUserHomePathsRedacted": true,
+    "sanitizedEvidenceFiles": 31,
+    "screenshotsVisuallyReviewed": 9,
+    "unchangedBinaryFixturesContainHistoricalDeveloperPaths": true
+  },
+  "integrity": {
+    "manifestEntriesVerifiedAgainstArchivedAndOriginalFiles": 228,
+    "executablePartsVerified": 10,
+    "applicationCopiesByteIdenticalToOriginals": true,
+    "originalReleaseFilesUnchanged": true,
+    "executableRestorationAndRepeatInvocationPassed": true
+  },
+  "limits": "Pattern scans and manual review cover this new archive, not every historical Git object. Public examples and vendor test fixtures are retained as part of the original applications."
+}

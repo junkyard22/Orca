@@ -1,0 +1,112 @@
+Scope: 17 of 18 workspace projects
+packages/miranda-core test$ vitest run
+packages/maestro-core test$ vitest run
+packages/dewey-core test$ vitest run
+packages/benson-core test$ vitest run
+packages/dewey-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/dewey-core
+packages/benson-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/benson-core
+packages/maestro-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/maestro-core
+packages/miranda-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/miranda-core
+packages/maestro-core test:  Test Files  5 passed (5)
+packages/maestro-core test:       Tests  75 passed (75)
+packages/maestro-core test:    Start at  14:23:28
+packages/maestro-core test:    Duration  1.52s (transform 1.70s, setup 0ms, import 2.36s, tests 153ms, environment 1ms)
+packages/maestro-core test: Done
+packages/workbench-core test$ vitest run
+packages/benson-core test:  Test Files  6 passed (6)
+packages/benson-core test:       Tests  133 passed (133)
+packages/benson-core test:    Start at  14:23:28
+packages/benson-core test:    Duration  1.78s (transform 2.83s, setup 0ms, import 4.03s, tests 373ms, environment 2ms)
+packages/dewey-core test:  Test Files  2 passed (2)
+packages/dewey-core test:       Tests  32 passed (32)
+packages/dewey-core test:    Start at  14:23:28
+packages/dewey-core test:    Duration  1.81s (transform 374ms, setup 0ms, import 545ms, tests 671ms, environment 1ms)
+packages/benson-core test: Done
+packages/dewey-core test: Done
+packages/miranda-core test:  Test Files  8 passed (8)
+packages/miranda-core test:       Tests  163 passed | 1 skipped (164)
+packages/miranda-core test:    Start at  14:23:28
+packages/miranda-core test:    Duration  1.85s (transform 2.79s, setup 0ms, import 4.27s, tests 399ms, environment 2ms)
+packages/miranda-core test: Done
+packages/workbench-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/workbench-core
+packages/workbench-core test:  Test Files  2 passed (2)
+packages/workbench-core test:       Tests  55 passed (55)
+packages/workbench-core test:    Start at  14:23:30
+packages/workbench-core test:    Duration  1.20s (transform 210ms, setup 0ms, import 300ms, tests 757ms, environment 0ms)
+packages/workbench-core test: Done
+packages/claire-core test$ vitest run --passWithNoTests
+packages/pappy-core test$ vitest run
+packages/pappy-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/pappy-core
+packages/claire-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/claire-core
+packages/claire-core test: No test files found, exiting with code 0
+packages/claire-core test: include: **/*.{test,spec}.?(c|m)[jt]s?(x)
+packages/claire-core test: exclude:  **/node_modules/**, **/.git/**
+packages/claire-core test: Done
+packages/pappy-core test:  Test Files  14 passed (14)
+packages/pappy-core test:       Tests  368 passed (368)
+packages/pappy-core test:    Start at  14:23:32
+packages/pappy-core test:    Duration  1.47s (transform 4.06s, setup 0ms, import 6.12s, tests 815ms, environment 3ms)
+packages/pappy-core test: Done
+packages/orca-core test$ vitest run
+packages/pappy-eval test$ vitest run
+packages/pappy-eval test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/pappy-eval
+packages/orca-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/orca-core
+packages/pappy-eval test:  Test Files  4 passed (4)
+packages/pappy-eval test:       Tests  100 passed (100)
+packages/pappy-eval test:    Start at  14:23:34
+packages/pappy-eval test:    Duration  2.10s (transform 1.66s, setup 0ms, import 2.40s, tests 213ms, environment 1ms)
+packages/pappy-eval test: Done
+packages/orca-core test:  Test Files  16 passed (16)
+packages/orca-core test:       Tests  253 passed (253)
+packages/orca-core test:    Start at  14:23:34
+packages/orca-core test:    Duration  3.42s (transform 8.47s, setup 0ms, import 13.56s, tests 4.39s, environment 4ms)
+packages/orca-core test: Done
+packages/agent-loop-core test$ vitest run
+packages/ext-web test$ vitest run
+packages/ext-github test$ vitest run
+packages/ext-docs test$ vitest run
+packages/ext-github test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/ext-github
+packages/ext-docs test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/ext-docs
+packages/ext-web test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/ext-web
+packages/agent-loop-core test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/agent-loop-core
+packages/ext-web test:  Test Files  1 passed (1)
+packages/ext-web test:       Tests  12 passed (12)
+packages/ext-web test:    Start at  14:23:38
+packages/ext-web test:    Duration  453ms (transform 103ms, setup 0ms, import 142ms, tests 22ms, environment 0ms)
+packages/ext-docs test:  Test Files  1 passed (1)
+packages/ext-docs test:       Tests  14 passed (14)
+packages/ext-docs test:    Start at  14:23:38
+packages/ext-docs test:    Duration  489ms (transform 114ms, setup 0ms, import 151ms, tests 51ms, environment 0ms)
+packages/ext-web test: Done
+packages/mcp-client test$ vitest run
+packages/ext-docs test: Done
+packages/ext-github test:  Test Files  1 passed (1)
+packages/ext-github test:       Tests  18 passed (18)
+packages/ext-github test:    Start at  14:23:38
+packages/ext-github test:    Duration  562ms (transform 163ms, setup 0ms, import 224ms, tests 42ms, environment 0ms)
+packages/ext-github test: Done
+packages/mcp-client test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/packages/mcp-client
+packages/agent-loop-core test:  Test Files  1 passed (1)
+packages/agent-loop-core test:       Tests  16 passed (16)
+packages/agent-loop-core test:    Start at  14:23:38
+packages/agent-loop-core test:    Duration  1.45s (transform 888ms, setup 0ms, import 1.16s, tests 23ms, environment 0ms)
+packages/mcp-client test:  Test Files  1 passed (1)
+packages/mcp-client test:       Tests  44 passed (44)
+packages/mcp-client test:    Start at  14:23:39
+packages/mcp-client test:    Duration  425ms (transform 120ms, setup 0ms, import 162ms, tests 22ms, environment 0ms)
+packages/mcp-client test: Done
+packages/agent-loop-core test: Done
+apps/desktop test$ vitest run
+apps/runner test$ vitest run
+apps/desktop test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/apps/desktop
+apps/runner test:  RUN  v4.1.11 C:/Orca/.claude/worktrees/summit-recovery/apps/runner
+apps/runner test:  Test Files  5 passed (5)
+apps/runner test:       Tests  107 passed (107)
+apps/runner test:    Start at  14:23:40
+apps/runner test:    Duration  2.92s (transform 5.72s, setup 0ms, import 8.52s, tests 349ms, environment 2ms)
+apps/runner test: Done
+apps/desktop test:  Test Files  26 passed (26)
+apps/desktop test:       Tests  350 passed (350)
+apps/desktop test:    Start at  14:23:40
+apps/desktop test:    Duration  5.32s (transform 12.52s, setup 0ms, import 19.27s, tests 7.14s, environment 9ms)
+apps/desktop test: Done

@@ -1,0 +1,8 @@
+# Logs are intentional archived evidence, despite the repository-wide ignore.
+!*.log
+!**/*.log
+
+# Machine-specific profiles and reconstructed executables are not committed.
+**/profile/
+**/Orca Summit Staging.exe
+*.restoring

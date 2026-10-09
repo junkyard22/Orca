@@ -1,0 +1,1343 @@
+{
+  "version": 1,
+  "archivedAt": "2026-10-09T18:28:00.649594+00:00",
+  "branch": "fix/live-rehearsal-remediation-1.6.1",
+  "remediationCommit": "507abde92869321d7e45acca4b6eddc58786312f",
+  "sourceRoot": "apps/desktop/release",
+  "chunkBytes": 50331648,
+  "files": [
+    {
+      "path": "live-rehearsal-2026-10-08/account-model-catalog.json",
+      "bytes": 418,
+      "sha256": "99a98d3d282b0027f6110c55fc57b788cdb9d820691eb337269259261013a327",
+      "originalSha256": "8050b3bed51c60a7b74d36f2b70b7cfeaeba3c73bc5949769a49618c1deb00a9",
+      "originalBytes": 417,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/application-stderr.log",
+      "bytes": 2349,
+      "sha256": "0a6476857e039987a43ac78e491f7a754818da62759b88b1db980b9ce944a38c"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/application-stdout.log",
+      "bytes": 2240,
+      "sha256": "e63a804359f62191ae64624a56f71a8d48ffd79570394d626b4161a703449f0b",
+      "originalSha256": "ab1f01255e0e082bad4539d5088eba722054b1c214b2764ae6ca5b26163820fd",
+      "originalBytes": 2226,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/approval-18.png",
+      "bytes": 93968,
+      "sha256": "7add57927165ce9b8fade79beeddb2cbd53bea0fb042de21b37b7e08937baf11"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/approval-36.png",
+      "bytes": 97441,
+      "sha256": "54a9451569eab7f655b371d16b75ba0bf8a7db1e19300505c23851823bbde848"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/artifact-preservation.json",
+      "bytes": 574,
+      "sha256": "2a12c2b87bc9e35d046296e43c5306b94d2cd4b7cf97f908d42ca201af845bee",
+      "originalSha256": "d51064ee0334f53caa49dcfde6a8f270b0d6fd857f5545e70da9ccb839698358",
+      "originalBytes": 573,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/cancel-ui.mjs",
+      "bytes": 1478,
+      "sha256": "4c6d255e1fcb7d94d1ca13d7735c305ab931c402f75d12e3cf3eb1c00e049145"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/collect-evidence.mjs",
+      "bytes": 3672,
+      "sha256": "db0ed88fe1a07d786c9ef7bb78a6edacee7752f56aea8262e259f421a49ad3dc",
+      "originalSha256": "da94476f68fdd5b3a9007471cc1b52877d1a74ea0d12a04655184f42d48eb876",
+      "originalBytes": 3656,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/current-state.json",
+      "bytes": 2074,
+      "sha256": "be31084598052b6e8925e6912fc14c3ccb78723418c0a4975c16ad2f4a1a447d",
+      "originalSha256": "7dfaaa05544ff9b1bca69b360e0c852d135c043a79f035c20f79a845ae6352f6",
+      "originalBytes": 2059,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/current.png",
+      "bytes": 65196,
+      "sha256": "bcac3d5855982a5e89529be121a7c5b79609eacbd2c5b2a1b5c51173db3e28ab"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/final-process-check.json",
+      "bytes": 92,
+      "sha256": "5350135e56f787f68f99058361d895807e719564db7b1305b825a20a38fc9cd6",
+      "originalSha256": "884efe6842f2a09c8addbd904889cb6a2d9f9fc2f0e8ce32d7e10731179a17c3",
+      "originalBytes": 164,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/final-state.json",
+      "bytes": 2074,
+      "sha256": "1e71dbe9f45ae94ce8eabbacc2365cb82a1d66eb4d6ac261d57ad8910cbc5121",
+      "originalSha256": "8f2a4899ba412b95da9f865acd7371b574c5bd7199034cb8ba8c4228a7ba30b7",
+      "originalBytes": 2059,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/kit-preservation.json",
+      "bytes": 37,
+      "sha256": "2790a415943aca4a4e9be02ffbb73a17fd75d275fb007a4215c0e0814b58318a",
+      "originalSha256": "6e95581af0628cdb8943f9b7e4e6eca75d6d3d3f18d9d5e525728e4bc2a909a2",
+      "originalBytes": 70,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/live-ready.png",
+      "bytes": 61250,
+      "sha256": "13dd7916135ae7a8fa43b2fee30b8992a9a45957c2de6351f36c996d953e4e55"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/outcome.png",
+      "bytes": 69760,
+      "sha256": "357f7c7c7ca4061975e6566c3367c7aa5a3a810fb6b108f1e45ae8dfc4c4cd6e"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/preflight.json",
+      "bytes": 5309,
+      "sha256": "e5a078b5f19441d05a1bdeb1d2c9ac6af361d379adda9c79552580b38b2a47ca",
+      "originalSha256": "a8a7fcdc66580f8044707599cad2e451a44f6efe4ff0ea752369e069d0d2ae0c",
+      "originalBytes": 5308,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/preflight.png",
+      "bytes": 65098,
+      "sha256": "535e35daea9ea78af1c3b597c6e2e6a1e36ec6de8519bc8097a352ec0e166ca5"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/production-before.json",
+      "bytes": 704,
+      "sha256": "c49b443c9833d67b6e37bbb5762dd0ca0ef5d789d47ad28ec5881508d5ac4908",
+      "originalSha256": "aab4e9d05041e01b097ac9eab3c000ccd24800b941294a2308095def863e546c",
+      "originalBytes": 647,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/production-preservation.json",
+      "bytes": 796,
+      "sha256": "ecf080586630379e5d457c4904c338a9aab50a30174df3811f9060cf6dc9d3c3",
+      "originalSha256": "c836b12150e938156c8a467a5dd2d02bb24a3c971d9b124e61548b11f26473e7",
+      "originalBytes": 739,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/receipts.redacted.json",
+      "bytes": 37254,
+      "sha256": "f3fc1fb4d7adaec24ce06a768e6a527e176f37dc09be34d7d5f35dc347283b89",
+      "originalSha256": "a5e611c1e137ab707e9e6a2f7d138182f1df1a88e8bab2b6a0b0a6326afdc939",
+      "originalBytes": 37225,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/REHEARSAL-REPORT.md",
+      "bytes": 15085,
+      "sha256": "b61820cb83959ee10f1308b17f838eb9dc37afeddd661d5741826a5c3eabb563"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/run-analysis.redacted.md",
+      "bytes": 46558,
+      "sha256": "b86ddc9baa006fdc0f21bca9a8dbfd173015ee7fd9070f3109954004d31147da",
+      "originalSha256": "09798282fd0a665df007266c3599d43962930448f605b74d60ac60b6eb01450a",
+      "originalBytes": 46635,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/run-events.redacted.json",
+      "bytes": 415072,
+      "sha256": "74769b5b0b8219c5712736947d5bbf5d13a98bc42ba9229a9a5d26ef8b53383d",
+      "originalSha256": "51b7055302139145bc370a7c1854e1ca26b9dcfaa09d3ef906353f1f1074d85e",
+      "originalBytes": 416997,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/source.diff",
+      "bytes": 197,
+      "sha256": "eec0b929134f3816cebe6b60a1b21410db60663f29f5424680ca0d3b6df76539"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/test-execution.json",
+      "bytes": 378,
+      "sha256": "908b4da013da52e5cc352ec2ad4733406f3a72118b22c32a57f8177e1079b5f5",
+      "originalSha256": "f4559e5ac6695c2eb44abf162efa9ead1e748412460759a89199ce25cbddec7f",
+      "originalBytes": 377,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/timeline.jsonl",
+      "bytes": 9408,
+      "sha256": "92c1704cbe609d885f9d4294d93d8617c47a34e32df8649dc7f224646b207d34",
+      "originalSha256": "0b13ec0dbab366df4b56480642cc6749d32449c9f1645c92279bc2884ff3d5ff",
+      "originalBytes": 8998,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/ui-controller.mjs",
+      "bytes": 17782,
+      "sha256": "25775961a0f55f3156951ae49131d29e73df8de8f1ecf782fee1dc2740ca9325",
+      "originalSha256": "7deb80fdb8a36af50d25979dc83ef795137519430abc2c33d4168e56614da3e8",
+      "originalBytes": 17726,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-after/ISSUE.md",
+      "bytes": 604,
+      "sha256": "3f1fb1bc1a66cfbbb4912573384322a1b94de9e89974025cc43e86fafd57710a"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-after/package.json",
+      "bytes": 212,
+      "sha256": "4bce89868a63c42194cde08641aec44681d93a7864e5faabe1973c846d99313f"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-after/README.md",
+      "bytes": 253,
+      "sha256": "b397e77214014e4a489a7c2453b0d28f7be12b3ffffd3630d36e6a35a39dfecb"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-after/src/bookings.js",
+      "bytes": 1531,
+      "sha256": "296831daec6dd338fd022f8d712ab9b3da4bfd00ddc88a501687f3a6259ff4c8"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-after/test/bookings.test.js",
+      "bytes": 2125,
+      "sha256": "23c4f3527fc60fbbaaa422c3b19f224a1ceb7c574fae1c7ce85324dc29e4f1b6"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-after-hashes.json",
+      "bytes": 726,
+      "sha256": "2089dbebe54d48ed98e834f18feaa4bb544bca5a6ee972501b1fcb85e513c9f6",
+      "originalSha256": "df8a473456f5d69342f54048c84dc7f371efac589436673a9e8ba7369340f451",
+      "originalBytes": 725,
+      "sanitized": true
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-before/ISSUE.md",
+      "bytes": 604,
+      "sha256": "3f1fb1bc1a66cfbbb4912573384322a1b94de9e89974025cc43e86fafd57710a"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-before/package.json",
+      "bytes": 212,
+      "sha256": "4bce89868a63c42194cde08641aec44681d93a7864e5faabe1973c846d99313f"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-before/README.md",
+      "bytes": 253,
+      "sha256": "b397e77214014e4a489a7c2453b0d28f7be12b3ffffd3630d36e6a35a39dfecb"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-before/src/bookings.js",
+      "bytes": 1533,
+      "sha256": "d726528d2676936907a8ac2475bbb6a21d7f857254450bc4bad8445de9c9c306"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-before/test/bookings.test.js",
+      "bytes": 2125,
+      "sha256": "23c4f3527fc60fbbaaa422c3b19f224a1ceb7c574fae1c7ce85324dc29e4f1b6"
+    },
+    {
+      "path": "live-rehearsal-2026-10-08/workspace-comparison.json",
+      "bytes": 1144,
+      "sha256": "4ac71bb6441d8f52d63ededdbd286456cff3649b4717e2742d4350a0f33b3b97",
+      "originalSha256": "23a8fe1abcb8909e759a15e286f5093bdb83512323914052dc510fe330e3e320",
+      "originalBytes": 1143,
+      "sanitized": true
+    },
+    {
+      "path": "preflight-1.6.1/offline-smoke-initial-09147476.json",
+      "bytes": 49109,
+      "sha256": "43402f4319e863385c351ee9c9eec66ce2f793c56d1d47a08365daa333654343",
+      "originalSha256": "8b7b9cfcc383485db77ab0afccc23bb13c16f3670dcb21c95be095419613c503",
+      "originalBytes": 49108,
+      "sanitized": true
+    },
+    {
+      "path": "preflight-1.6.1/offline-smoke.json",
+      "bytes": 46291,
+      "sha256": "011a8f16f22c36d4320bb0edc5c6ff24bc7454647220da153742da587f793c64",
+      "originalSha256": "b2ace4884de58bf87ba5e0bd18706717ef4449ed46989bd8c019aecbde42f924",
+      "originalBytes": 46290,
+      "sanitized": true
+    },
+    {
+      "path": "preflight-1.6.1/pappy-verdict.png",
+      "bytes": 79667,
+      "sha256": "54a80d609acb7c2b1d38777b66aca0d03a8c927e252881710ecf8b2748941509"
+    },
+    {
+      "path": "preflight-1.6.1/pipeline.png",
+      "bytes": 68711,
+      "sha256": "42616976218bec8426ddbc1db77645f8d60c863f6312233a49caaf73b13929b3"
+    },
+    {
+      "path": "preflight-1.6.1/preservation-check.json",
+      "bytes": 37,
+      "sha256": "062ac9d64af02bfe2283a0be9f7169cf5e110a80e4b64dc1179a617ff26aa615",
+      "originalSha256": "f414b7fd6eb8973e7c90b07300a60aa77407df34bf1ae679f7f5fb36a7dcbaf2",
+      "originalBytes": 36,
+      "sanitized": true
+    },
+    {
+      "path": "preflight-1.6.1/protected-before.json",
+      "bytes": 9439,
+      "sha256": "739422332e8ef87feaa6f8ba71f002fba3a013bdf9a623485cae6ab292723195",
+      "originalSha256": "0a092bf7ce60ed687a0c71eff3c6858c389bdb1d75c6a68d1cddd680e51d3387",
+      "originalBytes": 9695,
+      "sanitized": true
+    },
+    {
+      "path": "preflight-1.6.1/smoke-staging.mjs",
+      "bytes": 11679,
+      "sha256": "ca0352803df8b31e0dd952cd99e7867692a4e99ab4df08b918444a521d94d1a2"
+    },
+    {
+      "path": "preflight-1.6.1/staging-stderr.log",
+      "bytes": 760,
+      "sha256": "0d5733f2cdc62d1dc72bef0fdffe292a03e84c5988e1beceed260a7d8f9a0f06"
+    },
+    {
+      "path": "preflight-1.6.1/staging-stdout.log",
+      "bytes": 2,
+      "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6"
+    },
+    {
+      "path": "preflight-1.6.1/startup.png",
+      "bytes": 64997,
+      "sha256": "48c19253243a056ae602df46322b15b4e39045e5b2842ae3647c0aa0b61635a0"
+    },
+    {
+      "path": "remediation-1.6.1/contract-check.log",
+      "bytes": 3141,
+      "sha256": "b442aa9d14d6f262ada5788402d204edba2c53c6f73ea793e8b0776e7669ac95",
+      "originalSha256": "2499ef8a2f575c6f2648c2fd13aa8a79a886355ed349570bfcb2635011be8725",
+      "originalBytes": 5284,
+      "sanitized": true
+    },
+    {
+      "path": "remediation-1.6.1/edit-wiring.py",
+      "bytes": 3886,
+      "sha256": "fd3af877357a016bfc6c85270017082d72b8af7ef1ca695403a339a309186b56"
+    },
+    {
+      "path": "remediation-1.6.1/kit-preservation.json",
+      "bytes": 37,
+      "sha256": "d691b618d570c94ab2ecd90ea1ba70b17eca5c8080676ede823a9e4a39f0ab76",
+      "originalSha256": "0b2c1c953dfc0a5ad20dd9c17612811ab9a76c84d95451066813e48808f6d9c6",
+      "originalBytes": 70,
+      "sanitized": true
+    },
+    {
+      "path": "remediation-1.6.1/pappy-hardening.log",
+      "bytes": 4589,
+      "sha256": "c8b6ebb3ab80b26ff0f8635703b2127c1afaf4f9f8c421fc0743066e4bb087d0",
+      "originalSha256": "02f549281dd53316cc658a8b4f82ad208acdf03fe624070e917673ddaa27084b",
+      "originalBytes": 9144,
+      "sanitized": true
+    },
+    {
+      "path": "remediation-1.6.1/pappy-raw.log",
+      "bytes": 4790,
+      "sha256": "772b0a41e196d5a04967f055f9aed423d415d71cf28f979585a9bb6bfe61ef83",
+      "originalSha256": "ae19587110f31fbdb3304a109c532934d5d143fdd91131f929ef0fe2fbfe53a1",
+      "originalBytes": 9538,
+      "sanitized": true
+    },
+    {
+      "path": "remediation-1.6.1/pappy-reference.log",
+      "bytes": 1575,
+      "sha256": "3fe06cfb7ffe0d38c07d6d23f60e784bb551db598c0b4ca786c76b899e9fc008",
+      "originalSha256": "feff9b59d8b18c34bc54e0f349928a46f7ea17230b0bf2163f72f3207f655a28",
+      "originalBytes": 3152,
+      "sanitized": true
+    },
+    {
+      "path": "remediation-1.6.1/preservation.json",
+      "bytes": 760,
+      "sha256": "391fa421f3934627ed282fa50d323f9adedad17d6ed20f0f0cb29f7b87f14d65",
+      "originalSha256": "8b68d0656278a2486b3ca31c554e9ee56d293f68ac6f00ae64dc75bbc8cb13b3",
+      "originalBytes": 885,
+      "sanitized": true
+    },
+    {
+      "path": "remediation-1.6.1/workspace-tests-final.log",
+      "bytes": 7147,
+      "sha256": "98644f0568a86a2c252a9a25c18fc196868b43b26e9f2b7c19e905f063dacc55",
+      "originalSha256": "fd396eb25250123c1b2873081e9ad2da3636396153973a39d44221b0a4679318",
+      "originalBytes": 14296,
+      "sanitized": true
+    },
+    {
+      "path": "remediation-1.6.1/workspace-tests.log",
+      "bytes": 7148,
+      "sha256": "2be954111e56d03bda546e3ff5809836b11947620cd76c7182d7dfb291651ed7",
+      "originalSha256": "c3e526f54aab18f704e974b7f20df4b65d74b48faec4de557721d832721d8d46",
+      "originalBytes": 14298,
+      "sanitized": true
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/artifact-hashes.json",
+      "bytes": 349,
+      "sha256": "1f6a2556cdd8fff329565be6d9bd45a3bc1a254d54280bdb6b1ca1de8c31dc3b"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/build-info.json",
+      "bytes": 211,
+      "sha256": "3adcdbbb4a1b82239ab49ac3181189dae93661532ae14b94193c90636e3bdd00"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/STAGING-REPORT.md",
+      "bytes": 7055,
+      "sha256": "a1ab93874d334a0193d8f56ba38a1dd32a4b6afad5601026f9f8c20b5341cad8"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/chrome_100_percent.pak",
+      "bytes": 116089,
+      "sha256": "34433fa04ddf5eb78b3b4e9c64a3af626e28641907ad7a6086614eb6a8f00a07"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/chrome_200_percent.pak",
+      "bytes": 187558,
+      "sha256": "581c8d53199c10512d31a340699f9ad269f8eea5fe6bc49e05c1bde98ee612aa"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/d3dcompiler_47.dll",
+      "bytes": 4741480,
+      "sha256": "c8e25abd3d45dfb55966a74613258c39b4a83ea2ac77f2f80903499f4d5c03f0"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/dxcompiler.dll",
+      "bytes": 25666560,
+      "sha256": "19b5788f5fc04c963b191efab9795bf4a294b0dc7dc8a33e3c4c75e7d13bbda9"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/dxil.dll",
+      "bytes": 1503600,
+      "sha256": "436f128f22050ae27323da61321a469de0678def7a4e6d86f9ccad4858724f0a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/ffmpeg.dll",
+      "bytes": 3096576,
+      "sha256": "f6f46577037db135c29490155bde31014af67a7770f43dfb4e3d7607873170cb"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/icudtl.dat",
+      "bytes": 10822192,
+      "sha256": "1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/libEGL.dll",
+      "bytes": 522752,
+      "sha256": "1d39cd65afeacdd3270fd5c47301d0727ca3467f8e50e17b13bfa861f28fcc25"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/libGLESv2.dll",
+      "bytes": 7967232,
+      "sha256": "9869159dc3f62f52033c38ad22fa7a586555d103b56e30091234690525f19cba"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/LICENSE.electron.txt",
+      "bytes": 1096,
+      "sha256": "5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/LICENSES.chromium.html",
+      "bytes": 19475437,
+      "sha256": "0883a9eb407906c12b334d89bc5fbc63bd1df9e0803c252cc8d23cb76b6d58f3"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/af.pak",
+      "bytes": 610360,
+      "sha256": "7bf59977f051c1ccb19cb8c48a8efd57922d088ad26cd51a85a671000c845a4e"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/am.pak",
+      "bytes": 989825,
+      "sha256": "a387f4af550667980c7631532b5c8f50a20ecf2c2f45392a7e0bf23f8f6c91fc"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ar.pak",
+      "bytes": 1092515,
+      "sha256": "e8f4b9b64235893bbee95c8360c739e5ba09687072dd4b7d706cee9ae4032887"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/bg.pak",
+      "bytes": 1129698,
+      "sha256": "da36ef0cde92b2021ff39b6c3341f4d2832c1129d13248aa371573812140db9a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/bn.pak",
+      "bytes": 1456238,
+      "sha256": "4f246bc78ddfc2cc249ae99990470e2d470a13a2d7599ab8787400c4fd179cdc"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ca.pak",
+      "bytes": 687263,
+      "sha256": "b232cebcb102bf03c81286f1ec082e80d0e399d09d9251c3e574ef24fb15b68b"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/cs.pak",
+      "bytes": 713897,
+      "sha256": "58b2d7c81430bec91ff72560acd604df82ff0090e2c4e3d1ce8cac2b69bc40e9"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/da.pak",
+      "bytes": 642047,
+      "sha256": "66de87f60ce23d82457271b34da1baed85bf0f3f63b04d90610a20c4ebe66c23"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/de.pak",
+      "bytes": 688266,
+      "sha256": "dadd0439167371607d9a82222f248f268d9e27669c1d87ca09d8751c07a90d01"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/el.pak",
+      "bytes": 1243082,
+      "sha256": "9a9db32904381a6eda169f56099313a494dae63f2795678449c4ad87cd3a69fb"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/en-GB.pak",
+      "bytes": 556091,
+      "sha256": "7bbcf19623b0a34524d75a3211d305d6b01150b3ecf2bff3b140189a13c29eb4"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/en-US.pak",
+      "bytes": 562214,
+      "sha256": "446a0f711467b162cced38128932f712e4a53fe344a165110196c366fd3d87ea"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/es-419.pak",
+      "bytes": 678061,
+      "sha256": "337a0ef8be48fcf7d120026d8dd9970737604ad177df1709fefa5cca79c70079"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/es.pak",
+      "bytes": 674828,
+      "sha256": "b32a3073e0e749b8b1f0f3e082343a8ca192cf3b7244847387526a5cd8beef7f"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/et.pak",
+      "bytes": 616533,
+      "sha256": "740a4632aa00dbc07251c10cdef1480739069a6456fa9a642eef387fba935e09"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/fa.pak",
+      "bytes": 1020166,
+      "sha256": "7d13dfa4bc6ea7ae996f0696eb328de26b35e1ec7e606fb0c4f8192d4bfcbaec"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/fi.pak",
+      "bytes": 627354,
+      "sha256": "53cca3552a8bf4ccc516103cdf929b5f10ba1859ccebe644bb080082faff6878"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/fil.pak",
+      "bytes": 711710,
+      "sha256": "3503fbfa400b23a3019005a2f1d7a31d623b056889a66abcaeb1558ad4316924"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/fr.pak",
+      "bytes": 733552,
+      "sha256": "a8db41476a1103bc5bfb617b150c6b6e2ca1eb24f534872c9c15e353649cd0bc"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/gu.pak",
+      "bytes": 1439086,
+      "sha256": "947324c6aada6255df0c702114796436215f8012634a58b065b7ff3fc92162bd"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/he.pak",
+      "bytes": 892715,
+      "sha256": "d06fb5dc66cc104503a861d2e4e6ef53e9172549c862aadeddcc2b5bb856f25c"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/hi.pak",
+      "bytes": 1523238,
+      "sha256": "a775f5724ccbe9bdfeefc448b42e3b48402f81404d94dea4252bfb765a314b96"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/hr.pak",
+      "bytes": 687133,
+      "sha256": "84c6bd6ce5bcd81a89b0908f22576725128e27688f6578d13d8b2f0e7fa6335f"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/hu.pak",
+      "bytes": 734494,
+      "sha256": "cd1026c6596610617d8a313b899e9d2e2514d0cd1fbf97790f2c450309ede792"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/id.pak",
+      "bytes": 607206,
+      "sha256": "4de71f7c766db79412dcc1f5521c5f3e678cf343327cc31b0fc28472102e0247"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/it.pak",
+      "bytes": 664037,
+      "sha256": "ac12cbbdeeea05f0cf90cc57df1f6ef299444b1f499157eef8aa089f73da25f9"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ja.pak",
+      "bytes": 810483,
+      "sha256": "c737584f4b525c4d17cc2a79f0318640a7a666c43ef7aa24753551d1b75d7d7f"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/kn.pak",
+      "bytes": 1651168,
+      "sha256": "3eb9b3dda74b5e21abf7d7726cc2e682afd87141ee30a488e288695d48a5352e"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ko.pak",
+      "bytes": 687538,
+      "sha256": "bcc64be2004522a68a12dcfb6efb45f030d0badfe048220d2830b188e7f4135d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/lt.pak",
+      "bytes": 747396,
+      "sha256": "a7eae3ba06229763b85b29eb64e011b992679952165bb7239a9ece1d441de4ab"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/lv.pak",
+      "bytes": 744633,
+      "sha256": "8a4c31840217419f608b15eca1490bb4e83c5a896556a045f95af7f1390f5f8a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ml.pak",
+      "bytes": 1701775,
+      "sha256": "434221a29e71a6dfc6c14a5843713df51b2afe8cc3114cb9fedfbfdfc590ce4d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/mr.pak",
+      "bytes": 1408749,
+      "sha256": "ae12ff8ac009a4991d71363ff442abb3beaef772d08e72f4ccd685403a02f332"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ms.pak",
+      "bytes": 639802,
+      "sha256": "77912adf05407adf3dfd2b0eba269b1cb99d980dd0a16fae74dabea3a584a869"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/nb.pak",
+      "bytes": 613091,
+      "sha256": "81b5a935f83a49ef4faf7132876e500a6cd49909c1d2b45d4bf1336769874b86"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/nl.pak",
+      "bytes": 638505,
+      "sha256": "afc9e6696a40b0318ba96e786fe0b286c3ea9a2d548479c1fa43d96b1c137c62"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/pl.pak",
+      "bytes": 713495,
+      "sha256": "f92f6bff33a975e189b78a4cf0e153e85743dda432347745ebf8f1b4ff51a99b"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/pt-BR.pak",
+      "bytes": 668362,
+      "sha256": "d1aba0dbde99231d3096b7ef9ec62ed017c72804257de62ffb649d45cf234f9d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/pt-PT.pak",
+      "bytes": 672043,
+      "sha256": "1326efcde830a8b29541c98fb51e3b5e5428d2a59e1b21a11a677317d08b2bbd"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ro.pak",
+      "bytes": 697778,
+      "sha256": "7fd5b85509f67394eee48b07339c9a3a77fb1fb99b6204bae3209f9f0ffab3b1"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ru.pak",
+      "bytes": 1156619,
+      "sha256": "23166d431d70048e248e3ff47732642cb1ab73f9516384e33ef3c1979574f2ff"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/sk.pak",
+      "bytes": 725683,
+      "sha256": "91037f2ecb636857b92a2729b7c116d8dd98082b068e4f78b0fdab06f27d2eb7"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/sl.pak",
+      "bytes": 695245,
+      "sha256": "321ab341e3225dddcac858448367d43677c20e739b2ccab52f8c86aa0727d868"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/sr.pak",
+      "bytes": 1069470,
+      "sha256": "7b337dcad390a9f08c3bd1d27235898e588827fa8da8808f4bc7012011578ef0"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/sv.pak",
+      "bytes": 620034,
+      "sha256": "f10b4db7184a14f28bfdad82597d2d43b4ec859ab6eab59a5c3891aa6070f3ed"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/sw.pak",
+      "bytes": 655944,
+      "sha256": "726ba26363103920712874418cbfc23ce899c46ca8a6dc3ec9da0bf48355622b"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ta.pak",
+      "bytes": 1692959,
+      "sha256": "fd8fe5c21a10e6542599e9148c8a30557c4d437b9606d6b29b685d474d89534d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/te.pak",
+      "bytes": 1564565,
+      "sha256": "28b85fa550df913e970fac8a599ec4963b1466e3b610350924518de107e41602"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/th.pak",
+      "bytes": 1313478,
+      "sha256": "cfd9e6651e9335fbc0483aed1098112234e973303bf7101d88e0518d3fb16ffe"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/tr.pak",
+      "bytes": 667628,
+      "sha256": "4b047663f169169f3ccd33923782ae33348c37e5107314d3324f1850f3c5fb42"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/uk.pak",
+      "bytes": 1165026,
+      "sha256": "3ebafedd5f6005f56a2d7a500e59bcb435e58a6013c7e075b241a91ab1c605ed"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/ur.pak",
+      "bytes": 1005046,
+      "sha256": "51c318f3df2673cb34d0df9235021dd1794073cddf59d14433620da1141ec650"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/vi.pak",
+      "bytes": 793190,
+      "sha256": "45c351251b938ea6f46305f2c324e8144bdf7500e08d430f8280b7db9e2ce52d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/zh-CN.pak",
+      "bytes": 567739,
+      "sha256": "78837eb8a17d34e371ed72b7c7d9262876592f409fc66b293461c5468386834c"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/locales/zh-TW.pak",
+      "bytes": 560490,
+      "sha256": "fb77ff841f652f0ac8be02ce625559ae516c63081a45bde96f9277f241172eca"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/Orca Summit Staging.exe",
+      "bytes": 223865856,
+      "sha256": "4ca724aaa0ad850a915e7eaf7d63766ea8a8a33fe45668a9db7bd2b0941a67fa",
+      "parts": [
+        {
+          "path": "Orca-Summit-Staging-1.6.1/win-unpacked/Orca Summit Staging.exe.part-001",
+          "bytes": 50331648,
+          "sha256": "d1baaa1ed1a997696fdb020959953715ed9662772e60e7dd301bd692d3561a71"
+        },
+        {
+          "path": "Orca-Summit-Staging-1.6.1/win-unpacked/Orca Summit Staging.exe.part-002",
+          "bytes": 50331648,
+          "sha256": "dcaef236b44af82afc42ee1c9a67bb4df0e278d125dcba1297bf22d5a30f2ad0"
+        },
+        {
+          "path": "Orca-Summit-Staging-1.6.1/win-unpacked/Orca Summit Staging.exe.part-003",
+          "bytes": 50331648,
+          "sha256": "bec13bfd9c5d78acfa3328fddbff983e592f9b17a37a867692f9c3eaecd7322e"
+        },
+        {
+          "path": "Orca-Summit-Staging-1.6.1/win-unpacked/Orca Summit Staging.exe.part-004",
+          "bytes": 50331648,
+          "sha256": "73d7eb9bf29918ae895cc5f34bb4a0d626d71b44db683806bc7b1d87b556049e"
+        },
+        {
+          "path": "Orca-Summit-Staging-1.6.1/win-unpacked/Orca Summit Staging.exe.part-005",
+          "bytes": 22539264,
+          "sha256": "3aec31e1bb1ca16510c2bfa4c0a7e67c9a4617aef83465efc7fd18807c7401c9"
+        }
+      ]
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/app.asar",
+      "bytes": 43497601,
+      "sha256": "b48691c6d725c77723a05f2ee65902661c4c5eabf2a32f7afe4f764d8c8cfc5c"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/default_app.asar",
+      "bytes": 111073,
+      "sha256": "06d4a28be095a80eff94dbd18edcfac5b5805e1b5538e0fb7cee7c7ae81db76a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/demo/summit-app/ISSUE.md",
+      "bytes": 604,
+      "sha256": "3f1fb1bc1a66cfbbb4912573384322a1b94de9e89974025cc43e86fafd57710a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/demo/summit-app/package.json",
+      "bytes": 212,
+      "sha256": "4bce89868a63c42194cde08641aec44681d93a7864e5faabe1973c846d99313f"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/demo/summit-app/README.md",
+      "bytes": 253,
+      "sha256": "b397e77214014e4a489a7c2453b0d28f7be12b3ffffd3630d36e6a35a39dfecb"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/demo/summit-app/src/bookings.js",
+      "bytes": 1533,
+      "sha256": "d726528d2676936907a8ac2475bbb6a21d7f857254450bc4bad8445de9c9c306"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/demo/summit-app/test/bookings.test.js",
+      "bytes": 2125,
+      "sha256": "23c4f3527fc60fbbaaa422c3b19f224a1ceb7c574fae1c7ce85324dc29e4f1b6"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/orca-settings.example.json",
+      "bytes": 2149,
+      "sha256": "e8f4794522cdcc18c7bfc1552f413adac9a0773e1904e63e95a691ebefde90d0"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources/orca.ico",
+      "bytes": 145992,
+      "sha256": "4470df01e2b52446d8d053a613d95bc4cce1cfb0030cd03751e6d131ef72eb6a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/resources.pak",
+      "bytes": 6793929,
+      "sha256": "d3b5b0c43701dbac52e07085f152efa7418bc95b13a4a3667c6439b51d680e1e"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/snapshot_blob.bin",
+      "bytes": 341312,
+      "sha256": "b283c0860b4e316e10cff2ba9ea88771fbd173a64efedcf9711b249c0af64303"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/v8_context_snapshot.bin",
+      "bytes": 715208,
+      "sha256": "24998bd4fdb072daf8fff21608fc91a55d74b031b6d21c3bf949cc0c32a584aa"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/version",
+      "bytes": 7,
+      "sha256": "3ef2a0837dee364841a77ab46f69db84f9056401b082f2b204544ec3ddb17dd1"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/vk_swiftshader.dll",
+      "bytes": 5624320,
+      "sha256": "1d0465abba4a0eba6072fa774f6c1c690844ac2e9af038a44833d952db03435a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/vk_swiftshader_icd.json",
+      "bytes": 106,
+      "sha256": "32d83ff113fef532a9f97e0d2831f8656628ab1c99e9060f0332b1532839afd9"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1/win-unpacked/vulkan-1.dll",
+      "bytes": 954880,
+      "sha256": "86e77670446894cd9743c3c02a261ac3a7429fef1b23fa0c83a2f95994846cf1"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/build-info.json",
+      "bytes": 211,
+      "sha256": "cbdeffcf786e8e72fd1b285b9c3050aae8b41e1b7c27c889da4edcee26abf637"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/chrome_100_percent.pak",
+      "bytes": 116089,
+      "sha256": "34433fa04ddf5eb78b3b4e9c64a3af626e28641907ad7a6086614eb6a8f00a07"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/chrome_200_percent.pak",
+      "bytes": 187558,
+      "sha256": "581c8d53199c10512d31a340699f9ad269f8eea5fe6bc49e05c1bde98ee612aa"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/d3dcompiler_47.dll",
+      "bytes": 4741480,
+      "sha256": "c8e25abd3d45dfb55966a74613258c39b4a83ea2ac77f2f80903499f4d5c03f0"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/dxcompiler.dll",
+      "bytes": 25666560,
+      "sha256": "19b5788f5fc04c963b191efab9795bf4a294b0dc7dc8a33e3c4c75e7d13bbda9"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/dxil.dll",
+      "bytes": 1503600,
+      "sha256": "436f128f22050ae27323da61321a469de0678def7a4e6d86f9ccad4858724f0a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/ffmpeg.dll",
+      "bytes": 3096576,
+      "sha256": "f6f46577037db135c29490155bde31014af67a7770f43dfb4e3d7607873170cb"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/icudtl.dat",
+      "bytes": 10822192,
+      "sha256": "1cf67874b5a87a8363a86fb3f81e3cbbed54d389062dab8fb52308d5cf8c8612"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/libEGL.dll",
+      "bytes": 522752,
+      "sha256": "1d39cd65afeacdd3270fd5c47301d0727ca3467f8e50e17b13bfa861f28fcc25"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/libGLESv2.dll",
+      "bytes": 7967232,
+      "sha256": "9869159dc3f62f52033c38ad22fa7a586555d103b56e30091234690525f19cba"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/LICENSE.electron.txt",
+      "bytes": 1096,
+      "sha256": "5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/LICENSES.chromium.html",
+      "bytes": 19475437,
+      "sha256": "0883a9eb407906c12b334d89bc5fbc63bd1df9e0803c252cc8d23cb76b6d58f3"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/af.pak",
+      "bytes": 610360,
+      "sha256": "7bf59977f051c1ccb19cb8c48a8efd57922d088ad26cd51a85a671000c845a4e"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/am.pak",
+      "bytes": 989825,
+      "sha256": "a387f4af550667980c7631532b5c8f50a20ecf2c2f45392a7e0bf23f8f6c91fc"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ar.pak",
+      "bytes": 1092515,
+      "sha256": "e8f4b9b64235893bbee95c8360c739e5ba09687072dd4b7d706cee9ae4032887"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/bg.pak",
+      "bytes": 1129698,
+      "sha256": "da36ef0cde92b2021ff39b6c3341f4d2832c1129d13248aa371573812140db9a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/bn.pak",
+      "bytes": 1456238,
+      "sha256": "4f246bc78ddfc2cc249ae99990470e2d470a13a2d7599ab8787400c4fd179cdc"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ca.pak",
+      "bytes": 687263,
+      "sha256": "b232cebcb102bf03c81286f1ec082e80d0e399d09d9251c3e574ef24fb15b68b"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/cs.pak",
+      "bytes": 713897,
+      "sha256": "58b2d7c81430bec91ff72560acd604df82ff0090e2c4e3d1ce8cac2b69bc40e9"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/da.pak",
+      "bytes": 642047,
+      "sha256": "66de87f60ce23d82457271b34da1baed85bf0f3f63b04d90610a20c4ebe66c23"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/de.pak",
+      "bytes": 688266,
+      "sha256": "dadd0439167371607d9a82222f248f268d9e27669c1d87ca09d8751c07a90d01"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/el.pak",
+      "bytes": 1243082,
+      "sha256": "9a9db32904381a6eda169f56099313a494dae63f2795678449c4ad87cd3a69fb"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/en-GB.pak",
+      "bytes": 556091,
+      "sha256": "7bbcf19623b0a34524d75a3211d305d6b01150b3ecf2bff3b140189a13c29eb4"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/en-US.pak",
+      "bytes": 562214,
+      "sha256": "446a0f711467b162cced38128932f712e4a53fe344a165110196c366fd3d87ea"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/es-419.pak",
+      "bytes": 678061,
+      "sha256": "337a0ef8be48fcf7d120026d8dd9970737604ad177df1709fefa5cca79c70079"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/es.pak",
+      "bytes": 674828,
+      "sha256": "b32a3073e0e749b8b1f0f3e082343a8ca192cf3b7244847387526a5cd8beef7f"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/et.pak",
+      "bytes": 616533,
+      "sha256": "740a4632aa00dbc07251c10cdef1480739069a6456fa9a642eef387fba935e09"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/fa.pak",
+      "bytes": 1020166,
+      "sha256": "7d13dfa4bc6ea7ae996f0696eb328de26b35e1ec7e606fb0c4f8192d4bfcbaec"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/fi.pak",
+      "bytes": 627354,
+      "sha256": "53cca3552a8bf4ccc516103cdf929b5f10ba1859ccebe644bb080082faff6878"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/fil.pak",
+      "bytes": 711710,
+      "sha256": "3503fbfa400b23a3019005a2f1d7a31d623b056889a66abcaeb1558ad4316924"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/fr.pak",
+      "bytes": 733552,
+      "sha256": "a8db41476a1103bc5bfb617b150c6b6e2ca1eb24f534872c9c15e353649cd0bc"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/gu.pak",
+      "bytes": 1439086,
+      "sha256": "947324c6aada6255df0c702114796436215f8012634a58b065b7ff3fc92162bd"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/he.pak",
+      "bytes": 892715,
+      "sha256": "d06fb5dc66cc104503a861d2e4e6ef53e9172549c862aadeddcc2b5bb856f25c"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/hi.pak",
+      "bytes": 1523238,
+      "sha256": "a775f5724ccbe9bdfeefc448b42e3b48402f81404d94dea4252bfb765a314b96"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/hr.pak",
+      "bytes": 687133,
+      "sha256": "84c6bd6ce5bcd81a89b0908f22576725128e27688f6578d13d8b2f0e7fa6335f"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/hu.pak",
+      "bytes": 734494,
+      "sha256": "cd1026c6596610617d8a313b899e9d2e2514d0cd1fbf97790f2c450309ede792"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/id.pak",
+      "bytes": 607206,
+      "sha256": "4de71f7c766db79412dcc1f5521c5f3e678cf343327cc31b0fc28472102e0247"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/it.pak",
+      "bytes": 664037,
+      "sha256": "ac12cbbdeeea05f0cf90cc57df1f6ef299444b1f499157eef8aa089f73da25f9"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ja.pak",
+      "bytes": 810483,
+      "sha256": "c737584f4b525c4d17cc2a79f0318640a7a666c43ef7aa24753551d1b75d7d7f"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/kn.pak",
+      "bytes": 1651168,
+      "sha256": "3eb9b3dda74b5e21abf7d7726cc2e682afd87141ee30a488e288695d48a5352e"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ko.pak",
+      "bytes": 687538,
+      "sha256": "bcc64be2004522a68a12dcfb6efb45f030d0badfe048220d2830b188e7f4135d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/lt.pak",
+      "bytes": 747396,
+      "sha256": "a7eae3ba06229763b85b29eb64e011b992679952165bb7239a9ece1d441de4ab"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/lv.pak",
+      "bytes": 744633,
+      "sha256": "8a4c31840217419f608b15eca1490bb4e83c5a896556a045f95af7f1390f5f8a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ml.pak",
+      "bytes": 1701775,
+      "sha256": "434221a29e71a6dfc6c14a5843713df51b2afe8cc3114cb9fedfbfdfc590ce4d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/mr.pak",
+      "bytes": 1408749,
+      "sha256": "ae12ff8ac009a4991d71363ff442abb3beaef772d08e72f4ccd685403a02f332"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ms.pak",
+      "bytes": 639802,
+      "sha256": "77912adf05407adf3dfd2b0eba269b1cb99d980dd0a16fae74dabea3a584a869"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/nb.pak",
+      "bytes": 613091,
+      "sha256": "81b5a935f83a49ef4faf7132876e500a6cd49909c1d2b45d4bf1336769874b86"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/nl.pak",
+      "bytes": 638505,
+      "sha256": "afc9e6696a40b0318ba96e786fe0b286c3ea9a2d548479c1fa43d96b1c137c62"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/pl.pak",
+      "bytes": 713495,
+      "sha256": "f92f6bff33a975e189b78a4cf0e153e85743dda432347745ebf8f1b4ff51a99b"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/pt-BR.pak",
+      "bytes": 668362,
+      "sha256": "d1aba0dbde99231d3096b7ef9ec62ed017c72804257de62ffb649d45cf234f9d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/pt-PT.pak",
+      "bytes": 672043,
+      "sha256": "1326efcde830a8b29541c98fb51e3b5e5428d2a59e1b21a11a677317d08b2bbd"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ro.pak",
+      "bytes": 697778,
+      "sha256": "7fd5b85509f67394eee48b07339c9a3a77fb1fb99b6204bae3209f9f0ffab3b1"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ru.pak",
+      "bytes": 1156619,
+      "sha256": "23166d431d70048e248e3ff47732642cb1ab73f9516384e33ef3c1979574f2ff"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/sk.pak",
+      "bytes": 725683,
+      "sha256": "91037f2ecb636857b92a2729b7c116d8dd98082b068e4f78b0fdab06f27d2eb7"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/sl.pak",
+      "bytes": 695245,
+      "sha256": "321ab341e3225dddcac858448367d43677c20e739b2ccab52f8c86aa0727d868"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/sr.pak",
+      "bytes": 1069470,
+      "sha256": "7b337dcad390a9f08c3bd1d27235898e588827fa8da8808f4bc7012011578ef0"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/sv.pak",
+      "bytes": 620034,
+      "sha256": "f10b4db7184a14f28bfdad82597d2d43b4ec859ab6eab59a5c3891aa6070f3ed"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/sw.pak",
+      "bytes": 655944,
+      "sha256": "726ba26363103920712874418cbfc23ce899c46ca8a6dc3ec9da0bf48355622b"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ta.pak",
+      "bytes": 1692959,
+      "sha256": "fd8fe5c21a10e6542599e9148c8a30557c4d437b9606d6b29b685d474d89534d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/te.pak",
+      "bytes": 1564565,
+      "sha256": "28b85fa550df913e970fac8a599ec4963b1466e3b610350924518de107e41602"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/th.pak",
+      "bytes": 1313478,
+      "sha256": "cfd9e6651e9335fbc0483aed1098112234e973303bf7101d88e0518d3fb16ffe"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/tr.pak",
+      "bytes": 667628,
+      "sha256": "4b047663f169169f3ccd33923782ae33348c37e5107314d3324f1850f3c5fb42"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/uk.pak",
+      "bytes": 1165026,
+      "sha256": "3ebafedd5f6005f56a2d7a500e59bcb435e58a6013c7e075b241a91ab1c605ed"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/ur.pak",
+      "bytes": 1005046,
+      "sha256": "51c318f3df2673cb34d0df9235021dd1794073cddf59d14433620da1141ec650"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/vi.pak",
+      "bytes": 793190,
+      "sha256": "45c351251b938ea6f46305f2c324e8144bdf7500e08d430f8280b7db9e2ce52d"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/zh-CN.pak",
+      "bytes": 567739,
+      "sha256": "78837eb8a17d34e371ed72b7c7d9262876592f409fc66b293461c5468386834c"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/locales/zh-TW.pak",
+      "bytes": 560490,
+      "sha256": "fb77ff841f652f0ac8be02ce625559ae516c63081a45bde96f9277f241172eca"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/Orca Summit Staging.exe",
+      "bytes": 223865856,
+      "sha256": "5df95bcc7230b7460ecabcbfef65370ab8cf245e8512ae6ecea0f8c0d3e55c8d",
+      "parts": [
+        {
+          "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/Orca Summit Staging.exe.part-001",
+          "bytes": 50331648,
+          "sha256": "d1baaa1ed1a997696fdb020959953715ed9662772e60e7dd301bd692d3561a71"
+        },
+        {
+          "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/Orca Summit Staging.exe.part-002",
+          "bytes": 50331648,
+          "sha256": "dcaef236b44af82afc42ee1c9a67bb4df0e278d125dcba1297bf22d5a30f2ad0"
+        },
+        {
+          "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/Orca Summit Staging.exe.part-003",
+          "bytes": 50331648,
+          "sha256": "bec13bfd9c5d78acfa3328fddbff983e592f9b17a37a867692f9c3eaecd7322e"
+        },
+        {
+          "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/Orca Summit Staging.exe.part-004",
+          "bytes": 50331648,
+          "sha256": "73d7eb9bf29918ae895cc5f34bb4a0d626d71b44db683806bc7b1d87b556049e"
+        },
+        {
+          "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/Orca Summit Staging.exe.part-005",
+          "bytes": 22539264,
+          "sha256": "6c3396d3edcdb616217f8248720422990482daa0464b7a9ec7f515053f1b4e6a"
+        }
+      ]
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/app.asar",
+      "bytes": 43475670,
+      "sha256": "3ea4f23fc5775916ebaae52b46330c5ecd12563e7938cbbed58f91618d032f20"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/default_app.asar",
+      "bytes": 111073,
+      "sha256": "06d4a28be095a80eff94dbd18edcfac5b5805e1b5538e0fb7cee7c7ae81db76a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/demo/summit-app/ISSUE.md",
+      "bytes": 604,
+      "sha256": "3f1fb1bc1a66cfbbb4912573384322a1b94de9e89974025cc43e86fafd57710a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/demo/summit-app/package.json",
+      "bytes": 212,
+      "sha256": "4bce89868a63c42194cde08641aec44681d93a7864e5faabe1973c846d99313f"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/demo/summit-app/README.md",
+      "bytes": 253,
+      "sha256": "b397e77214014e4a489a7c2453b0d28f7be12b3ffffd3630d36e6a35a39dfecb"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/demo/summit-app/src/bookings.js",
+      "bytes": 1533,
+      "sha256": "d726528d2676936907a8ac2475bbb6a21d7f857254450bc4bad8445de9c9c306"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/demo/summit-app/test/bookings.test.js",
+      "bytes": 2125,
+      "sha256": "23c4f3527fc60fbbaaa422c3b19f224a1ceb7c574fae1c7ce85324dc29e4f1b6"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/orca-settings.example.json",
+      "bytes": 2149,
+      "sha256": "e8f4794522cdcc18c7bfc1552f413adac9a0773e1904e63e95a691ebefde90d0"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources/orca.ico",
+      "bytes": 145992,
+      "sha256": "4470df01e2b52446d8d053a613d95bc4cce1cfb0030cd03751e6d131ef72eb6a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/resources.pak",
+      "bytes": 6793929,
+      "sha256": "d3b5b0c43701dbac52e07085f152efa7418bc95b13a4a3667c6439b51d680e1e"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/snapshot_blob.bin",
+      "bytes": 341312,
+      "sha256": "b283c0860b4e316e10cff2ba9ea88771fbd173a64efedcf9711b249c0af64303"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/v8_context_snapshot.bin",
+      "bytes": 715208,
+      "sha256": "24998bd4fdb072daf8fff21608fc91a55d74b031b6d21c3bf949cc0c32a584aa"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/version",
+      "bytes": 7,
+      "sha256": "3ef2a0837dee364841a77ab46f69db84f9056401b082f2b204544ec3ddb17dd1"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/vk_swiftshader.dll",
+      "bytes": 5624320,
+      "sha256": "1d0465abba4a0eba6072fa774f6c1c690844ac2e9af038a44833d952db03435a"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/vk_swiftshader_icd.json",
+      "bytes": 106,
+      "sha256": "32d83ff113fef532a9f97e0d2831f8656628ab1c99e9060f0332b1532839afd9"
+    },
+    {
+      "path": "Orca-Summit-Staging-1.6.1-initial-09147476/win-unpacked/vulkan-1.dll",
+      "bytes": 954880,
+      "sha256": "86e77670446894cd9743c3c02a261ac3a7429fef1b23fa0c83a2f95994846cf1"
+    }
+  ],
+  "excluded": [
+    "live-rehearsal-2026-10-08/staging-settings-before.encrypted.json",
+    "preflight-1.6.1/local-state-before.json",
+    "preflight-1.6.1/user-context-before.json",
+    "Orca-Summit-Staging-1.6.1/profile/",
+    "Orca-Summit-Staging-1.6.1-initial-09147476/profile/"
+  ],
+  "sanitization": {
+    "credentialAndPersonalContextFieldsRedacted": true,
+    "userHomePathsRedacted": true,
+    "credentialBearingUrlsRedacted": true,
+    "sanitizedFiles": [
+      "live-rehearsal-2026-10-08/account-model-catalog.json",
+      "live-rehearsal-2026-10-08/application-stdout.log",
+      "live-rehearsal-2026-10-08/artifact-preservation.json",
+      "live-rehearsal-2026-10-08/collect-evidence.mjs",
+      "live-rehearsal-2026-10-08/current-state.json",
+      "live-rehearsal-2026-10-08/final-process-check.json",
+      "live-rehearsal-2026-10-08/final-state.json",
+      "live-rehearsal-2026-10-08/kit-preservation.json",
+      "live-rehearsal-2026-10-08/preflight.json",
+      "live-rehearsal-2026-10-08/production-before.json",
+      "live-rehearsal-2026-10-08/production-preservation.json",
+      "live-rehearsal-2026-10-08/receipts.redacted.json",
+      "live-rehearsal-2026-10-08/run-analysis.redacted.md",
+      "live-rehearsal-2026-10-08/run-events.redacted.json",
+      "live-rehearsal-2026-10-08/test-execution.json",
+      "live-rehearsal-2026-10-08/timeline.jsonl",
+      "live-rehearsal-2026-10-08/ui-controller.mjs",
+      "live-rehearsal-2026-10-08/workspace-after-hashes.json",
+      "live-rehearsal-2026-10-08/workspace-comparison.json",
+      "preflight-1.6.1/offline-smoke-initial-09147476.json",
+      "preflight-1.6.1/offline-smoke.json",
+      "preflight-1.6.1/preservation-check.json",
+      "preflight-1.6.1/protected-before.json",
+      "remediation-1.6.1/contract-check.log",
+      "remediation-1.6.1/kit-preservation.json",
+      "remediation-1.6.1/pappy-hardening.log",
+      "remediation-1.6.1/pappy-raw.log",
+      "remediation-1.6.1/pappy-reference.log",
+      "remediation-1.6.1/preservation.json",
+      "remediation-1.6.1/workspace-tests-final.log",
+      "remediation-1.6.1/workspace-tests.log"
+    ],
+    "applicationBinariesUnchanged": true
+  }
+}

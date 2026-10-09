@@ -1,0 +1,25 @@
+Debugger listening on ws://127.0.0.1:19562/9cfaf70a-e4eb-46a9-adac-91a8a0ec060b
+For help, see: https://nodejs.org/learn/getting-started/debugging
+[RunnerRegistry] Registered runner: shell
+Debugger attached.
+
+DevTools listening on ws://127.0.0.1:19561/devtools/browser/6d0eef66-2ffd-43b7-8165-15ebfe2bc892
+[Dewey] Context loaded from C:\Orca\.claude\worktrees\summit-recovery\apps\desktop\release\Orca-Summit-Staging-1.6.1\profile\userContext.json
+[Dewey] Context saved to C:\Orca\.claude\worktrees\summit-recovery\apps\desktop\release\Orca-Summit-Staging-1.6.1\profile\userContext.json
+[Dewey] Context saved to C:\Orca\.claude\worktrees\summit-recovery\apps\desktop\release\Orca-Summit-Staging-1.6.1\profile\userContext.json
+[ext-github] GITHUB_TOKEN not set. Public API calls are limited to 60 req/hr. Set GITHUB_TOKEN for higher limits and private repo access.
+[Dewey] Context saved to C:\Orca\.claude\worktrees\summit-recovery\apps\desktop\release\Orca-Summit-Staging-1.6.1\profile\userContext.json
+[Dewey] Context saved to C:\Orca\.claude\worktrees\summit-recovery\apps\desktop\release\Orca-Summit-Staging-1.6.1\profile\userContext.json
+[Dewey] Briefing for task type "general", tone "casual"
+[Dewey] Briefing for task type "general", tone "casual"
+[Pappy FAIL] 7 issue(s): [
+  'HIGH TOOL_FAILURE: Tool "run_command" reported a failure. Downstream results cannot be trusted.',
+  'LOW COMPLETENESS_GOAL_COVERAGE: Output covers only 45% of the task goals. Missing concepts: identifies, described, source, code, minimal, reported.',
+  'LOW UNSAFE_FUNCTIONAL_PATTERN: Diff contains a potentially unsafe pattern (injection/eval/shell risk): "exec("',
+  'HIGH FIX_TEST_RESULT_UNREADABLE: The final test run (npm test) produced no recognisable test summary, so its result cannot be verified.',
+  'HIGH REQUIRED_RECEIPT_MISSING: Required receipt AC1 is missing: Output identifies the root cause of the bug described in ISSUE.md',
+  'HIGH REQUIRED_RECEIPT_MISSING: Required receipt AC3 is missing: Project test suite is run and its results are reported as passing',
+  'HIGH REQUIRED_RECEIPT_MISSING: Required receipt AC4 is missing: Output confirms the reported problem from ISSUE.md no longer occurs'
+]
+Debugger ending on ws://127.0.0.1:19562/9cfaf70a-e4eb-46a9-adac-91a8a0ec060b
+For help, see: https://nodejs.org/learn/getting-started/debugging

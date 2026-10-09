@@ -1,0 +1,22 @@
+[
+  {
+    "path": "C:/[REDACTED CONTEXT]s/james/AppData/Roaming/@clawde/desktop/orca-settings.json",
+    "sha256": "6c93aaf96f8dc97868c3be88eb5088312e02f57ae80b8d5961d2d10f2968d56b",
+    "unchanged": true
+  },
+  {
+    "path": "C:/[REDACTED CONTEXT]s/james/AppData/Roaming/@clawde/desktop/Local State",
+    "sha256": "7bb32c0524de36a687a8711522f060e4aba578697ae242e405691ee74d4f16f3",
+    "unchanged": true
+  },
+  {
+    "path": "C:/[REDACTED CONTEXT]s/james/AppData/Roaming/@clawde/desktop/orca-auth.json",
+    "sha256": "c474e4f9eebb7f364242703285756cf893296f8e4da856e61f7702f837a3ec6a",
+    "unchanged": true
+  },
+  {
+    "path": "C:/[REDACTED CONTEXT]s/james/.orca/userContext.json",
+    "sha256": "45e11f9901dc662b88a17b6553c83c025626bc5aaf21a17b6fb20e34d6495d58",
+    "unchanged": true
+  }
+]

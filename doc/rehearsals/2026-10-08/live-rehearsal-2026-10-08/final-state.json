@@ -1,0 +1,51 @@
+{
+  "at": "2026-10-08T17:43:29.652Z",
+  "demoMode": true,
+  "demoExecution": "live",
+  "busy": false,
+  "initState": {
+    "ok": true,
+    "error": null
+  },
+  "authLocked": false,
+  "selectedOffline": "false",
+  "outcome": "–\nStopped\nThe run was stopped before it finished.\nRetry\nReset Demo",
+  "tracker": {
+    "stage": "verify",
+    "verification": "reverifying",
+    "lastVerdict": "FAIL",
+    "taskStatus": null,
+    "repairPass": 1,
+    "maxRepairPasses": 2,
+    "workerError": true,
+    "planFallback": false,
+    "blockingIssues": 5,
+    "timeline": [
+      {
+        "kind": "verifying",
+        "label": "Pappy verifying the work"
+      },
+      {
+        "kind": "failed",
+        "label": "Pappy rejected the result (7 issues)"
+      },
+      {
+        "kind": "repairing",
+        "label": "Repair pass 1 started"
+      },
+      {
+        "kind": "reverifying",
+        "label": "Pappy re-verifying the repair"
+      }
+    ]
+  },
+  "approvalVisible": false,
+  "approvalId": "tool_1791481358824_ad34e",
+  "approvalTool": "run_command",
+  "approvalArgs": "Command: npm test",
+  "approvalTimer": "",
+  "alwaysApprove": false,
+  "settingsStatus": "",
+  "notice": "",
+  "messageText": "YOU\n[REDACTED CONTEXT]s reported a bug in this meeting-room booking app (see ISSUE.md). Investigate the repository, identify the root cause, and implement the smallest correct fix in the source code. Then run the project's test suite and verify that the reported problem is actually resolved. Do not change unrelated behavior or modify the existing tests.\nNarrator\nCould not complete\n126.6s\nDetails\n›\nFull trace ↓\n✕\n▸\nThe main work is complete. I’m checking the result.\n!\nThe checks found something to fix.\n▸\nI’m correcting the issues that were found.\n!\nA work step finished, but it may need another pass.\n⚙\nrun_command\n✗ Denied\nCommand: npm test\n⚙\nrun_command\n✗ Denied\nCommand: npm test\nStopped.\nunknown\nFAIL\n50%\n0.00s · 1 repair\nDetails\n›\n–\nStopped\nThe run was stopped before it finished.\nRetry\nReset Demo"
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "path": "[USER_HOME]/AppData/Roaming/@clawde/desktop/orca-settings.json",
+    "unchanged": true
+  },
+  {
+    "path": "[USER_HOME]/AppData/Roaming/@clawde/desktop/Local State",
+    "unchanged": true
+  },
+  {
+    "path": "[USER_HOME]/AppData/Roaming/@clawde/desktop/orca-auth.json",
+    "unchanged": true
+  },
+  {
+    "path": "[USER_HOME]/.orca/userContext.json",
+    "unchanged": true
+  },
+  {
+    "path": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+    "unchanged": true
+  },
+  {
+    "path": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\resources\\app.asar",
+    "unchanged": true
+  }
+]

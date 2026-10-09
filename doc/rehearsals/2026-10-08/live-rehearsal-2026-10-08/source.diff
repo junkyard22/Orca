@@ -1,0 +1,5 @@
+--- before/src/bookings.js
++++ after/src/bookings.js
+@@ -29 +29 @@
+-  return first.start <= second.end && second.start <= first.end;
++  return first.start < second.end && second.start < first.end;

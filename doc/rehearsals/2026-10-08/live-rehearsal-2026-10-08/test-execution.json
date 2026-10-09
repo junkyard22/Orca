@@ -1,0 +1,17 @@
+{
+  "baseline": {
+    "executed": false,
+    "expectedPass": 7,
+    "expectedFail": 1,
+    "actualPass": null,
+    "actualFail": null
+  },
+  "final": {
+    "executed": false,
+    "expectedPass": 8,
+    "expectedFail": 0,
+    "actualPass": null,
+    "actualFail": null
+  },
+  "reason": "Both npm test requests were denied; no test output or successful command receipt exists."
+}

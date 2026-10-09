@@ -1,0 +1,10 @@
+{
+  "name": "room-booking",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tiny meeting-room booking rules used for the Orca demo.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

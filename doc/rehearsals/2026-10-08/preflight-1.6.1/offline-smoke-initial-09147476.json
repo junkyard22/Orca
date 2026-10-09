@@ -1,0 +1,1223 @@
+{
+  "exe": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+  "profile": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\profile",
+  "checks": {
+    "startup": true,
+    "encryptedCredentialsLoadedWithoutExposure": true,
+    "settingsLoading": true,
+    "demoModeSelection": true,
+    "offlineFindAndFix": true,
+    "pipelineVisualization": true,
+    "pappyVerdict": true,
+    "noUnnecessaryMcpProcesses": true,
+    "noApiCalls": true,
+    "stagingSettingsUnchanged": true
+  },
+  "rendererErrors": [],
+  "networkRequests": [],
+  "processSamples": [
+    {
+      "at": "2026-10-08T17:00:23.942Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:25.702Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:27.283Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:29.056Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:30.688Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:32.290Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:33.885Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:35.473Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:37.071Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:38.639Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:40.227Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:41.818Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:43.389Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:44.977Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:46.553Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:48.143Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:49.714Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:51.327Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:52.910Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:54.495Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:56.065Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:57.639Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:00:59.223Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:01:00.803Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:01:02.383Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:01:03.969Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:01:05.551Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:01:07.134Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:01:08.710Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:01:10.277Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    },
+    {
+      "at": "2026-10-08T17:01:11.855Z",
+      "processes": [
+        {
+          "ProcessId": 9568,
+          "ParentProcessId": 18612,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 20496,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 14256,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        },
+        {
+          "ProcessId": 16304,
+          "ParentProcessId": 9568,
+          "Name": "Orca Summit Staging.exe",
+          "ExecutablePath": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\win-unpacked\\Orca Summit Staging.exe",
+          "mcp": null
+        }
+      ],
+      "unwanted": []
+    }
+  ],
+  "identity": {
+    "name": "Orca Summit Staging",
+    "version": "1.6.1",
+    "userData": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\profile",
+    "sessionData": "C:\\Orca\\.claude\\worktrees\\summit-recovery\\apps\\desktop\\release\\Orca-Summit-Staging-1.6.1\\profile",
+    "isPackaged": true
+  },
+  "initial": {
+    "demoMode": true,
+    "demoExecution": "offline",
+    "busy": false,
+    "showPipeline": true,
+    "classes": "demo-mode demo-offline",
+    "offlineSelected": "true",
+    "badge": "OFFLINE DEMO — Simulated AI responses",
+    "traceVisible": false,
+    "strip": "",
+    "pappyCards": [],
+    "pappyChecks": 0,
+    "tracker": {
+      "stage": "idle",
+      "verification": "pending",
+      "lastVerdict": null,
+      "taskStatus": null,
+      "repairPass": 0,
+      "maxRepairPasses": 0,
+      "workerError": false,
+      "planFallback": false,
+      "blockingIssues": 0,
+      "timeline": []
+    }
+  },
+  "settings": {
+    "demoMode": true,
+    "showPipeline": false,
+    "providers": [
+      {
+        "id": "prov_d833",
+        "type": "anthropic",
+        "keyPresent": true
+      },
+      {
+        "id": "prov_edd8",
+        "type": "openrouter",
+        "keyPresent": true
+      }
+    ],
+    "roles": {
+      "brain": {
+        "providerId": "prov_d833",
+        "model": "claude-opus-5-5"
+      },
+      "coder_strong": {
+        "providerId": "prov_b942",
+        "model": "qwen/qwen3.5-flash-02-23"
+      },
+      "coder_cheap": {
+        "providerId": "prov_d833",
+        "model": "openai/gpt-4o-mini-2024-07-18"
+      },
+      "utility": {
+        "providerId": "prov_d833",
+        "model": "claude-sonnet-5-5"
+      },
+      "reviewer": {
+        "providerId": "prov_d833",
+        "model": "claude-opus-5-5"
+      },
+      "narrator": {
+        "providerId": "prov_d833",
+        "model": "claude-haiku-5-5"
+      },
+      "strong_model": {
+        "providerId": "prov_d833",
+        "model": "claude-sonnet-5-5"
+      },
+      "cheap_model": {
+        "providerId": "prov_d833",
+        "model": "claude-haiku-5-5"
+      }
+    }
+  },
+  "during": {
+    "demoMode": true,
+    "demoExecution": "offline",
+    "busy": true,
+    "showPipeline": true,
+    "classes": "demo-mode demo-offline",
+    "offlineSelected": "true",
+    "badge": "OFFLINE DEMO — Simulated AI responses",
+    "traceVisible": true,
+    "traceText": "Narrator\nI'm planning the approach.\n3.1s\nHide\n›\nFull trace ↓\n✕\n▸\nI've got your request. I'm outlining the work.\n▸\nI'm planning the approach.\n▸\nBenson\nReceived your request\n+1.1s\n▸\nBrain\nPlanning route\n+3.1s",
+    "strip": "OFFLINE DEMO — Simulated AI responses\n●\nPLAN\n→\n○\nBUILD\n→\n○\nVERIFY\n→\n○\nDONE\nBrain is planning the job",
+    "pappyCards": [],
+    "pappyChecks": 0,
+    "tracker": {
+      "stage": "plan",
+      "verification": "pending",
+      "lastVerdict": null,
+      "taskStatus": null,
+      "repairPass": 0,
+      "maxRepairPasses": 0,
+      "workerError": false,
+      "planFallback": false,
+      "blockingIssues": 0,
+      "timeline": []
+    }
+  },
+  "final": {
+    "demoMode": true,
+    "demoExecution": "offline",
+    "busy": false,
+    "showPipeline": true,
+    "classes": "demo-mode demo-offline",
+    "offlineSelected": "true",
+    "badge": "OFFLINE DEMO — Simulated AI responses",
+    "outcome": "✓\nOFFLINE DEMO — Simulated AI responses\nVerified by Pappy\nSimulated Pappy verification from the Offline Demo scenario. No AI model or network was used.\nAcceptance criteria met: 4 of 4\nPassed on the first verification\nReset Demo",
+    "traceVisible": true,
+    "traceText": "Narrator\nWork complete\n46.1s\nHide\n›\nFull trace ↓\n✕\n▸\nWork step 1 is complete.\n▸\nThe main work is complete. I'm checking the result.\n▸\nThe result passed its checks.\n▸\nEverything is complete. I'm preparing the final response.\n▸\nBenson\nReceived your request\n+1.1s\n▸\nBrain\nPlanning route\n+3.1s\n▸\nWorker (debugger)\ndebugger started\n+8.1s\n✓\nWorker (debugger)\ndebugger completed · 6 iterations\n+29.1s\n✓\nMaestro\nSynthesis complete\n+30.1s\n✓\nPappy\nQC passed\n+43.1s\n✓\nBenson\nPreparing final response\n+45.1s",
+    "strip": "OFFLINE DEMO — Simulated AI responses\n✓\nPLAN\n→\n✓\nBUILD\n→\n✓\nVERIFY\n→\n✓\nDONE\nVerified by Pappy\nPappy verifying the work\n›\nVerification passed",
+    "pappyCards": [
+      "PAPPY\nPappy — independent verification\nSIMULATED\n✓\nReported issue\nBack-to-back bookings in the same room must be allowed.\n✓\nImplemented change\noverlaps() now treats intervals as half-open: < instead of <=.\n✓\nExpected behavior\n09:00–10:00 followed by 10:00–11:00 books successfully; real overlaps are still rejected.\n✓\nTest evidence\nThe ISSUE.md test passes and all 8 tests pass.\n✓\nUnrelated behavior\nNo other functions or tests were changed."
+    ],
+    "pappyChecks": 5,
+    "tracker": {
+      "stage": "done",
+      "verification": "passed",
+      "lastVerdict": "PASS",
+      "taskStatus": "SUCCESS",
+      "repairPass": 0,
+      "maxRepairPasses": 0,
+      "workerError": false,
+      "planFallback": false,
+      "blockingIssues": 0,
+      "timeline": [
+        {
+          "kind": "verifying",
+          "label": "Pappy verifying the work"
+        },
+        {
+          "kind": "passed",
+          "label": "Verification passed"
+        }
+      ]
+    }
+  },
+  "fetchAttempts": [],
+  "finishedAt": "2026-10-08T17:01:16.566Z",
+  "passed": true
+}

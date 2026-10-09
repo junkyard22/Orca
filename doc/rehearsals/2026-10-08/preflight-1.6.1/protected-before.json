@@ -1,0 +1,186 @@
+[
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\AppData\\Roaming\\@clawde\\desktop\\orca-settings.json",
+    "Hash": "6C93AAF96F8DC97868C3BE88EB5088312E02F57AE80B8D5961D2D10F2968D56B"
+  },
+  {
+    "Path": "C:\\Orca\\Orca-Summit-Kit\\Booth-Cheat-Sheet.html",
+    "Hash": "B1BCE3DBFDF9483657DCDBEF41314452ACAC8C66445526BB795181D010CA7044"
+  },
+  {
+    "Path": "C:\\Orca\\Orca-Summit-Kit\\Booth-Cheat-Sheet.pdf",
+    "Hash": "D81C267939D63569CDE34F93E0A9751CA178C2548750349BEA99D410E58B69C2"
+  },
+  {
+    "Path": "C:\\Orca\\Orca-Summit-Kit\\Orca 1.6.0.exe",
+    "Hash": "68AF961AA04DA2A99717ABE3395E5B8E5CC36614524BA376981B3FDF268CE7F5"
+  },
+  {
+    "Path": "C:\\Orca\\Orca-Summit-Kit\\Orca Setup 1.6.0.exe",
+    "Hash": "4253ECDB4E6E96F7F644A4278D6D9ECCFE9BB9BD03B1B51CFFD05B8CACEF7E2D"
+  },
+  {
+    "Path": "C:\\Orca\\Orca-Summit-Kit\\README.txt",
+    "Hash": "8D8F06046C5B477A5DFAEFC4EAF6D6B1AD3F6EBD062D7E3B525C4A0E746A03CB"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\anthropic-temperature.patch",
+    "Hash": "D81DDBD17D7F094422D593253B8C495715F90B0A7A2A05191345FC9B83A337F2"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\live-ai-remediation.patch",
+    "Hash": "CDF482FC0905EBC82C3A24CF6F3206BD4B2518BB7F754CEC65AB73493CDF5E12"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\README.txt",
+    "Hash": "8D402BA2BB2BB5024BE98167C6D61D5FCB60D9F779E2D7F0880AD829456D1E6A"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\stale-role-provider.patch",
+    "Hash": "A6DA582B563D2B7B904DDAC6A45404C96B4EDF379E62B34C62C9A66B5C82EAAC"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\summit-build-stage.patch",
+    "Hash": "C591097B29DC8B52C778F8D48F3659820180B4EDDE2BE2B391C0582C2C69D961"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\summit-demo-display.patch",
+    "Hash": "BB65A4C19A8E3AFDBBBAC14AC1F60617B0CF3F4EB939DB1FF09BB601EF99C0A5"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\cvsummary.cjs",
+    "Hash": "C180DCE2AA96C2D2A10539400E35BFD3784C02724A1656ADFB3CFD312388D112"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\miranda.cjs",
+    "Hash": "7F2662C95D599FC44D8AA65240DDA477BAE397DBBD843B5911EA5D5061F9E8C2"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\pappy.cjs",
+    "Hash": "ACBDF9E32BF1F57601DF5B584513D29D315B1920A468DFB0E8ADD953A0232D47"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\README.txt",
+    "Hash": "2F7B9C3CF8539DAFD5A7A3B602464325E04F51AA343E2EA8B7732F08AF0EF5CD"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\scenarios-repo.mjs",
+    "Hash": "BEE5716C621BEBA42B747FAE1320619BC43018A60886A155C8EA305F58901A24"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\scenarios.cjs",
+    "Hash": "C3FB3ED67D0992CC3800539C0D6209E4815A3AD5C03E225EA80B4D019CAC3021"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\toolgaps-repo.mjs",
+    "Hash": "E407563AB13104AFBD1A47966EB304276A0A3FE807960E32D83BFD92C6A6855F"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\toolgaps.cjs",
+    "Hash": "48776F90B187AA429F44B29DF1F988467367046328AD8894AF3C3FFA6D79ED8D"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base_cat.code",
+    "Hash": "9A271F2A916B0B6EE6CECB2426F0B3206EF074578BE55D9BC94F6F3FE3AB86AA"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base_cat.out",
+    "Hash": "3F1FB1BC1A66CFBBB4912573384322A1B94DE9E89974025CC43E86FAFD57710A"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base_npmtest.code",
+    "Hash": "4355A46B19D348DC2F57C046F8EF63D4538EBB936000F3C9EE954A27460DD865"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base_npmtest.out",
+    "Hash": "2F2FDCB267BA1997B3CE99C64155E5DE8E19F327EAA0E0F916853652BFF3D1FA"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base_subset.code",
+    "Hash": "9A271F2A916B0B6EE6CECB2426F0B3206EF074578BE55D9BC94F6F3FE3AB86AA"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base_subset.out",
+    "Hash": "2CDF3FA6D79DFD9649D17CDA8D050EC1F9DB685B90FB6DF457AE17E4F2170409"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\fixed_npmtest.code",
+    "Hash": "9A271F2A916B0B6EE6CECB2426F0B3206EF074578BE55D9BC94F6F3FE3AB86AA"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\fixed_npmtest.out",
+    "Hash": "0163308280583CC3B87033FB225E04F9D1B701866EC439B4453D2F9101534228"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\tamper_npmtest.code",
+    "Hash": "9A271F2A916B0B6EE6CECB2426F0B3206EF074578BE55D9BC94F6F3FE3AB86AA"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\tamper_npmtest.out",
+    "Hash": "E58E15AAF3937008D8D309EA9F413F7AE888A66E5F70D3BEF93B365A43334BBF"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base\\ISSUE.md",
+    "Hash": "3F1FB1BC1A66CFBBB4912573384322A1B94DE9E89974025CC43E86FAFD57710A"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base\\package.json",
+    "Hash": "4BCE89868A63C42194CDE08641AEC44681D93A7864E5FAABE1973C846D99313F"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base\\README.md",
+    "Hash": "B397E77214014E4A489A7C2453B0D28F7BE12B3FFFFD3630D36E6A35A39DFECB"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base\\src\\bookings.js",
+    "Hash": "D726528D2676936907A8AC2475BBB6A21D7F857254450BC4BAD8445DE9C9C306"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\base\\test\\bookings.test.js",
+    "Hash": "23C4F3527FC60FBBAAA422C3B19F224A1CEB7C574FAE1C7CE85324DC29E4F1B6"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\fixed\\ISSUE.md",
+    "Hash": "3F1FB1BC1A66CFBBB4912573384322A1B94DE9E89974025CC43E86FAFD57710A"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\fixed\\package.json",
+    "Hash": "4BCE89868A63C42194CDE08641AEC44681D93A7864E5FAABE1973C846D99313F"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\fixed\\README.md",
+    "Hash": "B397E77214014E4A489A7C2453B0D28F7BE12B3FFFFD3630D36E6A35A39DFECB"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\fixed\\src\\bookings.js",
+    "Hash": "296831DAEC6DD338FD022F8D712AB9B3DA4BFD00DDC88A501687F3A6259FF4C8"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\fixed\\test\\bookings.test.js",
+    "Hash": "23C4F3527FC60FBBAAA422C3B19F224A1CEB7C574FAE1C7CE85324DC29E4F1B6"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\tamper\\ISSUE.md",
+    "Hash": "3F1FB1BC1A66CFBBB4912573384322A1B94DE9E89974025CC43E86FAFD57710A"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\tamper\\package.json",
+    "Hash": "4BCE89868A63C42194CDE08641AEC44681D93A7864E5FAABE1973C846D99313F"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\tamper\\README.md",
+    "Hash": "B397E77214014E4A489A7C2453B0D28F7BE12B3FFFFD3630D36E6A35A39DFECB"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\tamper\\src\\bookings.js",
+    "Hash": "D726528D2676936907A8AC2475BBB6A21D7F857254450BC4BAD8445DE9C9C306"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\Documents\\Orca-Summit-1.6.0-Patches\\verification-harness\\ws\\tamper\\test\\bookings.test.js",
+    "Hash": "414B82BD1277A46F32EFED5DD3B91FBFB287E5574C326C02AD4AE4ED1B7689DA"
+  },
+  {
+    "Path": "C:\\[REDACTED CONTEXT]s\\james\\AppData\\Roaming\\@clawde\\desktop\\orca-auth.json",
+    "Hash": "C474E4F9EEBB7F364242703285756CF893296F8E4DA856E61F7702F837A3EC6A"
+  }
+]
