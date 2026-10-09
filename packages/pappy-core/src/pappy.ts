@@ -17,8 +17,11 @@ import type {
   TrainingEligibility,
   AcceptanceCriterion,
   Claim,
+  EvidenceStrength,
   ReceiptEntry,
+  VerificationStatus,
 } from "./types.js";
+import { runWorkspaceVerificationChecks } from "./checks/workspaceVerification.js";
 import { runSafetyChecks }       from "./checks/safety.js";
 import { runToolResultChecks }   from "./checks/toolResults.js";
 import { runCompletenessChecks, runSatisfactionChecks } from "./checks/completeness.js";
@@ -145,10 +148,76 @@ function reportingTermRoot(term: string): string {
  *
  * Your output is evaluated by an automated QC system (Pappy) that checks for specific evidence of each criterion. A response that does not contain the required evidence will be rejected and sent back for repair. Save everyone the repair pass — get it right the first time.
  */
+/**
+ * Evidence sources the worker does not author, prepared once per evaluation.
+ * `changedContent` is what is actually on disk now for files the runtime saw
+ * change; `hostOutput` is tool output the host recorded for commands that ran.
+ */
+interface IndependentEvidence {
+  available: boolean;
+  changedPaths: Set<string>;
+  /** path + after-content of every non-deleted file the runtime saw change (lower-cased). */
+  changedContent: string;
+  /** after-content of changed test files (lower-cased). */
+  changedTests: string;
+  /** host-recorded output of successful tool calls (lower-cased). */
+  hostOutput: string;
+}
+
+function independentEvidence(input: PappyInput): IndependentEvidence {
+  const workspace = input.workspace;
+  const available = workspace?.available === true;
+  const changes = available ? workspace!.changes.filter((c) => c.status !== "deleted") : [];
+  const hostOutput = (input.toolEvents ?? [])
+    .filter((event) => event.ok && event.raw && typeof event.raw === "object")
+    .map((event) => (event.raw as Record<string, unknown>)["_outputForProof"])
+    .filter((text): text is string => typeof text === "string")
+    .join("\n")
+    .toLowerCase();
+  return {
+    available,
+    changedPaths: new Set(changes.map((c) => c.path)),
+    changedContent: changes.map((c) => `${c.path} ${c.after ?? ""}`).join("\n").toLowerCase(),
+    changedTests: changes.filter((c) => c.kind === "test").map((c) => c.after ?? "").join("\n").toLowerCase(),
+    hostOutput,
+  };
+}
+
+interface CriterionReceipt {
+  proved: boolean;
+  partial?: boolean;
+  evidence: string[];
+  strength: EvidenceStrength;
+}
+
+/**
+ * Verify an acceptance criterion against specific evidence in the output.
+ *
+ * ## Acceptance Criteria
+ *
+ * When you receive done_criteria, treat each item as a binding contract:
+ *
+ * - "Output contains a TypeScript implementation" → your response MUST contain a ``` code block with a class or function definition
+ * - "Output includes unit tests" → your response MUST contain describe(), it(), and expect() calls
+ * - "Supports configurable X" → the specific parameter (burstCapacity, refillRate, etc.) MUST appear in your code
+ * - "Tracks usage per Y" or "includes cleanup" → clientId, Map, cleanup, or stale MUST appear in your code
+ *
+ * Do not consider your task complete until every criterion is satisfied. If you finish writing and realize a criterion is missing, add it before submitting your final answer.
+ *
+ * Your output is evaluated by an automated QC system (Pappy) that checks for specific evidence of each criterion. A response that does not contain the required evidence will be rejected and sent back for repair. Save everyone the repair pass — get it right the first time.
+ *
+ * Each receipt also records where its evidence came from (`strength`). Claims
+ * about files, code and tests are `self_reported` when only the worker's own
+ * text or reported diff supports them, `corroborated` when host-recorded tool
+ * output names the criterion's terms, and `independent` when the runtime's own
+ * workspace evidence confirms them. Criteria about the response text itself are
+ * `direct`. A successful tool call never corroborates an unrelated claim.
+ */
 function verifyAcceptanceCriterion(
   ac: AcceptanceCriterion,
   input: PappyInput,
-): { proved: boolean; partial?: boolean; evidence: string[] } {
+  independent: IndependentEvidence,
+): CriterionReceipt {
   const outputText = input.outputText ?? "";
   const hasOutput  = outputText.trim().length > 0;
   const hasFiles   = (input.filesChanged?.length ?? 0) > 0;
@@ -157,25 +226,41 @@ function verifyAcceptanceCriterion(
   const touched    = new Set(presentFiles.map((f) => f.path));
   const lowerOutput = outputText.toLowerCase();
   const lowerCriterion = ac.text.toLowerCase();
-  
+
   // Build combined search text from output and diffs
   const diffText = presentFiles.map((f) => f.diff ?? "").join("\n");
   const searchText = `${lowerOutput} ${diffText.toLowerCase()}`;
-  
+
   // Helper to check if a pattern matches
   const matchesPattern = (pattern: RegExp): boolean => pattern.test(searchText);
   const containsTerm = (term: string): boolean => matchesPattern(new RegExp(`\\b${term}\\w*\\b`, 'i'));
   const criterionMatchesPattern = (pattern: RegExp): boolean => pattern.test(lowerCriterion);
   const criterionContainsTerm = (term: string): boolean => criterionMatchesPattern(new RegExp(`\\b${term}\\w*\\b`, 'i'));
-  
-  // Required file criterion
+  /** Strength of a term-based proof: runtime-changed content beats host output beats the worker's account. */
+  const termStrength = (term: string): EvidenceStrength => {
+    const re = new RegExp(`\\b${term}\\w*\\b`, "i");
+    if (independent.available && re.test(independent.changedContent)) return "independent";
+    if (re.test(independent.hostOutput)) return "corroborated";
+    return "self_reported";
+  };
+  const normalizePath = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "");
+
+  // Required file criterion. With runtime evidence the file must really differ
+  // on disk; a reported write that changed nothing is not a receipt.
   const fileMatch = ac.text.match(/[Ff]ile ["`']?([^"`'\s]+)["`']? must be/);
   if (fileMatch) {
     const path = fileMatch[1] ?? "";
+    if (independent.available) {
+      const onDisk = independent.changedPaths.has(normalizePath(path));
+      return onDisk
+        ? { proved: true, evidence: [`workspace snapshot: ${path} changed`], strength: "independent" }
+        : { proved: false, evidence: touched.has(path) ? [`reported write to ${path} left it unchanged on disk`] : [], strength: "none" };
+    }
     const proved = touched.has(path);
     return {
       proved,
       evidence: proved ? [`filesChanged: ${path}`] : [],
+      strength: proved ? "self_reported" : "none",
     };
   }
 
@@ -190,26 +275,35 @@ function verifyAcceptanceCriterion(
     return {
       proved: hasSectionHeading,
       evidence: hasSectionHeading ? [`section heading: ${title}`] : [],
+      strength: hasSectionHeading ? "direct" : "none",
     };
   }
-  
+
+  // Criteria about the response text itself ("Output contains …") are
+  // satisfied by the response Pappy is reading: that evidence is direct.
+  const aboutTheOutput = /^(output|response|answer|result)\b/i.test(ac.text);
+
   // Check for code / implementation requirements. Mere prose mentioning code
   // keywords (or an otherwise empty fenced block) is not a receipt.
   if (criterionContainsTerm("code") || criterionContainsTerm("implementation") || criterionContainsTerm("function") || criterionContainsTerm("class") || criterionContainsTerm("TypeScript")) {
     const codeDeclarationPattern = /\b(?:function\s+[A-Za-z_$][\w$]*\s*\(|class\s+[A-Za-z_$][\w$]*(?:\s+\w+)*\s*\{|(?:const|let|var)\s+[A-Za-z_$][\w$]*(?:\s*:[^=;\n]+)?\s*=|(?:interface|type|enum)\s+[A-Za-z_$][\w$]*|def\s+[A-Za-z_]\w*\s*\()/;
     const hasCodeInOutput = codeDeclarationPattern.test(outputText);
     const hasCodeInDiff = codeDeclarationPattern.test(diffText);
-    const hasCode = hasCodeInOutput || hasCodeInDiff;
-    
+    const hasCodeOnDisk = independent.available && codeDeclarationPattern.test(independent.changedContent);
+    const hasCode = hasCodeInOutput || hasCodeInDiff || hasCodeOnDisk;
+
     if (hasCode) {
       return {
         proved: true,
-        evidence: hasCodeInOutput
-          ? ["code declaration found in output"]
-          : ["code declaration found in non-deleted file diff"],
+        evidence: hasCodeOnDisk
+          ? ["code declaration found in files the runtime saw change"]
+          : hasCodeInOutput
+            ? ["code declaration found in output"]
+            : ["code declaration found in non-deleted file diff"],
+        strength: hasCodeOnDisk ? "independent" : hasCodeInOutput && aboutTheOutput ? "direct" : "self_reported",
       };
     }
-    return { proved: false, evidence: [] };
+    return { proved: false, evidence: [], strength: "none" };
   }
   
   // Check for unit test requirement
@@ -234,21 +328,24 @@ function verifyAcceptanceCriterion(
     const hasTestFile = presentFiles.some(
       (file) => file.path.includes(".test.") || file.path.includes(".spec."),
     );
-    const hasTestArtifact = hasTestFunctions || hasTestFile;
-    
+    const hasTestOnDisk = independent.available && /\b(?:describe|it|test|expect)\s*\(/i.test(independent.changedTests);
+    const hasTestArtifact = hasTestFunctions || hasTestFile || hasTestOnDisk;
+
     if (hasTestFramework && hasTestArtifact) {
       return {
         proved: true,
         evidence: [
+          ...(hasTestOnDisk ? ["test file changed on disk contains test functions"] : []),
           ...(requestedFrameworks.length > 0 ? ["requested test framework used in code"] : []),
           ...(hasTestFunctions ? ["test functions (describe/it/expect) found"] : []),
           ...(hasTestFile ? ["test file in filesChanged"] : []),
         ],
+        strength: hasTestOnDisk ? "independent" : "self_reported",
       };
     }
-    return { proved: false, evidence: [] };
+    return { proved: false, evidence: [], strength: "none" };
   }
-  
+
   // Check for configurable parameter requirement.
   // The criterion names a specific parameter ("Supports configurable burstCapacity");
   // proof requires that exact parameter name to appear — generic words like
@@ -260,9 +357,10 @@ function verifyAcceptanceCriterion(
       return {
         proved: true,
         evidence: [`configurable parameter "${paramName}" found in output`],
+        strength: termStrength(paramName),
       };
     }
-    return { proved: false, evidence: [] };
+    return { proved: false, evidence: [], strength: "none" };
   }
 
   // Check for tracking/cleanup requirement.
@@ -291,19 +389,24 @@ function verifyAcceptanceCriterion(
 
     if (trackingProved && cleanupProved) {
       const evidence: string[] = [];
+      const terms: string[] = [];
       if (criterionMentionsTracking) {
         evidence.push(
           entity
             ? `tracked entity "${entity}" found in output`
             : "tracking mechanism (clientId/track) found",
         );
+        terms.push(entity ?? "track");
       }
       if (criterionMentionsCleanup) {
         evidence.push("cleanup/stale/expire/evict term found");
+        terms.push("cleanup", "stale", "expire", "evict");
       }
-      return { proved: true, evidence };
+      const strengths = terms.map(termStrength);
+      const strength: EvidenceStrength = strengths.includes("independent") ? "independent" : strengths.includes("corroborated") ? "corroborated" : "self_reported";
+      return { proved: true, evidence, strength };
     }
-    return { proved: false, evidence: [] };
+    return { proved: false, evidence: [], strength: "none" };
   }
   
   // Limitation / negative-outcome criteria
@@ -322,6 +425,7 @@ function verifyAcceptanceCriterion(
       evidence: outputMentionsLimitation
         ? ["output contains limitation/inability language matching criterion"]
         : [],
+      strength: outputMentionsLimitation ? "direct" : "none",
     };
   }
 
@@ -353,6 +457,7 @@ function verifyAcceptanceCriterion(
             ...(hasTools ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
           ]
         : [],
+      strength: proved ? "direct" : "none",
     };
   }
 
@@ -367,6 +472,7 @@ function verifyAcceptanceCriterion(
         ...(hasFiles ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
         ...(hasTools ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
       ],
+      strength: proved ? "direct" : "none",
     };
   }
 
@@ -379,8 +485,11 @@ function verifyAcceptanceCriterion(
     // Joined with spaces because this only ever feeds a substring check.
     const changedCode = presentFiles.map((f) => `${f.path} ${f.diff ?? ""}`).join(" ");
     const { inCode, inAccount } = findCriterionSymbols(symbols, changedCode, outputText);
+    // The runtime's own record of what changed, and what the host saw commands print.
+    const onDisk = independent.available ? findCriterionSymbols(symbols, independent.changedContent, "").inCode : [];
+    const inHostOutput = independent.hostOutput ? findCriterionSymbols(symbols, independent.hostOutput, "").inCode : [];
 
-    if (inCode.length > 0 || inAccount.length > 0) {
+    if (inCode.length > 0 || inAccount.length > 0 || onDisk.length > 0 || inHostOutput.length > 0) {
       // A unified diff routinely changes a function's body without restating
       // its name, so requiring the symbol inside the diff alone rejects correct
       // work over a property of diff formatting. The agent's own account naming
@@ -388,13 +497,26 @@ function verifyAcceptanceCriterion(
       // it proves nothing.
       //
       // PROVED therefore needs the symbol plus corroboration from a source the
-      // agent does not author: the symbol in the changed code itself, or a tool
-      // event that actually ran. PARTIAL is the symbol named with nothing
-      // objective behind it.
-      const corroborated = inCode.length > 0 || (input.toolEvents ?? []).some((e) => e.ok);
-      const named = [...new Set([...inCode, ...inAccount])].join(", ");
+      // agent does not author. Strongest: the symbol in files the runtime saw
+      // change, or in host-recorded command output. Without runtime evidence
+      // the legacy rule stands — the symbol in the reported diff, or in the
+      // account plus a tool event that ran — but that is self-reported, and a
+      // successful tool call never corroborates an unrelated claim once the
+      // runtime can supply real evidence. PARTIAL is the symbol named with
+      // nothing objective behind it.
+      const named = [...new Set([...onDisk, ...inHostOutput, ...inCode, ...inAccount])].join(", ");
+      const legacyCorroborated = inCode.length > 0 || (!independent.available && (input.toolEvents ?? []).some((e) => e.ok));
 
-      if (corroborated) {
+      if (onDisk.length > 0 || inHostOutput.length > 0) {
+        return {
+          proved: true,
+          evidence: [
+            `criterion symbol(s) ${named} present in ${onDisk.length > 0 ? "files the runtime saw change" : "host-recorded command output"}`,
+          ],
+          strength: onDisk.length > 0 ? "independent" : "corroborated",
+        };
+      }
+      if (legacyCorroborated) {
         return {
           proved: true,
           evidence: [
@@ -402,38 +524,73 @@ function verifyAcceptanceCriterion(
             ...(hasFiles ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
             ...(hasTools ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
           ],
+          strength: "self_reported",
         };
       }
       return {
         proved: false,
         partial: true,
         evidence: [`criterion symbol(s) ${named} named, but nothing objective corroborates the change`],
+        strength: "self_reported",
+      };
+    }
+  }
+
+  // A criterion that names a workspace file which the runtime saw change
+  // ("docs/guide.md must link to the right page"). Only runtime evidence
+  // counts here — never the worker's reported writes — and the receipt is
+  // explicit that the file changed, not that its content was judged.
+  if (independent.available) {
+    const namedPaths = [...ac.text.matchAll(/(?<![\w/])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]{1,8})(?![\w/])/g)]
+      .map((m) => normalizePath(m[1]!))
+      .filter((p) => /[\/.]/.test(p) && !/^\d+\.\d+$/.test(p));
+    const changedNamed = namedPaths.filter((p) => independent.changedPaths.has(p));
+    if (changedNamed.length > 0) {
+      return {
+        proved: true,
+        evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")} (content not semantically judged)`],
+        strength: "independent",
       };
     }
   }
 
   // Unknown semantic criteria have no deterministic verifier. Fail closed:
   // unrelated output or file activity is not criterion-specific proof.
-  return { proved: false, evidence: [] };
+  return { proved: false, evidence: [], strength: "none" };
 }
 
+/**
+ * One ledger entry per criterion. Mandatory-evidence rule: when the runtime
+ * supplied workspace evidence (available or not), a required criterion whose
+ * only support is the worker's own account cannot stay PROVED — it becomes
+ * UNVERIFIED, which fails the run until independent evidence exists. Callers
+ * that supply no workspace evidence at all keep the legacy statuses; their
+ * results are marked not independently verified and are never trainable.
+ */
 function buildCriteriaLedger(
   input: PappyInput,
   criteria: AcceptanceCriterion[],
 ): ReceiptEntry[] {
   const entries: ReceiptEntry[] = [];
+  const independent = independentEvidence(input);
+  const mandatory = input.workspace !== undefined;
 
   for (const ac of criteria) {
-    const { proved, partial, evidence } = verifyAcceptanceCriterion(ac, input);
-    
+    const { proved, partial, evidence, strength } = verifyAcceptanceCriterion(ac, input, independent);
+    let status: ReceiptEntry["status"] = proved ? "PROVED" : partial ? "PARTIAL" : "MISSING";
+    if (mandatory && ac.required && status === "PROVED" && strength === "self_reported") {
+      status = "UNVERIFIED";
+    }
+
     entries.push({
       ref: ac.id,
       required_receipt: {
         type: "criterion_specific",
         details: ac.text.slice(0, 80) + (ac.text.length > 80 ? "..." : ""),
       },
-      status: proved ? "PROVED" : partial ? "PARTIAL" : "MISSING",
+      status,
       evidence,
+      strength,
     });
   }
 
@@ -443,6 +600,24 @@ function buildCriteriaLedger(
 function buildMissingReceiptIssues(
   receiptLedger: readonly ReceiptEntry[],
 ): Omit<Issue, "issueId">[] {
+  // UNVERIFIED is insufficient proof, not proven incorrectness: the worker
+  // reported satisfying the criterion but nothing the runtime recorded
+  // confirms it. It still fails the run — mandatory evidence cannot become a
+  // warning — and the wording keeps the two cases apart.
+  const unverified: Omit<Issue, "issueId">[] = receiptLedger
+    .filter((entry) => entry.status === "UNVERIFIED")
+    .map((entry) => ({
+      severity: "HIGH" as const,
+      code: "REQUIRED_EVIDENCE_INSUFFICIENT",
+      category: "Proof" as const,
+      description: `Not verified (insufficient independent evidence): ${entry.ref} is supported only by the worker's own account — ${entry.required_receipt.details}`,
+      expected_receipt: `${entry.required_receipt.type}: ${entry.required_receipt.details}`,
+      evidence: `${entry.ref}: status=UNVERIFIED; strength=self_reported; evidence=${JSON.stringify(entry.evidence)}`,
+      fix_hint: `Produce independent evidence for ${entry.ref}: a real change in the workspace that the runtime can see, or a host-recorded command/test run that shows it.`,
+      message: `Receipt ${entry.ref} is not independently verified.`,
+      suggestedFix: `Back ${entry.ref} with a real file change or a recorded test/command result.`,
+    }));
+
   // PARTIAL warns rather than failing. The criterion named a symbol and that
   // symbol was genuinely touched — specific evidence, but not proof the
   // behaviour is right. Treating it as MISSING fails every correct coding task;
@@ -475,7 +650,7 @@ function buildMissingReceiptIssues(
       suggestedFix: `Satisfy ${entry.ref} with verifiable evidence before marking the task complete.`,
     }));
 
-  return [...missing, ...partial];
+  return [...missing, ...unverified, ...partial];
 }
 
 // ---------------------------------------------------------------------------
@@ -530,6 +705,13 @@ const NEVER_TRAINABLE_CODES = new Set([
   "SUSPICIOUS_HARDCODING_BRANCH_TABLE",
   // Claimed an action it cannot show evidence for.
   "PROOF_CLAIM_UNVERIFIED",
+  // Workspace evidence shows the suite was made to pass rather than fixed.
+  "TEST_FILE_DELETED",
+  "TEST_EDIT_PROHIBITED",
+  "FIX_TEST_COUNT_DROPPED",
+  "REFACTOR_TEST_COUNT_DROPPED",
+  "FEATURE_TEST_COUNT_DROPPED",
+  "FORBIDDEN_DELETE_DETECTED",
 ]);
 
 /** Out-of-scope or ambiguous — a human decides, rather than a heuristic. */
@@ -544,10 +726,36 @@ const NOT_TRAINABLE_PATTERN_CODES = new Set([
   "EMBEDDED_SECRET_PATTERN",
 ]);
 
-function deriveTrainingEligibility(verdict: Verdict, issues: Issue[]): TrainingEligibility {
+/** The worker's account presents the work as done or working. */
+const SUCCESS_CLAIM_PATTERN =
+  /\b(fixed|resolved|works|working|passes|passed|passing|succeeded|successfully|completed?|done|implemented|verified|now\s+(?:returns?|handles?|supports?|works?|uses?|checks?|does|accepts?|rejects?)|has been|have been|is now|are now)\b/i;
+
+function deriveTrainingEligibility(
+  verdict: Verdict,
+  issues: Issue[],
+  verification: VerificationStatus,
+  outputText: string,
+): TrainingEligibility {
   // Most restrictive wins.
   if (issues.some((i) => NEVER_TRAINABLE_CODES.has(i.code))) return "rejected";
+  // Host evidence contradicts an account that presents the work as done or
+  // working: the run misrepresented itself, whatever else is true of it.
+  if (verdict === "FAIL" && verification.status === "contradicted" && SUCCESS_CLAIM_PATTERN.test(outputText)) return "rejected";
   if (issues.some((i) => ELIGIBILITY_REVIEW_CODES.has(i.code))) return "needs_human_review";
+
+  // Evidence-integrity gate. Training needs more than a verdict: the run's
+  // claims must have been checked against evidence the worker could not author.
+  // Without host evidence (no workspace captured, or unreadable) nothing
+  // separates an honest run from a well-worded one, so it is never eligible —
+  // for legacy callers as much as anyone.
+  const hostEvidence = verification.status !== "not_applicable" && verification.status !== "unavailable";
+  if (!hostEvidence) return verdict === "PASS" ? "accepted_but_not_trainable" : "needs_human_review";
+
+  // A FAIL is a clean signal only when the evidence actually judged it (an
+  // honest failure that the evidence confirms). When the evidence was merely
+  // insufficient, a human decides whether the attempt is worth teaching.
+  if (verdict === "FAIL" && (verification.status === "unverified" || verification.status === "uninterpretable")) return "needs_human_review";
+
   if (issues.some((i) => NOT_TRAINABLE_PATTERN_CODES.has(i.code))) return "accepted_but_not_trainable";
 
   // A partial success is too murky to teach from unreviewed: something was left
@@ -557,9 +765,20 @@ function deriveTrainingEligibility(verdict: Verdict, issues: Issue[]): TrainingE
   // disqualifier here, not failure.
   if (verdict === "WARN") return "needs_human_review";
 
+  // A PASS is trainable only when the evidence verified it, including a
+  // host-recorded test run on the final source.
+  if (verdict === "PASS") {
+    return verification.status === "verified" && verification.testEvidence ? "eligible" : "accepted_but_not_trainable";
+  }
+
   return "eligible";
 }
 
+/**
+ * Heuristic only. A fixed deduction per issue severity after the verdict is
+ * decided; it is not calibrated against correctness and must not gate any
+ * decision. `PappyResult.confidenceBasis` says so to every consumer.
+ */
 function deriveConfidence(input: PappyInput, issues: Issue[]): number {
   let score = 1.0;
 
@@ -582,17 +801,23 @@ function deriveConfidence(input: PappyInput, issues: Issue[]): number {
   return parseFloat(Math.max(0, Math.min(1, score)).toFixed(2));
 }
 
-function buildSummary(verdict: Verdict, issues: Issue[], hasTrace: boolean): string {
+function buildSummary(verdict: Verdict, issues: Issue[], hasTrace: boolean, verification: VerificationStatus): string {
   if (verdict === "PASS") {
-    return "All required receipts are present. Task output is verified.";
+    return verification.status === "verified"
+      ? "All required receipts are present. Task output is verified against runtime evidence."
+      : "All required receipts are present. Task output is accepted but not independently verified (no runtime workspace evidence).";
   }
 
   const highCount = issues.filter(
     (i) => i.severity === "CRITICAL" || i.severity === "HIGH",
   ).length;
   const medCount = issues.filter((i) => i.severity === "MEDIUM").length;
+  const insufficient = issues.filter((i) => /^Not verified \(/.test(i.description)).length;
+  const contradicted = verification.status === "contradicted";
 
   const parts: string[] = [];
+  if (contradicted) parts.push("evidence contradicts the reported work");
+  if (insufficient > 0) parts.push(`${insufficient} criterion/check${insufficient > 1 ? "s" : ""} lack independent evidence`);
   if (highCount > 0) parts.push(`${highCount} HIGH issue${highCount > 1 ? "s" : ""} require repair`);
   if (medCount  > 0) parts.push(`${medCount} MEDIUM issue${medCount > 1 ? "s" : ""} need attention`);
   if (!hasTrace)     parts.push("no run trace provided — claims cannot be verified");
@@ -645,6 +870,19 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
     ...runIntegrityChecks(input),
   ];
 
+  // Step 3b: workspace verification from runtime evidence (what really changed
+  // on disk, which test commands really ran). Task-aware; inert without
+  // `input.workspace`. Where it reports the same code as the diff-based
+  // integrity check, the evidence-backed finding replaces the reported-diff one.
+  const workspaceVerification = runWorkspaceVerificationChecks(input);
+  if (workspaceVerification.issues.length > 0) {
+    const evidenceCodes = new Set(workspaceVerification.issues.map((issue) => issue.code));
+    for (let i = rawIssues.length - 1; i >= 0; i--) {
+      if (evidenceCodes.has(rawIssues[i]!.code)) rawIssues.splice(i, 1);
+    }
+    rawIssues.push(...workspaceVerification.issues);
+  }
+
   // Step 4: build receipt ledger (criteria + claim entries merged).
   // Must happen BEFORE stampIssueIds so CORE_GOAL_MISSING can inspect the ledger.
   const criteriaLedger = buildCriteriaLedger(input, acceptance_criteria);
@@ -681,12 +919,14 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
 
   const issues = stampIssueIds(rawIssues);
 
-  // Step 5: verdict
+  // Step 5: verdict, then the three separate axes: evidence status (what the
+  // evidence shows), training eligibility (integrity), heuristic confidence.
   const verdict  = deriveVerdict(issues);
-  const trainingEligibility = deriveTrainingEligibility(verdict, issues);
+  const verification = deriveVerificationStatus(workspaceVerification.verification, criteriaLedger);
+  const trainingEligibility = deriveTrainingEligibility(verdict, issues, verification, input.outputText ?? "");
   const confidence = deriveConfidence(input, issues);
   const hasTrace = (input.toolEvents?.length ?? 0) > 0 || (input.filesChanged?.length ?? 0) > 0;
-  const summary  = buildSummary(verdict, issues, hasTrace);
+  const summary  = buildSummary(verdict, issues, hasTrace, verification);
   const internalSummary = buildInternalSummary(verdict, issues);
 
   // Step 6: repair task (only when not PASS)
@@ -706,8 +946,10 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
 
   return {
     verdict,
+    verification,
     trainingEligibility,
     confidence,
+    confidenceBasis: "heuristic",
     summary,
     acceptance_criteria,
     claims,
@@ -716,6 +958,28 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
     repair_task,
     internalSummary,
     repairTask: repairTaskStr,  // backward compat
+  };
+}
+
+/**
+ * Fold the criteria ledger into the workspace verification status. A required
+ * criterion that is MISSING, PARTIAL or UNVERIFIED means the task is not
+ * verified even when the workspace checks found nothing wrong; a contradiction
+ * found by the workspace checks is never softened by a satisfied ledger.
+ */
+function deriveVerificationStatus(
+  workspace: VerificationStatus,
+  ledger: readonly ReceiptEntry[],
+): VerificationStatus {
+  if (workspace.status === "not_applicable" || workspace.status === "unavailable" || workspace.status === "contradicted") {
+    return workspace;
+  }
+  const unmet = ledger.filter((entry) => entry.status !== "PROVED");
+  if (unmet.length === 0) return workspace;
+  return {
+    ...workspace,
+    status: workspace.status === "verified" ? "unverified" : workspace.status,
+    reasons: [...workspace.reasons, `required criteria without independent evidence: ${unmet.map((e) => `${e.ref} (${e.status})`).join(", ")}`],
   };
 }
 

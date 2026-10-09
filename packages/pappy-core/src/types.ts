@@ -51,7 +51,26 @@ export type ReceiptType =
   | "criterion_specific"
   | "other";
 
-export type ReceiptStatus = "PROVED" | "MISSING" | "PARTIAL";
+/**
+ * PROVED     — criterion-specific evidence found
+ * PARTIAL    — the named code was touched, behaviour unverified
+ * MISSING    — no criterion-specific evidence
+ * UNVERIFIED — evidence exists but only from the worker's own account, while
+ *              the runtime supplied workspace evidence that could have
+ *              confirmed it and did not (mandatory evidence not met)
+ */
+export type ReceiptStatus = "PROVED" | "MISSING" | "PARTIAL" | "UNVERIFIED";
+
+/**
+ * Where a receipt's evidence comes from, strongest first:
+ *   direct        — the deliverable itself (the response text Pappy is reading)
+ *   independent   — the runtime's own record: files that really changed on disk,
+ *                   a host-recorded test run on the final source
+ *   corroborated  — host-recorded tool output that names the criterion's terms
+ *   self_reported — only the worker's own text or reported diff
+ *   none          — no evidence
+ */
+export type EvidenceStrength = "direct" | "independent" | "corroborated" | "self_reported" | "none";
 
 // ---------------------------------------------------------------------------
 // Receipt ledger structures
@@ -83,6 +102,8 @@ export interface ReceiptEntry {
   status: ReceiptStatus;
   /** Short pointers to the evidence (event id, diff excerpt, filename, exit code). */
   evidence: string[];
+  /** Provenance of the evidence behind `status`. */
+  strength?: EvidenceStrength;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,10 +235,99 @@ export interface PappyInput {
     modelReview?: ModelReviewProvenance;
   };
   constraints?: Constraints;
+  /**
+   * What actually changed on disk and which test commands really ran, as
+   * recorded by Orca's runtime (never by the worker). Absent for callers that
+   * have no workspace; `available: false` when the runtime could not read it.
+   */
+  workspace?: WorkspaceEvidence;
+  /**
+   * Genuine tool receipts from earlier passes of the same task (oldest first),
+   * so a repair pass is judged with the reproduction evidence gathered before it.
+   */
+  priorToolEvents?: ToolEvent[];
+}
+
+// ---------------------------------------------------------------------------
+// Workspace evidence — captured by the runtime from disk and from the host's
+// own trace of tool execution. A worker cannot author any of it.
+// ---------------------------------------------------------------------------
+
+export type WorkspaceFileKind = "test" | "source" | "docs" | "config" | "lock" | "other";
+
+export interface WorkspaceFileChange {
+  /** Workspace-relative path with forward slashes. */
+  path: string;
+  status: "added" | "modified" | "deleted";
+  kind: WorkspaceFileKind;
+  /** Content before the task (test/config files only, bounded). */
+  before?: string;
+  /** Content after the last change (bounded; text files only). */
+  after?: string;
+}
+
+export interface WorkspaceTestRun {
+  tool: string;
+  command: string;
+  cwd?: string;
+  ok: boolean;
+  exitCode?: number;
+  output: string;
+  /** True when the command ran the whole suite (no file/name filters). */
+  fullSuite: boolean;
+  /**
+   * Non-test source state when the run finished, compared by content hash:
+   * identical to the task-start baseline, identical to the final state at
+   * verification, or an intermediate state. "unknown" when the runtime could
+   * not fingerprint the workspace around the run.
+   */
+  sourceState: "baseline" | "final" | "intermediate" | "unknown";
+}
+
+export interface WorkspaceEvidence {
+  available: boolean;
+  /** Set when a limit stopped the inventory: `changes` may be incomplete. */
+  partial?: boolean;
+  reason?: string;
+  provenance: "runtime-snapshot";
+  /** Files in the task-start inventory. */
+  baselineFiles?: number;
+  /** Files whose content hash differs from the task-start baseline. */
+  changes: WorkspaceFileChange[];
+  /** Test command declared by the project at task start (package.json scripts.test). */
+  testCommand?: string;
+  /** Test commands the host observed running, in execution order. */
+  testRuns?: WorkspaceTestRun[];
+  /** Milliseconds spent capturing the baseline and this comparison. */
+  captureMs?: number;
+}
+
+export type TaskKind = "bugfix" | "refactor" | "feature" | "docs" | "inspect" | "other";
+
+/**
+ * How well the evidence supports the user's objective — kept apart from the
+ * verdict so an uncertain run is never promoted to "verified" silently.
+ *   verified       — independent evidence shows the requested change and its tests
+ *   unverified     — work looks correct but the evidence is insufficient
+ *   uninterpretable— evidence exists but could not be read reliably
+ *   contradicted   — evidence shows the work is incorrect
+ *   unavailable    — the runtime could not capture evidence
+ *   not_applicable — no workspace evidence was supplied (legacy callers)
+ */
+export type EvidenceStatus = "verified" | "unverified" | "uninterpretable" | "contradicted" | "unavailable" | "not_applicable";
+
+export interface VerificationStatus {
+  status: EvidenceStatus;
+  taskKind: TaskKind;
+  reasons: string[];
+  /** True when a host-recorded full test run on the final source was found and passed. */
+  testEvidence: boolean;
 }
 
 export interface PappyResult {
   verdict: Verdict;
+  /** Evidence-based verification status, independent of the verdict and of training eligibility. */
+  verification?: VerificationStatus;
   /**
    * Whether this run may be reused as training data. Independent of `verdict` —
    * see the TrainingEligibility docs for why.
@@ -228,7 +338,16 @@ export interface PappyResult {
    * deterministic receipt verification remains separate from model independence.
    */
   reviewIndependence?: ReviewIndependence;
+  /**
+   * Heuristic score in [0, 1]: 1.0 minus fixed deductions per issue severity.
+   * It is derived from the issues after the verdict is decided, feeds no
+   * verdict, eligibility, repair or export decision, and has not been
+   * calibrated against correctness. Kept for display and compatibility only;
+   * see `confidenceBasis`.
+   */
   confidence: number;
+  /** Set by evaluateWithPappy; always "heuristic" until a calibration is demonstrated and recorded. */
+  confidenceBasis?: "heuristic";
   summary: string;
   acceptance_criteria: AcceptanceCriterion[];
   claims: Claim[];
