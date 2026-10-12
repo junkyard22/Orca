@@ -647,17 +647,70 @@ describe("contested writes (phase 6)", () => {
     workspace: ws([srcFixed], [hostRun("npm test", "base_npmtest.out", "baseline"), hostRun("npm test", "fixed_npmtest.out", "final")]),
   });
 
-  it("a file two workers wrote in the same pass cannot be verified, with the writers named; the same evidence uncontested stays verified", () => {
+  const contest = (scenario: PappyInput, path = "src/bookings.js") => {
+    scenario.workspace = { ...scenario.workspace!, changes: scenario.workspace!.changes.map((c) => (c.path === path ? { ...c, writers: ["engineer", "debugger"] } : c)), contested: [{ path, writers: ["engineer", "debugger"] }] };
+    return scenario;
+  };
+
+  it("contested source file, final state verified by a full suite on the final source: verified as a result, attribution unresolved, never trainable", () => {
     const clean = evaluateWithPappy(verifiedScenario());
     expect(clean.verification?.status).toBe("verified");
+    expect(clean.verification?.attributionUnresolved).toBeUndefined();
 
-    const contested = verifiedScenario();
-    contested.workspace = { ...contested.workspace!, changes: [{ ...srcFixed, writers: ["engineer", "debugger"] }], contested: [{ path: "src/bookings.js", writers: ["engineer", "debugger"] }] };
-    const r = evaluateWithPappy(contested);
+    const r = evaluateWithPappy(contest(verifiedScenario()));
+    expect(r.verdict).toBe("PASS");
+    expect(r.verification?.status).toBe("verified");
+    expect(r.verification?.attributionUnresolved).toBe(true);
+    expect(r.verification?.reasons.join(" ")).toMatch(/attribution unresolved \(final state verified\): src\/bookings\.js \(engineer, debugger\)/);
+    expect(codes(r)).toContain("CONFLICTING_WRITES_ATTRIBUTION");
+    expect(codes(r)).not.toContain("CONFLICTING_WRITES");
+    expect(r.trainingEligibility).toBe("accepted_but_not_trainable");
+    expect(r.trainingEligibility).not.toBe("eligible");
+  });
+
+  it("contested source file with no run on the final source: unresolved conflicting evidence — unverified, MEDIUM, not a pass, not trainable", () => {
+    const scenario = contest(verifiedScenario());
+    // Only the reproduction on the baseline and a run on an intermediate state exist.
+    scenario.workspace = { ...scenario.workspace!, testRuns: [hostRun("npm test", "base_npmtest.out", "baseline"), hostRun("npm test", "fixed_npmtest.out", "intermediate")] };
+    const r = evaluateWithPappy(scenario);
     expect(r.verification?.status).toBe("unverified");
-    expect(r.verification?.reasons.join(" ")).toMatch(/conflicting writes: src\/bookings\.js \(engineer, debugger\)/);
+    expect(r.verification?.reasons.join(" ")).toMatch(/conflicting writes without a run on the final source: src\/bookings\.js \(engineer, debugger\)/);
     expect(codes(r)).toContain("CONFLICTING_WRITES");
     expect(r.verdict).not.toBe("PASS");
+    expect(r.trainingEligibility).not.toBe("eligible");
+  });
+
+  it("a contested file the objective does not rest on is harmless collaboration: a LOW note, everything else unchanged", () => {
+    const scenario = verifiedScenario();
+    scenario.workspace = { ...scenario.workspace!, changes: [...scenario.workspace!.changes, { path: "docs/NOTES.md", status: "modified", kind: "docs", after: "notes", writers: ["engineer", "debugger"] }], contested: [{ path: "docs/NOTES.md", writers: ["engineer", "debugger"] }] };
+    const r = evaluateWithPappy(scenario);
+    expect(r.verdict).toBe("PASS");
+    expect(r.verification?.status).toBe("verified");
+    expect(r.verification?.attributionUnresolved).toBeUndefined();
+    expect(codes(r)).toContain("CONFLICTING_WRITES_HARMLESS");
+    expect(r.trainingEligibility).toBe(evaluateWithPappy(verifiedScenario()).trainingEligibility); // unchanged by a harmless conflict
+  });
+
+  it("a mandatory criterion proved only by the content of a contested file becomes PARTIAL (mandatory evidence not met) until a run on the final source vouches for it", () => {
+    const task = "Update docs/guide.md so it documents the back-to-back booking rule.";
+    const base = input({
+      task,
+      goals: [task],
+      outputText: "Documented the back-to-back booking rule in docs/guide.md.",
+      toolEvents: [write("docs/guide.md", "# Guide\n\nBack-to-back bookings are allowed: a booking may start when the previous one ends.")],
+      filesChanged: [{ path: "docs/guide.md", changeType: "M", diff: "back-to-back" }],
+      workspace: ws([{ path: "docs/guide.md", status: "modified", kind: "docs", after: "# Guide\n\nBack-to-back bookings are allowed: a booking may start when the previous one ends. The booking rule is documented here." }]),
+    });
+    const clean = evaluateWithPappy(base);
+    expect(clean.verification?.status).toBe("verified");
+
+    const r = evaluateWithPappy(contest(base, "docs/guide.md"));
+    expect(r.verification?.status).toBe("unverified");
+    const entry = r.receipt_ledger.find((e) => e.status === "PARTIAL");
+    expect(entry?.assessment?.needed).toMatch(/settled final content of docs\/guide\.md \(two workers wrote it in one pass/);
+    expect(codes(r)).toContain("RECEIPT_PARTIAL");
+    expect(r.verdict).toBe("FAIL");
+    expect(r.trainingEligibility).not.toBe("eligible");
   });
 
   it("writer attribution alone (one writer per file) changes nothing", () => {

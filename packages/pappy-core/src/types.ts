@@ -378,6 +378,13 @@ export interface VerificationStatus {
    * evidence shows the change only, not its behaviour.
    */
   behaviouralEvidence?: string[];
+  /**
+   * True when a path relevant to the objective was written by more than one
+   * worker in one pass. The final state may still be verified by a host run
+   * on it, but which worker's change produced it is unknown, so the run is
+   * never a training candidate.
+   */
+  attributionUnresolved?: boolean;
 }
 
 export interface PappyResult {

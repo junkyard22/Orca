@@ -701,6 +701,43 @@ function requireBehaviouralEvidence(
 }
 
 /**
+ * A criterion proved by the final content of a named file that two workers
+ * wrote in the same pass rests on evidence nobody can attribute: unless a
+ * host-recorded run on the final source speaks for the task, the receipt
+ * becomes PARTIAL and says what would settle it. Criteria proved by a
+ * behavioural run already stand on the final state and are left alone.
+ */
+function requireAttributableEvidence(
+  ac: AcceptanceCriterion,
+  receipt: CriterionReceipt,
+  input: PappyInput,
+  context: LedgerContext,
+): CriterionReceipt {
+  const contested = input.workspace?.contested ?? [];
+  if (!receipt.proved || contested.length === 0) return receipt;
+  const cited = contested.filter((c) => receipt.evidence.some((line) => /named file\(s\) changed on disk:/.test(line) && line.includes(c.path)));
+  if (cited.length === 0) return receipt;
+  const finalProof = context.receipts.some((r) => r.sourceState === "final" && r.coversTask && r.kind !== "final_content");
+  if (finalProof) {
+    return { ...receipt, evidence: [...receipt.evidence, `attribution unresolved: ${cited.map((c) => `${c.path} written by ${c.writers.join(" and ")}`).join("; ")} (final state verified by a run on the final source)`] };
+  }
+  const list = cited.map((c) => `${c.path} (written by ${c.writers.join(" and ")} in one pass)`).join("; ");
+  return {
+    proved: false,
+    partial: true,
+    evidence: [...receipt.evidence, `contested: ${list}; no run on the final source vouches for the content`],
+    strength: receipt.strength,
+    assessment: {
+      requires: ac.text,
+      satisfiedBy: `the final content of ${cited.map((c) => c.path).join(", ")} verified by a run on the final source, or written by one worker`,
+      supportedBy: receipt.evidence,
+      sufficient: false,
+      needed: `a test or validation run on the settled final content of ${cited.map((c) => c.path).join(", ")} (two workers wrote it in one pass, so the content cannot be credited to either)`,
+    },
+  };
+}
+
+/**
  * One ledger entry per criterion. Mandatory-evidence rule: when the runtime
  * supplied workspace evidence (available or not), a required criterion whose
  * only support is the worker's own account cannot stay PROVED — it becomes
@@ -723,6 +760,7 @@ function buildCriteriaLedger(
     if (independent.available && receipt.behavioural && CODE_CHANGE_KINDS.has(context.taskKind)) {
       receipt = requireBehaviouralEvidence(ac, receipt, context);
     }
+    receipt = requireAttributableEvidence(ac, receipt, input, context);
     const { proved, partial, evidence, strength, assessment } = receipt;
     let status: ReceiptEntry["status"] = proved ? "PROVED" : partial ? "PARTIAL" : "MISSING";
     if (mandatory && ac.required && status === "PROVED" && strength === "self_reported") {
@@ -966,6 +1004,11 @@ function deriveTrainingEligibility(
   // A PASS is trainable only when the evidence verified it, including a
   // host-recorded test run on the final source. A positive verdict is not an
   // authorisation to train.
+  // A change nobody can attribute to one worker is never a training candidate,
+  // however well the final state is verified: the lesson would be credited to
+  // the wrong author.
+  if (verification.attributionUnresolved) return "accepted_but_not_trainable";
+
   if (verdict === "PASS") {
     return verification.status === "verified" && verification.testEvidence ? "eligible" : "accepted_but_not_trainable";
   }

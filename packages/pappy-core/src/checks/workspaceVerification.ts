@@ -373,18 +373,7 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
     downgrade("unverified", "partial workspace inventory");
   }
 
-  // ── Universal: a path two workers wrote in the same pass is not attributable ──
-  // The final content may have lost one worker's change; what the tests
-  // proved cannot be credited to either worker. The change is still judged,
-  // but not as independent evidence.
-  if (workspace.contested && workspace.contested.length > 0 && kind !== "inspect" && kind !== "other") {
-    const list = workspace.contested.map((c) => `${c.path} (${c.writers.join(", ")})`).join("; ");
-    issues.push(issue("MEDIUM", "CONFLICTING_WRITES", "Proof",
-      `${UNVERIFIED}more than one worker wrote the same file in one pass: ${list}. One worker's change may have overwritten the other's.`,
-      `workspace.contested=${JSON.stringify(workspace.contested)}`,
-      "Re-run the verification after confirming the final content of each contested file, or route the writes to one worker."));
-    downgrade("unverified", `conflicting writes: ${list}`);
-  }
+  let attributionUnresolved = false;
 
   // ── Universal: existing tests left intact ─────────────────────────────────
   const prohibited = prohibitsTestEdits(task);
@@ -780,7 +769,52 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
   }
 
   if (status === "verified" && reasons.length === 0) reasons.push(kind === "inspect" || kind === "other" ? "no unexpected workspace changes" : "evidence consistent with the request");
-  const verification: VerificationStatus = { status, taskKind: kind, reasons, testEvidence };
+  // ── Universal: a path two workers wrote in the same pass is not attributable ──
+  // Harmless collaboration and unresolved conflicting evidence are told apart
+  // by what the conflict touches and what proves the final state:
+  //   - a contested path that is not a source change relevant to the
+  //     objective (docs for a bug fix, a lock file) is noted (LOW) and nothing
+  //     else changes;
+  //   - a contested relevant path whose final state a host-recorded run on
+  //     the final source speaks for (reproduction, regression test, full
+  //     suite, validation) is trustworthy as a result: verified, but its
+  //     attribution is unresolved (LOW note; never a training candidate);
+  //   - a contested relevant path with no such run is unresolved conflicting
+  //     evidence: MEDIUM, status unverified, and (in the criteria ledger) any
+  //     criterion that rests on that file's content becomes PARTIAL.
+  if (workspace.contested && workspace.contested.length > 0 && kind !== "inspect" && kind !== "other") {
+    const relevantPaths = new Set(sourceChanges.map((c) => c.path));
+    const relevant = workspace.contested.filter((c) => relevantPaths.has(c.path));
+    const harmless = workspace.contested.filter((c) => !relevantPaths.has(c.path));
+    const describe = (list: typeof workspace.contested) => list.map((c) => `${c.path} (${c.writers.join(", ")})`).join("; ");
+    if (harmless.length > 0) {
+      issues.push(issue("LOW", "CONFLICTING_WRITES_HARMLESS", "Proof",
+        `More than one worker wrote the same file in one pass, but the file is not a source change the objective rests on: ${describe(harmless)}.`,
+        `workspace.contested=${JSON.stringify(harmless)}`,
+        "No action needed for verification; route writes to one worker to keep attribution clean."));
+    }
+    if (relevant.length > 0) {
+      attributionUnresolved = true;
+      // Only a behavioural run on the *final* source can vouch for a file two
+      // workers wrote; one on an intermediate state proves an earlier content.
+      const finalProof = receipts.filter((r) => r.sourceState === "final" && r.coversTask && r.kind !== "final_content");
+      if (finalProof.length > 0) {
+        issues.push(issue("LOW", "CONFLICTING_WRITES_ATTRIBUTION", "Proof",
+          `More than one worker wrote the same source file in one pass: ${describe(relevant)}. The final state is verified by ${finalProof.map((r) => r.summary).join("; ")}, but which worker's change produced it is unknown, so this run is not a training candidate.`,
+          `workspace.contested=${JSON.stringify(relevant)}; finalProof=${finalProof.map((r) => r.kind).join(",")}`,
+          "Route writes to one worker, or accept that this run cannot be attributed."));
+        reasons.push(`attribution unresolved (final state verified): ${describe(relevant)}`);
+      } else {
+        issues.push(issue("MEDIUM", "CONFLICTING_WRITES", "Proof",
+          `${UNVERIFIED}more than one worker wrote the same source file in one pass and no run on the final source vouches for it: ${describe(relevant)}. One worker's change may have overwritten the other's.`,
+          `workspace.contested=${JSON.stringify(relevant)}`,
+          "Run the project's tests or the documented validation on the settled final content, or route the writes to one worker."));
+        downgrade("unverified", `conflicting writes without a run on the final source: ${describe(relevant)}`);
+      }
+    }
+  }
+
+  const verification: VerificationStatus = { status, taskKind: kind, reasons, testEvidence, ...(attributionUnresolved ? { attributionUnresolved: true } : {}) };
   if (receipts.length > 0) verification.behaviouralEvidence = receipts.map((r) => r.summary);
   return { issues, verification, receipts };
 }
