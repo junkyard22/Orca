@@ -51,6 +51,7 @@ import { buildToolBootstrap } from "@clawde/tool-bootstrap";
 import type { BootstrappedTool } from "@clawde/tool-bootstrap";
 import { createClaire } from "@clawde/claire-core";
 import type { ClaireMessage } from "@clawde/claire-core";
+import { verificationGuidance } from "./verificationGuidance";
 import {
   createMaestroCore,
   getRolePrompt,
@@ -900,6 +901,12 @@ function buildMaestroAdapter(
     },
   ): Promise<DecomposeWorkerRun> => {
     throwIfAborted(ctx.abortSignal);
+    // Tell the worker, as goals, what evidence Pappy will require for this kind
+    // of work. Goals only: the acceptance criteria and AHP packet are unchanged.
+    const guidance = verificationGuidance(task.originalUserMessage ?? task.intent ?? "");
+    if (guidance.length > 0) {
+      agentTask = { ...agentTask, goals: [...agentTask.goals, ...guidance.filter((g) => !agentTask.goals.includes(g))] };
+    }
     const subagentId = `${ctx.runId}:${role}:${options.workerIndex}`;
     const childPacket = createWorkerPacket(
       task,

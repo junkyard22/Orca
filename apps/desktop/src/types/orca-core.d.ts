@@ -318,6 +318,10 @@ declare module '@clawde/orca-core' {
     options?: { maxTokens?: number; temperature?: number }
   ): OrcaLLMService;
   export function createPappyPort(): PappyPort;
+  /** Pappy's task classification (re-exported from pappy-core). */
+  export function classifyTaskKind(task: string): "bugfix" | "refactor" | "feature" | "docs" | "inspect" | "other";
+  export function isDefectFixTask(task: string): boolean;
+  export function prohibitsTestEdits(task: string): boolean;
   export function deriveFilesChangedFromToolEvents(
     toolEvents: OrcaToolEvent[],
     filesChanged?: OrcaFileChange[]
