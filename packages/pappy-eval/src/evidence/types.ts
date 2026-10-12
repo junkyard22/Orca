@@ -13,7 +13,7 @@
  * Small fixture sets measure behaviour on named cases. They are not a
  * statistical calibration.
  */
-import type { EvidenceStatus, PappyInput, TrainingEligibility, Verdict } from "@clawde/pappy-core";
+import type { EvidenceRequest, EvidenceStatus, PappyInput, ReceiptEntry, TrainingEligibility, Verdict } from "@clawde/pappy-core";
 
 export type EvidenceCategory =
   | "coding"
@@ -49,6 +49,10 @@ export interface EvidenceFixtureResult {
   status: EvidenceStatus;
   eligibility: TrainingEligibility;
   issueCodes: string[];
+  /** Per-criterion receipts with their assessments, for inspection. */
+  ledger: ReceiptEntry[];
+  /** What Pappy says is still missing, when workspace evidence was supplied. */
+  evidenceRequests: EvidenceRequest[];
   verdictMatched: boolean;
   statusMatched: boolean;
   eligibilityMatched: boolean;

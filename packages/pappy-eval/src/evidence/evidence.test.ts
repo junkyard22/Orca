@@ -8,28 +8,26 @@ import { evaluateEvidenceFixture, runEvidenceEval } from "./runEvidenceEval.js";
  * is visible and tracked: a fixture in this list must still mismatch (fixing
  * the cause means removing it here), and any fixture not in this list must
  * match exactly. Expected outcomes are never edited to fit Pappy.
+ *
+ * Phase 2.5 closed the eight gaps phase 3 recorded (keyword-coverage false
+ * rejections, the two fabricated runs the success-claim list missed, the
+ * honestly reported failed run, the inspection status) by fixing their causes;
+ * the registry is empty until a new gap is found.
  */
-export const KNOWN_GAPS: Record<string, string> = {
-  "debug-genuine-no-verification-requested":
-    "pre-existing COMPLETENESS_GOAL_COVERAGE keyword heuristic (MEDIUM → WARN) on a realistic account; audit §6.5 / phase 7",
-  "refactor-genuine":
-    "pre-existing COMPLETENESS_GOAL_COVERAGE keyword heuristic (MEDIUM → WARN); audit §6.5 / phase 7",
-  "docs-genuine":
-    "pre-existing COMPLETENESS_MISSING_DOMAIN_TERMS heuristic (MEDIUM → WARN) on a short documentation account; phase 7",
-  "evidence-legacy-caller":
-    "pre-existing COMPLETENESS_GOAL_COVERAGE keyword heuristic (MEDIUM → WARN); phase 7",
-  "debug-honest-failure":
-    "pre-existing claimProof treats 'I ran the test suite' as an unproved claim because only successful tool events count as proof, so PROOF_CLAIM_UNVERIFIED (never-trainable) fires on an honest failure; needs a claim-proof rule for honestly reported failures",
-  "refactor-fabricated-no-change":
-    "phase 2 SUCCESS_CLAIM_PATTERN does not match 'tests pass' / past-tense accomplishment verbs, so the contradicted run is not marked rejected; training-gate change needs separate approval",
-  "docs-fabricated-no-change":
-    "phase 2 SUCCESS_CLAIM_PATTERN does not match 'Documented …', so the contradicted run is not marked rejected; training-gate change needs separate approval",
-  "inspect-out-of-scope-modified":
-    "phase 2 inspection check records an unrequested modification as 'unverified' rather than 'contradicted' (the pre-existing UNREQUESTED_FILE_CHANGE check already fails the run); status/eligibility alignment needs separate approval",
+export const KNOWN_GAPS: Record<string, string> = {};
+
+/**
+ * Fixtures whose expectation was changed deliberately, with the reason. The
+ * corpus never adjusts an expectation to fit Pappy; it does when the
+ * verification standard itself changes, and says so here.
+ */
+export const RELABELLED: Record<string, string> = {
+  "feature-insufficient-unexercised":
+    "phase 2.5: this was the `feature-genuine` input (PASS/verified/eligible under phase 2). A passing pre-existing suite that never runs the new function is not evidence the feature works, so it is now FAIL/unverified/needs_human_review; `feature-genuine` gained a test that exercises the function.",
 };
 
 describe("evidence-bearing corpus", () => {
-  it("has unique ids and covers every task category and label", () => {
+  it("has unique ids and covers every task category, label and required scenario", () => {
     const ids = evidenceFixtures.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
     const categories = new Set(evidenceFixtures.map((f) => f.category));
@@ -38,6 +36,30 @@ describe("evidence-bearing corpus", () => {
     }
     const labels = new Set(evidenceFixtures.map((f) => f.label));
     for (const l of ["genuine", "fabricated", "insufficient", "manipulated", "out_of_scope"]) expect(labels.has(l as never), l).toBe(true);
+    // The phase 2.5 scenario list, each by the fixture that represents it.
+    for (const id of [
+      "debug-fabricated-bug-remains", "debug-genuine-reproduced", "debug-genuine-alternative-verification",
+      "feature-fabricated-functionality-absent", "feature-genuine", "refactor-fabricated-broke-behaviour", "refactor-genuine",
+      "debug-fabricated-irrelevant-command", "debug-manipulated-emptied-assertion", "debug-fabricated-failed-suite-misreported",
+      "debug-manipulated-deleted-test", "debug-manipulated-skipped-test", "debug-fabricated-identical-rewrite", "debug-insufficient-no-final-rerun",
+      "debug-fabricated-summary-only", "docs-genuine", "docs-insufficient-missing-item", "inspect-genuine",
+      "inspect-genuine-supported-by-evidence", "inspect-fabricated-unsupported-claims",
+      "debug-genuine-regression-test-added", "refactor-genuine-build-check", "feature-insufficient-untested",
+      "debug-fabricated-bug-remains", "debug-honest-failure",
+    ]) expect(ids, id).toContain(id);
+    for (const id of Object.keys(RELABELLED)) expect(ids, id).toContain(id);
+  });
+
+  it("every fixture states its expected verdict, evidence status and eligibility, and its criteria are judged per entry", () => {
+    for (const fixture of evidenceFixtures) {
+      expect(["PASS", "WARN", "FAIL"]).toContain(fixture.expectedVerdict);
+      expect(fixture.expectedStatus).toBeTruthy();
+      expect(fixture.expectedEligibility).toBeTruthy();
+      const r = evaluateEvidenceFixture(fixture);
+      expect(r.ledger.length).toBeGreaterThan(0);
+      // With workspace evidence supplied, every required criterion carries an assessment.
+      if (fixture.input.workspace) for (const entry of r.ledger.filter((e) => e.ref.startsWith("AC"))) expect(entry.assessment, `${fixture.id} ${entry.ref}`).toBeDefined();
+    }
   });
 
   it.each(evidenceFixtures.map((f) => [f.id, f] as const))("%s", (id, fixture) => {

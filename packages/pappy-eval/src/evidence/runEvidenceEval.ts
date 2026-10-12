@@ -10,6 +10,8 @@ export function evaluateEvidenceFixture(fixture: EvidenceFixture): EvidenceFixtu
     status,
     eligibility: result.trainingEligibility,
     issueCodes: result.issues.map((issue) => `${issue.severity[0]}:${issue.code}`),
+    ledger: result.receipt_ledger,
+    evidenceRequests: result.evidenceRequests ?? [],
     verdictMatched: result.verdict === fixture.expectedVerdict,
     statusMatched: status === fixture.expectedStatus,
     eligibilityMatched: result.trainingEligibility === fixture.expectedEligibility,
