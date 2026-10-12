@@ -115,9 +115,14 @@ function guardTrainingEligibility(
 function finalizePappyResult(input: PappyInput, result: PappyResult): PappyResult {
   const reviewIndependence = assessModelReviewIndependence(input.metadata?.modelReview);
   const trainingEligibility = guardTrainingEligibility(result.trainingEligibility, reviewIndependence);
+  // The persisted summary carries the evidence status and the test-evidence
+  // flag beside the eligibility so the training export can check them
+  // independently rather than trust the eligibility word alone.
   const internalSummary = [
     result.internalSummary,
     `training_eligibility=${trainingEligibility}`,
+    `evidence=${result.verification?.status ?? "not_applicable"}`,
+    `test_evidence=${result.verification?.testEvidence === true}`,
     `review_independence=${reviewIndependence.status}`,
     reviewIndependence.fallbackUsed ? "review_fallback=true" : "review_fallback=false",
   ].join(" ");

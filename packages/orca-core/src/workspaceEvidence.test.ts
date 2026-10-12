@@ -166,3 +166,86 @@ describe("runtime wiring", () => {
     expect((seen[0] as { workspace?: unknown }).workspace).toBeUndefined();
   });
 });
+
+describe("phase 2.5: evidence capture across worker passes and failed commands", () => {
+  const makeLLM = () => ({ complete: vi.fn(async () => ({ text: "x" })), stream: vi.fn(async () => ({ text: "x" })) });
+  const failResult = {
+    verdict: "FAIL" as const, trainingEligibility: "needs_human_review" as const, confidence: 0.5, summary: "", acceptance_criteria: [], claims: [], receipt_ledger: [],
+    issues: [{ issueId: "x", severity: "HIGH" as const, code: "FIX_TESTS_FAILING", category: "Proof" as const, description: "failing", expected_receipt: "", evidence: "", fix_hint: "fix it", message: "failing" }],
+    repair_task: { title: "repair", steps: ["fix it"], required_proofs: ["passing suite"] }, repairTask: "repair: fix it", internalSummary: "verdict=FAIL",
+  };
+  const passResult = { ...failResult, verdict: "PASS" as const, issues: [], repair_task: null, repairTask: undefined, internalSummary: "verdict=PASS" };
+
+  it("a repair pass sees the first pass's receipts, both passes' changes, and the failed run's output and exit code", async () => {
+    const root = workspace();
+    const seen: Array<{ workspace?: { changes: Array<{ path: string; status: string }>; testRuns?: Array<{ sourceState: string; ok: boolean; exitCode?: number; output: string }> }; priorToolEvents?: Array<{ tool: string; ok: boolean }>; toolEvents?: Array<{ tool: string }> }> = [];
+    let pass = 0;
+    const pappy: PappyPort = { evaluate: vi.fn((input) => { seen.push(input as never); return pass === 1 ? failResult : passResult; }) };
+    const maestro: MaestroPort = {
+      run: async (_task, ctx: OrcaRunCtx) => {
+        pass++;
+        if (pass === 1) {
+          // First attempt: a new file, then the suite fails.
+          writeFileSync(join(root, "src", "b.js"), "export const b = 1;\n");
+          ctx.recordTrace?.("tool.call", { tool: "run_command", input: { command: "npm test" } });
+          ctx.recordTrace?.("tool.result", { tool: "run_command", ok: false, output: FAILING, exitCode: 1 });
+          return { outputText: "tried", toolEvents: [{ tool: "write_file", ok: true, summary: "write_file: ok", raw: { path: "src/b.js" } }, { tool: "run_command", ok: false, summary: "run_command: failed - Command failed with exit code 1", raw: { command: "npm test", _outputForProof: FAILING, _exitCodeForProof: 1 } }] };
+        }
+        // Repair: the real fix, then the suite passes.
+        writeFileSync(join(root, "src", "a.js"), "export const a = 2;\n");
+        utimesSync(join(root, "src", "a.js"), new Date(), new Date(Date.now() + 5000));
+        ctx.recordTrace?.("tool.call", { tool: "run_command", input: { command: "npm test" } });
+        ctx.recordTrace?.("tool.result", { tool: "run_command", ok: true, output: PASSING, exitCode: 0 });
+        return { outputText: "fixed", toolEvents: [{ tool: "write_file", ok: true, summary: "write_file: ok", raw: { path: "src/a.js" } }, { tool: "run_command", ok: true, summary: "run_command: ok", raw: { command: "npm test", _outputForProof: PASSING, _exitCodeForProof: 0 } }] };
+      },
+    };
+    const spec = { originalUserMessage: "Fix the bug in src/a.js", intent: "fix", goals: ["a must be 2"], permissions: { fileRead: true, fileWrite: true, shellExec: true } } as unknown as OrcaTaskSpec;
+    const result = await createOrcaRuntime({ maestro, pappy, llm: makeLLM() as never, workspaceRoot: root, maxRepairPasses: 1 } as never).executeTask(spec);
+    expect(result.status).toBe("SUCCESS");
+    expect(seen).toHaveLength(2);
+
+    const first = seen[0]!;
+    expect(first.workspace?.changes.map((c) => `${c.status}:${c.path}`)).toEqual(["added:src/b.js"]);
+    expect(first.workspace?.testRuns?.map((r) => [r.ok, r.exitCode, r.sourceState])).toEqual([[false, 1, "final"]]);
+    expect(first.workspace?.testRuns?.[0]?.output).toContain("not ok 1 - a");
+
+    const second = seen[1]!;
+    // Receipts of the first pass are carried over, oldest first; the second pass's own events are separate.
+    expect(second.priorToolEvents?.map((e) => `${e.tool}:${e.ok}`)).toEqual(["write_file:true", "run_command:false"]);
+    expect(second.toolEvents?.map((e) => e.tool)).toEqual(["write_file", "run_command"]);
+    // The inventory is diffed against the task-start baseline, so both passes' changes are visible.
+    expect(second.workspace?.changes.map((c) => `${c.status}:${c.path}`).sort()).toEqual(["added:src/b.js", "modified:src/a.js"]);
+    // Both runs are recorded; the failed one keeps its exit code, the final one ran on the final source.
+    expect(second.workspace?.testRuns?.map((r) => [r.ok, r.exitCode, r.sourceState])).toEqual([[false, 1, "intermediate"], [true, 0, "final"]]);
+  });
+
+  it("captures a test run that happens after the last source change as final, and one before a later edit as intermediate", async () => {
+    const root = workspace();
+    const collector = createWorkspaceEvidenceCollector(root);
+    await collector.ready;
+    writeFileSync(join(root, "src", "a.js"), "export const a = 2;\n");
+    utimesSync(join(root, "src", "a.js"), new Date(), new Date(Date.now() + 5000));
+    collector.observeTrace("tool.call", { tool: "run_command", input: { command: "npm test" } });
+    collector.observeTrace("tool.result", { tool: "run_command", ok: true, output: PASSING, exitCode: 0 });
+    writeFileSync(join(root, "src", "a.js"), "export const a = 3;\n");
+    utimesSync(join(root, "src", "a.js"), new Date(), new Date(Date.now() + 10000));
+    collector.observeTrace("tool.call", { tool: "run_command", input: { command: "npm test" } });
+    collector.observeTrace("tool.result", { tool: "run_command", ok: false, output: FAILING, exitCode: 1 });
+    const evidence = await collector.collect();
+    expect(evidence.testRuns?.map((r) => [r.sourceState, r.ok, r.exitCode])).toEqual([["intermediate", true, 0], ["final", false, 1]]);
+  });
+
+  it("sees renames as a deletion plus an addition, and pre-existing uncommitted edits as the baseline rather than as the task's change", async () => {
+    const root = workspace();
+    // The user had already edited a file before the task started.
+    writeFileSync(join(root, "src", "a.js"), "export const a = 'user edit';\n");
+    const before = await captureWorkspaceInventory(root);
+    const { renameSync } = await import("node:fs");
+    renameSync(join(root, "src", "a.js"), join(root, "src", "renamed.js"));
+    const after = await captureWorkspaceInventory(root, DEFAULT_EVIDENCE_LIMITS, before);
+    const changes = await diffWorkspaceInventories(root, before, after);
+    expect(changes.map((c) => `${c.status}:${c.path}`).sort()).toEqual(["added:src/renamed.js", "deleted:src/a.js"]);
+    // The untouched test file is not reported even though it differs from nothing but itself.
+    expect(changes.some((c) => c.path === "test/a.test.js")).toBe(false);
+  });
+});

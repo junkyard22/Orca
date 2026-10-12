@@ -13,6 +13,8 @@ export { createFilteredToolService, extractToolNamesFromPrompt } from "./toolFil
 export { createMirandaLLMService } from "./adapters/mirandaLLM.js";
 export { createDirectLLMService } from "./adapters/directLLM.js";
 export { createPappyPort, createDebugPappyPort, createLoggingPappyPort } from "./adapters/pappyPort.js";
+// Pappy's task classification, so app shells can tell a worker what evidence the check will require.
+export { classifyTaskKind, isDefectFixTask, prohibitsTestEdits } from "@clawde/pappy-core";
 
 // Workspace context — capture git + file state for prompt grounding
 export { getWorkspaceContext } from "./workspaceContext.js";

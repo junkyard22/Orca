@@ -513,6 +513,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             issues: qcResult.issues,
             repairTask: qcResult.repairTask,
             internalSummary: qcResult.internalSummary,
+            evidenceRequests: qcResult.evidenceRequests,
           });
           result = {
             status: qcResult.verdict === "FAIL" ? "FAIL" : "SUCCESS",
@@ -694,6 +695,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           issues: qcResult.issues,
           repairTask: qcResult.repairTask,
           internalSummary: qcResult.internalSummary,
+          evidenceRequests: qcResult.evidenceRequests,
         });
 
         if (qcResult.verdict === "FAIL") {
