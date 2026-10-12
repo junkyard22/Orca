@@ -24,7 +24,8 @@ import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
 import { isAbortError, throwIfAborted } from "./abort.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
-import { composeMirandaGates, createMirandaGate } from "@clawde/miranda-core";
+import { BudgetRefusedError, TaskBudgetLedger, composeMirandaGates, createMirandaGate, currentBudgetLedger } from "@clawde/miranda-core";
+import { accountPass, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
 import {
   createRootPacket,
   registerChildOnRoot,
@@ -279,11 +280,34 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       });
     };
 
+    // One budget ledger for everything this task asks a model: the shell may
+    // have opened one for the whole user interaction (then narration and
+    // utility calls share it); otherwise the task gets its own, from the
+    // configured limit. Every reservation, settlement and refusal is traced
+    // and emitted so the UI and the journal see the figures as they move.
+    const budgetLedger = currentBudgetLedger() ?? new TaskBudgetLedger({
+      taskId,
+      limitUsd: budgetUsd ?? null,
+      limitSource: deps.budgetSource,
+      customPrices: deps.customPrices,
+      parent: deps.sessionBudget,
+    });
+    const unsubBudget = budgetLedger.subscribe({
+      trace: (stage, detail) => recordTrace(stage, detail),
+      onChange: (snapshot) => {
+        emitter.emit({ type: "budget:update", taskId, budget: snapshot });
+        deps.budgetJournal?.update(snapshot);
+      },
+    });
+    deps.budgetJournal?.open(budgetLedger.taskId, budgetLedger.snapshot());
+    recordTrace("budget.task", budgetLedger.snapshot());
+
     const ctx: OrcaRunCtx = {
       llm,
       runId: taskId,
       abortSignal: options?.abortSignal,
       recordTrace,
+      budget: budgetLedger,
       toolNamesAllowed: normalizedTaskSpec.permissions?.toolsAllowed,
       tools: tools && (() => {
         const allowed = normalizedTaskSpec.permissions?.toolsAllowed;
@@ -535,9 +559,10 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
       recordTrace("maestro.run.start", { attempt: 0, isRepair: false, task: normalizedTaskSpec });
 
-      const maestroResult = normalizeMaestroResult(await maestro.run(normalizedTaskSpec, ctx));
+      const initialPass = await accountPass(budgetLedger, () => maestro.run(normalizedTaskSpec, ctx), effectiveGate);
+      const maestroResult = withPassAccounting(normalizeMaestroResult(initialPass.result), initialPass.accounting);
       persistedMaestroResult = maestroResult;
-      const initialSpendUsd = maestroResult.metadata?.costUsd ?? 0;
+      const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
 
       // Detect tools the agent tried to call but weren't available.
       unknownTools = [
@@ -723,15 +748,21 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             userFacingText: maestroResult.outputText,
             summary: qcResult.internalSummary,
           };
-        } else if (budgetUsd && budgetUsd > 0 && initialSpendUsd >= budgetUsd) {
+        } else if (budgetStopReason(budgetLedger, initialPass.accounting) || legacyBudgetStop(budgetLedger, budgetUsd, initialSpendUsd)) {
+          // The ledger decides; a Maestro that reports its own cost without
+          // going through a budgeted adapter keeps the legacy cap check.
+          const ledgerReason = budgetStopReason(budgetLedger, initialPass.accounting);
+          const snapshot = budgetLedger.snapshot();
           recordTrace("repair.skipped.budget", {
-            budgetUsd,
+            budgetUsd: snapshot.limitUsd ?? budgetUsd,
             spentUsd: initialSpendUsd,
+            reason: ledgerReason ?? legacyBudgetStop(budgetLedger, budgetUsd, initialSpendUsd),
+            budget: snapshot,
           });
           result = {
             status: "FAIL",
             userFacingText: maestroResult.outputText,
-            summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${initialSpendUsd.toFixed(4)} spent on initial pass). Repair skipped.`,
+            summary: `${ledgerReason ? formatBudgetStop(ledgerReason, snapshot) : `${legacyBudgetStop(budgetLedger, budgetUsd, initialSpendUsd)}.`} Repair skipped.`,
           };
         } else {
           throwIfAborted(options?.abortSignal);
@@ -780,6 +811,16 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           name: abortError.name,
           message: abortError.message,
         });
+      } else if (error instanceof BudgetRefusedError) {
+        // A model request was refused before dispatch and nothing above could
+        // continue without it. The task is incomplete; say exactly why.
+        const snapshot = budgetLedger.snapshot();
+        result = {
+          status: "FAIL",
+          userFacingText: persistedMaestroResult?.outputText,
+          summary: formatBudgetStop(error.decision.reason, snapshot),
+        };
+        recordTrace("budget.stop", { kind: error.decision.kind, reason: error.decision.reason, budget: snapshot });
       } else {
         const message = error instanceof Error ? error.message : String(error);
         result = { status: "FAIL", summary: `Runtime error: ${message}` };
@@ -791,6 +832,10 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     }
 
     const durationMs = Date.now() - startTime;
+    unsubBudget();
+    const finalBudget = budgetLedger.snapshot();
+    recordTrace("budget.final", finalBudget);
+    deps.budgetJournal?.close(budgetLedger.taskId);
     unsubRepair();
     unsubDewey();
     unsubMiranda();
@@ -890,6 +935,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         repairPasses,
         durationMs,
         ahpPacketGraph: ahpGraph,
+        budget: finalBudget,
       },
     };
 
@@ -932,6 +978,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           };
         }),
         durationMs,
+        budget: finalBudget,
         repairPasses,
         errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
         traceStages: trace.entries.map((entry) => entry.stage),
@@ -981,6 +1028,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           inputTokens: persistedMaestroResult?.metadata?.inputTokens,
           outputTokens: persistedMaestroResult?.metadata?.outputTokens,
           costUsd: persistedMaestroResult?.metadata?.costUsd,
+          costUnreconciledUsd: persistedMaestroResult?.metadata?.costUnreconciledUsd,
+          costBasis: persistedMaestroResult?.metadata?.costBasis,
           repairPasses,
           ahpPacketGraph: ahpGraph ? JSON.stringify(ahpGraph) : undefined,
         } as RunRecord,
@@ -1038,4 +1087,14 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     on: (type: OrcaEventType, handler: (event: OrcaEvent) => void) =>
       emitter.on(type, handler),
   };
+}
+
+/**
+ * Legacy cap check for a Maestro that reports `metadata.costUsd` itself and
+ * makes no request through a budgeted adapter (the ledger saw nothing).
+ */
+function legacyBudgetStop(ledger: TaskBudgetLedger, budgetUsd: number | undefined, spentUsd: number): string | undefined {
+  if (ledger.snapshot().requests.total > 0) return undefined;
+  if (!budgetUsd || budgetUsd <= 0 || spentUsd < budgetUsd) return undefined;
+  return `Budget cap $${budgetUsd.toFixed(4)} reached ($${spentUsd.toFixed(4)} spent on initial pass)`;
 }

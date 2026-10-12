@@ -118,3 +118,7 @@ export {
   parseAHPPacketGraph,
 } from "./ahp/graph.js";
 
+export { createBudgetJournal } from "./budget/journal.js";
+export type { BudgetJournal, UnresolvedBudgetTask } from "./budget/journal.js";
+export { accountPass, budgetGateContext, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
+export type { PassAccounting } from "./budget/passAccounting.js";

@@ -25,7 +25,12 @@ export interface RunRecord {
   issueCount?: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** Reconciled cost (measured usage × known price). Null when nothing was priced. */
   costUsd?: number;
+  /** Upper bound charged for requests whose billing outcome is unknown. */
+  costUnreconciledUsd?: number;
+  /** "measured" | "upper_bound" | "none": what the cost figures rest on. */
+  costBasis?: string;
   repairPasses?: number;
   /** JSON-serialized AHPPacketGraph for this run. Null on older records. */
   ahpPacketGraph?: string;

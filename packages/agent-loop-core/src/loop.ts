@@ -1,4 +1,5 @@
 import {
+  budgetGateContext,
   extractFilesChangedFromCommandOutput,
   extractToolNamesFromPrompt,
   type OrcaFileChange,
@@ -15,11 +16,7 @@ function isGateStop(gateResult: GateResult): boolean {
   return !gateResult.allowed || gateResult.verdict === "CONFIRM_REQUIRED";
 }
 
-// Neutral placeholders until live per-call cost accounting is threaded here.
-const NEUTRAL_LLM_BUDGET_CONTEXT = {
-  budgetUsed: 0,
-  budgetLimit: Infinity,
-} as const;
+
 
 /** Characters of tool output kept as proof; long enough for a full test summary. */
 const PROOF_OUTPUT_LIMIT = 64_000;
@@ -171,7 +168,7 @@ export async function runAgentLoop(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "agent_loop_main_stream",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetGateContext(ctx),
         ...llmCallSizeContext,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
@@ -390,7 +387,7 @@ export async function runAgentLoop(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "agent_loop_rescue_stream",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetGateContext(ctx),
         ...llmCallSizeContext,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
