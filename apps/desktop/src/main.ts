@@ -91,8 +91,9 @@ import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
 import { runWithBudget, withBudgetAttribution } from "@clawde/miranda-core";
 import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
-import { createBudgetJournal } from "@clawde/orca-core";
-import type { BudgetJournal } from "@clawde/orca-core";
+import { createBudgetJournal, createWorkspaceGuard, WorkspaceProtectedError } from "@clawde/orca-core";
+import type { BudgetJournal, WorkspaceGuard } from "@clawde/orca-core";
+import { probeProcess } from "@yakstacks/workbench-core";
 import { budgetWarnings, createMessageBudget, getCustomPrices, getSessionBudget, setCustomPrices } from "./budgetContext";
 import { TaskSessionManager } from "./taskSession";
 import {
@@ -1492,6 +1493,34 @@ function budgetJournal(): BudgetJournal {
   if (!_budgetJournal) _budgetJournal = createBudgetJournal(join(app.getPath('userData'), 'budget-journal.json'));
   return _budgetJournal;
 }
+let _workspaceGuard: WorkspaceGuard | null = null;
+/**
+ * Who may write to the workspace. A task that ended with an operation or a
+ * child process unsettled leaves the workspace protected (on disk, across
+ * restarts) until the leftovers settle, are verified gone, or the user
+ * releases it knowingly. Task state and workspace safety are kept apart.
+ */
+function workspaceGuard(): WorkspaceGuard {
+  if (!_workspaceGuard) {
+    _workspaceGuard = createWorkspaceGuard({
+      filePath: join(app.getPath('userData'), 'workspace-protection.json'),
+      probe: (resource) => probeProcess({ pid: resource.pid, identity: resource.identity }),
+    });
+    _workspaceGuard.subscribe((event) => {
+      if (event.type === "protected") {
+        console.warn(`[Orca] workspace protected: ${event.protection.root} (task ${event.protection.taskId})`);
+        win?.webContents.send("orca-event", { type: "workspace:protected", taskId: event.protection.taskId, root: event.protection.root, reason: event.protection.reason, operations: event.protection.operations.map((o) => `${o.kind} ${o.label}`), resources: event.protection.resources.map((r) => `process ${r.pid} (${r.label})`), recovery: _workspaceGuard!.describe([event.protection]) });
+      } else {
+        console.log(`[Orca] workspace released: ${event.release.root} by ${event.release.by}: ${event.release.reason}`);
+        win?.webContents.send("orca-event", { type: "workspace:released", taskId: event.release.taskId, root: event.release.root, by: event.release.by, reason: event.release.reason, remaining: _workspaceGuard!.list().filter((p) => p.root === event.release.root).length });
+      }
+    });
+  }
+  return _workspaceGuard;
+}
+function activeWorkspaceRoot(): string {
+  return _currentSettings?.workspaceRoot || join(homedir(), "Orca");
+}
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 let dewey: InstanceType<typeof Dewey> | null = null;
 let _currentSettings: OrcaSettings | null = null;
@@ -1504,8 +1533,23 @@ let mcpDispose: (() => Promise<void>) | null = null;
 const taskSessions = new TaskSessionManager({
   interruptAfterMs: 30_000,
   onInterrupted: ({ id, reason }) => {
+    // The lock is released so the user is not shut out, but the workspace is
+    // not: the runtime never settled, so whatever it was running may still
+    // write. Protection lifts when the runtime finally settles, or on an
+    // explicit release.
     console.warn(`[Orca] task session ${id} interrupted: ${reason}`);
-    win?.webContents.send("orca-event", { type: "task:state", taskId: id, state: "INTERRUPTED", reason, activeOperations: 0 });
+    workspaceGuard().protect(activeWorkspaceRoot(), {
+      taskId: id,
+      reason: "did not settle after Stop",
+      operations: [{ kind: "other", label: "task runtime (never settled after Stop)", startedAt: new Date().toISOString() }],
+    });
+    win?.webContents.send("orca-event", { type: "task:state", taskId: id, state: "INTERRUPTED", reason, activeOperations: 1, unsettledOperations: ["task runtime (never settled after Stop)"] });
+  },
+  onLateSettlement: ({ id, state }) => {
+    // The runtime settled after all. The session-level record is lifted; a
+    // record the runtime itself made for unsettled processes stays.
+    console.log(`[Orca] task session ${id} settled late: ${state}`);
+    void workspaceGuard().settle(activeWorkspaceRoot(), id, "the task runtime settled after the watchdog had given up");
   },
 });
 let appAuthStatus: AppAuthStatus = {
@@ -1684,6 +1728,20 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     } catch (error) {
       console.warn("[Orca] could not record the interrupted task:", error);
     }
+  }
+  // Workspaces a previous process left protected: in-process operations died
+  // with it; child processes are re-probed, and only a verified-gone process
+  // lifts the protection. Nothing is reset on the user's behalf.
+  try {
+    const recovered = await workspaceGuard().recover();
+    for (const release of recovered.released) {
+      _initWarnings.push(`Workspace ${release.root} was left protected by task ${release.taskId} and is released: ${release.reason}. Review the workspace for partial changes before continuing.`);
+    }
+    if (recovered.kept.length > 0) {
+      _initWarnings.push(workspaceGuard().describe(recovered.kept));
+    }
+  } catch (error) {
+    console.warn("[Orca] could not recover workspace protection:", error);
   }
 
   try {
@@ -1879,6 +1937,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       customPrices: getCustomPrices(),
       sessionBudget: getSessionBudget(),
       budgetJournal: budgetJournal(),
+      workspaceGuard: workspaceGuard(),
       gate,
       model,
     });
@@ -2332,6 +2391,37 @@ function requestSingleToolApproval(
   });
 }
 
+// ── Workspace protection: what is still unsettled, and an explicit release ──
+ipcMain.handle("workspace:protection", async () => {
+  const root = activeWorkspaceRoot();
+  const protections = await workspaceGuard().status(root);
+  return { root, protections, recovery: protections.length ? workspaceGuard().describe(protections) : "" };
+});
+
+ipcMain.handle("workspace:release", async () => {
+  if (isAppLocked()) return { ok: false, error: lockedError() };
+  const root = activeWorkspaceRoot();
+  const protections = await workspaceGuard().status(root);
+  if (protections.length === 0) return { ok: true, released: [] };
+  // A native, human-answered confirmation: the user is shown exactly what was
+  // left running and takes responsibility for the workspace. Never automated.
+  const choice = win && !win.isDestroyed()
+    ? await dialog.showMessageBox(win, {
+        type: "warning",
+        title: "Release workspace protection",
+        message: "Release this workspace for new tasks?",
+        detail: `${workspaceGuard().describe(protections)}\n\nOnly release it if you have checked that nothing listed is still writing to the workspace.`,
+        buttons: ["Cancel", "I have checked — release"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+    : { response: 0 };
+  if (choice.response !== 1) return { ok: false, error: "Release cancelled." };
+  const released = await workspaceGuard().release(root, "released by the user after a manual check");
+  return { ok: true, released };
+});
+
 ipcMain.handle("auth:status", () => appAuthStatus);
 
 ipcMain.handle("auth:unlock", (_ev, password: string) => {
@@ -2702,11 +2792,18 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   const busyNow = taskSessions.refusal();
   if (busyNow) return busyNow;
 
+  // A workspace still owned by an unsettled task is refused here, before
+  // Benson or any model is asked anything.
+  const protections = await workspaceGuard().status(activeWorkspaceRoot());
+  if (protections.length > 0) {
+    return { ok: false, error: workspaceGuard().describe(protections), workspaceProtected: true };
+  }
+
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
     "maestro:agent_start", "maestro:agent_done",
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
-    "pipeline:summary", "budget:update", "task:state", "brain:fallback",
+    "pipeline:summary", "budget:update", "task:state", "brain:fallback", "workspace:protected",
     "dewey:brief", "miranda:checkpoint",
     "subagent:spawned", "subagent:done", "subagent:failed",
   ];
@@ -2787,7 +2884,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   // repairs and Cargo summaries reserve against it, and the runtime reuses it
   // as the task ledger. Its final figures travel with the reply.
   const messageBudget = createMessageBudget(_currentSettings ?? { budgetUsd: 0 });
-  type SendResult = { ok: true; reply: { text: string } } | { ok: false; error: string; cancelling?: boolean };
+  type SendResult = { ok: true; reply: { text: string } } | { ok: false; error: string; cancelling?: boolean; workspaceProtected?: boolean };
   const cleanup = () => {
     if (isStreaming) {
       isStreaming = false;
@@ -2809,6 +2906,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
       .then((text): SendResult => ({ ok: true, reply: { text } }))
       .catch((err): SendResult => {
         if (isAbortError(err)) return { ok: false, error: err.message || "Stopped." };
+        if (err instanceof WorkspaceProtectedError) return { ok: false, error: err.message, workspaceProtected: true };
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }),
     (reason) => ({ ok: false, error: reason, cancelling: true }),

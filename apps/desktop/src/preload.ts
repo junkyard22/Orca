@@ -185,6 +185,14 @@ contextBridge.exposeInMainWorld("orca", {
   // Abort the currently running task (if any).
   abortTask: (): void => ipcRenderer.send("task:abort"),
 
+  // ── Workspace protection ─────────────────────────────────────────────────
+  // What an earlier, unsettled task left running in the workspace, and the
+  // explicit (natively confirmed) release of that protection.
+  getWorkspaceProtection: (): Promise<{ root: string; protections: unknown[]; recovery: string }> =>
+    ipcRenderer.invoke("workspace:protection"),
+  releaseWorkspace: (): Promise<{ ok: boolean; error?: string; released?: unknown[] }> =>
+    ipcRenderer.invoke("workspace:release"),
+
   // ── Streaming output ─────────────────────────────────────────────────────
   // Dedicated channels for streaming answer output to the renderer.
   // Only fires during the agent answer/generation stage — Miranda preflight,

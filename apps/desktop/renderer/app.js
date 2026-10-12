@@ -349,6 +349,19 @@ orca.onOrcaEvent((e) => {
     pushLiveTraceEvent(e);
     return;
   }
+  // Workspace safety is not task state: a task can be over while something it
+  // started still writes. Say so, and offer the explicit release.
+  if (e.type === "workspace:protected") {
+    showWorkspaceBanner(e.recovery);
+    appendSys("Workspace protected — nothing will run in it until the listed work settles or you release it.", "warn");
+    pushLiveTraceEvent(e);
+    return;
+  }
+  if (e.type === "workspace:released") {
+    if (!e.remaining) hideWorkspaceBanner();
+    appendSys(`Workspace released (${e.by}): ${e.reason}.`, "info");
+    return;
+  }
 
   // Phase 1 live pipeline visibility — sanitized rows only.
   // The mapper drops chain-of-thought / token / scratchpad events at the
@@ -749,6 +762,48 @@ function attachRoleBadge(msgDiv, roleInfo) {
   lbl.appendChild(badge);
 }
 
+// ── Workspace protection banner ───────────────────────────────────────────
+
+let workspaceBanner = null;
+
+function showWorkspaceBanner(recoveryText) {
+  if (!workspaceBanner) {
+    workspaceBanner = document.createElement("div");
+    workspaceBanner.id = "workspace-banner";
+    workspaceBanner.className = "workspace-banner";
+    const text = document.createElement("pre");
+    text.className = "workspace-banner-text";
+    const btn = document.createElement("button");
+    btn.className = "workspace-banner-release";
+    btn.textContent = "I have checked — release workspace";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const r = await orca.releaseWorkspace();
+        if (!r?.ok) appendSys(r?.error || "Release cancelled.", "info");
+      } catch (err) {
+        appendSys(String(err), "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    workspaceBanner.appendChild(text);
+    workspaceBanner.appendChild(btn);
+    messages.parentElement.insertBefore(workspaceBanner, messages);
+  }
+  workspaceBanner.querySelector(".workspace-banner-text").textContent = recoveryText || "Workspace protected.";
+  workspaceBanner.hidden = false;
+}
+
+function hideWorkspaceBanner() {
+  if (workspaceBanner) workspaceBanner.hidden = true;
+}
+
+// On load, a protection left by a previous session is shown before any message is sent.
+orca.getWorkspaceProtection?.().then((status) => {
+  if (status?.protections?.length) showWorkspaceBanner(status.recovery);
+}).catch(() => {});
+
 // ── Task lifecycle display ────────────────────────────────────────────────
 
 // Latest lifecycle event for the current task (from task:state events).
@@ -763,7 +818,10 @@ function taskStateLabel(e) {
       ? `Stopping — waiting for ${e.activeOperations} operation${e.activeOperations === 1 ? "" : "s"} to settle…`
       : "Stopping…";
     case "CANCELLED": return "Stopped — all operations settled.";
-    case "INTERRUPTED": return `Stopped, but not cleanly: ${e.unsettledOperations?.length ? e.unsettledOperations.join(", ") + " never settled and may still change the workspace" : e.reason}.`;
+    case "INTERRUPTED": {
+      const left = [...(e.unsettledOperations ?? []), ...(e.unsettledResources ?? [])];
+      return `Stopped, but not cleanly: ${left.length ? left.join(", ") + " never settled and may still change the workspace" : e.reason}. The workspace stays protected until this settles or you release it.`;
+    }
     default: return null;
   }
 }
@@ -1406,6 +1464,9 @@ async function sendMessage() {
       if (currentRole) attachRoleBadge(msgDiv, currentRole);
     } else if (result.error === "Stopped." || result.error === "Locked.") {
       appendSys("Stopped.", "info");
+    } else if (result.workspaceProtected) {
+      showWorkspaceBanner(result.error);
+      appendSys("Not started: the workspace is still protected by an earlier task. See the notice above.", "warn");
     } else {
       appendSys(result.error ?? "Unknown error.", "error");
     }

@@ -39,6 +39,8 @@ export interface TaskSessionManagerOptions {
   interruptAfterMs?: number;
   now?: () => number;
   onInterrupted?: (session: { id: string; reason: string }) => void;
+  /** The work of a session the watchdog had marked interrupted settled after all. */
+  onLateSettlement?: (session: { id: string; state: "cancelled" | "failed" }) => void;
 }
 
 export interface BeginRefusal {
@@ -115,8 +117,16 @@ export class TaskSessionManager {
     this.active = session;
 
     const task = work(session).then(
-      (value) => { session.settle(state === "cancelling" ? "cancelled" : "completed"); return value; },
-      (error: unknown) => { session.settle(state === "cancelling" ? "cancelled" : "failed"); throw error; },
+      (value) => {
+        if (state === "interrupted") this.options.onLateSettlement?.({ id, state: "cancelled" });
+        session.settle(state === "cancelling" ? "cancelled" : "completed");
+        return value;
+      },
+      (error: unknown) => {
+        if (state === "interrupted") this.options.onLateSettlement?.({ id, state: "failed" });
+        session.settle(state === "cancelling" ? "cancelled" : "failed");
+        throw error;
+      },
     );
     // The reply: the work's own outcome, or the stop acknowledgement — whichever
     // comes first. The lock is not part of this race.

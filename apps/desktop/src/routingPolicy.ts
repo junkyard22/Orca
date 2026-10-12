@@ -13,15 +13,34 @@ const COMMAND_VERIFICATION_ROLE: RoleName = "debugger";
  * the reader for inspection, and Narrator only for conversation-shaped work.
  */
 export function fallbackExecutionRole(task: OrcaTaskSpec): RoleName {
-  const kind = classifyTaskKind(requestText(task));
+  const text = requestText(task);
+  const kind = classifyTaskKind(text);
   switch (kind) {
     case "bugfix": return "debugger";
     case "feature":
     case "refactor":
     case "docs": return "strong_model";
-    case "inspect": return "reader";
+    case "inspect": return restatesKnownInformation(text) ? DEFAULT_EXECUTION_ROLE : "reader";
     default: return DEFAULT_EXECUTION_ROLE;
   }
+}
+
+/**
+ * Pappy's "inspect" kind covers two different jobs: gathering information
+ * from the workspace (review, audit, explain how X in src/ works) and
+ * restating information already in hand (summarize the facts, report the
+ * findings, tell the user what was found). The first needs the reader, who
+ * can open files; the second is a response, which is Narrator's job. The
+ * rule looks at the object of the request, not at particular phrasings: a
+ * response-shaped verb whose object is prior information or the user, with
+ * nothing in the workspace named, is a response.
+ */
+const RESPONSE_VERB = /\b(summari[sz]e|describe|explain|report\s+on|tell\s+me|recap|restate|present)\b/i;
+const KNOWN_INFORMATION = /\b(facts?|findings?|results?|conclusions?|outcomes?|answers?|the\s+above|these|this|so\s+far|what\s+(?:you|we)\s+(?:found|learned|have|know)|for\s+the\s+user|in\s+plain\s+(?:english|language|words)|the\s+(?:output|conversation|discussion|thread))\b/i;
+const WORKSPACE_OBJECT = /\b(code|codebase|source|repo(?:sitory)?|project|module|package|file|files|folder|director(?:y|ies)|function|class|method|component|service|schema|config(?:uration)?|architecture|implementation|tests?|logs?|diff|commit|branch|src|lib)\b|[\w./\\-]+\.(?:[cm]?[jt]sx?|py|go|rs|java|rb|md|json|ya?ml|toml|css|html)\b/i;
+
+export function restatesKnownInformation(text: string): boolean {
+  return RESPONSE_VERB.test(text) && KNOWN_INFORMATION.test(text) && !WORKSPACE_OBJECT.test(text);
 }
 
 function requestText(task: OrcaTaskSpec): string {

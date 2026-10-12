@@ -2412,3 +2412,35 @@ body.hide-pipeline .live-trace-panel .ltp-role { display: none; }
   margin-top: 1px;
   word-break: break-word;
 }
+
+/* ── Workspace protection banner ─────────────────────────────────────────── */
+.workspace-banner {
+  margin: 8px 12px 0;
+  padding: 10px 14px;
+  border: 1px solid #5a3a1a;
+  border-radius: 8px;
+  background: #1f170e;
+  color: #ffd9a8;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workspace-banner[hidden] { display: none; }
+.workspace-banner-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  user-select: text;
+}
+.workspace-banner-release {
+  align-self: flex-start;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #7a4f1f;
+  background: #2b1f10;
+  color: #ffd9a8;
+  cursor: pointer;
+}
+.workspace-banner-release:disabled { opacity: 0.6; cursor: default; }

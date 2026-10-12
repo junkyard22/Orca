@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OrcaTaskSpec } from "@clawde/orca-core";
 import type { DecomposeDecision } from "maestro-core";
-import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
+import { fallbackExecutionRole, normalizeDesktopRoutingForExecution } from "./routingPolicy";
 
 function task(goals: string[] = []): OrcaTaskSpec {
   return {
@@ -69,8 +69,10 @@ describe("normalizeDesktopRoutingForExecution", () => {
 
     expect(result.decision.routing).toBe("decompose");
     if (result.decision.routing !== "decompose") throw new Error("expected decompose");
-    // Phase 5: a Brain-headed department is remapped by its own work; "Summarize the facts" is inspection, so the reader.
-    expect(result.decision.departments.map((department) => department.head)).toEqual(["reader", "reviewer"]);
+    // A Brain-headed department is remapped by its own work. "Summarize the
+    // facts" restates information already gathered: a response, so Narrator
+    // (phase 6 correction of the phase 5 remap, which sent it to the reader).
+    expect(result.decision.departments.map((department) => department.head)).toEqual(["narrator", "reviewer"]);
     expect(result.remappedBrainExecution).toBe(true);
   });
 
@@ -168,6 +170,24 @@ describe("objective preservation and fallback roles (phase 5)", () => {
     const r = normalizeDesktopRoutingForExecution(request("Fix the crash in src/parse.js when the input is empty.", goals), { routing: "direct", role: "brain" }, null);
     expect(r.decision).toMatchObject({ routing: "direct", role: "debugger", done_criteria: goals });
     expect(r.remapReason).toBe("direct_default");
+  });
+
+  it("information gathering goes to the reader; restating known information goes to Narrator — decided by the object, not the phrase", () => {
+    const role = (text: string) => fallbackExecutionRole(request(text));
+    // Gathering: the workspace is named, or nothing says the information is already in hand.
+    expect(role("Explain the architecture")).toBe("reader");
+    expect(role("Explain how the overlap check works in src/bookings.js.")).toBe("reader");
+    expect(role("Summarize the code in the auth module")).toBe("reader");
+    expect(role("Review the tests and report on gaps")).toBe("reader");
+    expect(role("Describe what parseConfig does")).toBe("reader");
+    // Restating: the object is prior information or the user; nothing in the workspace is named.
+    expect(role("Summarize the facts")).toBe("narrator");
+    expect(role("Summarize the findings for the user")).toBe("narrator");
+    expect(role("Report on the results so far in plain English")).toBe("narrator");
+    expect(role("Tell me what you found")).toBe("narrator");
+    expect(role("Describe the conclusions above")).toBe("narrator");
+    // Restating that still names the workspace is gathering: the reader can check it.
+    expect(role("Summarize the findings about src/parse.js")).toBe("reader");
   });
 
   it("Brain-headed departments are remapped by the department's own work", () => {
