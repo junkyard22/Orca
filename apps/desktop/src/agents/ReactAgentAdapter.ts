@@ -820,6 +820,14 @@ export class ReactAgentAdapter implements AgentAdapter {
     try {
       for (let iteration = 0; iteration < this.maxIterations; iteration++) {
         throwIfAborted(ctx.abortSignal);
+        // The task lifecycle has the last word: once cancellation was
+        // requested or the task ended, no model call is made for it, whatever
+        // the signal says (defence in depth, same rule as the tool path).
+        if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) {
+          const refused = new Error(`model call not made: the task is ${ctx.lifecycle.current.toLowerCase()}.`);
+          refused.name = "AbortError";
+          throw refused;
+        }
         iterationCount = iteration + 1;
 
         if (iteration > 0) {
