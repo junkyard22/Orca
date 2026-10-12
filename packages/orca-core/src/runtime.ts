@@ -23,6 +23,8 @@ import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from ".
 import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
 import { isAbortError, throwIfAborted, untilAborted } from "./abort.js";
+import { WorkspaceProtectedError } from "./workspaceGuard.js";
+import { guardDispatch } from "./dispatchGuard.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
 import { BudgetRefusedError, TaskBudgetLedger, composeMirandaGates, createMirandaGate, currentBudgetLedger } from "@clawde/miranda-core";
 import { TaskLifecycle } from "./lifecycle.js";
@@ -261,6 +263,14 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     const effectiveWorkspaceContext = effectiveWorkspaceRoot
       ? { ...(workspaceContext ?? {}), cwd: effectiveWorkspaceRoot }
       : workspaceContext;
+    // A workspace an earlier task left unsettled (an operation or a child
+    // process that may still write) is refused before anything is read or
+    // any model is called. The error says what was left and how to recover.
+    if (effectiveWorkspaceRoot && deps.workspaceGuard) {
+      const protections = await deps.workspaceGuard.status(effectiveWorkspaceRoot);
+      if (protections.length > 0) throw new WorkspaceProtectedError(protections);
+    }
+
     const taskId = generateRunId();
     const startTime = Date.now();
     const traceEntries: OrcaPipelineTraceEntry[] = [];
@@ -314,6 +324,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         type: "task:state", taskId, state: transition.to, previous: transition.from, reason: transition.reason,
         activeOperations: snapshot.activeOperations.length,
         ...(snapshot.unsettledOperations.length > 0 ? { unsettledOperations: snapshot.unsettledOperations.map((o) => `${o.kind} ${o.label}`) } : {}),
+        ...(snapshot.unsettledResources.length > 0 ? { unsettledResources: snapshot.unsettledResources.map((r) => `process ${r.pid} (${r.label})`) } : {}),
       });
     });
     const onAbort = () => lifecycle.cancel(options?.abortSignal?.reason instanceof Error ? options.abortSignal.reason.message : "cancelled");
@@ -346,8 +357,12 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       return createFilteredToolService(tools, allowed);
     })();
 
+    // A model call made for a task that is no longer running is refused the
+    // same way a tool call is: a late worker callback cannot spend or act.
+    const guardedLLM = guardDispatch(llm, lifecycle);
+
     const ctx: OrcaRunCtx = {
-      llm,
+      llm: guardedLLM,
       runId: taskId,
       abortSignal: options?.abortSignal,
       recordTrace,
@@ -922,12 +937,36 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
     // The lifecycle ends from the result, never from the promise: a task is
     // COMPLETED only when it succeeded and QC did not fail; a cancellation
-    // outcome already set above wins over any late result.
+    // outcome already set above wins over any late result. Either way the
+    // task is not over while something it started still runs: an operation
+    // left behind by a failed or finished pass is waited for, and one that
+    // will not settle makes the task INTERRUPTED rather than quietly done.
+    if (!lifecycle.terminal && !lifecycle.quiet) {
+      const settled = await lifecycle.drain(deps.drainTimeoutMs ?? 10_000);
+      if (!settled) {
+        lifecycle.interrupt(`${result.status}: operations still active after the task ended (${deps.drainTimeoutMs ?? 10_000} ms)`);
+        recordTrace("task.interrupted", lifecycle.snapshot());
+      }
+    }
     if (!lifecycle.terminal) {
       const succeeded = !abortError && result.status !== "FAIL" && persistedQcResult?.verdict !== "FAIL";
       lifecycle.finish(succeeded ? "COMPLETED" : "FAILED", abortError ? abortError.message : `${result.status}: ${result.summary ?? ""}`);
     }
     const finalLifecycle = lifecycle.snapshot();
+    if (finalLifecycle.state === "INTERRUPTED") {
+      // The task's state is settled; its workspace is not. Protect it until
+      // the leftovers settle or the user, told what they are, releases it.
+      const operations = lifecycle.activeOperations().map((o) => `${o.kind} ${o.label}`);
+      const resources = lifecycle.unsettledResources().map((r) => `process ${r.pid} (${r.label})`);
+      if (effectiveWorkspaceRoot && deps.workspaceGuard) {
+        const protection = deps.workspaceGuard.protect(effectiveWorkspaceRoot, { taskId, reason: "was interrupted with work still running", lifecycle });
+        const recovery = deps.workspaceGuard.describe([protection]);
+        recordTrace("workspace.protected", { root: protection.root, operations, resources });
+        emitter.emit({ type: "workspace:protected", taskId, root: protection.root, reason: protection.reason, operations, resources, recovery });
+      } else {
+        recordTrace("workspace.unprotected", { root: effectiveWorkspaceRoot ?? null, operations, resources, note: "no workspace guard is configured; the host must keep the workspace quiet" });
+      }
+    }
     const stoppedBecause = (finalLifecycle.state === "CANCELLED" ? "cancelled" : finalLifecycle.state === "INTERRUPTED" ? "interrupted" : persistedMaestroResult?.metadata?.stoppedBecause) as RunRecord["stoppedBecause"];
 
     // ── Finalize root AHP packet ───────────────────────────────────────────
@@ -1171,7 +1210,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       };
     }
 
-    return result;
+    // The caller sees the lifecycle the trace and the summary saw: a result
+    // alone cannot say whether the task settled quietly.
+    return { ...result, lifecycle: finalLifecycle };
   }
 
   return {

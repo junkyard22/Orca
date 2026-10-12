@@ -433,6 +433,8 @@ export interface OrcaRuntimeDeps {
   drainTimeoutMs?: number;
   /** Persists each task's budget snapshot so unresolved reservations survive a restart. */
   budgetJournal?: import("./budget/journal.js").BudgetJournal;
+  /** Refuses a task whose workspace is still protected by an earlier, unsettled task, and protects it when this task ends unsettled. */
+  workspaceGuard?: import("./workspaceGuard.js").WorkspaceGuard;
   /**
    * Miranda's gate — the compliance and governance layer.
    * Wraps every LLM call, tool execution, and QC run with validation checkpoints.
@@ -494,7 +496,9 @@ export type OrcaEvent =
   | { type: "repair:start";       taskId: string; pass: number; maxPasses: number }
   | { type: "task:done";          taskId: string; status: "SUCCESS" | "WARN" | "FAIL" }
   /** The task's lifecycle state changed (see lifecycle.ts); terminal states are final. */
-  | { type: "task:state";         taskId: string; state: import("./lifecycle.js").TaskState; previous?: import("./lifecycle.js").TaskState; reason: string; activeOperations: number; unsettledOperations?: string[] }
+  | { type: "task:state";         taskId: string; state: import("./lifecycle.js").TaskState; previous?: import("./lifecycle.js").TaskState; reason: string; activeOperations: number; unsettledOperations?: string[]; unsettledResources?: string[] }
+  /** The task ended with operations or processes unsettled; its workspace is protected until they settle or the user releases it. */
+  | { type: "workspace:protected"; taskId: string; root: string; reason: string; operations: string[]; resources: string[]; recovery: string }
   /** Brain did not produce a usable plan; a deterministic route was selected, with the original goals preserved. */
   | { type: "brain:fallback";     taskId: string; cause: "invalid_plan" | "provider_failed" | "timed_out" | "no_decision"; role: string; reason: string; preservedCriteria: string[] }
   /** The task's budget ledger changed (reservation, settlement, refusal, block). */

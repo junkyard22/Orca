@@ -123,4 +123,7 @@ export type { BudgetJournal, UnresolvedBudgetTask } from "./budget/journal.js";
 export { accountPass, budgetGateContext, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
 export type { PassAccounting } from "./budget/passAccounting.js";
 export { TaskLifecycle, TERMINAL_TASK_STATES } from "./lifecycle.js";
-export type { ActiveOperation, OperationHandle, OperationKind, TaskLifecycleSnapshot, TaskState, TaskTransition } from "./lifecycle.js";
+export { unsettledResourceOf } from "./lifecycle.js";
+export type { ActiveOperation, OperationHandle, OperationKind, TaskLifecycleSnapshot, TaskState, TaskTransition, UnsettledResource } from "./lifecycle.js";
+export { createWorkspaceGuard, describeProtections, existenceProbe, WorkspaceProtectedError } from "./workspaceGuard.js";
+export type { ProcessLiveness, ProcessProbe, ProtectRecord, ProtectedOperation, WorkspaceGuard, WorkspaceGuardEvent, WorkspaceProtection, WorkspaceRelease } from "./workspaceGuard.js";
