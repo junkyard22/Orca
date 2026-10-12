@@ -135,3 +135,33 @@ Outcomes the ledger keeps apart, all exercised through the real `OpenAICompatAda
 ### Legacy $0.10 (§13)
 
 The start-up warning, the Settings note and now the **refusal message** all say the same thing: the limit is Orca's historical default, never explicitly chosen, enforced as is, and changed in Settings → General (0 disables the hard limit). The execution ledger carries `limitSource` so the refusal wording matches the setting's provenance; a user-set limit gets the ordinary "raise the budget or use a cheaper model" guidance.
+
+## Phase 6 pre-merge validation (2026-10-12)
+
+No budget code changed in phase 6. The behaviours below were re-run against the real ledger with mocked providers (`packages/miranda-core/src/budget/budget.test.ts`, `budgetHardening.test.ts`, `packages/orca-core/src/budget/runtimeBudget.test.ts`, `journal.test.ts`, `apps/desktop/src/budgetContext.test.ts`) and, where cancellation is involved, through the runtime (`runtimeCancellation.test.ts`, `runtimeWorkspaceSafety.test.ts`):
+
+| Scenario (§8–9) | Behaviour | Test |
+|---|---|---|
+| Cancelled before dispatch | reservation released, nothing charged | budget.test "network failure or cancellation after dispatch…"; budgetHardening "cancellation after dispatch keeps…" |
+| Cancelled after dispatch | upper bound kept as unreconciled; hard budget stops | same |
+| Stream ends without usage | dispatched-but-unmeasured: bound charged as unreconciled | budgetHardening "a stream without a usage chunk…" |
+| Usage arrives after cancellation | ignored; the unreconciled amount stands | budgetHardening "a late usage report cannot reconcile…" |
+| Provider exceeds the reservation | true cost recorded; further spending blocked | budget.test "a response that exceeds its reservation…" |
+| Fallback while another request is unresolved | refused (`refused_unreconciled`) under a hard budget | budget.test "a request sent without usage … blocks further paid requests" |
+| Repair denied, budget exhausted | repair skipped, task reported incomplete with the reason | runtimeBudget "stops halfway…", "a Pappy rejection followed by a repair…" |
+| Restart with unresolved charges | journal recovers exposure as an upper bound; run saved as interrupted | journal.test; desktop init (manual) |
+| Late model call after Stop | refused before the ledger is touched (`dispatchGuard`) | runtimeWorkspaceSafety "after Stop a late worker callback…" |
+| Cache creation / read prices | priced at the reviewed rates; unknown write rate → estimate + stop | budgetHardening (3 cases) |
+| Metered localhost gateway | `unknown` until classified; unpriced under a hard budget | budgetHardening "Ollama defaults to local…", "an unpriced local gateway…" |
+| Zero budget | no hard limit, tracked and estimated | budgetContext "0 means no hard limit"; budget.test "without a hard budget…" |
+| Historical $0.10 | refusal names it and where to change it | budgetHardening "names the historical default…" |
+| Parallel requests | accounted + reserved never exceed the limit | budget.test (3 concurrency cases); runtimeBudget |
+
+No request bypasses the task ledger: every desktop adapter is `budgetedAdapter` (budgetContext "every provider adapter is budgeted"), the runner wraps its adapter the same way, and the runtime refuses a late call before it reaches an adapter.
+
+### Where an absolute spending guarantee is not possible
+
+- A provider that does not honour `max_tokens` or does not report usage: the overrun is recorded at its true cost and stops the task; it is not prevented.
+- A provider that bills a cancelled request in full after partial generation: Orca charges the upper bound as unreconciled (never zero), which may over- or under-state the real invoice until reconciled against the provider's own usage report.
+- Prices known from the reviewed catalog only for Anthropic's API; every other paid endpoint needs a custom price under a hard budget. A stale catalog row refuses under a hard budget rather than guessing.
+- The ledger is per process; concurrent Orca processes on one account are not coordinated.

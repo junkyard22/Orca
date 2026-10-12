@@ -1,6 +1,6 @@
-# Orca task lifecycle and cancellation (core reliability, phase 5)
+# Orca task lifecycle and cancellation (core reliability, phases 5–6)
 
-**Status:** implemented on `integration/core-reliability` (2026-10-12). Not merged.
+**Status:** implemented on `integration/core-reliability` (2026-10-12; phase 6 corrections the same day). Not merged. The phase 6 pre-merge validation of this design is in `docs/ORCA_PRE_MERGE_VALIDATION.md`.
 
 A task is not safely stopped because the interface says "Stopped." Four things are kept apart: *requesting* cancellation, *preventing* further dispatch, *draining* active work, and *confirming* that everything settled.
 
@@ -49,25 +49,60 @@ Transitions are checked against an explicit table; a terminal state is never lef
 
 Verification cannot be reached after cancellation: the runtime throws before QC and the repair loop checks the signal before each pass; a verdict already produced is kept but the lifecycle ends CANCELLED, never COMPLETED. The budget ledger's `markUnreconciled` is called when a request's outcome is unknown and a late settlement cannot reconcile it.
 
+## Workspace safety is not task state (phase 6)
+
+Phase 6 reproduced the loophole the phase 5 limitations named: a tool that ignores the abort signal keeps running after the runtime gives up draining (10 s) and returns INTERRUPTED; the desktop session then settled and released the lock, so a second task could start in a workspace the first task's worker was still writing to. A second, quieter loophole sat in `run_command`: after Stop it rejected 750 ms after requesting the kill whether or not the child had exited, so a process tree that survived `taskkill` was reported as settled.
+
+Five things are now kept apart, and each has its own record:
+
+| Concern | Where it lives | What it answers |
+|---|---|---|
+| Task execution state | `TaskLifecycle.current` | What is the task doing; is it over |
+| Active operations | `TaskLifecycle.activeOperations()` | What is still running in this process for the task |
+| Unsettled resources | `TaskLifecycle.unsettledResources()` | Which child processes were not confirmed stopped (pid, command, start time, creation-time identity) |
+| Workspace protection | `WorkspaceGuard` (`orca-core/src/workspaceGuard.ts`) | May another task own this workspace root |
+| Pending authorization | desktop `pendingApprovals` + session binding | Whose approval dialog is open, and whether its answer can still authorize anything |
+
+**Residues.** `run_command` now only treats the child's `close` as confirmation. If the kill is not confirmed within 750 ms it rejects with an `AbortError` that carries `unsettledResource` (pid, trimmed command, spawn time, and the process creation time captured at that moment through `workbench-core/src/tools/processIdentity.ts`). `TaskLifecycle.track` records that resource: the operation has ended, the task has not settled. CANCELLING with every operation ended but a resource outstanding becomes INTERRUPTED, never CANCELLED; `drain` resolves false at once in that case; `lifecycle.quiet` is true only when both lists are empty. A late `end()` after a terminal state is still applied to the operation list (and recorded as "settled after INTERRUPTED") so the workspace can be declared quiet later.
+
+**Protection.** When a task ends INTERRUPTED — after Stop, or because a pass returned while a fire-and-forget operation was still running and it never settled — the runtime protects the workspace root with the guard: the record names the task, the unsettled operations and the unconfirmed processes, and follows the lifecycle. The next `executeTask` for that root throws `WorkspaceProtectedError` before the evidence baseline, before Benson, before any model call; the desktop's `send-message` asks the guard first and returns the same text, and the renderer shows it as a banner. Protection is released by exactly three things:
+
+1. *settlement* — the lifecycle reports the operations ended and no resource is left;
+2. *verification* — every recorded process is probed (`probeProcess`: pid existence, then creation-time comparison, so a reused pid with a different identity counts as gone; `unknown` is never treated as gone);
+3. *user release* — the user, shown the list and a native confirmation dialog ("I have checked — release"), takes responsibility. Recorded with `by: "user"` and the reason.
+
+There is no timeout and no automatic reset. Protection is persisted (`workspace-protection.json` under userData, atomic rename) and re-read at start-up: in-process operations of a dead Orca are gone by definition (noted, with the warning that their last writes may be partial), child processes are re-probed, and anything still alive keeps the workspace protected with the recovery text in the init warnings.
+
+**Desktop watchdog.** The 30 s session watchdog still releases the *lock* (the user must not be shut out of the app), but it now also records a host-level protection for the workspace ("task runtime never settled after Stop"); when the runtime finally settles, `onLateSettlement` lifts that record, leaving any record the runtime itself made for unconfirmed processes.
+
+**Late dispatch.** `ctx.llm` is wrapped by `dispatchGuard.ts`: after cancellation or completion a late worker callback's `complete`/`stream` rejects with `AbortError`, as a late tool call, approval, repair or transition already did. The wrapper makes no model call of its own; the gated service it forwards to is unchanged (see the Rule 2 note in the validation report).
+
 ## Parallel execution and ownership
 
-Workers still run in parallel (`Promise.all` in the desktop's decompose path). Every operation is registered under the task id and kind; evidence collected for Pappy while any operation other than verification is still active is marked `partial` with the operations named, so Pappy treats it as insufficient evidence (`EVIDENCE_PARTIAL`, HIGH) instead of judging a moving workspace. Conflicting writes between two workers are not serialised (that would remove the parallelism the brief preserves); they are visible in the evidence (both appear in `changes[]`) and in the per-worker tool events, and the acceptance criteria decide.
+Workers still run in parallel (`Promise.all` in the desktop's decompose path). Every operation is registered under the task id and kind; evidence collected for Pappy while any operation other than verification is still active is marked `partial` with the operations named, so Pappy treats it as insufficient evidence (`EVIDENCE_PARTIAL`, HIGH) instead of judging a moving workspace.
+
+Phase 6 adds attribution and conflict detection instead of serialisation. The evidence collector reads every `agent.tool.call` / `tool.call` trace for a writing tool (`write_file`, `edit_*`, `*patch*`, `create_*`, connector editors named like them) and records the path and the worker (`role`, else `subagentId`, else "worker") against the current Maestro pass (`maestro.run.start` / `repair.start` boundaries). Each changed path in the evidence carries `writers[]`; a path written by two different workers in the same pass is listed in `contested[]`. Pappy (`CONFLICTING_WRITES`, MEDIUM, "Proof") downgrades the verification status to `unverified` for a change-kind task with a contested path: the final content may have lost one worker's change, so what the tests proved cannot be credited to either. Sequential writes across passes (a repair after a rejection) are attribution only. A test run is still tied to the source state it ran on (`baseline` / `intermediate` / `final`), so a passing run followed by another source change is never final evidence.
 
 ## Brain fallback
 
 `brainRoute` distinguishes `invalid_plan` (validation failed after the repair attempt), `provider_failed`, `timed_out`, `no_decision`; a cancelled Brain rethrows (no fallback). The fallback route preserves the user's goals as the acceptance criteria and picks a worker by the kind of work (`fallbackExecutionRole`: debugger for a defect, strong model for feature/refactor/docs, reader for inspection, Narrator only for conversational work). The reason is traced (`brain.route.fallback`) and emitted (`brain:fallback`) to the UI. Command verification applies only when running commands *is* the request (`requestsChanges` false).
 
+Phase 6 corrected one unintended effect of using Pappy's task classifier for routing: Pappy's `inspect` kind groups information *gathering* (review, audit, "explain how X in src/ works") with *restating* information already in hand ("summarize the facts", "report on the findings for the user"), because for verification both leave the workspace unchanged. For routing they differ: gathering needs the reader, who can open files; restating is a response, which is Narrator's job. `restatesKnownInformation` decides by the object of the request — a response-shaped verb whose object is prior information or the user, with nothing in the workspace named — not by particular phrasings. "Summarize the facts" → Narrator again; "Explain the architecture", "Summarize the findings about src/parse.js" → reader.
+
 ## Recovery
 
-The budget journal records in-flight snapshots; on the next start each unresolved task is reported in the init warnings **and** saved to the run history as `FAIL / interrupted` with the unreconciled exposure. Nothing is resumed and no paid request is repeated. Orphaned child processes started by a crashed Orca are outside its control; the warning says the workspace should be checked.
+The budget journal records in-flight snapshots; on the next start each unresolved task is reported in the init warnings **and** saved to the run history as `FAIL / interrupted` with the unreconciled exposure. Nothing is resumed and no paid request is repeated. Child processes started by a crashed Orca whose kill was never confirmed are recorded in the workspace protection file with pid and creation time; at start-up they are probed, and the workspace stays protected while one is alive (see above). Pending approvals die with the process and cannot be answered later; a new session's approvals are bound to that session.
 
 ## Tests
 
-`packages/orca-core/src/lifecycle.test.ts` (transitions, terminal immutability, drain/interrupt, tracking), `runtimeCancellation.test.ts` (Stop during worker/approval/repair/model request, late callbacks, double Stop, COMPLETED vs FAILED, partial evidence), `apps/desktop/src/taskSession.test.ts` (the `Promise.race` reproduction and its fix, watchdog, double Stop, sequencing), `routingPolicy.test.ts` (objective preservation, fallback roles).
+`packages/orca-core/src/lifecycle.test.ts` (transitions, terminal immutability, drain/interrupt, tracking), `runtimeCancellation.test.ts` (Stop during worker/approval/repair/model request, late callbacks, double Stop, COMPLETED vs FAILED, partial evidence), `workspaceGuard.test.ts` (protect/refuse/settle, process verification and pid reuse, user release, persistence across a restart, `settle()`, residues in the lifecycle), `runtimeWorkspaceSafety.test.ts` (Task B refused while Task A still writes; protection lifts on settlement; stray operations drained or INTERRUPTED+protected; late model/tool/approval/transition all refused; verdict unchanged), `evidenceStability.test.ts` (intermediate vs final test runs, writer attribution, contested writes, sequential passes), `packages/workbench-core/src/tools/runCommandCancellation.test.ts` (confirmed kill vs unconfirmed kill with the process named), `processIdentity.test.ts` (real disposable processes: alive → gone, identity mismatch), `packages/pappy-core/src/checks/workspaceVerification.test.ts` (contested → unverified, attribution alone changes nothing), `apps/desktop/src/taskSession.test.ts` (the `Promise.race` reproduction and its fix, watchdog, double Stop, sequencing), `workspaceSafety.test.ts` (the end-to-end Task A / Task B scenario, watchdog protection and late settlement, user release), `routingPolicy.test.ts` (objective preservation, fallback roles, gathering vs restating).
 
 ## Limitations
 
-- An MCP tool that ignores the abort signal cannot be interrupted; it is tracked and reported, not killed.
-- The desktop watchdog releases the lock after 30 s of unsettled operations; the UI says so, and the next task runs in a workspace that may still change.
-- Lifecycle tracking is in-process; a crash leaves only the journal's budget snapshot (no per-operation record).
+- An MCP tool that ignores the abort signal cannot be interrupted; it is tracked and reported, not killed. In-process (MCP, model stream, file write) operations cannot outlive Orca; only child processes can, and only those are probed after a restart.
+- Process identity is best effort: the creation time is read with PowerShell (`Get-CimInstance Win32_Process`) or `ps -o lstart=`; where that fails, the probe falls back to pid existence, which errs on the side of "alive" (protection stays, the user is asked to check).
+- A command tool that spawns grandchildren outside the killed process tree, or an MCP server that runs its own commands, leaves processes Orca never saw; they are not in the record and the recovery text tells the user to check.
+- The desktop watchdog still releases the *lock* after 30 s so the app stays usable; the *workspace* stays protected until the runtime settles or the user releases it.
+- Conflicting writes are detected (same path, two workers, one pass), not prevented; the pass is still judged, as `unverified`.
+- Lifecycle operation tracking is in-process; a crash leaves the journal's budget snapshot and the protection file (processes only), not a per-operation record.
 - Targeted evidence collection (asking a worker for one missing receipt instead of a full repair) is a recommendation, not implemented: Pappy's `evidenceRequests` already name the exact evidence; the repair loop could send only those as the repair instruction when the only unmet criteria are insufficient-evidence findings (not contradictions), keeping the original task, criteria and budget. That needs a design review of the repair prompt contract and Maestro's AHP packets.
