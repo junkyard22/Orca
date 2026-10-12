@@ -5,7 +5,7 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-10-12 (core reliability, phase 2.5) · **Machine:** dev desktop · **By:** Claude Code session
+**Last updated:** 2026-10-12 (core reliability, phase 4) · **Machine:** dev desktop · **By:** Claude Code session
 
 ---
 
@@ -14,7 +14,7 @@
 | Branch | Where | Head | Pushed? | Status |
 |---|---|---|---|---|
 | `main` | origin | `7b62cce` | yes | Production baseline. Carries the shared-component defects listed in the audit (`docs/ORCA-CORE-RELIABILITY-AUDIT.md`). Local `main` in `C:\Orca\Orca` is 10 commits behind. |
-| **`integration/core-reliability`** | dev desktop worktree `C:\Orca\worktrees\core-reliability` | this commit | **no** | **Source-only production integration branch, from `origin/main`.** Phases 0 (docs), 1 (core security), 2 (Pappy verification integrity), 3 (provider compatibility) and 2.5 (behavioural verification, evidence integrity, Moonshiner training safety) done; none approved for merge. No Demo Mode code. |
+| **`integration/core-reliability`** | dev desktop worktree `C:\Orca\worktrees\core-reliability` | this commit | **no** | **Source-only production integration branch, from `origin/main`.** Phases 0 (docs), 1 (core security), 2 (Pappy verification integrity), 3 (provider compatibility), 2.5 (behavioural verification, evidence integrity, Moonshiner training safety) and 4 (budget enforcement) done; none approved for merge. No Demo Mode code. |
 | `integration/1.6.1-clean` | dev desktop worktree `C:\Orca\worktrees\integration-1.6.1-clean` | `4191c00` + uncommitted `PROJECT_STATE.md` edit and untracked `ORCA-CORE-RELIABILITY-AUDIT.md` (the audit's original copy) | no | Summit 1.6.1 line (Demo Mode, staging build). Reference for later phases; not merged. |
 | `fix/live-rehearsal-remediation-1.6.1` | origin (to `58e447e`); worktree `C:\Orca\worktrees\remediation-1.6.1` | `28125ee` | local commits not pushed | Contains the 774 MB build archive. **Never merge.** |
 | `wip/live-demo-verification-parallel` | dev desktop | `43edfda` | no | Snapshot of the unreviewed 10/7 parallel verification work (see `docs/ORCA_PARALLEL_WORK_COMPARISON.md`). Reference only. |
@@ -88,6 +88,21 @@ Principle: Pappy establishes what the evidence proves. A confirmed file change p
 
 Same-corpus before/after (45 fixtures, `%TEMP%\orca-audit\phase25\before-after-45.txt`; phase 3 Pappy built from `96bacc6`): false acceptances **3/33 → 0/33**; false rejections **7/11 → 0/11** (legitimate acceptance 4/11 → 11/11); evidence-status accuracy **86.7 % → 100 %**; eligibility accuracy **73.3 % → 100 %**. Original corpus (expectations unchanged): default 23/23 → 23/23, raw **11/23 → 12/23**, hardened **14/23 → 15/23**; cheat catch 100 % and false accept 0 % throughout (`accepted_but_not_trainable-002` no longer falsely rejected). Runtime overhead unchanged: no new workspace rescans; this repo (423 files) baseline 184 ms · stat refresh 76 ms · fingerprint 73 ms · collect 70 ms; Pappy evaluation 0.6 ms per run. Small deterministic corpora — behaviour on named cases, not calibrated rates.
 
+### Phase 4 — budget enforcement, cost accounting, provider-aware spending (2026-10-12; design: `docs/ORCA_BUDGET_ARCHITECTURE.md`)
+
+Root causes on `main`: `metadata.costUsd` had no producer (every caller discarded provider usage), Miranda's `before_llm_call` got `0 / Infinity` placeholders, the only check ran after a pass, parallel workers shared nothing, the $0.10 default had no provenance and was labelled "per request", unknown models were priced at an invented rate.
+
+| Area | Change | Verified by |
+|---|---|---|
+| `miranda-core/src/budget/` (new: `pricing.ts`, `tokenBound.ts`, `ledger.ts`, `budgetedAdapter.ts`) | Provider-independent **task budget ledger**: estimate / reserve (synchronous, atomic) / measured usage / reconciled cost / unreconciled upper bounds / remaining, per role and provider; refusals `refused_limit`, `refused_pricing_unknown`, `refused_invalid_request`, `refused_unreconciled`, each with an actionable reason; overruns recorded at true cost and block; no usage → unreconciled and block; cancellation before dispatch charges nothing. Reviewed Anthropic price catalog (2026-10-12, sourced, dated, stale after 120 days), custom prices, local inference ($0 external, cost unknown), no substitution between models or providers. Input bound from the request's UTF-8 bytes (+ framing, +10 %), never the context window. `budgetedAdapter` wraps any `LLMAdapter`; `runWithBudget` / `withBudgetAttribution` scope every request to the task ledger with role, stage and the Miranda gate | `budget.test.ts` (26: bounds, pricing, settlement, unknown outcomes, overrun, concurrency, adapter, gate, performance) |
+| `miranda-core` gate | `LLMCallGateContext.budget: BudgetDecision`; a refusal BLOCKs with the kind in the reason; the budgeted adapter passes every decision through `before_llm_call` at stage `budget:<stage>` | same + gate suite |
+| `orca-core` runtime, repair loop, `budget/passAccounting.ts`, `budget/journal.ts` (new) | One ledger per task (or the shell's message ledger), traced and emitted (`budget:update`); each Maestro pass runs in the scope and its measured cost, unreconciled bound, tokens and refusals land in `metadata`; a budget refusal or exhausted ledger stops with `Stopped by the task budget: … incomplete and was not verified`; repairs and fallbacks draw on the same remaining budget; a repair pass that could not make a request stops before QC; legacy self-reported `costUsd` cap kept for Maestros without adapters; snapshot in `pipeline:summary`, trace `finalResult`, `runs.cost_usd` (reconciled) + new `cost_unreconciled_usd`, `cost_basis`; JSON journal of in-flight snapshots recovered on next start | `runtimeBudget.test.ts` (7), `journal.test.ts` (3), existing runtime/repair stress tests |
+| `agent-loop-core`, runner maestro adapter | `budgetGateContext(ctx)` replaces the `0 / Infinity` placeholders at every `before_llm_call` | suites |
+| `apps/desktop` (`budgetContext.ts` new, `providerAdapter.ts`, `llmGate.ts`, `settings.ts`, `main.ts`, renderer) | Every adapter budgeted (session ledger outside a message); one message ledger with the configured limit wraps narration, Brain, workers, fallbacks, repairs and Cargo summaries; Miranda fields from the ledger; `budgetSource` (`user` / `legacy_default`), `pricing` (custom prices) in Settings; legacy $0.10 kept enforced, labelled and explained at start-up, never raised; "Budget per task" with 0 = no hard limit; journal recovery warnings; status bar and badge show confirmed / unreconciled / reserved / remaining / by role / by provider / stop reason | `budgetContext.test.ts` (7), `settings.test.ts` (+5), `llmGate.test.ts` (+3), desktop suite |
+| `apps/runner` | Adapters budgeted; `ORCA_BUDGET_USD` (hard budget) and `ORCA_PRICING_JSON` (custom prices) | runner suite |
+
+Not changed: Pappy's rules, Moonshiner eligibility, Miranda's tool protections, model assignments, cancellation, MCP behaviour. No paid request, no push, no package.
+
 ## Unverified
 
 - Behaviour inside the packaged Electron app (the approval dialog flow with real MCP servers) — unit tests use spy executors; the main-process bundle builds (`build-main.mjs`) but no live run was made.
@@ -99,7 +114,8 @@ Same-corpus before/after (45 fixtures, `%TEMP%\orca-audit\phase25\before-after-4
 
 | # | Problem | Notes |
 |---|---|---|
-| 1 | **Phases 4–7 of the integration plan** (budget, routing/cancellation, UI, Pappy false rejects) | Not started; each needs its own authorization. |
+| 1 | **Phases 5–7 of the integration plan** (routing/cancellation, UI, Pappy false rejects) | Not started; each needs its own authorization. |
+| 1k | **Budget limitations** (`docs/ORCA_BUDGET_ARCHITECTURE.md` §Limitations): prices known only for Anthropic's own API (others need a custom price under a hard budget; OpenAI/OpenRouter pages could not be fetched); reservation is an upper bound only where the provider honours `max_tokens` and reports usage (overruns are recorded and stop the task, not prevented); ledger is per process; a stream without usage stops a hard-budget task after one request; cache writes not modelled | Recommended refresh: a dated JSON catalog filled from OpenRouter `/api/v1/models` and Anthropic's Models API, warned on age instead of edited by hand. |
 | 1e | ~~Follow-up A gaps~~ | Closed in phase 2.5 (behavioural receipts, PARTIAL → HIGH with evidence, docs content check). |
 | 1f | ~~Evidence corpus known gaps~~ | Closed in phase 2.5 by fixing the causes; registry empty (`docs/ORCA_EVIDENCE_CORPUS.md`). |
 | 1g | `claude-haiku-5-5` is not in Orca's Anthropic catalog (reviewed 2026-09-25) and could not be checked live | The 1.6.1 staging profile and docs use it; on this branch it only produces an init warning and is sent as configured. Verify against Anthropic's live model list before any Live run. |
@@ -120,6 +136,10 @@ Same-corpus before/after (45 fixtures, `%TEMP%\orca-audit\phase25\before-after-4
 
 | Date | Commit | Machine | Command | Result |
 |---|---|---|---|---|
+| 2026-10-12 | phase 4 head | dev desktop (Node 24.11.1) | `pnpm -r --no-bail test` | **1,789 passed · 0 failed · 1 skipped** (packages 1,423; runner 107; desktop 259) |
+| 2026-10-12 | phase 4 head | dev desktop | `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts`, desktop `tsc --noEmit` + `build-main.mjs` | 0 errors; bundle OK |
+| 2026-10-12 | phase 4 head | dev desktop | `pnpm contract:check` | REVIEW REQUIRED (15 × Rule 4 from phase 2.5, 1 × Rule 5 runner; no new findings) |
+| 2026-10-12 | phase 4 head | dev desktop | ledger benchmark (`miranda-core` scratch) | reserve+settle 70 µs (4 KB prompt) / 390 µs (400 KB); snapshot 1.3 ms at 22k entries; budgeted adapter 24 µs per request over a bare adapter |
 | 2026-10-12 | phase 2.5 head | dev desktop (Node 24.11.1) | `pnpm -r --no-bail test` | **1,735 passed · 0 failed · 1 skipped** (packages 1,384; runner 107; desktop 244) |
 | 2026-10-12 | phase 2.5 head | dev desktop | `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts`, desktop `tsc --noEmit` + `build-main.mjs` | 0 errors; bundle OK |
 | 2026-10-12 | phase 2.5 head | dev desktop | `pnpm contract:check` | REVIEW REQUIRED (15 × Rule 4, 1 × Rule 5 runner) |
@@ -147,6 +167,7 @@ Same-corpus before/after (45 fixtures, `%TEMP%\orca-audit\phase25\before-after-4
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-10-12 (core phase 4)** (dev desktop) — Budget enforcement: provider-independent task ledger in miranda-core (atomic reservations from request-derived token bounds, measured settlement, unreconciled upper bounds, refusals with reasons, Miranda budget checkpoint), reviewed Anthropic price catalog (2026-10-12), custom prices, local inference; runtime/repair/desktop/runner wiring, legacy $0.10 kept-and-labelled migration, restart journal, cost display. No push, merge, package, paid call.
 - **2026-10-12 (core phase 2.5)** (dev desktop) — Behavioural verification (task-aware receipts: reproduction, regression test, full suite, documented validation command, build check, final docs content), per-criterion assessments with HIGH PARTIAL, honesty-based training eligibility on contradicted evidence, evidence requests, root-cause fixes to the keyword heuristics and claim proof, export that checks evidence tags itself, desktop worker guidance, corpus 26 → 45 with 0/0 false acceptances/rejections, original corpus raw 11→12 / hardened 14→15. Full suite 1,735 passed. No push, merge, build, paid call, retraining.
 - **2026-10-09 (core phase 3)** (dev desktop) — Provider compatibility: adapter-layer sampling/thinking policy, model catalog, structured provider errors, honest usage reporting, stable provider resolution with warnings, renderer stale-provider fix, runner policy; evidence-bearing eval corpus (26 fixtures, 0 false acceptances, 8 documented known gaps); follow-up A investigation (no Pappy change). No push, merge, build, paid call.
 - **2026-10-09 (core phase 2)** (dev desktop) — Audited Pappy's confidence (heuristic, display-only, uncalibrated); implemented runtime workspace evidence, task-aware verification, evidence-strength ledger, evidence status and the training-eligibility gate; adversarial before/after 7→0 false acceptances, 1→0 false rejections; corpus verdict metrics unchanged; full suite 1,597 passed. No push, merge, build, paid call.
