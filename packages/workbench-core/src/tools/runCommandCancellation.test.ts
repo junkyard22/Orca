@@ -36,7 +36,10 @@ vi.mock("child_process", () => ({
   },
 }));
 
-vi.mock("./processIdentity.js", () => ({ captureProcessIdentity: async () => "2026-10-12T14:00:00.0000000+00:00" }));
+vi.mock("./processIdentity.js", () => ({
+  captureProcessIdentity: async () => "2026-10-12T14:00:00.0000000+00:00",
+  findSurvivingDescendants: async () => [],
+}));
 
 const { runCommandTool } = await import("./runCommandTool.js");
 const { createSandboxPolicy } = await import("./sandbox.js");
