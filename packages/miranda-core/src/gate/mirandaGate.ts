@@ -21,6 +21,7 @@
 import type { AHPPacket, AHPConstraint } from "../ahp/types.js";
 import { AHPLifecycle, AHPVerdict } from "../ahp/types.js";
 import * as path from "node:path";
+import type { BudgetDecision } from "../budget/ledger.js";
 
 // ---------------------------------------------------------------------------
 // AHP lifecycle transition enforcement
@@ -112,10 +113,17 @@ export interface LLMCallGateContext {
   stage: string;
   /** Model ID being invoked, e.g. "deepseek/deepseek-chat" */
   model: string;
-  /** USD spent across all stages so far in this run */
+  /** USD accounted so far in this run (spent + unreconciled + reserved) */
   budgetUsed: number;
   /** USD budget cap for this run */
   budgetLimit: number;
+  /**
+   * The task budget ledger's decision for this request, when the caller
+   * consulted it: authorized within budget, no applicable hard budget, or
+   * refused (limit would be exceeded, pricing unknown, charges unreconciled,
+   * request unbounded). A refusal blocks the call; the kind is in the reason.
+   */
+  budget?: BudgetDecision;
   /**
    * The following context-size fields are optional and purely diagnostic —
    * populated by callers that have already computed them for telemetry
@@ -736,7 +744,9 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
     beforeLLMCall(ctx): GateResult {
       const violations: string[] = [];
 
-      if (ctx.budgetUsed >= ctx.budgetLimit) {
+      if (ctx.budget && !ctx.budget.allowed) {
+        violations.push(`Budget ${ctx.budget.kind}: ${ctx.budget.reason}`);
+      } else if (ctx.budgetUsed >= ctx.budgetLimit) {
         violations.push(
           `Budget exceeded: $${ctx.budgetUsed.toFixed(6)} used, limit $${ctx.budgetLimit}`,
         );
@@ -778,7 +788,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
 
       const result: GateResult = {
         allowed: true,
-        reason: `stage=${ctx.stage}  model=${ctx.model}  budget=$${ctx.budgetUsed.toFixed(4)}/$${ctx.budgetLimit}`,
+        reason: `stage=${ctx.stage}  model=${ctx.model}  budget=$${ctx.budgetUsed.toFixed(4)}/$${ctx.budgetLimit}${ctx.budget ? `  decision=${ctx.budget.kind}` : ""}`,
         ...(warnings.length > 0 && { warnings }),
         verdict: deriveVerdict(true, undefined, warnings),
       };

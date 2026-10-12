@@ -137,3 +137,6 @@ export type { ProviderErrorDetails } from "./llm/errors.js";
 export { estimateTokens, resolveTokenUsage } from "./metrics/tokens.js";
 export { calculateCost, formatCost } from "./metrics/costs.js";
 export { appendRunLog, getRunSummary } from "./metrics/runStore.js";
+
+// Budget — task ledger, pricing, budgeted adapters
+export * from "./budget/index.js";
