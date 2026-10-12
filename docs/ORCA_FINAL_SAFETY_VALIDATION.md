@@ -65,7 +65,7 @@ Run from source (`node build-main.mjs`, the normal dev bundle; no installer, no 
 
 | Rows | Result |
 |---|---|
-| 1 startup · 5 approval timeout · 6 Stop during a request · 8 badges · 9 Brain fallback · 10 budget refusal · 11 Pappy result · 12 recovery after restart | **PASS** (6, 8, 10 after fixes found by this run) |
+| 1 startup · 5 approval timeout · 6 Stop during a request · 8 badges · 9 Brain fallback · 10 budget refusal · 11 Pappy result · 12 recovery after restart | **PASS** — 8 rows (6, 8, 10 after fixes found by this run) |
 | 2 provider configuration · 13 workspace protection | **PARTIAL** — observed from seeded settings / the banner appeared live; the Settings edit and the override dialog not operated |
 | 3 approval presentation · 4 Approve/Deny · 7 Stop while approval pending | **PENDING (human)** — the approval card appeared; its inspection and clicks are the presenter's |
 
@@ -146,7 +146,7 @@ See PROJECT_STATE "Phase 6.5" and `git log` for the hashes recorded at commit ti
 - The survivor scan is a lower bound (processes that left the group or were started by something else are invisible) and can report unrelated short-lived orphans created during the command window (released within seconds by verification). Hosts without PowerShell / `ps` get "unknown" and no protection from the scan.
 - An external process that ignored the kill cannot be fenced; an override records that the user accepts it.
 - Starting a long-lived server from a task protects the workspace until it exits or the user overrides (by design, conservative).
-- Three checklist rows (approval presentation, Approve/Deny, Stop while approval pending) and the override dialog are not yet observed by a human; the "still stopping" refusal was not observable live.
+- Three checklist rows (approval presentation, Approve/Deny, Stop while approval pending) and the override dialog are not yet observed by a human; the "still stopping" refusal was not observable live. (Accounting corrected in phase 6.6: 8 PASS + 2 PARTIAL + 3 PENDING = 13; row 2 had been counted twice.)
 - Prices known from the reviewed catalog only for Anthropic's API; no run against a real provider has been made on this branch.
 - `brainRoute`'s classification is now tested, but the Electron handler that calls it (and the init recovery wiring) is covered by the live run only.
 
