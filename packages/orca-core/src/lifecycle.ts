@@ -51,7 +51,19 @@ const TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
   INTERRUPTED: [],
 };
 
-export type OperationKind = "model" | "tool" | "approval" | "verification" | "other";
+export type OperationKind = "model" | "tool" | "approval" | "verification" | "scan" | "other";
+
+/** What a tool may attach (non-enumerably) to its result or error: a scan for processes it left behind. */
+export interface PendingResourceScan {
+  status: "done" | "unknown";
+  resources: UnsettledResource[];
+}
+
+function pendingResourcesOf(value: unknown): Promise<PendingResourceScan> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const p = (value as { pendingResources?: unknown }).pendingResources;
+  return p && typeof (p as Promise<unknown>).then === "function" ? (p as Promise<PendingResourceScan>) : undefined;
+}
 
 export interface ActiveOperation {
   id: number;
@@ -118,6 +130,8 @@ export interface TaskLifecycleSnapshot {
   unsettledResources: UnsettledResource[];
   /** Events that arrived after a terminal state and were ignored. */
   ignoredAfterEnd: Array<{ at: string; event: string }>;
+  /** What could not be established (a process scan that did not run), so nobody reads silence as safety. */
+  notes: string[];
 }
 
 export interface OperationHandle {
@@ -142,6 +156,7 @@ export class TaskLifecycle {
   private readonly unsettled: ActiveOperation[] = [];
   private readonly residues: UnsettledResource[] = [];
   private readonly ignored: Array<{ at: string; event: string }> = [];
+  private readonly notesList: string[] = [];
   private nextOp = 0;
   private cancelRequestedFlag = false;
   private cancelReasonText?: string;
@@ -230,14 +245,41 @@ export class TaskLifecycle {
   async track<T>(kind: OperationKind, label: string, fn: () => Promise<T>, cancellable = true): Promise<T> {
     const op = this.begin(kind, label, cancellable);
     try {
-      return await fn();
+      const value = await fn();
+      this.absorbPending(value, label);
+      return value;
     } catch (error) {
       const residue = unsettledResourceOf(error);
       if (residue) this.residues.push(residue);
+      this.absorbPending(error, label);
       throw error;
     } finally {
       op.end();
     }
+  }
+
+  /**
+   * A tool handed back a scan for processes it left behind. The scan is an
+   * operation of its own (the task is not quiet until it answers); every
+   * survivor becomes a resource, and a scan that could not run is noted.
+   */
+  private absorbPending(value: unknown, label: string): void {
+    const pending = pendingResourcesOf(value);
+    if (!pending) return;
+    const op = this.begin("scan", `process scan after ${label}`, false);
+    pending.then(
+      (scan) => {
+        if (scan.status === "unknown") this.notesList.push(`process scan after ${label} could not run: processes it may have started are unknown`);
+        else this.addResources(scan.resources);
+      },
+      () => this.notesList.push(`process scan after ${label} failed: processes it may have started are unknown`),
+    ).finally(() => op.end());
+  }
+
+  /** Record processes the task started that are still running. */
+  addResources(resources: UnsettledResource[]): void {
+    for (const r of resources) if (!this.residues.some((x) => x.pid === r.pid)) this.residues.push(r);
+    if (resources.length > 0) this.notify();
   }
 
   activeOperations(): ActiveOperation[] {
@@ -246,6 +288,23 @@ export class TaskLifecycle {
 
   unsettledResources(): UnsettledResource[] {
     return [...this.residues];
+  }
+
+  notes(): string[] {
+    return [...this.notesList];
+  }
+
+  /** Resolves when no process scan is running, or after `timeoutMs`. */
+  waitForScans(timeoutMs: number): Promise<void> {
+    const pending = () => [...this.active.values()].some((o) => o.kind === "scan");
+    if (!pending()) return Promise.resolve();
+    return new Promise((resolve) => {
+      let done = false;
+      let unsub = () => {};
+      const finish = () => { if (done) return; done = true; clearTimeout(timer); unsub(); resolve(); };
+      const timer = setTimeout(finish, timeoutMs);
+      unsub = this.subscribe(() => { if (!pending()) finish(); });
+    });
   }
 
   /** A resource was verified gone (or the user took responsibility for it). */
@@ -298,28 +357,25 @@ export class TaskLifecycle {
   }
 
   /**
-   * Wait for the task to be quiet, up to `timeoutMs`. Resolves true when
-   * every operation settled and no resource is outstanding, false when the
-   * timeout passed with operations still active or a resource unconfirmed.
+   * Wait for every active operation to end, up to `timeoutMs`. Resolves true
+   * only when the task is then quiet (no operation, no resource); false when
+   * the timeout passed with operations still active, or when the operations
+   * ended but a process was left unconfirmed.
    */
   drain(timeoutMs: number): Promise<boolean> {
-    if (this.quiet) return Promise.resolve(true);
-    if (this.active.size === 0) return Promise.resolve(false);
+    if (this.active.size === 0) return Promise.resolve(this.quiet);
     return new Promise((resolve) => {
       let done = false;
       let unsub = () => {};
-      const finish = (settled: boolean) => {
+      const finish = () => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         unsub();
-        resolve(settled);
+        resolve(this.quiet);
       };
-      const timer = setTimeout(() => finish(false), timeoutMs);
-      unsub = this.subscribe(() => {
-        if (this.quiet) finish(true);
-        else if (this.active.size === 0) finish(false);
-      });
+      const timer = setTimeout(finish, timeoutMs);
+      unsub = this.subscribe(() => { if (this.active.size === 0) finish(); });
     });
   }
 
@@ -354,6 +410,7 @@ export class TaskLifecycle {
       unsettledOperations: [...this.unsettled],
       unsettledResources: [...this.residues],
       ignoredAfterEnd: [...this.ignored],
+      notes: [...this.notesList],
     };
   }
 }

@@ -10,6 +10,7 @@ import { toTokenUsage } from "../llm/usage.js";
 import { BudgetRefusedError, TaskBudgetLedger } from "./ledger.js";
 import { resolvePrice } from "./pricing.js";
 import { budgetedAdapter, runWithBudget } from "./budgetedAdapter.js";
+import type { LLMAdapter, LLMRequest, LLMResponse } from "../llm/types.js";
 
 const ANTHROPIC = { id: "p", type: "anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com/v1" };
 const NOW = new Date("2026-10-12T12:00:00Z");
@@ -143,5 +144,27 @@ describe("legacy default refusal wording", () => {
     expect(legacy.decide(big).reason).toMatch(/historical default budget, never explicitly chosen — set the budget you intend in Settings/);
     const user = new TaskBudgetLedger({ taskId: "t", limitUsd: 0.1, limitSource: "user", now: () => NOW });
     expect(user.decide(big).reason).toMatch(/raise the task budget in Settings or use a cheaper model/);
+  });
+});
+
+describe("cancellation identity (phase 6.5)", () => {
+  it("a transport that reports the abort as its own error type still surfaces an AbortError to the caller, with the bound unreconciled as 'cancelled after dispatch'", async () => {
+    const ledger = new TaskBudgetLedger({ taskId: "t", limitUsd: 1 });
+    const controller = new AbortController();
+    const transport = {
+      name: "wrapping",
+      complete: (r: LLMRequest) => new Promise<LLMResponse>((_res, rej) => {
+        r.signal?.addEventListener("abort", () => rej(Object.assign(new Error("Stopped."), { name: "ProviderRequestError" })));
+      }),
+    } as unknown as LLMAdapter;
+    const adapter = budgetedAdapter(transport, { provider: ANTHROPIC, defaultModel: "claude-sonnet-5-5", fallback: () => ledger });
+    const p = adapter.complete({ model: "", messages: [{ role: "user", content: "hi" }], temperature: 0, maxTokens: 100, signal: controller.signal });
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort(new Error("Stopped."));
+    const error = await p.then(() => null, (e: Error & { cause?: unknown }) => e);
+    expect(error?.name).toBe("AbortError");
+    expect(error?.message).toBe("Stopped.");
+    expect((error?.cause as Error)?.name).toBe("ProviderRequestError");
+    expect(JSON.stringify(ledger.history())).toMatch(/cancelled after dispatch/);
   });
 });

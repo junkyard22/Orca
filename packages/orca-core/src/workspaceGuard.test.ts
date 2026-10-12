@@ -53,13 +53,24 @@ describe("workspace guard", () => {
     expect(status).toEqual([]);
   });
 
-  it("the user may release a workspace, and the release is recorded as theirs", async () => {
+  it("an override is the user's acknowledged risk: recorded with the protection as it stood, generation bumped, nothing verified", async () => {
     const guard = createWorkspaceGuard({ probe: () => "alive" });
     guard.protect("/ws", { taskId: "A", reason: "was interrupted", resources: [proc(1)] });
-    const released = await guard.release("/ws", "checked Task Manager; the process is a leftover shell with no open files");
-    expect(released).toMatchObject([{ taskId: "A", by: "user" }]);
+    expect(guard.generation("/ws")).toBe(0);
+    // @ts-expect-error acknowledged must be literally true
+    await expect(guard.override("/ws", { reason: "x", acknowledged: false })).rejects.toThrow(/explicit acknowledgement/);
+    const released = await guard.override("/ws", { reason: "I checked Task Manager and accept the risk", acknowledged: true });
+    expect(released).toMatchObject([{ taskId: "A", by: "override", generation: 1 }]);
     expect(await guard.status("/ws")).toEqual([]);
-    expect(await guard.release("/ws", "again")).toEqual([]);
+    expect(guard.generation("/ws")).toBe(1);
+    const audit = guard.overrides();
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ taskId: "A", reason: "I checked Task Manager and accept the risk", generation: 1 });
+    expect(audit[0]!.protection.resources.map((r) => r.pid)).toEqual([1]); // the interruption evidence travels with the override
+    expect(await guard.override("/ws", { reason: "again", acknowledged: true })).toEqual([]);
+    // A later protection on the same root carries the new generation.
+    guard.protect("/ws", { taskId: "B", reason: "was interrupted", resources: [proc(2)] });
+    expect((await guard.status("/ws"))[0]!.generation).toBe(1);
   });
 
   it("protection survives a restart: in-process operations are gone with the process, child processes are re-probed, nothing is reset", async () => {
@@ -101,7 +112,7 @@ describe("workspace guard", () => {
     expect(text).toMatch(/Wait: protection lifts on its own/);
     expect(text).toMatch(/Task Manager/);
     expect(text).toMatch(/git status/);
-    expect(text).toMatch(/release the workspace. The release is recorded as a manual decision/);
+    expect(text).toMatch(/override the protection. An override is recorded as your decision: it verifies nothing and stops nothing/);
   });
 });
 

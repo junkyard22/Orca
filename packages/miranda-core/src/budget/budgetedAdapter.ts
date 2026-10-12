@@ -124,7 +124,17 @@ export function budgetedAdapter(adapter: LLMAdapter, options: BudgetedAdapterOpt
       response = await call(request);
     } catch (error) {
       // The request may have reached the provider: its upper bound stays charged.
-      ledger.markUnreconciled(reservation, isAbort(error) ? "the request was cancelled after dispatch" : `the request failed after dispatch (${error instanceof Error ? error.message : String(error)})`);
+      // A cancellation keeps its identity whatever the transport threw: an
+      // adapter that reports the abort as its own error type must not turn
+      // Stop into a provider failure for the caller.
+      const cancelled = isAbort(error) || request.signal?.aborted === true;
+      ledger.markUnreconciled(reservation, cancelled ? "the request was cancelled after dispatch" : `the request failed after dispatch (${error instanceof Error ? error.message : String(error)})`);
+      if (cancelled && !isAbort(error)) {
+        const e = new Error(error instanceof Error && error.message ? error.message : "The model request was cancelled after dispatch.");
+        e.name = "AbortError";
+        (e as Error & { cause?: unknown }).cause = error;
+        throw e;
+      }
       throw error;
     }
     ledger.settle(reservation, response.usage, response.model);

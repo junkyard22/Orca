@@ -39,14 +39,34 @@ export interface WorkspaceProtection {
   resources: UnsettledResource[];
   /** What was verified since the record was made. */
   notes: string[];
+  /** The root's generation when the record was made (fence). */
+  generation?: number;
 }
 
 export interface WorkspaceRelease {
   root: string;
   taskId: string;
   at: string;
-  by: "settlement" | "verification" | "user";
+  /**
+   * settlement   every operation ended and no process is outstanding (verified quiet)
+   * verification every recorded process was probed and found gone (verified quiet)
+   * override     the user accepted the risk; nothing was verified and nothing was stopped
+   */
+  by: "settlement" | "verification" | "override";
   reason: string;
+  /** Fence: the root's generation after this release. Anything recorded under an older generation is stale. */
+  generation: number;
+}
+
+/** An override, kept for audit with the protection as it stood: what the user accepted. */
+export interface WorkspaceOverride {
+  root: string;
+  taskId: string;
+  at: string;
+  reason: string;
+  generation: number;
+  /** The protection record at the moment of the override — the interruption evidence is never discarded. */
+  protection: WorkspaceProtection;
 }
 
 export type WorkspaceGuardEvent =
@@ -69,8 +89,18 @@ export interface WorkspaceGuard {
   status(root: string): Promise<WorkspaceProtection[]>;
   /** Every protection on record, without probing. */
   list(): WorkspaceProtection[];
-  /** The user takes responsibility for `root`. Returns what was released. */
-  release(root: string, reason: string): Promise<WorkspaceRelease[]>;
+  /**
+   * The user overrides the protection of `root`. This verifies nothing and
+   * stops nothing: it records that the user accepted the risk, with the
+   * protection as it stood, and bumps the root's generation so anything
+   * recorded under the old one is stale. `acknowledged` must be literally
+   * true — a caller cannot override by accident.
+   */
+  override(root: string, input: { reason: string; acknowledged: true }): Promise<WorkspaceRelease[]>;
+  /** Overrides on record, newest first. */
+  overrides(): WorkspaceOverride[];
+  /** The root's current generation (0 when never released by override). */
+  generation(root: string): number;
   /** The host saw task `taskId`'s in-process work settle; its processes, if any, are still verified before release. */
   settle(root: string, taskId: string, reason: string): Promise<WorkspaceRelease | null>;
   /** Re-read protections a previous process left, dropping the ones whose processes are verified gone. */
@@ -90,7 +120,11 @@ export interface WorkspaceGuardOptions {
 interface GuardFile {
   version: 1;
   protections: Array<Omit<WorkspaceProtection, "notes"> & { notes?: string[] }>;
+  overrides?: WorkspaceOverride[];
+  generations?: Record<string, number>;
 }
+
+const OVERRIDE_HISTORY = 50;
 
 /** pid existence only: a reused pid looks alive, which is the safe error. */
 export const existenceProbe: ProcessProbe = (resource) => {
@@ -124,7 +158,7 @@ export function describeProtections(protections: WorkspaceProtection[]): string 
   lines.push("  1. Wait: protection lifts on its own when the listed operations end or their processes are verified gone.");
   lines.push("  2. If a process is listed, look for it (Task Manager, or `ps`) and end it if it is still writing to the workspace.");
   lines.push("  3. Review what changed before continuing (for example `git status` / `git diff`); a stopped worker may have left a partial edit.");
-  lines.push("  4. Once you have verified nothing is still writing, release the workspace. The release is recorded as a manual decision.");
+  lines.push("  4. If you decide to go on anyway, override the protection. An override is recorded as your decision: it verifies nothing and stops nothing, and a process listed above keeps whatever access it has.");
   return lines.join("\n");
 }
 
@@ -134,6 +168,9 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
   const protections = new Map<string, WorkspaceProtection>(); // key: rootKey + "\0" + taskId
   const followers = new Map<string, () => void>();
   const lifecycles = new Map<string, TaskLifecycle>();
+  const overrideLog: WorkspaceOverride[] = [];
+  const generations = new Map<string, number>();
+  let loaded = false;
   const listeners: Array<(event: WorkspaceGuardEvent) => void> = [];
 
   const keyOf = (root: string, taskId: string) => `${rootKey(root)}\0${taskId}`;
@@ -142,7 +179,7 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
     if (!options.filePath) return;
     try {
       mkdirSync(dirname(options.filePath), { recursive: true });
-      const file: GuardFile = { version: 1, protections: [...protections.values()] };
+      const file: GuardFile = { version: 1, protections: [...protections.values()], overrides: overrideLog.slice(0, OVERRIDE_HISTORY), generations: Object.fromEntries(generations) };
       const tmp = `${options.filePath}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify(file), "utf8");
       renameSync(tmp, options.filePath);
@@ -155,6 +192,11 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
     if (!options.filePath || !existsSync(options.filePath)) return [];
     try {
       const parsed = JSON.parse(readFileSync(options.filePath, "utf8")) as Partial<GuardFile>;
+      if (!loaded) {
+        loaded = true;
+        if (Array.isArray(parsed.overrides)) overrideLog.push(...parsed.overrides.filter((o) => o && typeof o.root === "string"));
+        if (parsed.generations && typeof parsed.generations === "object") for (const [k, v] of Object.entries(parsed.generations)) if (typeof v === "number") generations.set(k, v);
+      }
       return Array.isArray(parsed.protections)
         ? parsed.protections
             .filter((p): p is GuardFile["protections"][number] => !!p && typeof p.root === "string" && typeof p.taskId === "string")
@@ -176,7 +218,7 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
     followers.delete(key);
     lifecycles.delete(key);
     persist();
-    const release: WorkspaceRelease = { root: p.root, taskId: p.taskId, at: now().toISOString(), by, reason };
+    const release: WorkspaceRelease = { root: p.root, taskId: p.taskId, at: now().toISOString(), by, reason, generation: generations.get(rootKey(p.root)) ?? 0 };
     emit({ type: "released", protection: p, release });
     return release;
   };
@@ -218,6 +260,7 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
       operations: lifecycle ? lifecycle.activeOperations().map(({ kind, label, startedAt }) => ({ kind, label, startedAt })) : [...(record.operations ?? [])],
       resources: lifecycle ? lifecycle.unsettledResources() : [...(record.resources ?? [])],
       notes: [],
+      generation: generations.get(rootKey(root)) ?? 0,
     };
     protections.set(key, p);
     if (lifecycle) {
@@ -248,10 +291,20 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
     return still;
   };
 
-  const release = async (root: string, reason: string): Promise<WorkspaceRelease[]> => {
+  const override = async (root: string, input: { reason: string; acknowledged: true }): Promise<WorkspaceRelease[]> => {
+    if (input.acknowledged !== true) throw new Error("A workspace override requires explicit acknowledgement.");
     const key = rootKey(root);
     const matching = [...protections.values()].filter((p) => rootKey(p.root) === key);
-    return matching.map((p) => drop(p, "user", reason));
+    if (matching.length === 0) return [];
+    const generation = (generations.get(key) ?? 0) + 1;
+    generations.set(key, generation);
+    const at = now().toISOString();
+    for (const p of matching) {
+      // The evidence of the interruption travels with the override, unchanged.
+      overrideLog.unshift({ root: p.root, taskId: p.taskId, at, reason: input.reason, generation, protection: JSON.parse(JSON.stringify(p)) as WorkspaceProtection });
+    }
+    overrideLog.splice(OVERRIDE_HISTORY);
+    return matching.map((p) => drop(p, "override", input.reason));
   };
 
   const settle = async (root: string, taskId: string, reason: string): Promise<WorkspaceRelease | null> => {
@@ -262,7 +315,7 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
     p.notes.push(`${reason} at ${now().toISOString()}`);
     persist();
     if (p.resources.length === 0) return drop(p, "settlement", reason);
-    return (await verify(p)) ? { root: p.root, taskId, at: now().toISOString(), by: "verification", reason } : null;
+    return (await verify(p)) ? { root: p.root, taskId, at: now().toISOString(), by: "verification", reason, generation: generations.get(rootKey(root)) ?? 0 } : null;
   };
 
   const recover = async (): Promise<{ kept: WorkspaceProtection[]; released: WorkspaceRelease[] }> => {
@@ -279,7 +332,7 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
       }
       protections.set(key, p);
       if (await verify(p)) {
-        released.push({ root: p.root, taskId: p.taskId, at: now().toISOString(), by: "verification", reason: "no process survived the restart" });
+        released.push({ root: p.root, taskId: p.taskId, at: now().toISOString(), by: "verification", reason: "no process survived the restart", generation: generations.get(rootKey(p.root)) ?? 0 });
       } else {
         kept.push(p);
       }
@@ -292,7 +345,9 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
     protect,
     status,
     list: () => [...protections.values()],
-    release,
+    override,
+    overrides: () => [...overrideLog],
+    generation: (root: string) => generations.get(rootKey(root)) ?? 0,
     settle,
     recover,
     subscribe: (listener) => {

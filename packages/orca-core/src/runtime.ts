@@ -392,10 +392,18 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             // an operation in flight (a tool that has not settled, a model
             // request still open) makes the inventory partial, and Pappy
             // treats a partial inventory as insufficient evidence.
+            // A scan for processes a command left behind answers within a few
+            // seconds; it is waited for so a survivor is known before judging.
+            await lifecycle.waitForScans(8000);
             const collected = await evidence.collect();
-            const active = lifecycle.activeOperations().filter((o) => o.kind !== "verification");
-            if (active.length > 0 && collected.available) {
-              return { ...collected, partial: true, reason: `${active.length} operation(s) still active while verifying: ${active.map((o) => `${o.kind} ${o.label}`).join(", ")}` };
+            const active = lifecycle.activeOperations().filter((o) => o.kind !== "verification" && o.kind !== "scan");
+            const survivors = lifecycle.unsettledResources();
+            if (collected.available && (active.length > 0 || survivors.length > 0)) {
+              const reasons = [
+                ...(active.length > 0 ? [`${active.length} operation(s) still active while verifying: ${active.map((o) => `${o.kind} ${o.label}`).join(", ")}`] : []),
+                ...(survivors.length > 0 ? [`${survivors.length} process(es) started by the task may still be writing: ${survivors.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
+              ];
+              return { ...collected, partial: true, reason: reasons.join("; ") };
             }
             return collected;
           }
@@ -901,7 +909,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         // operations have settled: wait for them, then say what never did.
         lifecycle.cancel(abortError.message);
         const settled = await lifecycle.drain(deps.drainTimeoutMs ?? 10_000);
-        if (!settled) lifecycle.interrupt(`${abortError.message}; operations still active after ${deps.drainTimeoutMs ?? 10_000} ms`);
+        // Operations that ended but left a process unconfirmed already moved
+        // the task to INTERRUPTED; operations still active do so here.
+        if (!settled && !lifecycle.terminal) lifecycle.interrupt(`${abortError.message}; operations still active after ${deps.drainTimeoutMs ?? 10_000} ms`);
         recordTrace(settled ? "task.cancelled" : "task.interrupted", lifecycle.snapshot());
       } else if (error instanceof BudgetRefusedError) {
         // A model request was refused before dispatch and nothing above could
@@ -941,9 +951,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     // task is not over while something it started still runs: an operation
     // left behind by a failed or finished pass is waited for, and one that
     // will not settle makes the task INTERRUPTED rather than quietly done.
-    if (!lifecycle.terminal && !lifecycle.quiet) {
-      const settled = await lifecycle.drain(deps.drainTimeoutMs ?? 10_000);
-      if (!settled) {
+    if (!lifecycle.terminal && lifecycle.activeOperations().length > 0) {
+      await lifecycle.drain(deps.drainTimeoutMs ?? 10_000);
+      if (lifecycle.activeOperations().length > 0) {
         lifecycle.interrupt(`${result.status}: operations still active after the task ended (${deps.drainTimeoutMs ?? 10_000} ms)`);
         recordTrace("task.interrupted", lifecycle.snapshot());
       }
@@ -953,13 +963,17 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       lifecycle.finish(succeeded ? "COMPLETED" : "FAILED", abortError ? abortError.message : `${result.status}: ${result.summary ?? ""}`);
     }
     const finalLifecycle = lifecycle.snapshot();
-    if (finalLifecycle.state === "INTERRUPTED") {
-      // The task's state is settled; its workspace is not. Protect it until
-      // the leftovers settle or the user, told what they are, releases it.
+    if (finalLifecycle.notes.length > 0) recordTrace("task.notes", { notes: finalLifecycle.notes });
+    // The task's state is settled; its workspace may not be. A task that was
+    // interrupted, or that ended (even COMPLETED) with a process it started
+    // still running, leaves the workspace protected until the leftovers
+    // settle, are verified gone, or the user knowingly overrides.
+    const leftover = lifecycle.activeOperations().length > 0 || lifecycle.unsettledResources().length > 0;
+    if (finalLifecycle.state === "INTERRUPTED" || leftover) {
       const operations = lifecycle.activeOperations().map((o) => `${o.kind} ${o.label}`);
       const resources = lifecycle.unsettledResources().map((r) => `process ${r.pid} (${r.label})`);
       if (effectiveWorkspaceRoot && deps.workspaceGuard) {
-        const protection = deps.workspaceGuard.protect(effectiveWorkspaceRoot, { taskId, reason: "was interrupted with work still running", lifecycle });
+        const protection = deps.workspaceGuard.protect(effectiveWorkspaceRoot, { taskId, reason: finalLifecycle.state === "INTERRUPTED" ? "was interrupted with work still running" : `ended ${finalLifecycle.state.toLowerCase()}, but a process it started is still running`, lifecycle });
         const recovery = deps.workspaceGuard.describe([protection]);
         recordTrace("workspace.protected", { root: protection.root, operations, resources });
         emitter.emit({ type: "workspace:protected", taskId, root: protection.root, reason: protection.reason, operations, resources, recovery });
@@ -1212,7 +1226,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
     // The caller sees the lifecycle the trace and the summary saw: a result
     // alone cannot say whether the task settled quietly.
-    return { ...result, lifecycle: finalLifecycle };
+    return { ...result, lifecycle: finalLifecycle, ...(persistedQcResult && !result.qcResult ? { qcResult: persistedQcResult } : {}) };
   }
 
   return {
