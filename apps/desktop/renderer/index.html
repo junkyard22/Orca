@@ -243,19 +243,34 @@
               </div>
               <div class="setting-group">
                 <label class="setting-label" for="set-budget"
-                  >Budget per request (USD)</label
+                  >Budget per task (USD)</label
                 >
                 <p class="setting-hint">
-                  Miranda stops spending when this limit is reached.
+                  Covers every model request for one message: narration, Brain, workers, fallbacks and repairs.
+                  Each request is reserved against it before it is sent and refused if it would exceed what remains;
+                  the reservation is an upper bound from the request size and the model's documented limits.
+                  0 = no hard limit (spending is still tracked and shown).
                 </p>
                 <input
                   type="number"
                   id="set-budget"
                   class="setting-input setting-input--sm"
-                  min="0.01"
-                  max="10"
+                  min="0"
+                  max="1000"
                   step="0.01"
                 />
+                <p class="setting-hint" id="set-budget-source"></p>
+              </div>
+              <div class="setting-group mt-14">
+                <label class="setting-label" for="set-pricing"
+                  >Custom model prices (JSON, optional)</label
+                >
+                <p class="setting-hint">
+                  Orca prices Anthropic API models from a reviewed catalog. Any other model needs a price here before it can run under a hard budget,
+                  e.g. [{"providerId":"prov_x","model":"openai/gpt-4o-mini","inputPer1M":0.15,"outputPer1M":0.60}] (USD per million tokens).
+                  Local Ollama / loopback endpoints need none (no external API charge; electricity and hardware are not counted).
+                </p>
+                <textarea id="set-pricing" class="setting-input" rows="4" spellcheck="false"></textarea>
               </div>
               <div class="setting-group mt-14">
                 <label class="setting-label" for="set-repairs"

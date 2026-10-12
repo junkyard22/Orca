@@ -50,6 +50,8 @@ export type OrcaSettings = {
   providers:       ProviderEntry[];
   roles:           Partial<Record<string, RoleEntry>>;
   budgetUsd:       number;
+  budgetSource?:   "user" | "legacy_default";
+  pricing?:        Array<{ providerId?: string; model: string; inputPer1M: number; outputPer1M: number; cacheReadPer1M?: number; maxOutputTokens?: number; note?: string }>;
   maxRepairPasses: number;
   verbose:         boolean;
   workspaceRoot:   string;

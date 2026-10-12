@@ -68,7 +68,8 @@ describe("settings", () => {
     expect(saved.providers[0]?.apiKey).toBe("plain:secret-key");
 
     const loaded = await loadSettings();
-    expect(loaded).toEqual(baseSettings);
+    // A stored budget other than the historical default is the user's choice.
+    expect(loaded).toEqual({ ...baseSettings, budgetSource: "user" });
   });
 
   it("stores encrypted keys when safeStorage is available", async () => {
@@ -233,5 +234,46 @@ describe("settings", () => {
 
     expect(loaded.autoResolveCargo).toBe(false);
     expect(loaded.narratorProgressMode).toBe("model");
+  });
+});
+
+describe("budget migration", () => {
+  let userDataDir = "";
+  beforeEach(() => { userDataDir = mkdtempSync(join(tmpdir(), "orca-settings-budget-")); electronState.userDataPath = userDataDir; electronState.encryptionAvailable = false; });
+  afterEach(() => { rmSync(userDataDir, { recursive: true, force: true }); });
+  it("keeps the historical $0.10 default enforced and labels it legacy_default rather than raising or removing it", async () => {
+    writeFileSync(join(userDataDir, "orca-settings.json"), JSON.stringify({ providers: [], roles: {}, budgetUsd: 0.1, maxRepairPasses: 2, verbose: false, workspaceRoot: "" }), "utf-8");
+    const loaded = await loadSettings();
+    expect(loaded.budgetUsd).toBe(0.1);
+    expect(loaded.budgetSource).toBe("legacy_default");
+  });
+
+  it("treats a stored budget other than the default as the user's choice", async () => {
+    writeFileSync(join(userDataDir, "orca-settings.json"), JSON.stringify({ providers: [], roles: {}, budgetUsd: 3, maxRepairPasses: 2, verbose: false, workspaceRoot: "" }), "utf-8");
+    const loaded = await loadSettings();
+    expect(loaded).toMatchObject({ budgetUsd: 3, budgetSource: "user" });
+  });
+
+  it("a file with no budget at all gets the default, labelled legacy_default; a recorded source is kept; 0 is preserved as 'no hard limit'", async () => {
+    writeFileSync(join(userDataDir, "orca-settings.json"), JSON.stringify({ providers: [], roles: {} }), "utf-8");
+    expect(await loadSettings()).toMatchObject({ budgetUsd: 0.1, budgetSource: "legacy_default" });
+    writeFileSync(join(userDataDir, "orca-settings.json"), JSON.stringify({ providers: [], roles: {}, budgetUsd: 0.1, budgetSource: "user" }), "utf-8");
+    expect(await loadSettings()).toMatchObject({ budgetUsd: 0.1, budgetSource: "user" });
+    writeFileSync(join(userDataDir, "orca-settings.json"), JSON.stringify({ providers: [], roles: {}, budgetUsd: 0, budgetSource: "user" }), "utf-8");
+    expect(await loadSettings()).toMatchObject({ budgetUsd: 0, budgetSource: "user" });
+  });
+
+  it("round-trips custom prices and the budget source through save and load", async () => {
+    const pricing = [{ providerId: "p", model: "openai/gpt-4o-mini", inputPer1M: 0.15, outputPer1M: 0.6 }];
+    await saveSettings({ providers: [], roles: {}, budgetUsd: 2.5, budgetSource: "user", pricing, maxRepairPasses: 2, verbose: false, workspaceRoot: "" });
+    const loaded = await loadSettings();
+    expect(loaded.budgetUsd).toBe(2.5);
+    expect(loaded.budgetSource).toBe("user");
+    expect(loaded.pricing).toEqual(pricing);
+  });
+
+  it("legacy flat files migrate their budget with the same rule", async () => {
+    writeFileSync(join(userDataDir, "orca-settings.json"), JSON.stringify({ provider: "openrouter", apiKey: "legacy-key" }), "utf-8");
+    expect(await loadSettings()).toMatchObject({ budgetUsd: 0.1, budgetSource: "legacy_default" });
   });
 });

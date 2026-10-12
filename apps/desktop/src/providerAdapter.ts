@@ -1,6 +1,7 @@
-import { OllamaAdapter, OpenAICompatAdapter, providerAcceptsEnableThinking, providerAcceptsTemperature } from "@clawde/miranda-core";
+import { OllamaAdapter, OpenAICompatAdapter, budgetedAdapter, providerAcceptsEnableThinking, providerAcceptsTemperature } from "@clawde/miranda-core";
 import type { LLMAdapter } from "@clawde/miranda-core";
 import type { ProviderEntry } from "./settings";
+import { getSessionBudget } from "./budgetContext";
 
 /**
  * Build the LLM adapter for a configured provider. Every role (Brain, workers,
@@ -12,8 +13,27 @@ import type { ProviderEntry } from "./settings";
  * `temperature` only for Claude generations that accept it and never receive
  * the nonstandard `enable_thinking` field; every other provider keeps its
  * current request shape.
+ *
+ * Every adapter is budgeted: each request is reserved in the task ledger
+ * active for the current message before it is sent and settled with the
+ * provider's reported usage afterwards; outside a message the session ledger
+ * accounts it. No request leaves the app unaccounted.
  */
 export function buildAdapterForProvider(
+  provider: ProviderEntry,
+  model: string,
+  enableThinking?: boolean,
+): LLMAdapter {
+  return budgetedAdapter(buildTransportAdapter(provider, model, enableThinking), {
+    provider: { id: provider.id, type: provider.type, name: provider.name, baseUrl: provider.baseUrl },
+    defaultModel: model,
+    enableThinking,
+    fallback: getSessionBudget,
+  });
+}
+
+/** The provider transport alone, without budget accounting (tests of request shape). */
+export function buildTransportAdapter(
   provider: ProviderEntry,
   model: string,
   enableThinking?: boolean,

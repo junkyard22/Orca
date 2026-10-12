@@ -325,6 +325,12 @@ orca.onOrcaEvent((e) => {
   }
   // Token/cost estimate — saved and rendered below the completed reply.
   if (e.type === "run:stats") { pendingStats = e; return; }
+  // Budget ledger moved (reservation, settlement, refusal): keep the status bar current.
+  if (e.type === "budget:update") {
+    latestBudget = e.budget;
+    if (statusbarCost) statusbarCost.textContent = formatBudgetLine(e.budget);
+    return;
+  }
 
   // Phase 1 live pipeline visibility — sanitized rows only.
   // The mapper drops chain-of-thought / token / scratchpad events at the
@@ -725,6 +731,44 @@ function attachRoleBadge(msgDiv, roleInfo) {
   lbl.appendChild(badge);
 }
 
+// ── Budget / cost display ─────────────────────────────────────────────────
+
+// Latest budget snapshot for the current task (from budget:update events).
+let latestBudget = null;
+
+// One line of confirmed figures. Estimates are labelled, unknowns are said.
+function formatBudgetLine(b) {
+  if (!b) return "";
+  const usd = (n) => `$${Number(n ?? 0).toFixed(4)}`;
+  const parts = [];
+  if (b.limitUsd !== null && b.limitUsd !== undefined) parts.push(`${usd(b.spentUsd)} of $${Number(b.limitUsd).toFixed(2)} confirmed`);
+  else parts.push(`${usd(b.spentUsd)} confirmed (no hard limit)`);
+  if (b.unreconciledUsd > 0) parts.push(`${usd(b.unreconciledUsd)} unreconciled`);
+  if (b.reservedUsd > 0) parts.push(`${usd(b.reservedUsd)} reserved`);
+  if (b.unpricedRequests > 0) parts.push(`${b.unpricedRequests} unpriced`);
+  if (b.blocked) parts.push("stopped by budget");
+  return parts.join(" · ");
+}
+
+// Rows for the pipeline badge: what was configured, spent, pending, remaining, and by whom.
+function budgetOutcomeRows(b) {
+  if (!b) return [];
+  const usd = (n) => `$${Number(n ?? 0).toFixed(4)}`;
+  const rows = [];
+  rows.push(["Task budget", b.limitUsd === null || b.limitUsd === undefined ? "none (tracked, not limited)" : `$${Number(b.limitUsd).toFixed(2)}${b.limitSource === "legacy_default" ? " (historical default, never chosen)" : ""}`]);
+  rows.push(["Spent (confirmed)", `${usd(b.spentUsd)} · ${(b.inputTokens ?? 0).toLocaleString()} in / ${(b.outputTokens ?? 0).toLocaleString()} out tokens`]);
+  if (b.unreconciledUsd > 0) rows.push(["Unreconciled", `${usd(b.unreconciledUsd)} upper bound (usage not reported)`]);
+  if (b.reservedUsd > 0) rows.push(["Reserved", usd(b.reservedUsd)]);
+  if (b.limitUsd !== null && b.limitUsd !== undefined) rows.push(["Remaining", usd(b.remainingUsd)]);
+  if (b.unpricedRequests > 0) rows.push(["Unpriced requests", `${b.unpricedRequests} (no reviewed or custom price)`]);
+  const byRole = Object.entries(b.byRole ?? {}).map(([role, agg]) => `${role} ${usd(agg.spentUsd)}${agg.unreconciledUsd > 0 ? ` (+${usd(agg.unreconciledUsd)} unreconciled)` : ""}`);
+  if (byRole.length) rows.push(["By role", byRole.join(", ")]);
+  const byProvider = Object.entries(b.byProvider ?? {}).map(([provider, agg]) => `${provider} ${usd(agg.spentUsd)}`);
+  if (byProvider.length) rows.push(["By provider", byProvider.join(", ")]);
+  if (b.blocked) rows.push(["Budget stop", b.blocked.reason]);
+  return rows;
+}
+
 // ── Token / cost stats pill ───────────────────────────────────────────────
 
 function appendStatsPill(stats) {
@@ -822,6 +866,7 @@ function appendPipelineBadge(summary) {
     ["Issues", String(summary.issueCount ?? 0)],
     ["Duration", `${durationSec}s`],
     ["Repairs", String(summary.repairPasses ?? 0)],
+    ...budgetOutcomeRows(summary.budget),
     ...(summary.taskId ? [["Task", summary.taskId]] : []),
   ];
   const outcomeHtml = `
@@ -1330,6 +1375,14 @@ async function sendMessage() {
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
     const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary ?? buildPipelineSummaryFromEvents(result);
+    // The message ledger's final figures travel with the reply; prefer them over
+    // the last event, and show them even when Pappy produced no summary.
+    const finalBudget = result.budget ?? latestBudget;
+    if (finalBudget) {
+      if (summaryToRender && !summaryToRender.budget) summaryToRender.budget = finalBudget;
+      if (statusbarCost) statusbarCost.textContent = formatBudgetLine(finalBudget);
+    }
+    latestBudget = null;
     const badgeEl = renderPipelineSummaryBadge(summaryToRender);
     if (badgeEl && livePanel && livePanel.setTraceLink) {
       livePanel.setTraceLink(function () {
@@ -1689,6 +1742,8 @@ inputEl.addEventListener("keydown", (e) => {
 // ── Settings panel ────────────────────────────────────────────────────────
 
 const setBudget       = document.getElementById("set-budget");
+const setBudgetSource = document.getElementById("set-budget-source");
+const setPricing      = document.getElementById("set-pricing");
 const setRepairs      = document.getElementById("set-repairs");
 const setVerbose      = document.getElementById("set-verbose");
 const setShowPipeline = document.getElementById("set-show-pipeline");
@@ -2158,6 +2213,12 @@ function openSettings() {
     }
     editingSettings        = JSON.parse(JSON.stringify(s)); // deep clone
     setBudget.value        = String(s.budgetUsd       ?? 0.10);
+    if (setBudgetSource) {
+      setBudgetSource.textContent = s.budgetSource === "legacy_default"
+        ? "This is the historical default and was never chosen; it is enforced as is. Saving records your choice."
+        : (Number(s.budgetUsd) > 0 ? "" : "0 = no hard limit; spending is tracked and shown but never refused.");
+    }
+    if (setPricing) setPricing.value = Array.isArray(s.pricing) && s.pricing.length ? JSON.stringify(s.pricing, null, 2) : "";
     setRepairs.value       = String(s.maxRepairPasses ?? 2);
     setVerbose.checked        = !!s.verbose;
     setShowPipeline.checked   = s.showPipeline !== false;
@@ -2206,9 +2267,27 @@ setSaveBtn.addEventListener("click", async () => {
   if (!editingSettings || (authKnown && authState.locked)) return;
 
   const ghTokenInput = document.getElementById("set-github-token");
+  let pricing = editingSettings.pricing;
+  if (setPricing) {
+    const text = setPricing.value.trim();
+    if (!text) pricing = [];
+    else {
+      try {
+        const parsed = JSON.parse(text);
+        if (!Array.isArray(parsed)) throw new Error("expected a JSON array");
+        pricing = parsed;
+      } catch (err) {
+        appendSys(`Custom model prices must be a JSON array of { "model", "inputPer1M", "outputPer1M" } objects: ${err.message}`, "error");
+        return;
+      }
+    }
+  }
+  const budgetInput = parseFloat(setBudget.value);
   const s = {
     ...editingSettings,
-    budgetUsd:       parseFloat(setBudget.value)   || 0.10,
+    // 0 is a real choice (no hard limit); only a blank or invalid field keeps the previous value.
+    budgetUsd:       Number.isFinite(budgetInput) && budgetInput >= 0 ? budgetInput : (editingSettings.budgetUsd ?? 0.10),
+    pricing,
     maxRepairPasses: parseInt(setRepairs.value, 10) || 0,
     verbose:         setVerbose.checked,
     showPipeline:    setShowPipeline.checked,

@@ -839,6 +839,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           ctx,
           {
             stage: "agent_iteration",
+            role: this.role,
             model: ctx.model ?? this.llmAdapter.name,
             outputOf: (result) => result.content,
           },
@@ -1360,6 +1361,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             ctx,
             {
               stage: "agent_finalization",
+              role: this.role,
               model: ctx.model ?? this.llmAdapter.name,
               outputOf: (result) => result.content,
             },

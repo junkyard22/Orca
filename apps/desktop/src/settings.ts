@@ -2,6 +2,7 @@ import { app, safeStorage } from "electron";
 import { join } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import type { McpServerConfig } from "@clawde/tool-bootstrap";
+import type { CustomModelPrice } from "@clawde/miranda-core";
 
 export type { McpServerConfig };
 
@@ -86,7 +87,20 @@ export interface OrcaSettings {
   /** Keyed by role name: brain, strong_model, cheap_model, utility, reviewer,
    *  narrator, planner_deep, debugger, reader, vision */
   roles:           Partial<Record<string, RoleEntry>>;
+  /**
+   * Hard budget per task (one user message: narration, Brain, workers,
+   * fallbacks, repairs) in USD. 0 = no hard limit; costs are still tracked.
+   */
   budgetUsd:       number;
+  /**
+   * Where `budgetUsd` came from. "user": saved from Settings. "legacy_default":
+   * the historical $0.10 default found in a settings file that predates this
+   * field; it stays enforced and is never raised silently, but the app says so
+   * at start-up until the user saves a budget of their own.
+   */
+  budgetSource?:   "user" | "legacy_default";
+  /** User-configured prices for models Orca cannot price from its reviewed catalog. */
+  pricing?:        CustomModelPrice[];
   maxRepairPasses: number;
   verbose:         boolean;
   /** Absolute path to the workspace root used for tool execution */
@@ -247,7 +261,7 @@ export async function loadSettings(): Promise<OrcaSettings> {
   }
 
   // Decrypt API keys after loading
-  const decrypted = decryptSettings({ ...DEFAULTS, ...stored });
+  const decrypted = decryptSettings({ ...DEFAULTS, ...stored, ...resolveBudgetSource(stored) });
 
   // Migration: if any provider had a legacy key format (bare plaintext or old b64: prefix),
   // re-save now so the file uses the current encoding going forward.
@@ -262,6 +276,24 @@ export async function loadSettings(): Promise<OrcaSettings> {
   }
 
   return decrypted;
+}
+
+/** The historical default budget, kept only to recognise files that still carry it. */
+export const LEGACY_DEFAULT_BUDGET_USD = 0.10;
+
+/**
+ * Decide what a stored budget means. A file that records `budgetSource` is
+ * taken at its word. An older file that holds exactly the historical default
+ * (or no budget at all) is a generated default, not a choice: it is kept and
+ * enforced, labelled `legacy_default`, and never raised or removed silently.
+ * Any other stored value can only have been typed by the user.
+ */
+export function resolveBudgetSource(stored: Partial<OrcaSettings>): Pick<OrcaSettings, "budgetUsd" | "budgetSource"> {
+  const raw = stored.budgetUsd;
+  const budgetUsd = typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : LEGACY_DEFAULT_BUDGET_USD;
+  if (stored.budgetSource === "user" || stored.budgetSource === "legacy_default") return { budgetUsd, budgetSource: stored.budgetSource };
+  const isGeneratedDefault = raw === undefined || raw === LEGACY_DEFAULT_BUDGET_USD;
+  return { budgetUsd, budgetSource: isGeneratedDefault ? "legacy_default" : "user" };
 }
 
 function migrateFromLegacy(raw: Record<string, unknown>): Partial<OrcaSettings> {
@@ -298,7 +330,7 @@ function migrateFromLegacy(raw: Record<string, unknown>): Partial<OrcaSettings> 
   return decryptSettings({
     providers,
     roles,
-    budgetUsd:       (raw["budgetUsd"]      as number)          ?? 0.10,
+    ...resolveBudgetSource({ budgetUsd: raw["budgetUsd"] as number | undefined }),
     maxRepairPasses: (raw["maxRepairPasses"] as number)          ?? 2,
     verbose:         (raw["verbose"]         as boolean)         ?? false,
     workspaceRoot:   (raw["workspaceRoot"]   as string | undefined) ?? "",

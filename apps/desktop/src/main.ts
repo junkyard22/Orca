@@ -89,6 +89,11 @@ import { enforceToolAuthorization } from "./toolAuthorization";
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
 import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
+import { runWithBudget, withBudgetAttribution } from "@clawde/miranda-core";
+import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
+import { createBudgetJournal } from "@clawde/orca-core";
+import type { BudgetJournal } from "@clawde/orca-core";
+import { budgetWarnings, createMessageBudget, getCustomPrices, getSessionBudget, setCustomPrices } from "./budgetContext";
 import {
   cargoReferenceAction,
   configuredCargoConnectors,
@@ -556,7 +561,7 @@ async function brainRoute(
     try {
       const { text } = await runGatedLLMCall(
         ctx,
-        { stage: "brain_route", outputOf: (result) => result.text },
+        { stage: "brain_route", role: "brain", outputOf: (result) => result.text },
         () => brainLLM.complete(prompt, {
           maxTokens: 512,
           temperature: 0,
@@ -1119,7 +1124,7 @@ function buildMaestroAdapter(
           const brainLLM = roleAdapters["brain"] ?? ctx.llm;
           const { text } = await runGatedLLMCall(
             ctx,
-            { stage: "result_synthesis", outputOf: (result) => result.text },
+            { stage: "result_synthesis", role: "brain", outputOf: (result) => result.text },
             () => brainLLM.complete(synthesisPrompt, {
               maxTokens: 2048,
               temperature: 0.2,
@@ -1469,6 +1474,14 @@ type ClaireHandle = ReturnType<typeof createClaire>;
 let runtime: OrcaRuntime | null = null;
 let claire: ClaireHandle | null = null;
 let store: SqliteStore | null = null;
+/** Miranda gate of the active runtime; the message budget scope passes decisions through it. */
+let _runtimeGate: DesktopMirandaGate | null = null;
+let _budgetJournal: BudgetJournal | null = null;
+/** Journal of in-flight budget snapshots, so reservations survive a crash and are reported on the next start. */
+function budgetJournal(): BudgetJournal {
+  if (!_budgetJournal) _budgetJournal = createBudgetJournal(join(app.getPath('userData'), 'budget-journal.json'));
+  return _budgetJournal;
+}
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 let dewey: InstanceType<typeof Dewey> | null = null;
 let _currentSettings: OrcaSettings | null = null;
@@ -1633,6 +1646,16 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
   // Every role that cannot run as configured is named here; nothing is
   // reassigned on the user's behalf.
   _initWarnings.push(...providerWarnings(s));
+  // Budget: custom prices feed every adapter; a historical default or an
+  // unlimited budget is said out loud; reservations a previous process never
+  // reconciled are reported as possible charges, not forgotten.
+  setCustomPrices(s.pricing);
+  _initWarnings.push(...budgetWarnings(s));
+  for (const unresolved of budgetJournal().recover()) {
+    _initWarnings.push(
+      `A previous session ended with model requests still in flight (task ${unresolved.taskId}, started ${unresolved.startedAt}): up to $${unresolved.exposureUsd.toFixed(4)} may have been charged without being reconciled.`,
+    );
+  }
 
   try {
     const model = brainRole.model;
@@ -1707,6 +1730,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     }
 
     const gate = createMirandaGate({ verbose: s.verbose === true });
+    _runtimeGate = gate;
     // Execution-time authorization sits directly in front of every tool.execute:
     // external writes, process control and unrecognised tools need the user's
     // approval per call, sandbox reconfiguration is refused, and every local
@@ -1822,6 +1846,10 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       writeTrace: writePipelineTrace,
       requestToolApproval,
       budgetUsd: s.budgetUsd,
+      budgetSource: s.budgetSource,
+      customPrices: getCustomPrices(),
+      sessionBudget: getSessionBudget(),
+      budgetJournal: budgetJournal(),
       gate,
       model,
     });
@@ -1839,6 +1867,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
           { gate, model: configuredNarratorModel },
           {
             stage: 'narrator_progress_lexicon',
+            role: 'narrator',
             model: configuredNarratorModel,
             budgetLimit: s.budgetUsd > 0 ? s.budgetUsd : Infinity,
             outputOf: (result) => result.content,
@@ -1914,6 +1943,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
           { gate, model: narratorModel },
           {
             stage: "claire_narration",
+            role: "narrator",
             model: narratorModel,
             budgetLimit: s.budgetUsd > 0 ? s.budgetUsd : Infinity,
             outputOf: (result) => result.content,
@@ -1978,6 +2008,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
               { gate, model: summaryModel },
               {
                 stage: 'cargo_resource_summary',
+                role: 'utility',
                 model: summaryModel,
                 budgetLimit: s.budgetUsd > 0 ? s.budgetUsd : Infinity,
                 outputOf: (result) => result.content,
@@ -2457,8 +2488,10 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
   }
 
   try {
-    await saveSettings(s);
-    const err = await initOrca(s);
+    // A budget saved from the Settings form is the user's choice from now on.
+    const chosen: OrcaSettings = { ...s, budgetSource: "user" };
+    await saveSettings(chosen);
+    const err = await initOrca(chosen);
     win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     return { ok: true };
   } catch (err) {
@@ -2648,7 +2681,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     "task:start", "maestro:start", "maestro:done",
     "maestro:agent_start", "maestro:agent_done",
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
-    "pipeline:summary",
+    "pipeline:summary", "budget:update",
     "dewey:brief", "miranda:checkpoint",
     "subagent:spawned", "subagent:done", "subagent:failed",
   ];
@@ -2726,9 +2759,13 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   );
 
   try {
-    const taskPromise = claire.handleUserMessage(cargoSyntax.message, {
+    // One budget for the whole message: narration, Brain, workers, fallbacks,
+    // repairs and Cargo summaries reserve against it, and the runtime reuses it
+    // as the task ledger. Its final figures travel with the reply.
+    const messageBudget = createMessageBudget(_currentSettings ?? { budgetUsd: 0 });
+    const taskPromise = runWithBudget(messageBudget, () => withBudgetAttribution({ gate: _runtimeGate ?? undefined }, () => claire!.handleUserMessage(cargoSyntax.message, {
       abortSignal: abortController.signal,
-    })
+    })))
       .then((text) => ({ ok: true as const, reply: { text } }))
       .catch((err) => {
         if (isAbortError(err)) {
@@ -2747,6 +2784,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     return {
       ...result,
       pipelineSummary: capturedPipelineSummary,
+      budget: messageBudget.snapshot(),
       cargoManifest: await getDewey().getManifest(),
     };
   } finally {
