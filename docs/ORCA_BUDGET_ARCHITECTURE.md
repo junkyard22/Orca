@@ -117,3 +117,21 @@ Verified Anthropic rates (2026-10-12); token counts are illustrative.
 - Streamed requests to an endpoint that rejects `stream_options` return no usage and stop a hard-budget task after the first such request (the task is told why); switching that role to non-streaming is the current workaround.
 - Cache-write pricing is not modelled (Orca does not create caches explicitly); cache reads are.
 - Local inference is $0 external; its real cost is unknown and shown as such.
+
+## Phase 5 hardening (2026-10-12)
+
+### Cache writes (§10)
+
+`TokenUsage.cacheCreationTokens` is parsed from `prompt_tokens_details.cache_creation_tokens` or Anthropic's `cache_creation_input_tokens` when a gateway passes it through (`cache_read_input_tokens` feeds `cachedPromptTokens`). Settlement prices written tokens at the catalog's cache-write rate (Anthropic: 5-minute write, reviewed 2026-10-12 — Opus 5.5 $5/M, Sonnet 5.5 $2.50/M, Haiku 5.5 $0.125/M …), read tokens at the cache-read rate, the rest at the base rate. For a custom-priced model with cache writes and no `cacheWritePer1M`, the write is priced at the base rate, the entry's `costBasis` becomes `estimate` with a note, and a hard budget **stops** (`refused_pricing_unknown`) because the true charge is known to be higher; without a hard budget it is recorded and annotated. Reservations do not add a cache-write allowance: Orca never requests caching itself, and a provider that caches on its own bills the write within the prompt tokens the reservation already bounds at the base rate — the settlement flag above is what catches the difference. Orca's OpenAI-compatible transports cannot *see* Anthropic cache writes unless the gateway forwards the field; that is a reporting limitation of the chat-completions surface, documented here, not a pricing guess.
+
+### Billing is not location (§11)
+
+`ProviderEntry.billing` (`local` / `metered` / `unknown`, Settings → provider "Billing"). Ollama defaults to `local`; every other endpoint — including one on `localhost` or a private network — defaults to `unknown` and is **unpriced under a hard budget** until the user classifies it as `local` or gives it a custom price (`metered`). A local proxy that forwards to Anthropic or OpenRouter is therefore never treated as free by accident. Existing configurations are not modified: an unclassified custom endpoint that used to count as free now refuses under a hard budget with a message naming the two fixes; without a hard budget it runs and is labelled unpriced.
+
+### Streaming and cancellation (§12)
+
+Outcomes the ledger keeps apart, all exercised through the real `OpenAICompatAdapter` with recorded responses: never dispatched (released, nothing charged); dispatched then cancelled (upper bound charged as unreconciled, hard budget stops); completed with measured usage (settled); completed without usable usage — stream without the usage chunk, inconsistent counts, an endpoint that rejected `stream_options` (unreconciled, hard budget stops); failed after generation began (unreconciled). A late usage report cannot reconcile a request already marked unreconciled. Cancellation never releases a reservation that may have reached the provider.
+
+### Legacy $0.10 (§13)
+
+The start-up warning, the Settings note and now the **refusal message** all say the same thing: the limit is Orca's historical default, never explicitly chosen, enforced as is, and changed in Settings → General (0 disables the hard limit). The execution ledger carries `limitSource` so the refusal wording matches the setting's provenance; a user-set limit gets the ordinary "raise the budget or use a cheaper model" guidance.

@@ -5,7 +5,7 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-10-12 (core reliability, phase 4) · **Machine:** dev desktop · **By:** Claude Code session
+**Last updated:** 2026-10-12 (core reliability, phase 5) · **Machine:** dev desktop · **By:** Claude Code session
 
 ---
 
@@ -14,7 +14,7 @@
 | Branch | Where | Head | Pushed? | Status |
 |---|---|---|---|---|
 | `main` | origin | `7b62cce` | yes | Production baseline. Carries the shared-component defects listed in the audit (`docs/ORCA-CORE-RELIABILITY-AUDIT.md`). Local `main` in `C:\Orca\Orca` is 10 commits behind. |
-| **`integration/core-reliability`** | dev desktop worktree `C:\Orca\worktrees\core-reliability` | this commit | **no** | **Source-only production integration branch, from `origin/main`.** Phases 0 (docs), 1 (core security), 2 (Pappy verification integrity), 3 (provider compatibility), 2.5 (behavioural verification, evidence integrity, Moonshiner training safety) and 4 (budget enforcement) done; none approved for merge. No Demo Mode code. |
+| **`integration/core-reliability`** | dev desktop worktree `C:\Orca\worktrees\core-reliability` | this commit | **no** | **Source-only production integration branch, from `origin/main`.** Phases 0 (docs), 1 (core security), 2 (Pappy verification integrity), 3 (provider compatibility), 2.5 (behavioural verification, evidence integrity, Moonshiner training safety), 4 (budget enforcement) and 5 (lifecycle, cancellation, routing integrity, recovery, budget hardening) done; none approved for merge. No Demo Mode code. |
 | `integration/1.6.1-clean` | dev desktop worktree `C:\Orca\worktrees\integration-1.6.1-clean` | `4191c00` + uncommitted `PROJECT_STATE.md` edit and untracked `ORCA-CORE-RELIABILITY-AUDIT.md` (the audit's original copy) | no | Summit 1.6.1 line (Demo Mode, staging build). Reference for later phases; not merged. |
 | `fix/live-rehearsal-remediation-1.6.1` | origin (to `58e447e`); worktree `C:\Orca\worktrees\remediation-1.6.1` | `28125ee` | local commits not pushed | Contains the 774 MB build archive. **Never merge.** |
 | `wip/live-demo-verification-parallel` | dev desktop | `43edfda` | no | Snapshot of the unreviewed 10/7 parallel verification work (see `docs/ORCA_PARALLEL_WORK_COMPARISON.md`). Reference only. |
@@ -103,6 +103,22 @@ Root causes on `main`: `metadata.costUsd` had no producer (every caller discarde
 
 Not changed: Pappy's rules, Moonshiner eligibility, Miranda's tool protections, model assignments, cancellation, MCP behaviour. No paid request, no push, no package.
 
+### Phase 5 — lifecycle, cancellation, routing integrity, recovery, budget hardening (2026-10-12; design: `docs/ORCA_TASK_LIFECYCLE.md`, `docs/ORCA_BUDGET_ARCHITECTURE.md` §Phase 5)
+
+Root cause of unsafe Stop: desktop `chat:send` awaited `Promise.race([task, stopped])`, so Stop released the task lock while model streams, tool processes, MCP calls, QC and repairs were still running; approvals had no task owner; the runtime awaited Maestro to completion and persisted nothing for a cancelled task; Brain's own abort became a fallback worker; "fix … then run the tests" was routed to command verification.
+
+| Area | Change | Verified by |
+|---|---|---|
+| `orca-core/src/lifecycle.ts` (new) | `TaskLifecycle`: CREATED → PLANNING → RUNNING ↔ WAITING_FOR_APPROVAL → VERIFYING → REPAIRING …, CANCELLING → CANCELLED / INTERRUPTED, COMPLETED, FAILED; explicit transition table; terminal states immutable (late events recorded as ignored); operation registry (`begin`/`track`, kinds model/tool/approval/verification); `cancel` → CANCELLING, settles to CANCELLED only when every operation ended; `drain(timeout)`; `interrupt` names what never settled | `lifecycle.test.ts` (6) |
+| `orca-core` runtime, repair loop, `abort.ts` | One lifecycle per task on `ctx.lifecycle`, traced (`task.state`) and emitted (`task:state`); abort → CANCELLING at once; Maestro passes raced against the signal (`untilAborted`) so the runtime stops waiting and drains tracked operations (10 s default) → CANCELLED or INTERRUPTED; the runtime's tool service and the wrapped `requestToolApproval` refuse after cancellation (stale approvals resolve false, approval waits are a state); evidence collected while operations are active is marked partial (Pappy: insufficient); COMPLETED only when SUCCESS and QC ≠ FAIL; cancelled/interrupted runs persisted (`stoppedBecause`), no `task:done`/summary for them; `pipeline:summary.lifecycle`, trace `finalResult.lifecycle` | `runtimeCancellation.test.ts` (8: Stop during worker / approval / repair / model request, hung operation, late callbacks, double Stop, COMPLETED vs FAILED, partial evidence), updated `runtime.test.ts` |
+| `apps/desktop/src/taskSession.ts` (new), `main.ts` | `TaskSessionManager`: Stop answers at once (`cancelling: true`), the lock is held until the task settles, a new message is refused with "still stopping", a 30 s watchdog marks the session interrupted and reports it; approvals bound to the running session (`tool:approve` from a stopped task authorizes nothing, `requestToolApproval` refuses when not running); lock/abort state no longer kept in two variables | `taskSession.test.ts` (5, incl. the `Promise.race` reproduction) |
+| desktop routing (`routingPolicy.ts`, `main.ts` brainRoute) | Command verification only when running commands *is* the request (`requestsChanges` via Pappy's task classification, command lines stripped); fallback role by work kind (debugger / strong_model / reader / narrator), never Narrator for code changes; direct-to-Brain remap keeps Brain's criteria or the user's goals; Brain fallback explicit (`invalid_plan` / `provider_failed` / `timed_out` / `no_decision`), traced and emitted as `brain:fallback`; a cancelled Brain rethrows; Brain routing reported as PLANNING | `routingPolicy.test.ts` (+5; two Phase-4 expectations updated by design) |
+| desktop agent, renderer | Tool runs tracked in the lifecycle and refused after cancellation; `task:state`, `task:session`, `brain:fallback` events shown ("Stopping — waiting for N operations…", "Stopped — all operations settled", "Stopped, but not cleanly: … never settled"); badge "Task state" row says completed-and-verified / completed-not-verified / cancelled / interrupted; provider "Billing" select | desktop suite |
+| budget hardening (`miranda-core`) | Cache-creation tokens parsed and priced at the reviewed write rate; unknown write rate → estimate + hard-budget stop; `ProviderEntry.billing` (local / metered / unknown): Ollama defaults local, every other loopback/private endpoint is unknown until classified (unpriced under a hard budget, runs without one); streaming/cancellation outcomes tested through the real adapter (usage chunk, no usage, failure after partial output, cancel before/after dispatch, late usage ignored); legacy-default refusal wording | `budgetHardening.test.ts` (11), updated `budget.test.ts` |
+| recovery | Journal-recovered tasks are saved to the run history as `FAIL / interrupted` with the unreconciled exposure, plus the init warning; nothing resumed | desktop init (manual), `journal.test.ts` |
+
+Not changed: Pappy's rules, Moonshiner eligibility, Miranda's tool protections, model assignments, MCP behaviour, parallel worker execution. No paid request, no push, no package.
+
 ## Unverified
 
 - Behaviour inside the packaged Electron app (the approval dialog flow with real MCP servers) — unit tests use spy executors; the main-process bundle builds (`build-main.mjs`) but no live run was made.
@@ -114,7 +130,9 @@ Not changed: Pappy's rules, Moonshiner eligibility, Miranda's tool protections, 
 
 | # | Problem | Notes |
 |---|---|---|
-| 1 | **Phases 5–7 of the integration plan** (routing/cancellation, UI, Pappy false rejects) | Not started; each needs its own authorization. |
+| 1 | **Phases 6–7 of the integration plan** (UI, Pappy false rejects) | Not started; each needs its own authorization. |
+| 1l | **Lifecycle limitations** (`docs/ORCA_TASK_LIFECYCLE.md`): an MCP tool that ignores the abort signal is tracked and reported, not killed; the desktop watchdog releases the lock 30 s after Stop with unsettled operations (reported as INTERRUPTED, workspace may still change); lifecycle tracking is in-process (a crash leaves only the journal); targeted evidence collection (repair with only Pappy's `evidenceRequests`) is a recommendation, not implemented | Needs a design review of the repair prompt contract before implementing. |
+| 1m | **Behaviour changes for users (phase 5):** Stop now replies "Stopped." at once but the next message is refused until the task settles; a Brain-headed department or a missing plan falls back to a role chosen by the work (debugger / strong model / reader) instead of Narrator; "fix … then run the tests" keeps the fix as the objective; a custom endpoint on localhost / a private network is no longer assumed free (classify its Billing in Settings or set a price) | Intended; documented in the lifecycle and budget docs. |
 | 1k | **Budget limitations** (`docs/ORCA_BUDGET_ARCHITECTURE.md` §Limitations): prices known only for Anthropic's own API (others need a custom price under a hard budget; OpenAI/OpenRouter pages could not be fetched); reservation is an upper bound only where the provider honours `max_tokens` and reports usage (overruns are recorded and stop the task, not prevented); ledger is per process; a stream without usage stops a hard-budget task after one request; cache writes not modelled | Recommended refresh: a dated JSON catalog filled from OpenRouter `/api/v1/models` and Anthropic's Models API, warned on age instead of edited by hand. |
 | 1e | ~~Follow-up A gaps~~ | Closed in phase 2.5 (behavioural receipts, PARTIAL → HIGH with evidence, docs content check). |
 | 1f | ~~Evidence corpus known gaps~~ | Closed in phase 2.5 by fixing the causes; registry empty (`docs/ORCA_EVIDENCE_CORPUS.md`). |
@@ -136,6 +154,11 @@ Not changed: Pappy's rules, Moonshiner eligibility, Miranda's tool protections, 
 
 | Date | Commit | Machine | Command | Result |
 |---|---|---|---|---|
+| 2026-10-12 | phase 5 head | dev desktop (Node 24.11.1) | `pnpm -r --no-bail test` | **1,825 passed · 0 failed · 1 skipped** (packages 1,449; runner 107; desktop 269) |
+| 2026-10-12 | phase 5 head | dev desktop | `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts`, desktop `tsc --noEmit` + `build-main.mjs`, renderer `node --check` | 0 errors; bundle OK |
+| 2026-10-12 | phase 5 head | dev desktop | `pnpm contract:check` | REVIEW REQUIRED (same 15 × Rule 4 + 1 × Rule 5; no new findings) |
+| 2026-10-12 | phase 5 head | dev desktop | `pnpm pappy:eval` / `:raw-real-pappy` / `:pappy-plus-hardening` / `:evidence` | 23/23 · 12/23 · 15/23 · 45/45 (unchanged) |
+| 2026-10-12 | phase 5 head | dev desktop | lifecycle benchmark (`orca-core` scratch) | 0.95 µs per tracked operation, ≈ 0.4 ms per task (8 transitions, 200 tool ops, listener attached) |
 | 2026-10-12 | phase 4 head | dev desktop (Node 24.11.1) | `pnpm -r --no-bail test` | **1,789 passed · 0 failed · 1 skipped** (packages 1,423; runner 107; desktop 259) |
 | 2026-10-12 | phase 4 head | dev desktop | `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts`, desktop `tsc --noEmit` + `build-main.mjs` | 0 errors; bundle OK |
 | 2026-10-12 | phase 4 head | dev desktop | `pnpm contract:check` | REVIEW REQUIRED (15 × Rule 4 from phase 2.5, 1 × Rule 5 runner; no new findings) |
@@ -167,6 +190,7 @@ Not changed: Pappy's rules, Moonshiner eligibility, Miranda's tool protections, 
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-10-12 (core phase 5)** (dev desktop) — Task lifecycle (explicit states, operation registry, cancel → drain → CANCELLED/INTERRUPTED), runtime raced against the abort signal, desktop task-session lock held until settlement with session-bound approvals, routing integrity (objective preserved against command-verification wording, fallback roles by work kind, explicit Brain fallback), evidence marked partial while operations are active, cancelled/interrupted runs persisted and recovered, budget hardening (cache writes, billing classification, streaming/cancellation outcomes, legacy wording). No push, merge, package, paid call.
 - **2026-10-12 (core phase 4)** (dev desktop) — Budget enforcement: provider-independent task ledger in miranda-core (atomic reservations from request-derived token bounds, measured settlement, unreconciled upper bounds, refusals with reasons, Miranda budget checkpoint), reviewed Anthropic price catalog (2026-10-12), custom prices, local inference; runtime/repair/desktop/runner wiring, legacy $0.10 kept-and-labelled migration, restart journal, cost display. No push, merge, package, paid call.
 - **2026-10-12 (core phase 2.5)** (dev desktop) — Behavioural verification (task-aware receipts: reproduction, regression test, full suite, documented validation command, build check, final docs content), per-criterion assessments with HIGH PARTIAL, honesty-based training eligibility on contradicted evidence, evidence requests, root-cause fixes to the keyword heuristics and claim proof, export that checks evidence tags itself, desktop worker guidance, corpus 26 → 45 with 0/0 false acceptances/rejections, original corpus raw 11→12 / hardened 14→15. Full suite 1,735 passed. No push, merge, build, paid call, retraining.
 - **2026-10-09 (core phase 3)** (dev desktop) — Provider compatibility: adapter-layer sampling/thinking policy, model catalog, structured provider errors, honest usage reporting, stable provider resolution with warnings, renderer stale-provider fix, runner policy; evidence-bearing eval corpus (26 fixtures, 0 false acceptances, 8 documented known gaps); follow-up A investigation (no Pappy change). No push, merge, build, paid call.
