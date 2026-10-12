@@ -305,6 +305,8 @@ export interface WorkspaceFileChange {
   before?: string;
   /** Content after the last change (bounded; text files only). */
   after?: string;
+  /** Workers (roles) the host saw write this path during the task, in order of first write. */
+  writers?: string[];
 }
 
 export interface WorkspaceTestRun {
@@ -341,6 +343,12 @@ export interface WorkspaceEvidence {
   testRuns?: WorkspaceTestRun[];
   /** Milliseconds spent capturing the baseline and this comparison. */
   captureMs?: number;
+  /**
+   * Paths written by more than one worker within the same Maestro pass: the
+   * final content cannot be attributed to one worker and a write may have been
+   * lost. Verification of such a change is not independent evidence.
+   */
+  contested?: Array<{ path: string; writers: string[] }>;
 }
 
 export type TaskKind = "bugfix" | "refactor" | "feature" | "docs" | "inspect" | "other";

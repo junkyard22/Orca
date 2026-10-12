@@ -373,6 +373,19 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
     downgrade("unverified", "partial workspace inventory");
   }
 
+  // ── Universal: a path two workers wrote in the same pass is not attributable ──
+  // The final content may have lost one worker's change; what the tests
+  // proved cannot be credited to either worker. The change is still judged,
+  // but not as independent evidence.
+  if (workspace.contested && workspace.contested.length > 0 && kind !== "inspect" && kind !== "other") {
+    const list = workspace.contested.map((c) => `${c.path} (${c.writers.join(", ")})`).join("; ");
+    issues.push(issue("MEDIUM", "CONFLICTING_WRITES", "Proof",
+      `${UNVERIFIED}more than one worker wrote the same file in one pass: ${list}. One worker's change may have overwritten the other's.`,
+      `workspace.contested=${JSON.stringify(workspace.contested)}`,
+      "Re-run the verification after confirming the final content of each contested file, or route the writes to one worker."));
+    downgrade("unverified", `conflicting writes: ${list}`);
+  }
+
   // ── Universal: existing tests left intact ─────────────────────────────────
   const prohibited = prohibitsTestEdits(task);
   const testChangesRequested = !prohibited && ASKS_TEST_CHANGES.test(withoutProhibitions(task));

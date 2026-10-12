@@ -28,7 +28,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceEvidence, WorkspaceFileChange, WorkspaceFileKind, WorkspaceTestRun } from "@clawde/pappy-core";
 import { classifyPath, isFullSuiteCommand, testSegment } from "@clawde/pappy-core";
 
@@ -309,6 +309,22 @@ export interface WorkspaceEvidenceCollector {
 const TOOL_CALL_STAGES = new Set(["tool.call", "agent.tool.call"]);
 const TOOL_RESULT_STAGES = new Set(["tool.result", "agent.tool.result"]);
 const COMMAND_TOOL = /(?:run_command|execute_command|start_process|shell)/i;
+/** Tools that change a file: the host's own writers and connector tools named like them. */
+const WRITE_TOOL = /(?:^|[:_.-])(?:write|edit|patch|create|append|replace|move|rename|delete|remove)(?:_?(?:file|files|block|text|lines?|path))?(?:$|[:_.-])/i;
+
+function writtenPath(input: Record<string, unknown>): string | undefined {
+  for (const key of ["path", "file", "filePath", "file_path", "filename", "target", "destination", "source"]) {
+    const v = input[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function relativePath(root: string, target: string): string {
+  const abs = isAbsolute(target) ? target : resolve(root, target);
+  const rel = relative(root, abs);
+  return (rel.startsWith("..") ? abs : rel).split(sep).join("/");
+}
 
 /**
  * Baseline once at task start; every later `collect()` compares the current
@@ -323,14 +339,30 @@ export function createWorkspaceEvidenceCollector(
   const ready = Promise.resolve();
   const runs: ObservedRun[] = [];
   const pendingCalls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+  // Who wrote what, and in which Maestro pass: attribution for every changed
+  // path, and detection of two workers writing the same path in one pass.
+  const writes = new Map<string, Array<{ writer: string; pass: number }>>();
+  let pass = 0;
   let evidenceMs = baseline.ms;
 
   const commandOf = (input: Record<string, unknown> | undefined) => (typeof input?.["command"] === "string" ? (input["command"] as string) : "");
 
   const observeTrace = (stage: string, detail: unknown): void => {
+    if (stage === "maestro.run.start" || stage === "repair.start") pass += 1;
     if (!detail || typeof detail !== "object") return;
     const d = detail as Record<string, unknown>;
     const tool = typeof d["tool"] === "string" ? d["tool"] : "";
+    if (TOOL_CALL_STAGES.has(stage) && WRITE_TOOL.test(tool)) {
+      const input = d["input"] && typeof d["input"] === "object" ? (d["input"] as Record<string, unknown>) : {};
+      const target = writtenPath(input);
+      if (target) {
+        const path = relativePath(absoluteRoot, target);
+        const writer = typeof d["role"] === "string" ? d["role"] : typeof d["subagentId"] === "string" ? d["subagentId"] : "worker";
+        const list = writes.get(path) ?? [];
+        list.push({ writer, pass: Math.max(pass, 1) });
+        writes.set(path, list);
+      }
+    }
     if (!COMMAND_TOOL.test(tool)) return;
     if (TOOL_CALL_STAGES.has(stage)) {
       const input = d["input"] && typeof d["input"] === "object" ? (d["input"] as Record<string, unknown>) : {};
@@ -395,7 +427,18 @@ export function createWorkspaceEvidenceCollector(
           ? "baseline"
           : sameDelta(run.delta, finalDelta) ? "final" : "intermediate",
     }));
-    const changes = await diffWorkspaceInventories(absoluteRoot, baseline, current, limits);
+    const changes = (await diffWorkspaceInventories(absoluteRoot, baseline, current, limits)).map((change) => {
+      const w = writes.get(change.path);
+      return w ? { ...change, writers: [...new Set(w.map((x) => x.writer))] } : change;
+    });
+    const contested: Array<{ path: string; writers: string[] }> = [];
+    for (const [path, list] of writes) {
+      const byPass = new Map<number, Set<string>>();
+      for (const w of list) byPass.set(w.pass, (byPass.get(w.pass) ?? new Set()).add(w.writer));
+      const writers = [...byPass.values()].find((set) => set.size > 1);
+      if (writers) contested.push({ path, writers: [...writers] });
+    }
+    contested.sort((x, y) => x.path.localeCompare(y.path));
     const partial = baseline.partial || current.partial;
     return {
       available: true,
@@ -405,6 +448,7 @@ export function createWorkspaceEvidenceCollector(
       changes,
       ...(baseline.testCommand ? { testCommand: baseline.testCommand } : {}),
       testRuns,
+      ...(contested.length > 0 ? { contested } : {}),
       captureMs: evidenceMs + current.ms + (Date.now() - started),
     };
   };

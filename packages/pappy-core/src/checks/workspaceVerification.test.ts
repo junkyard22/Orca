@@ -638,3 +638,31 @@ describe("phase 2.5: behavioural verification, criterion assessments and evidenc
     expect(r.verification?.behaviouralEvidence?.join(" ")).toMatch(/before-and-after verification/);
   });
 });
+
+describe("contested writes (phase 6)", () => {
+  const verifiedScenario = () => input({
+    toolEvents: [read("ISSUE.md", fx("ISSUE.md")), cmd("npm test", "base_npmtest.out"), read("src/bookings.js", SRC_BASE), write("src/bookings.js", SRC_FIXED), cmd("npm test", "fixed_npmtest.out")],
+    filesChanged: [{ path: "src/bookings.js", changeType: "M", diff: SRC_FIXED }],
+    outputText: "Root cause: overlaps() treated touching intervals as overlapping (<=). Changed to < in src/bookings.js. npm test: 8 passed, 0 failed.",
+    workspace: ws([srcFixed], [hostRun("npm test", "base_npmtest.out", "baseline"), hostRun("npm test", "fixed_npmtest.out", "final")]),
+  });
+
+  it("a file two workers wrote in the same pass cannot be verified, with the writers named; the same evidence uncontested stays verified", () => {
+    const clean = evaluateWithPappy(verifiedScenario());
+    expect(clean.verification?.status).toBe("verified");
+
+    const contested = verifiedScenario();
+    contested.workspace = { ...contested.workspace!, changes: [{ ...srcFixed, writers: ["engineer", "debugger"] }], contested: [{ path: "src/bookings.js", writers: ["engineer", "debugger"] }] };
+    const r = evaluateWithPappy(contested);
+    expect(r.verification?.status).toBe("unverified");
+    expect(r.verification?.reasons.join(" ")).toMatch(/conflicting writes: src\/bookings\.js \(engineer, debugger\)/);
+    expect(codes(r)).toContain("CONFLICTING_WRITES");
+    expect(r.verdict).not.toBe("PASS");
+  });
+
+  it("writer attribution alone (one writer per file) changes nothing", () => {
+    const attributed = verifiedScenario();
+    attributed.workspace = { ...attributed.workspace!, changes: [{ ...srcFixed, writers: ["engineer"] }] };
+    expect(evaluateWithPappy(attributed).verification?.status).toBe("verified");
+  });
+});
