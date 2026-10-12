@@ -7,6 +7,11 @@
  * PASS  → all required receipts exist, no HIGH issues
  * WARN  → receipts present but partial gaps or instrumentation missing
  * FAIL  → any required receipt missing, HIGH/CRITICAL issue, or unsafe behavior
+ *
+ * Pappy establishes what the evidence proves — not what the worker claims,
+ * what files changed, or what commands executed. For code work the proof is
+ * behavioural: a changed file shows a change, a host-recorded run on the final
+ * source that exercises the requirement shows the behaviour.
  */
 
 import type {
@@ -17,11 +22,15 @@ import type {
   TrainingEligibility,
   AcceptanceCriterion,
   Claim,
+  CriterionAssessment,
+  EvidenceRequest,
   EvidenceStrength,
   ReceiptEntry,
+  TaskKind,
   VerificationStatus,
 } from "./types.js";
 import { runWorkspaceVerificationChecks } from "./checks/workspaceVerification.js";
+import type { BehaviouralReceipt } from "./checks/workspaceVerification.js";
 import { runSafetyChecks }       from "./checks/safety.js";
 import { runToolResultChecks }   from "./checks/toolResults.js";
 import { runCompletenessChecks, runSatisfactionChecks } from "./checks/completeness.js";
@@ -30,6 +39,7 @@ import { runClaimProofChecks } from "./checks/claimProof.js";
 import { runBrainChecks }      from "./checks/brain.js";
 import { runIntegrityChecks }  from "./checks/integrity.js";
 import { extractCriterionSymbols, findCriterionSymbols } from "./checks/criterionSymbols.js";
+import { textCoversRequirement } from "./checks/evidenceTerms.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
 
 type OrcaProfileEvent = Record<string, unknown>;
@@ -133,22 +143,6 @@ function reportingTermRoot(term: string): string {
 }
 
 /**
- * Verify an acceptance criterion against specific evidence in the output.
- *
- * ## Acceptance Criteria
- *
- * When you receive done_criteria, treat each item as a binding contract:
- *
- * - "Output contains a TypeScript implementation" → your response MUST contain a ``` code block with a class or function definition
- * - "Output includes unit tests" → your response MUST contain describe(), it(), and expect() calls
- * - "Supports configurable X" → the specific parameter (burstCapacity, refillRate, etc.) MUST appear in your code
- * - "Tracks usage per Y" or "includes cleanup" → clientId, Map, cleanup, or stale MUST appear in your code
- *
- * Do not consider your task complete until every criterion is satisfied. If you finish writing and realize a criterion is missing, add it before submitting your final answer.
- *
- * Your output is evaluated by an automated QC system (Pappy) that checks for specific evidence of each criterion. A response that does not contain the required evidence will be rejected and sent back for repair. Save everyone the repair pass — get it right the first time.
- */
-/**
  * Evidence sources the worker does not author, prepared once per evaluation.
  * `changedContent` is what is actually on disk now for files the runtime saw
  * change; `hostOutput` is tool output the host recorded for commands that ran.
@@ -156,6 +150,8 @@ function reportingTermRoot(term: string): string {
 interface IndependentEvidence {
   available: boolean;
   changedPaths: Set<string>;
+  /** path → after-content of every non-deleted file the runtime saw change (original case). */
+  changedFiles: Map<string, string | undefined>;
   /** path + after-content of every non-deleted file the runtime saw change (lower-cased). */
   changedContent: string;
   /** after-content of changed test files (lower-cased). */
@@ -177,10 +173,17 @@ function independentEvidence(input: PappyInput): IndependentEvidence {
   return {
     available,
     changedPaths: new Set(changes.map((c) => c.path)),
+    changedFiles: new Map(changes.map((c) => [c.path, c.after])),
     changedContent: changes.map((c) => `${c.path} ${c.after ?? ""}`).join("\n").toLowerCase(),
     changedTests: changes.filter((c) => c.kind === "test").map((c) => c.after ?? "").join("\n").toLowerCase(),
     hostOutput,
   };
+}
+
+/** What the ledger knows about the run beyond the worker's account. */
+interface LedgerContext {
+  taskKind: TaskKind;
+  receipts: readonly BehaviouralReceipt[];
 }
 
 interface CriterionReceipt {
@@ -188,6 +191,22 @@ interface CriterionReceipt {
   partial?: boolean;
   evidence: string[];
   strength: EvidenceStrength;
+  /**
+   * True when the criterion is about code behaviour (a symbol, an
+   * implementation, tests, a parameter) rather than about the response text or
+   * the mere existence of a file — such receipts need a behavioural receipt on
+   * the final source before they count as proved.
+   */
+  behavioural?: boolean;
+  /** Filled in when the criterion was read against runtime evidence. */
+  assessment?: CriterionAssessment;
+}
+
+const CODE_CHANGE_KINDS = new Set<TaskKind>(["bugfix", "feature", "refactor"]);
+
+/** The behavioural receipt that speaks for this criterion, if any. */
+function supportingReceipt(ac: AcceptanceCriterion, receipts: readonly BehaviouralReceipt[]): BehaviouralReceipt | undefined {
+  return receipts.find((r) => r.coversTask || textCoversRequirement(r.text, ac.text).covered);
 }
 
 /**
@@ -301,11 +320,12 @@ function verifyAcceptanceCriterion(
             ? ["code declaration found in output"]
             : ["code declaration found in non-deleted file diff"],
         strength: hasCodeOnDisk ? "independent" : hasCodeInOutput && aboutTheOutput ? "direct" : "self_reported",
+        behavioural: !aboutTheOutput,
       };
     }
     return { proved: false, evidence: [], strength: "none" };
   }
-  
+
   // Check for unit test requirement
   const mentionsTestingFramework =
     criterionContainsTerm("vitest") || criterionContainsTerm("jest") || criterionContainsTerm("mocha") || criterionContainsTerm("spec");
@@ -341,6 +361,7 @@ function verifyAcceptanceCriterion(
           ...(hasTestFile ? ["test file in filesChanged"] : []),
         ],
         strength: hasTestOnDisk ? "independent" : "self_reported",
+        behavioural: !aboutTheOutput,
       };
     }
     return { proved: false, evidence: [], strength: "none" };
@@ -358,6 +379,7 @@ function verifyAcceptanceCriterion(
         proved: true,
         evidence: [`configurable parameter "${paramName}" found in output`],
         strength: termStrength(paramName),
+        behavioural: true,
       };
     }
     return { proved: false, evidence: [], strength: "none" };
@@ -404,11 +426,11 @@ function verifyAcceptanceCriterion(
       }
       const strengths = terms.map(termStrength);
       const strength: EvidenceStrength = strengths.includes("independent") ? "independent" : strengths.includes("corroborated") ? "corroborated" : "self_reported";
-      return { proved: true, evidence, strength };
+      return { proved: true, evidence, strength, behavioural: true };
     }
     return { proved: false, evidence: [], strength: "none" };
   }
-  
+
   // Limitation / negative-outcome criteria
   // If the AC text describes a failure, inability, or limitation state (e.g.
   // "Output explains inability to access filesystem", "Response explains why
@@ -496,24 +518,39 @@ function verifyAcceptanceCriterion(
       // the symbol is evidence — but the agent writes that text, so on its own
       // it proves nothing.
       //
-      // PROVED therefore needs the symbol plus corroboration from a source the
-      // agent does not author. Strongest: the symbol in files the runtime saw
-      // change, or in host-recorded command output. Without runtime evidence
-      // the legacy rule stands — the symbol in the reported diff, or in the
-      // account plus a tool event that ran — but that is self-reported, and a
-      // successful tool call never corroborates an unrelated claim once the
-      // runtime can supply real evidence. PARTIAL is the symbol named with
-      // nothing objective behind it.
+      // With runtime evidence the symbol must be in a file the runtime saw
+      // change (the implementation receipt); whether its *behaviour* holds is
+      // decided afterwards against the behavioural receipts. Host output naming
+      // the symbol without a change on disk is not an implementation. Without
+      // runtime evidence the legacy rule stands — the symbol in the reported
+      // diff, or in the account plus a tool event that ran — but that is
+      // self-reported. PARTIAL is the symbol named with nothing objective behind it.
       const named = [...new Set([...onDisk, ...inHostOutput, ...inCode, ...inAccount])].join(", ");
       const legacyCorroborated = inCode.length > 0 || (!independent.available && (input.toolEvents ?? []).some((e) => e.ok));
 
-      if (onDisk.length > 0 || inHostOutput.length > 0) {
+      if (onDisk.length > 0) {
         return {
           proved: true,
-          evidence: [
-            `criterion symbol(s) ${named} present in ${onDisk.length > 0 ? "files the runtime saw change" : "host-recorded command output"}`,
-          ],
-          strength: onDisk.length > 0 ? "independent" : "corroborated",
+          evidence: [`criterion symbol(s) ${named} present in files the runtime saw change`],
+          strength: "independent",
+          behavioural: true,
+        };
+      }
+      if (independent.available && inHostOutput.length > 0) {
+        return {
+          proved: false,
+          partial: true,
+          evidence: [`criterion symbol(s) ${named} named in host-recorded command output, but no file containing them changed on disk`],
+          strength: "corroborated",
+          behavioural: true,
+        };
+      }
+      if (!independent.available && inHostOutput.length > 0) {
+        return {
+          proved: true,
+          evidence: [`criterion symbol(s) ${named} present in host-recorded command output`],
+          strength: "corroborated",
+          behavioural: true,
         };
       }
       if (legacyCorroborated) {
@@ -525,6 +562,7 @@ function verifyAcceptanceCriterion(
             ...(hasTools ? [`toolEvents: ${input.toolEvents!.length} event(s)`] : []),
           ],
           strength: "self_reported",
+          behavioural: true,
         };
       }
       return {
@@ -532,24 +570,66 @@ function verifyAcceptanceCriterion(
         partial: true,
         evidence: [`criterion symbol(s) ${named} named, but nothing objective corroborates the change`],
         strength: "self_reported",
+        behavioural: true,
       };
     }
   }
 
   // A criterion that names a workspace file which the runtime saw change
-  // ("docs/guide.md must link to the right page"). Only runtime evidence
-  // counts here — never the worker's reported writes — and the receipt is
-  // explicit that the file changed, not that its content was judged.
+  // ("docs/guide.md must document the back-to-back rule"). Only runtime
+  // evidence counts here — never the worker's reported writes — and the file's
+  // final content must carry the criterion's own terms: a renamed or rewritten
+  // document that omits the requested item is a change, not a receipt.
   if (independent.available) {
     const namedPaths = [...ac.text.matchAll(/(?<![\w/])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]{1,8})(?![\w/])/g)]
       .map((m) => normalizePath(m[1]!))
       .filter((p) => /[\/.]/.test(p) && !/^\d+\.\d+$/.test(p));
     const changedNamed = namedPaths.filter((p) => independent.changedPaths.has(p));
     if (changedNamed.length > 0) {
+      const contents = changedNamed.map((p) => independent.changedFiles.get(p)).filter((c): c is string => typeof c === "string");
+      if (contents.length === 0) {
+        return {
+          proved: false,
+          partial: true,
+          evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")}, but their content was not captured, so it could not be checked against the criterion`],
+          strength: "independent",
+          assessment: {
+            requires: ac.text,
+            satisfiedBy: `the final content of ${changedNamed.join(", ")} containing what the criterion asks for`,
+            supportedBy: [`${changedNamed.join(", ")} changed on disk`],
+            sufficient: false,
+            needed: "captured final content of the named file(s)",
+          },
+        };
+      }
+      const { covered, matched, terms } = textCoversRequirement(contents.join("\n"), ac.text);
+      if (covered) {
+        return {
+          proved: true,
+          evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")}; final content contains ${matched.slice(0, 5).join(", ")}`],
+          strength: "independent",
+          assessment: {
+            requires: ac.text,
+            satisfiedBy: `the final content of ${changedNamed.join(", ")} containing what the criterion asks for`,
+            supportedBy: [`${changedNamed.join(", ")} changed on disk`, `final content names ${matched.slice(0, 5).join(", ")}`],
+            sufficient: true,
+          },
+        };
+      }
+      const missing = terms.filter((t) => !matched.includes(t));
       return {
-        proved: true,
-        evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")} (content not semantically judged)`],
+        proved: false,
+        partial: true,
+        evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")}, but the final content does not contain ${missing.slice(0, 5).join(", ") || "the criterion's terms"}`],
         strength: "independent",
+        assessment: {
+          requires: ac.text,
+          satisfiedBy: `the final content of ${changedNamed.join(", ")} containing what the criterion asks for`,
+          supportedBy: [`${changedNamed.join(", ")} changed on disk`],
+          sufficient: false,
+          contradictedBy: `final content lacks ${missing.slice(0, 5).join(", ") || "the requested item"}`,
+          needed: `the requested item (${missing.slice(0, 5).join(", ")}) written into ${changedNamed.join(", ")}`,
+        },
       };
     }
   }
@@ -560,29 +640,96 @@ function verifyAcceptanceCriterion(
 }
 
 /**
+ * Tie a code-behaviour receipt to the behavioural evidence the host recorded.
+ * An implementation on disk is proof of a change; the criterion is proved only
+ * when a receipt on the final source speaks for it — a reproduced-then-passing
+ * failure or full suite for the task, or a test/validation whose text names
+ * this criterion. Otherwise the receipt becomes PARTIAL and says what is missing.
+ */
+function requireBehaviouralEvidence(
+  ac: AcceptanceCriterion,
+  receipt: CriterionReceipt,
+  context: LedgerContext,
+): CriterionReceipt {
+  const symbols = extractCriterionSymbols(ac.text);
+  const what = symbols.length > 0 ? symbols.join(", ") : "the requested behaviour";
+  const satisfiedBy = `a host-recorded test or validation run on the final source that exercises ${what}`;
+  const supporter = supportingReceipt(ac, context.receipts);
+  if (receipt.proved && supporter) {
+    return {
+      ...receipt,
+      evidence: [...receipt.evidence, `behavioural receipt: ${supporter.summary}`],
+      assessment: {
+        requires: ac.text,
+        satisfiedBy,
+        supportedBy: [...receipt.evidence, supporter.summary],
+        sufficient: true,
+      },
+    };
+  }
+  if (receipt.proved) {
+    const unrelated = context.receipts.filter((r) => r !== supporter);
+    return {
+      proved: false,
+      partial: true,
+      evidence: [...receipt.evidence, `no behavioural receipt on the final source exercises ${what}`],
+      strength: receipt.strength,
+      behavioural: true,
+      assessment: {
+        requires: ac.text,
+        satisfiedBy,
+        supportedBy: receipt.evidence,
+        sufficient: false,
+        needed: unrelated.length > 0
+          ? `a test or validation run that exercises ${what} (the recorded ${unrelated.map((r) => r.kind.replace(/_/g, " ")).join(", ")} does not name it)`
+          : `a test or validation run on the final source that exercises ${what}`,
+      },
+    };
+  }
+  return {
+    ...receipt,
+    assessment: receipt.assessment ?? {
+      requires: ac.text,
+      satisfiedBy,
+      supportedBy: receipt.evidence,
+      sufficient: false,
+      needed: receipt.partial
+        ? `a change on disk that contains ${what}, and a test or validation run on the final source that exercises it`
+        : `an implementation of ${what} on disk and a test or validation run that exercises it`,
+    },
+  };
+}
+
+/**
  * One ledger entry per criterion. Mandatory-evidence rule: when the runtime
  * supplied workspace evidence (available or not), a required criterion whose
  * only support is the worker's own account cannot stay PROVED — it becomes
- * UNVERIFIED, which fails the run until independent evidence exists. Callers
+ * UNVERIFIED, which fails the run until independent evidence exists; and a
+ * code-behaviour criterion is PROVED only with a behavioural receipt. Callers
  * that supply no workspace evidence at all keep the legacy statuses; their
  * results are marked not independently verified and are never trainable.
  */
 function buildCriteriaLedger(
   input: PappyInput,
   criteria: AcceptanceCriterion[],
+  context: LedgerContext,
 ): ReceiptEntry[] {
   const entries: ReceiptEntry[] = [];
   const independent = independentEvidence(input);
   const mandatory = input.workspace !== undefined;
 
   for (const ac of criteria) {
-    const { proved, partial, evidence, strength } = verifyAcceptanceCriterion(ac, input, independent);
+    let receipt = verifyAcceptanceCriterion(ac, input, independent);
+    if (independent.available && receipt.behavioural && CODE_CHANGE_KINDS.has(context.taskKind)) {
+      receipt = requireBehaviouralEvidence(ac, receipt, context);
+    }
+    const { proved, partial, evidence, strength, assessment } = receipt;
     let status: ReceiptEntry["status"] = proved ? "PROVED" : partial ? "PARTIAL" : "MISSING";
     if (mandatory && ac.required && status === "PROVED" && strength === "self_reported") {
       status = "UNVERIFIED";
     }
 
-    entries.push({
+    const entry: ReceiptEntry = {
       ref: ac.id,
       required_receipt: {
         type: "criterion_specific",
@@ -591,7 +738,17 @@ function buildCriteriaLedger(
       status,
       evidence,
       strength,
-    });
+    };
+    if (mandatory && ac.required) {
+      entry.assessment = assessment ?? {
+        requires: ac.text,
+        satisfiedBy: "criterion-specific evidence the worker did not author",
+        supportedBy: evidence,
+        sufficient: status === "PROVED",
+        ...(status === "PROVED" ? {} : { needed: status === "UNVERIFIED" ? "independent evidence (a real change on disk or a host-recorded run) for what the account reports" : "criterion-specific evidence" }),
+      };
+    }
+    entries.push(entry);
   }
 
   return entries;
@@ -599,6 +756,7 @@ function buildCriteriaLedger(
 
 function buildMissingReceiptIssues(
   receiptLedger: readonly ReceiptEntry[],
+  mandatory: boolean,
 ): Omit<Issue, "issueId">[] {
   // UNVERIFIED is insufficient proof, not proven incorrectness: the worker
   // reported satisfying the criterion but nothing the runtime recorded
@@ -618,20 +776,25 @@ function buildMissingReceiptIssues(
       suggestedFix: `Back ${entry.ref} with a real file change or a recorded test/command result.`,
     }));
 
-  // PARTIAL warns rather than failing. The criterion named a symbol and that
-  // symbol was genuinely touched — specific evidence, but not proof the
-  // behaviour is right. Treating it as MISSING fails every correct coding task;
-  // treating it as PROVED restores the vacuous fallback this replaced.
+  // PARTIAL: the criterion's subject was genuinely touched, but its behaviour
+  // is not shown. With runtime evidence that is mandatory evidence not met —
+  // HIGH, worded as insufficient proof — because a change is not a result.
+  // Legacy callers (no workspace evidence) keep the MEDIUM note: for them a
+  // diff that omits the symbol is a property of diff formatting, not of the work.
   const partial: Omit<Issue, "issueId">[] = receiptLedger
     .filter((entry) => entry.status === "PARTIAL")
     .map((entry) => ({
-      severity: "MEDIUM" as const,
+      severity: mandatory ? ("HIGH" as const) : ("MEDIUM" as const),
       code: "RECEIPT_PARTIAL",
       category: "Proof" as const,
-      description: `Receipt ${entry.ref} is partial: the named code was changed, but the criterion's behaviour is unverified — ${entry.required_receipt.details}`,
-      expected_receipt: `${entry.required_receipt.type}: ${entry.required_receipt.details}`,
+      description: mandatory
+        ? `Not verified (insufficient evidence): ${entry.ref} — ${entry.assessment?.contradictedBy ? entry.assessment.contradictedBy : `the change is on record but nothing recorded shows the criterion's behaviour holds`} — ${entry.required_receipt.details}`
+        : `Receipt ${entry.ref} is partial: the named code was changed, but the criterion's behaviour is unverified — ${entry.required_receipt.details}`,
+      expected_receipt: entry.assessment?.satisfiedBy ?? `${entry.required_receipt.type}: ${entry.required_receipt.details}`,
       evidence: `${entry.ref}: status=PARTIAL; evidence=${JSON.stringify(entry.evidence)}`,
-      fix_hint: `Show the criterion's behaviour holds for ${entry.ref} — a passing test or command output naming it.`,
+      fix_hint: entry.assessment?.needed
+        ? `Provide ${entry.assessment.needed}.`
+        : `Show the criterion's behaviour holds for ${entry.ref} — a passing test or command output naming it.`,
       message: `Receipt ${entry.ref} is partial.`,
       suggestedFix: `Add executable proof for ${entry.ref}.`,
     }));
@@ -726,9 +889,31 @@ const NOT_TRAINABLE_PATTERN_CODES = new Set([
   "EMBEDDED_SECRET_PATTERN",
 ]);
 
-/** The worker's account presents the work as done or working. */
+/**
+ * The worker's account presents the work as done, working or accomplished.
+ * Broad on purpose: past-tense accomplishment verbs ("Documented…",
+ * "Extracted…") and bare "pass" count. This list is a *signal* that the
+ * account claims success; it is never what keeps a contradicted run out of
+ * training — that is the default (see `deriveTrainingEligibility`).
+ */
 const SUCCESS_CLAIM_PATTERN =
-  /\b(fixed|resolved|works|working|passes|passed|passing|succeeded|successfully|completed?|done|implemented|verified|now\s+(?:returns?|handles?|supports?|works?|uses?|checks?|does|accepts?|rejects?)|has been|have been|is now|are now)\b/i;
+  /\b(fixed|resolved|works|working|pass|passes|passed|passing|green|succeeded|successfully|complete|completed|done|implemented|verified|confirmed|documented|added|extracted|refactored|updated|created|wrote|written|changed|removed|renamed|in\s+place|now\s+(?:returns?|handles?|supports?|works?|uses?|checks?|does|accepts?|rejects?|treats?)|has\s+been|have\s+been|is\s+now|are\s+now)\b/i;
+
+/**
+ * The account says, in its own words, that the work did not succeed or was
+ * not done: the honest-failure signal. "0 failed" is a pass count, not an
+ * acknowledgement.
+ */
+const FAILURE_ACKNOWLEDGED_PATTERN =
+  /\b(did\s+not|didn't|could\s+not|couldn't|cannot|can't|unable|was\s+not\s+able|not\s+(?:yet\s+)?(?:fixed|resolved|implemented|done|complete|completed|verified|possible|changed|modified)|no\s+(?:files?|changes?|modifications?|source)\s+(?:were|was|have\s+been|has\s+been)?\s*(?:modified|changed|made|written|touched)|(?:still|remains?|remaining)\s+(?:fail\w*|broken|open|unresolved|present)|(?<!\b0\s)(?:fails?|failing|failed)|gave\s+up|blocked|incomplete|partially|ran\s+out\s+of|not\s+able\s+to)\b/i;
+
+export function accountClaimsSuccess(outputText: string): boolean {
+  return SUCCESS_CLAIM_PATTERN.test(outputText);
+}
+
+export function accountAcknowledgesFailure(outputText: string): boolean {
+  return FAILURE_ACKNOWLEDGED_PATTERN.test(outputText);
+}
 
 function deriveTrainingEligibility(
   verdict: Verdict,
@@ -738,9 +923,22 @@ function deriveTrainingEligibility(
 ): TrainingEligibility {
   // Most restrictive wins.
   if (issues.some((i) => NEVER_TRAINABLE_CODES.has(i.code))) return "rejected";
-  // Host evidence contradicts an account that presents the work as done or
-  // working: the run misrepresented itself, whatever else is true of it.
-  if (verdict === "FAIL" && verification.status === "contradicted" && SUCCESS_CLAIM_PATTERN.test(outputText)) return "rejected";
+
+  // Host evidence contradicts the objective. The only account that survives
+  // this is an honest one: it acknowledges the failure and does not present the
+  // work as done. Everything else is excluded by default — a success claim the
+  // evidence refutes is rejected outright, a mixed account or a silent one goes
+  // to a human. No keyword list is needed to keep a fabricated run out.
+  if (verification.status === "contradicted") {
+    const account = outputText.trim();
+    if (!account) return "needs_human_review";
+    const acknowledges = accountAcknowledgesFailure(account);
+    const claims = accountClaimsSuccess(account);
+    if (acknowledges && !claims) return "eligible";
+    if (acknowledges && claims) return "needs_human_review";
+    if (claims) return "rejected";
+    return "needs_human_review";
+  }
   if (issues.some((i) => ELIGIBILITY_REVIEW_CODES.has(i.code))) return "needs_human_review";
 
   // Evidence-integrity gate. Training needs more than a verdict: the run's
@@ -766,7 +964,8 @@ function deriveTrainingEligibility(
   if (verdict === "WARN") return "needs_human_review";
 
   // A PASS is trainable only when the evidence verified it, including a
-  // host-recorded test run on the final source.
+  // host-recorded test run on the final source. A positive verdict is not an
+  // authorisation to train.
   if (verdict === "PASS") {
     return verification.status === "verified" && verification.testEvidence ? "eligible" : "accepted_but_not_trainable";
   }
@@ -803,9 +1002,13 @@ function deriveConfidence(input: PappyInput, issues: Issue[]): number {
 
 function buildSummary(verdict: Verdict, issues: Issue[], hasTrace: boolean, verification: VerificationStatus): string {
   if (verdict === "PASS") {
-    return verification.status === "verified"
-      ? "All required receipts are present. Task output is verified against runtime evidence."
-      : "All required receipts are present. Task output is accepted but not independently verified (no runtime workspace evidence).";
+    if (verification.status !== "verified") {
+      return "All required receipts are present. Task output is accepted but not independently verified (no runtime workspace evidence).";
+    }
+    const behavioural = verification.behaviouralEvidence?.length
+      ? ` Behavioural evidence: ${verification.behaviouralEvidence.join("; ")}.`
+      : "";
+    return `All required receipts are present. Task output is verified against runtime evidence.${behavioural}`;
   }
 
   const highCount = issues.filter(
@@ -841,9 +1044,63 @@ function buildInternalSummary(verdict: Verdict, issues: Issue[]): string {
   return `verdict=${verdict} ${tally}`;
 }
 
+/**
+ * Evidence Pappy still needs, stated per requirement so a caller can collect
+ * exactly that rather than redo the task. Built from the criteria ledger
+ * (what each criterion lacks) and from the workspace checks whose finding is
+ * insufficient or unreadable evidence rather than a contradiction. Descriptive
+ * only: Pappy does not run anything, fabricate a receipt, or start a repair.
+ */
+const INSUFFICIENT_PREFIX = /^Not verified \((?:insufficient (?:independent )?evidence|evidence could not be interpreted)\): /;
+
+function buildEvidenceRequests(
+  criteria: readonly AcceptanceCriterion[],
+  ledger: readonly ReceiptEntry[],
+  issues: readonly Issue[],
+  verification: VerificationStatus,
+): EvidenceRequest[] {
+  const requests: EvidenceRequest[] = [];
+  const confirmedByWorkspace = [
+    ...(verification.behaviouralEvidence ?? []),
+  ];
+  for (const entry of ledger) {
+    if (entry.status === "PROVED" || !entry.assessment || entry.assessment.sufficient) continue;
+    const ac = criteria.find((c) => c.id === entry.ref);
+    if (!ac?.required) continue;
+    requests.push({
+      ref: entry.ref,
+      requirement: ac.text,
+      confirmed: entry.assessment.supportedBy,
+      missing: entry.assessment.needed ?? entry.assessment.satisfiedBy,
+      action: `${entry.assessment.supportedBy.length > 0 ? `${entry.assessment.supportedBy.join("; ")}. ` : ""}Required evidence is missing: ${entry.assessment.needed ?? entry.assessment.satisfiedBy}. Provide it and report the observed result.`,
+    });
+  }
+  for (const issue of issues) {
+    if (issue.category !== "Proof" || !INSUFFICIENT_PREFIX.test(issue.description)) continue;
+    if (/^(REQUIRED_EVIDENCE_INSUFFICIENT|RECEIPT_PARTIAL)$/.test(issue.code)) continue; // covered per criterion above
+    requests.push({
+      ref: issue.code,
+      requirement: issue.description.replace(INSUFFICIENT_PREFIX, ""),
+      confirmed: confirmedByWorkspace,
+      missing: issue.expected_receipt,
+      action: issue.fix_hint,
+    });
+  }
+  return requests;
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
+
+/**
+ * Keyword heuristics that stand in for evidence when there is none: once the
+ * runtime's own evidence has proved every goal-derived criterion with an
+ * independent, corroborated or direct receipt, the worker's choice of words is
+ * no longer the question, and these notes are dropped. Legacy callers (no
+ * workspace evidence) keep them.
+ */
+const SUPERSEDED_BY_EVIDENCE_CODES = new Set(["COMPLETENESS_GOAL_COVERAGE", "COMPLETENESS_MISSING_DOMAIN_TERMS"]);
 
 export function evaluateWithPappy(input: PappyInput): PappyResult {
   const _profStart = process.env["ORCA_PROFILE"] === "1" ? Date.now() : 0;
@@ -871,9 +1128,10 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
   ];
 
   // Step 3b: workspace verification from runtime evidence (what really changed
-  // on disk, which test commands really ran). Task-aware; inert without
-  // `input.workspace`. Where it reports the same code as the diff-based
-  // integrity check, the evidence-backed finding replaces the reported-diff one.
+  // on disk, which test commands really ran, what behaviour the host saw).
+  // Task-aware; inert without `input.workspace`. Where it reports the same code
+  // as the diff-based integrity check, the evidence-backed finding replaces the
+  // reported-diff one.
   const workspaceVerification = runWorkspaceVerificationChecks(input);
   if (workspaceVerification.issues.length > 0) {
     const evidenceCodes = new Set(workspaceVerification.issues.map((issue) => issue.code));
@@ -885,12 +1143,27 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
 
   // Step 4: build receipt ledger (criteria + claim entries merged).
   // Must happen BEFORE stampIssueIds so CORE_GOAL_MISSING can inspect the ledger.
-  const criteriaLedger = buildCriteriaLedger(input, acceptance_criteria);
+  const criteriaLedger = buildCriteriaLedger(input, acceptance_criteria, {
+    taskKind: workspaceVerification.verification.taskKind,
+    receipts: workspaceVerification.receipts,
+  });
   const receipt_ledger: ReceiptEntry[] = [...criteriaLedger, ...claimLedger];
 
   // The ledger is authoritative: a required MISSING row must feed verdict
   // derivation regardless of how many other criteria were proved.
-  rawIssues.push(...buildMissingReceiptIssues(receipt_ledger));
+  rawIssues.push(...buildMissingReceiptIssues(receipt_ledger, input.workspace !== undefined));
+
+  // Evidence supersedes the word-matching stand-ins (see SUPERSEDED_BY_EVIDENCE_CODES).
+  if (input.workspace?.available) {
+    const goalCriteria = criteriaLedger.slice(0, (input.goals ?? []).length);
+    const allProvedByEvidence = goalCriteria.length > 0 && goalCriteria.every((e) =>
+      e.status === "PROVED" && (e.strength === "independent" || e.strength === "corroborated" || e.strength === "direct"));
+    if (allProvedByEvidence) {
+      for (let i = rawIssues.length - 1; i >= 0; i--) {
+        if (SUPERSEDED_BY_EVIDENCE_CODES.has(rawIssues[i]!.code)) rawIssues.splice(i, 1);
+      }
+    }
+  }
 
   // ── CORE_GOAL_MISSING: all specific-goal criteria unproved ───────────────
   // When the task has explicit goals (i.e. more than just the generic fallback AC)
@@ -922,12 +1195,15 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
   // Step 5: verdict, then the three separate axes: evidence status (what the
   // evidence shows), training eligibility (integrity), heuristic confidence.
   const verdict  = deriveVerdict(issues);
-  const verification = deriveVerificationStatus(workspaceVerification.verification, criteriaLedger);
+  const verification = deriveVerificationStatus(workspaceVerification.verification, criteriaLedger, claimLedger, input.workspace?.available === true);
   const trainingEligibility = deriveTrainingEligibility(verdict, issues, verification, input.outputText ?? "");
   const confidence = deriveConfidence(input, issues);
   const hasTrace = (input.toolEvents?.length ?? 0) > 0 || (input.filesChanged?.length ?? 0) > 0;
   const summary  = buildSummary(verdict, issues, hasTrace, verification);
   const internalSummary = buildInternalSummary(verdict, issues);
+  const evidenceRequests = input.workspace !== undefined
+    ? buildEvidenceRequests(acceptance_criteria, criteriaLedger, issues, verification)
+    : undefined;
 
   // Step 6: repair task (only when not PASS)
   const repair_task   = verdict !== "PASS" ? buildRepairTask(input.task, issues) : null;
@@ -955,6 +1231,7 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
     claims,
     receipt_ledger,
     issues,
+    ...(evidenceRequests && evidenceRequests.length > 0 ? { evidenceRequests } : {}),
     repair_task,
     internalSummary,
     repairTask: repairTaskStr,  // backward compat
@@ -964,22 +1241,28 @@ export function evaluateWithPappy(input: PappyInput): PappyResult {
 /**
  * Fold the criteria ledger into the workspace verification status. A required
  * criterion that is MISSING, PARTIAL or UNVERIFIED means the task is not
- * verified even when the workspace checks found nothing wrong; a contradiction
- * found by the workspace checks is never softened by a satisfied ledger.
+ * verified even when the workspace checks found nothing wrong; a claim the
+ * account makes that no receipt supports means the same; a contradiction found
+ * by the workspace checks is never softened by a satisfied ledger.
  */
 function deriveVerificationStatus(
   workspace: VerificationStatus,
   ledger: readonly ReceiptEntry[],
+  claimLedger: readonly ReceiptEntry[],
+  evidenceAvailable: boolean,
 ): VerificationStatus {
   if (workspace.status === "not_applicable" || workspace.status === "unavailable" || workspace.status === "contradicted") {
     return workspace;
   }
   const unmet = ledger.filter((entry) => entry.status !== "PROVED");
-  if (unmet.length === 0) return workspace;
+  const unsupportedClaims = evidenceAvailable ? claimLedger.filter((entry) => entry.status === "MISSING") : [];
+  if (unmet.length === 0 && unsupportedClaims.length === 0) return workspace;
+  const reasons = [...workspace.reasons];
+  if (unmet.length > 0) reasons.push(`required criteria without sufficient evidence: ${unmet.map((e) => `${e.ref} (${e.status})`).join(", ")}`);
+  if (unsupportedClaims.length > 0) reasons.push(`claims in the account without a receipt: ${unsupportedClaims.map((e) => e.ref).join(", ")}`);
   return {
     ...workspace,
     status: workspace.status === "verified" ? "unverified" : workspace.status,
-    reasons: [...workspace.reasons, `required criteria without independent evidence: ${unmet.map((e) => `${e.ref} (${e.status})`).join(", ")}`],
+    reasons,
   };
 }
-

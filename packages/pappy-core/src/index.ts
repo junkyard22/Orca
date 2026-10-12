@@ -12,7 +12,8 @@ export {
   testSegment,
   testShape,
 } from "./checks/workspaceVerification.js";
-export type { WorkspaceVerificationResult } from "./checks/workspaceVerification.js";
+export type { BehaviouralReceipt, WorkspaceVerificationResult } from "./checks/workspaceVerification.js";
+export { distinctiveTerms, textCoversRequirement, textHasTerm } from "./checks/evidenceTerms.js";
 export { buildRepairTask } from "./repair.js";
 export { traceEvaluation } from "./pappy-trace.js";
 export { verifyAHPPacket } from "./ahp/evaluator.js";
@@ -48,6 +49,8 @@ export type {
   EvidenceStatus,
   TaskKind,
   VerificationStatus,
+  CriterionAssessment,
+  EvidenceRequest,
   WorkspaceEvidence,
   WorkspaceFileChange,
   WorkspaceFileKind,

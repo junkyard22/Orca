@@ -216,15 +216,20 @@ export function traceEvaluation(input: PappyInput): PappyResult {
     for (const entry of allLedger) {
       const statusPad = entry.ref.padEnd(refWidth);
       const statusStr =
-        entry.status === "PROVED"  ? `${C.green}PROVED ${C.reset}` :
-        entry.status === "PARTIAL" ? `${C.yellow}PARTIAL${C.reset}` :
-                                     `${C.red}MISSING${C.reset}`;
+        entry.status === "PROVED"     ? `${C.green}PROVED ${C.reset}` :
+        entry.status === "PARTIAL"    ? `${C.yellow}PARTIAL${C.reset}` :
+        entry.status === "UNVERIFIED" ? `${C.yellow}UNVERIFIED${C.reset}` :
+                                        `${C.red}MISSING${C.reset}`;
       const icon = entry.status === "PROVED" ? `${C.green}✓${C.reset}` : `${C.red}✗${C.reset}`;
-      console.log(`   ${icon} ${C.bold}${statusPad}${C.reset}  ${statusStr}  ${dim(entry.required_receipt.details.slice(0, 60))}`);
+      console.log(`   ${icon} ${C.bold}${statusPad}${C.reset}  ${statusStr}  ${dim(entry.required_receipt.details.slice(0, 60))}${entry.strength ? dim(`  [${entry.strength}]`) : ""}`);
       if (entry.evidence.length > 0) {
         for (const ev of entry.evidence) {
           console.log(`       ${dim("└─ " + ev.slice(0, 80))}`);
         }
+      }
+      if (entry.assessment && !entry.assessment.sufficient) {
+        if (entry.assessment.contradictedBy) console.log(`       ${C.red}contradicted by: ${entry.assessment.contradictedBy.slice(0, 80)}${C.reset}`);
+        if (entry.assessment.needed) console.log(`       ${C.yellow}needs: ${entry.assessment.needed.slice(0, 100)}${C.reset}`);
       }
     }
   }

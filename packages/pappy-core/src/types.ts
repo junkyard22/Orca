@@ -91,6 +91,26 @@ export interface Claim {
   requires_proof: boolean;
 }
 
+/**
+ * Pappy's reading of one required criterion against the runtime evidence:
+ * what it requires, what would satisfy it, what supports it, whether that is
+ * enough, what contradicts it, and what is still needed.
+ */
+export interface CriterionAssessment {
+  /** What the criterion requires, as Pappy read it. */
+  requires: string;
+  /** What observable evidence would satisfy it. */
+  satisfiedBy: string;
+  /** Runtime evidence that supports the claim (empty when none). */
+  supportedBy: string[];
+  /** Whether the supporting evidence is relevant to this criterion and sufficient. */
+  sufficient: boolean;
+  /** Evidence that contradicts the claim, when any. */
+  contradictedBy?: string;
+  /** What additional evidence is needed, when not sufficient. */
+  needed?: string;
+}
+
 /** One row in the proof ledger — maps a criterion/claim to evidence. */
 export interface ReceiptEntry {
   /** ID of the AcceptanceCriterion or Claim this entry covers. */
@@ -104,6 +124,27 @@ export interface ReceiptEntry {
   evidence: string[];
   /** Provenance of the evidence behind `status`. */
   strength?: EvidenceStrength;
+  /** Structured reading of a criterion against runtime evidence (criteria rows only, when workspace evidence was supplied). */
+  assessment?: CriterionAssessment;
+}
+
+/**
+ * A specific, actionable statement of evidence Pappy still needs for one
+ * requirement. Produced alongside the verdict so a caller can collect the
+ * missing evidence instead of repeating the whole task. Pappy never acts on
+ * these itself: it does not run commands, fabricate receipts or start repairs.
+ */
+export interface EvidenceRequest {
+  /** Criterion id (AC…) or check code the request belongs to. */
+  ref: string;
+  /** The requirement in question. */
+  requirement: string;
+  /** What the evidence already establishes. */
+  confirmed: string[];
+  /** What is missing. */
+  missing: string;
+  /** The action that would supply it. */
+  action: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +363,13 @@ export interface VerificationStatus {
   reasons: string[];
   /** True when a host-recorded full test run on the final source was found and passed. */
   testEvidence: boolean;
+  /**
+   * Behavioural receipts the host recorded on the final source, one line each
+   * (a reproduced-then-passing failure, a regression test, a full suite, a
+   * documented validation command, a build/type check). Empty when the
+   * evidence shows the change only, not its behaviour.
+   */
+  behaviouralEvidence?: string[];
 }
 
 export interface PappyResult {
@@ -353,6 +401,11 @@ export interface PappyResult {
   claims: Claim[];
   receipt_ledger: ReceiptEntry[];
   issues: Issue[];
+  /**
+   * Evidence Pappy still needs, one entry per unmet requirement, when runtime
+   * workspace evidence was supplied. Descriptive only — see EvidenceRequest.
+   */
+  evidenceRequests?: EvidenceRequest[];
   repair_task: RepairTask | null;
   /** Terse machine-readable summary for logging/Doctor. */
   internalSummary: string;

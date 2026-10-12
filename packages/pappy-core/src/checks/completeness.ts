@@ -1,4 +1,5 @@
 import type { Issue, PappyInput } from "../types.js";
+import { extractCriterionSymbols } from "./criterionSymbols.js";
 export type { Issue };
 
 // ---------------------------------------------------------------------------
@@ -141,7 +142,13 @@ function stemWord(word: string): string {
       break;
     }
   }
-  
+
+  // A doubled final consonant comes from the suffix ("overlapping" → "overlapp",
+  // "running" → "runn"); the stem that matches the base word drops it.
+  if (stemmed.length > 3 && /([b-df-hj-np-tv-z])\1$/.test(stemmed)) {
+    stemmed = stemmed.slice(0, -1);
+  }
+
   return stemmed;
 }
 
@@ -332,9 +339,14 @@ function extractDomainConcepts(task: string): string[] {
     for (const concept of Object.keys(CONCEPT_SYNONYMS)) {
       // Skip generic concepts
       if (isGenericActionVerb(concept)) continue;
-      
+
+      // A term maps to a concept when it is the concept, its stem, an inflected
+      // form of it ("components"), or a longer prefix of it ("compon"). Bare
+      // substring containment is not a mapping: "one" is inside "component"
+      // and "api" inside "capital", and both produced phantom domain concepts
+      // that the output could then never "cover".
       const conceptStem = stemWord(concept);
-      if (term === concept || term === conceptStem || term.includes(concept) || concept.includes(term)) {
+      if (term === concept || term === conceptStem || term.startsWith(concept) || (term.length >= 4 && concept.startsWith(term))) {
         if (!concepts.includes(concept)) {
           concepts.push(concept);
         }
@@ -1019,16 +1031,29 @@ export function runCompletenessChecks(input: PappyInput): Omit<Issue, "issueId">
   );
 
   if (meaningfulGoals.length > 0 && (hasOutput || hasFiles || hasTools)) {
-    // Extract meaningful terms from all goals
+    const diffText = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
+    const searchText = `${outputText.toLowerCase()} ${diffText.toLowerCase()}`;
+
+    // An identifier-anchored goal ("`overlaps` must treat a meeting that starts
+    // exactly when another ends as not overlapping") is about the code symbol it
+    // names; the words of its behavioural clause are what a test shows, not what
+    // the account must restate. When the output or diff names every symbol of
+    // such a goal, the goal is covered and its clause does not feed the word count.
+    const symbolAnchoredCovered = (goal: string): boolean => {
+      const symbols = extractCriterionSymbols(goal);
+      return symbols.length > 0 && symbols.every((s) => searchText.includes(s.toLowerCase()));
+    };
+    const goalsToCount = meaningfulGoals.filter((g) => !symbolAnchoredCovered(g));
+
+    // Extract meaningful terms from the remaining goals. Backticks and quotes
+    // are not part of a word: "`overlaps`" must count as "overlaps".
     const goalTerms = [...new Set(
-      meaningfulGoals
-        .flatMap((g) => g.toLowerCase().split(/[\s,.;:()\[\]'"\/\\]+/))
+      goalsToCount
+        .flatMap((g) => g.toLowerCase().split(/[\s,.;:()\[\]'"`\/\\]+/))
         .filter((t) => t.length > 3 && !STOP_WORDS.has(t))
     )].filter((term) => !(isCondensedRequest && isStructuredOutput && isCondensedFormatTerm(term)));
 
     if (goalTerms.length >= 2) {
-      const diffText = (input.filesChanged ?? []).map((f) => f.diff ?? "").join("\n");
-      const searchText = `${outputText.toLowerCase()} ${diffText.toLowerCase()}`;
 
       // For each goal term, check if it's conceptually covered
       const uncovered: string[] = [];

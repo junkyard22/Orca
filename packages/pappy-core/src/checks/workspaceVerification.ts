@@ -8,8 +8,11 @@
  * only when the host recorded it.
  *
  * The checks are task-aware. A bug fix, a refactor, a feature, a documentation
- * change and an inspection each need different evidence, and the result keeps
- * four states apart:
+ * change and an inspection each need different evidence — and for code work
+ * that evidence is *behavioural*: a modified file proves the file changed, not
+ * that a defect is resolved, a feature works or a refactor preserved behaviour.
+ * Each kind yields `receipts` (what the host recorded on the final source) that
+ * the ledger then ties to individual criteria. The result keeps four states apart:
  *   contradicted   — the evidence shows the work is wrong          → HIGH/CRITICAL
  *   unverified     — plausibly correct, but not independently shown → HIGH, worded
  *                    "Not verified (insufficient evidence)"; mandatory evidence
@@ -29,8 +32,27 @@ import type {
   WorkspaceFileKind,
   WorkspaceTestRun,
 } from "../types.js";
+import { extractCriterionSymbols } from "./criterionSymbols.js";
+import { distinctiveTerms, matchedTerms, textCoversRequirement, withoutFilePaths } from "./evidenceTerms.js";
 
 type RawIssue = Omit<Issue, "issueId">;
+
+/**
+ * Something the host recorded on the final source that shows behaviour, not
+ * just a change: which criteria it can support is decided by `text` (what it
+ * names) or `coversTask` (it exercises the whole request, as a reproduced
+ * failure or a full passing suite does for a bug fix or refactor).
+ */
+export interface BehaviouralReceipt {
+  kind: "reproduction" | "regression_test" | "full_suite" | "validation_command" | "build_check" | "final_content";
+  command: string;
+  sourceState: WorkspaceTestRun["sourceState"];
+  /** Lower-cased: command, output, and the content of the tests that ran. */
+  text: string;
+  /** True when the receipt speaks for every criterion of the task. */
+  coversTask: boolean;
+  summary: string;
+}
 
 // ── Path classification ─────────────────────────────────────────────────────
 
@@ -187,8 +209,15 @@ const TEST_COMMAND =
   /^(?:npx\s+|pnpm\s+exec\s+|yarn\s+)?(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|node\s+(?:--[\w-]+(?:=\S+)?\s+)*--test\b|vitest\b|jest\b|mocha\b|pytest\b|python3?\s+-m\s+(?:pytest|unittest)\b|go\s+test\b|cargo\s+test\b|deno\s+test\b)/i;
 const NARROWING_FLAG =
   /(?:^|\s)(?:--test-name-pattern|--testNamePattern|--test-only|--grep|--only|--filter|--testPathPattern|--bail|-t|-g|-k|-x|-run)(?=[=\s]|$)/;
+/** "Alternative verification: <method>" / "Verified by: <method>" — the worker naming how it checked the behaviour. */
+const ALTERNATIVE_VERIFICATION =
+  /^[ \t>*#-]*(?:\*\*)?(?:alternative verification|verification method|verified (?:by|with|via))(?:\*\*)?[ \t]*:[ \t]*(.{12,})$/gim;
+const BUILD_CHECK_COMMAND =
+  /^(?:npx\s+|pnpm\s+exec\s+|yarn\s+)?(?:tsc\b|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|typecheck|type-check|check)\b|cargo\s+(?:build|check|clippy)\b|go\s+(?:build|vet)\b|mypy\b|pyright\b|python3?\s+-m\s+(?:compileall|py_compile)\b|javac\b|mvn\s+(?:compile|verify)\b|gradle\w*\s+(?:build|compileJava)\b|dotnet\s+build\b)/i;
 const MUTATING_TOOL = /(^|[_-])(write|edit|modify|delete|remove|move|rename|create|patch|apply|replace)([_-]|$)|edit_block/i;
-const MUTATING_COMMAND = /(?:^|[\s;&|])(?:sed\s+-i|perl\s+-pi|mv|cp|rm|tee|git\s+(?:apply|checkout|restore|reset))\b|(?:^|[^\d&])>{1,2}\s*[^&\s]/i;
+// A shell redirect writes a file; an arrow (`=>`, `->`) or a comparison inside a
+// quoted script does not.
+const MUTATING_COMMAND = /(?:^|[\s;&|])(?:sed\s+-i|perl\s+-pi|mv|cp|rm|tee|git\s+(?:apply|checkout|restore|reset))\b|(?:^|[^\d&=<>|-])>{1,2}\s*[^&\s>=]/i;
 
 function rawRecord(event: ToolEvent): Record<string, unknown> {
   return event.raw && typeof event.raw === "object" ? (event.raw as Record<string, unknown>) : {};
@@ -292,6 +321,8 @@ const UNREADABLE = "Not verified (evidence could not be interpreted): ";
 export interface WorkspaceVerificationResult {
   issues: RawIssue[];
   verification: VerificationStatus;
+  /** Behavioural receipts recorded on the final source, for the criteria ledger. */
+  receipts: BehaviouralReceipt[];
 }
 
 // ── Main check ──────────────────────────────────────────────────────────────
@@ -304,7 +335,7 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
   const issues: RawIssue[] = [];
 
   if (!workspace) {
-    return { issues, verification: { status: "not_applicable", taskKind: kind, reasons: ["no workspace evidence supplied"], testEvidence: false } };
+    return { issues, verification: { status: "not_applicable", taskKind: kind, reasons: ["no workspace evidence supplied"], testEvidence: false }, receipts: [] };
   }
 
   if (!workspace.available) {
@@ -315,7 +346,7 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
         `workspace.available=false; reason=${workspace.reason ?? "unknown"}`,
         "Run the task in a readable workspace, or verify the change manually."));
     }
-    return { issues, verification: { status: "unavailable", taskKind: kind, reasons: [workspace.reason ?? "snapshot unavailable"], testEvidence: false } };
+    return { issues, verification: { status: "unavailable", taskKind: kind, reasons: [workspace.reason ?? "snapshot unavailable"], testEvidence: false }, receipts: [] };
   }
 
   const changes = workspace.changes;
@@ -402,6 +433,13 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
   // ── Task-specific evidence ────────────────────────────────────────────────
   const events = [...(input.priorToolEvents ?? []), ...(input.toolEvents ?? [])];
   const runs = collectTestRuns(events, workspace.testRuns, workspace.testCommand);
+  const lastChange = lastMutationIndex(events);
+  const receipts: BehaviouralReceipt[] = [];
+  const requirementText = [task, ...(input.goals ?? [])].join("\n");
+  const requirementTerms = distinctiveTerms(requirementText);
+  const requirementSymbols = extractCriterionSymbols(requirementText);
+  /** Content of test files that exist on disk after the run (what a final suite actually executed). */
+  const finalTestContent = testChanges.filter((c) => c.status !== "deleted").map((c) => c.after ?? "").join("\n");
 
   const requireSourceChange = (code: string, what: string) => {
     if (sourceChanges.length > 0) return true;
@@ -418,7 +456,6 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
 
   /** Full-suite receipt after the last change: returns the final run, or records why there is none. */
   const finalFullRun = (prefix: string, missingSeverity: "MEDIUM" | "HIGH" = "HIGH"): TestRun | null => {
-    const lastChange = lastMutationIndex(events);
     const fullRuns = runs.filter((r) => r.fullSuite);
     // Host-observed state wins; event ordering is the fallback when the runtime could not fingerprint.
     const finalRuns = fullRuns.filter((r) => r.sourceState === "final" || (r.sourceState === "unknown" && r.index > lastChange));
@@ -475,57 +512,234 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
     return final;
   };
 
-  const testsExpected = MENTIONS_TESTS.test(task) || (!!workspace.testCommand && codeChanges.length > 0);
+  /** Tests added on disk (new file, or new cases/assertions in an existing one) that the final suite then ran. */
+  const regressionTestReceipt = (final: TestRun): BehaviouralReceipt | null => {
+    const added = testChanges.filter((c) => {
+      if (c.status === "deleted" || !c.after) return false;
+      const after = testShape(c.after);
+      if (after.cases === 0 || after.assertions === 0) return false;
+      if (c.status === "added") return true;
+      const before = testShape(c.before ?? "");
+      return after.cases > before.cases || after.assertions > before.assertions;
+    });
+    if (added.length === 0) return null;
+    return {
+      kind: "regression_test",
+      command: final.command,
+      sourceState: final.sourceState,
+      text: `${added.map((c) => c.after).join("\n")}\n${final.output}`.toLowerCase(),
+      coversTask: false,
+      summary: `tests added in ${added.map((c) => c.path).join(", ")} and executed by ${final.command} on the final source (${parseTestCounts(final.output)?.total ?? "?"} tests passing)`,
+    };
+  };
+
+  /** Whether command output names what the request is about (never a bare success, never just a file name). */
+  const relevantToRequest = (text: string): { relevant: boolean; matched: string[] } => {
+    const lower = withoutFilePaths(text).toLowerCase();
+    const symbols = requirementSymbols.filter((s) => lower.includes(s.toLowerCase()));
+    const terms = matchedTerms(lower, requirementTerms);
+    const relevant = symbols.length > 0 || terms.length >= 2 || (requirementTerms.length <= 2 && terms.length >= 1);
+    return { relevant, matched: [...new Set([...symbols, ...terms])] };
+  };
+
+  /** Host-recorded commands that ran after the last change and succeeded with readable output. */
+  const commandsAfterLastChange = (): Array<{ index: number; command: string; output: string; exitCode?: number; ok: boolean }> => {
+    const out: Array<{ index: number; command: string; output: string; exitCode?: number; ok: boolean }> = [];
+    events.forEach((event, index) => {
+      if (index <= lastChange) return;
+      const raw = rawRecord(event);
+      const command = typeof raw["command"] === "string" ? raw["command"].trim() : "";
+      if (!command || !/(?:run_command|execute_command|start_process|shell)/i.test(event.tool)) return;
+      const output = typeof raw["_outputForProof"] === "string" ? raw["_outputForProof"] : "";
+      const exitCode = typeof raw["_exitCodeForProof"] === "number" ? raw["_exitCodeForProof"] : undefined;
+      out.push({ index, command, output, exitCode, ok: event.ok });
+    });
+    return out;
+  };
+
+  /**
+   * An explicitly documented alternative verification: the account names the
+   * method, the named command really ran after the last change, succeeded with
+   * readable output, and that output is about the request. The same command
+   * run before the first source change with a different or failing result
+   * makes it a before-and-after receipt.
+   */
+  const documentedAlternative = (): BehaviouralReceipt | { rejected: string } | null => {
+    const statements = [...(input.outputText ?? "").matchAll(ALTERNATIVE_VERIFICATION)].map((m) => m[1]!.trim());
+    if (statements.length === 0) return null;
+    const candidates = commandsAfterLastChange();
+    let rejected = "the documented method does not name a command that ran after the last change";
+    for (const statement of statements) {
+      const cited = candidates.filter((c) => statement.includes(c.command) || statement.includes(c.command.split(/\s+/)[0]!));
+      for (const c of cited) {
+        if (!c.ok || (c.exitCode !== undefined && c.exitCode !== 0)) { rejected = `the cited command failed (${c.command})`; continue; }
+        if (!c.output.trim()) { rejected = `the cited command produced no output to judge (${c.command})`; continue; }
+        const { relevant, matched } = relevantToRequest(`${c.command}\n${c.output}`);
+        if (!relevant) { rejected = `the cited command's output does not mention what the request is about (${c.command})`; continue; }
+        const firstSourceChange = firstSourceMutationIndex(events);
+        const before = events.slice(0, firstSourceChange).find((e) => {
+          const raw = rawRecord(e);
+          return typeof raw["command"] === "string" && normalizeCommand(raw["command"]) === normalizeCommand(c.command);
+        });
+        const beforeOutput = before ? String(rawRecord(before)["_outputForProof"] ?? "") : "";
+        const beforeAndAfter = !!before && (!before.ok || beforeOutput !== c.output);
+        return {
+          kind: beforeAndAfter ? "reproduction" : "validation_command",
+          command: c.command,
+          sourceState: "unknown",
+          text: `${c.command}\n${c.output}`.toLowerCase(),
+          coversTask: true,
+          summary: `${beforeAndAfter ? "before-and-after" : "documented"} verification: ${c.command} ran after the last change (exit ${c.exitCode ?? 0}), output names ${matched.slice(0, 4).join(", ")}${beforeAndAfter ? "; the same command gave a different result before the source changed" : ""}`,
+        };
+      }
+    }
+    return { rejected };
+  };
+
+  /** A build or type check that ran after the last change and passed. */
+  const buildCheckReceipt = (): BehaviouralReceipt | null => {
+    const c = commandsAfterLastChange().find((x) => BUILD_CHECK_COMMAND.test(x.command) && x.ok && (x.exitCode === undefined || x.exitCode === 0));
+    if (!c) return null;
+    return { kind: "build_check", command: c.command, sourceState: "unknown", text: `${c.command}\n${c.output}`.toLowerCase(), coversTask: true,
+      summary: `build/type check passed after the last change: ${c.command}` };
+  };
+
+  const behaviourMissing = (code: string, what: string, howTo: string) => {
+    issues.push(issue("HIGH", code, "Proof", `${UNVERIFIED}${what}`, `behavioural receipts on the final source: none; test runs: ${runs.length}; commands after last change: ${commandsAfterLastChange().map((c) => c.command).join("; ") || "none"}`, howTo));
+    downgrade("unverified", "no behavioural evidence on the final source");
+  };
+
+  // "Do not modify the existing tests" is a prohibition, not a request for a test run.
+  const testsExpected = MENTIONS_TESTS.test(withoutProhibitions(task)) || (!!workspace.testCommand && codeChanges.length > 0);
 
   switch (kind) {
     case "bugfix": {
       if (!requireSourceChange("FIX_SOURCE_CHANGE_MISSING", "the reported bug cannot have been fixed in the code")) break;
-      if (!testsExpected) { reasons.push("no test command in the workspace and no tests requested: verified by the on-disk change only"); break; }
-      const final = finalFullRun("FIX");
-      if (!final) break;
-      // Reproduction: a run on the task-start source that showed failures, whose
-      // failing tests pass in the final run.
-      const firstSourceChange = firstSourceMutationIndex(events);
-      const reproductions = runs
-        .filter((r) => r.sourceState === "baseline" || (r.sourceState === "unknown" && r.index < firstSourceChange))
-        .map((r) => ({ run: r, counts: parseTestCounts(r.output), failing: parseFailingTests(r.output) }))
-        .filter((x) => (x.counts?.failed ?? 0) > 0 || x.failing.length > 0);
-      const finalPassing = new Set(parseFailingTests(final.output));
-      const resolved = reproductions.find((x) =>
-        x.failing.length > 0 ? x.failing.every((name) => final.output.includes(name) && !finalPassing.has(name)) : true);
-      if (!resolved) {
-        // Reproduction is required evidence only when the user asked for the
-        // problem to be verified as resolved; otherwise it is a note.
-        const asked = ASKS_VERIFICATION.test(task);
-        issues.push(issue(asked ? "HIGH" : "LOW", "FIX_REPRODUCTION_MISSING", "Proof",
-          `${asked ? UNVERIFIED : ""}${reproductions.length > 0
-            ? "tests that failed before the fix do not all appear as passing in the final run."
-            : "no test run showed the reported failure before the source was changed, so the passing suite is not shown to cover the reported bug."}`,
-          `runs before first source change: ${runs.filter((r) => r.sourceState === "baseline" || r.index < firstSourceChange).length}; failing tests before: ${reproductions.flatMap((x) => x.failing).join("; ") || "none"}`,
-          "Run the tests before changing the code to show the failure, then again after the fix."));
-        if (asked) downgrade("unverified", "reported failure not reproduced before the fix");
+      if (testsExpected) {
+        const final = finalFullRun("FIX");
+        if (!final) break;
+        // Reproduction: a run on the task-start source that showed failures, whose
+        // failing tests pass in the final run.
+        const firstSourceChange = firstSourceMutationIndex(events);
+        const reproductions = runs
+          .filter((r) => r.sourceState === "baseline" || (r.sourceState === "unknown" && r.index < firstSourceChange))
+          .map((r) => ({ run: r, counts: parseTestCounts(r.output), failing: parseFailingTests(r.output) }))
+          .filter((x) => (x.counts?.failed ?? 0) > 0 || x.failing.length > 0);
+        const finalPassing = new Set(parseFailingTests(final.output));
+        const resolved = reproductions.find((x) =>
+          x.failing.length > 0 ? x.failing.every((name) => final.output.includes(name) && !finalPassing.has(name)) : true);
+        const regression = regressionTestReceipt(final);
+        if (regression) receipts.push(regression);
+        if (resolved) {
+          receipts.push({ kind: "reproduction", command: final.command, sourceState: final.sourceState, text: `${final.output}\n${finalTestContent}`.toLowerCase(), coversTask: true,
+            summary: `reproduced then resolved: ${resolved.failing.length > 0 ? resolved.failing.join("; ") : `${resolved.counts?.failed ?? "?"} failing test(s)`} failed on the task-start source and the full suite (${final.command}) passes on the final source` });
+        } else {
+          // Reproduction is required evidence only when the user asked for the
+          // problem to be verified as resolved; otherwise the passing suite on
+          // the final source is the behavioural receipt, with a note.
+          const asked = ASKS_VERIFICATION.test(task);
+          issues.push(issue(asked ? "HIGH" : "LOW", "FIX_REPRODUCTION_MISSING", "Proof",
+            `${asked ? UNVERIFIED : ""}${reproductions.length > 0
+              ? "tests that failed before the fix do not all appear as passing in the final run."
+              : "no test run showed the reported failure before the source was changed, so the passing suite is not shown to cover the reported bug."}`,
+            `runs before first source change: ${runs.filter((r) => r.sourceState === "baseline" || r.index < firstSourceChange).length}; failing tests before: ${reproductions.flatMap((x) => x.failing).join("; ") || "none"}`,
+            "Run the tests before changing the code to show the failure, then again after the fix."));
+          if (asked) downgrade("unverified", "reported failure not reproduced before the fix");
+          else receipts.push({ kind: "full_suite", command: final.command, sourceState: final.sourceState, text: `${final.output}\n${finalTestContent}`.toLowerCase(), coversTask: true,
+            summary: `full suite (${final.command}) passes on the final source: ${parseTestCounts(final.output)?.total ?? "?"} tests` });
+        }
+        break;
       }
+      // No test suite to run: the fix needs an explicitly documented, recorded,
+      // relevant verification. A source edit alone is not a behavioural receipt.
+      const alt = documentedAlternative();
+      if (alt && !("rejected" in alt)) { receipts.push(alt); reasons.push(`no test command in the workspace: ${alt.summary}`); break; }
+      behaviourMissing("FIX_BEHAVIOUR_EVIDENCE_MISSING",
+        `the source changed, but nothing recorded shows the reported defect is resolved: no test ran and ${alt ? alt.rejected : "no verification method was documented"}. A modified file does not prove a correction.`,
+        "Run a test that reproduces the defect before and after the fix, or add a line \"Alternative verification: <command you ran after the fix>\" whose recorded output shows the corrected behaviour.");
       break;
     }
     case "refactor": {
       if (!requireSourceChange("REFACTOR_SOURCE_CHANGE_MISSING", "nothing was refactored")) break;
-      if (!testsExpected) { reasons.push("no test command in the workspace and no tests requested: verified by the on-disk change only"); break; }
-      finalFullRun("REFACTOR");
+      if (testsExpected) {
+        const final = finalFullRun("REFACTOR");
+        if (!final) break;
+        const baseline = runs.find((r) => r.fullSuite && r.sourceState === "baseline" && parseTestCounts(r.output)?.failed === 0);
+        receipts.push({ kind: "full_suite", command: final.command, sourceState: final.sourceState, text: `${final.output}\n${finalTestContent}`.toLowerCase(), coversTask: true,
+          summary: `full suite (${final.command}) passes on the final source: ${parseTestCounts(final.output)?.total ?? "?"} tests${baseline ? ", the same suite passed on the task-start source" : ""}` });
+        break;
+      }
+      // No test suite: a passing build/type check or a documented equivalence
+      // check stands in, and the status says runtime equivalence was not shown.
+      const alt = documentedAlternative();
+      if (alt && !("rejected" in alt)) { receipts.push(alt); reasons.push(`no test command in the workspace: ${alt.summary}`); break; }
+      const build = buildCheckReceipt();
+      if (build) {
+        receipts.push(build);
+        reasons.push(`no test command in the workspace: ${build.summary}; runtime equivalence is not shown by tests`);
+        issues.push(issue("LOW", "REFACTOR_RUNTIME_EQUIVALENCE_NOT_SHOWN", "Proof",
+          `The refactor is verified by a build/type check only (${build.command}); no test shows the runtime behaviour is unchanged.`,
+          build.summary, "Add or run a test that exercises the refactored code if behavioural equivalence matters here."));
+        break;
+      }
+      behaviourMissing("REFACTOR_BEHAVIOUR_EVIDENCE_MISSING",
+        `the source changed, but nothing recorded shows the behaviour is preserved: no test, build or type check ran after the change${alt ? ` and ${alt.rejected}` : ""}.`,
+        "Run the test suite, a build/type check, or a documented equivalence check after the refactor.");
       break;
     }
     case "feature": {
       if (!requireSourceChange("FEATURE_CHANGE_MISSING", "the requested behaviour was not implemented")) break;
-      if (!testsExpected) { reasons.push("no test command in the workspace and no tests requested: verified by the on-disk change only"); break; }
-      finalFullRun("FEATURE");
+      let final: TestRun | null = null;
+      if (testsExpected) {
+        final = finalFullRun("FEATURE");
+        if (!final) break;
+        const regression = regressionTestReceipt(final);
+        if (regression) receipts.push(regression);
+        receipts.push({ kind: "full_suite", command: final.command, sourceState: final.sourceState, text: `${final.output}\n${finalTestContent}`.toLowerCase(), coversTask: false,
+          summary: `full suite (${final.command}) passes on the final source: ${parseTestCounts(final.output)?.total ?? "?"} tests` });
+      }
+      const alt = documentedAlternative();
+      if (alt && !("rejected" in alt)) receipts.push(alt);
+      // A passing suite shows no regression; the feature itself must be exercised
+      // by something that names it: a test, or a documented validation command.
+      const exercised = receipts.some((r) => r.coversTask || relevantToRequest(r.text).relevant);
+      if (!exercised) {
+        behaviourMissing("FEATURE_BEHAVIOUR_EVIDENCE_MISSING",
+          final
+            ? `the implementation is on disk and the existing suite passes, but nothing recorded exercises the requested functionality (${[...requirementSymbols, ...requirementTerms].slice(0, 5).join(", ")}): the presence of the code is not evidence that it works.`
+            : `the implementation is on disk, but no test or documented validation ran after the change${alt && "rejected" in alt ? ` and ${alt.rejected}` : ""}: the presence of the code is not evidence that it works.`,
+          "Add a test with assertions for the requested behaviour and run the suite, or add a line \"Alternative verification: <command you ran after the change>\" whose recorded output shows the feature working.");
+      }
       break;
     }
     case "docs": {
-      if (docsChanges.length === 0) {
+      const docsAfter = docsChanges.filter((c) => c.status !== "deleted");
+      if (docsAfter.length === 0) {
         issues.push(issue("HIGH", "DOCS_CHANGE_MISSING", "Proof",
           "No documentation file was changed, so the requested documentation work was not done.",
           `workspace changes: ${changes.map((c) => `${c.status}:${c.path}`).join(", ") || "none"}`,
           "Make the requested documentation change."));
         downgrade("contradicted", "no documentation change");
+      } else {
+        // The final content on disk must carry what was asked for; the worker's
+        // description of the edit is not evidence of the document's contents.
+        const content = docsAfter.map((c) => c.after ?? "").join("\n");
+        const { covered, matched, terms } = textCoversRequirement(content, requirementText);
+        if (!docsAfter.some((c) => typeof c.after === "string")) {
+          issues.push(issue("HIGH", "DOCS_CONTENT_UNREADABLE", "Proof",
+            `${UNREADABLE}the changed documentation (${docsAfter.map((c) => c.path).join(", ")}) has no captured content to check against the request.`,
+            `workspace changes: ${docsAfter.map((c) => `${c.status}:${c.path}`).join(", ")}`, "Keep documentation files small enough for the runtime to capture."));
+          downgrade("uninterpretable", "documentation content not captured");
+        } else if (!covered) {
+          issues.push(issue("HIGH", "DOCS_CONTENT_MISSING", "Proof",
+            `${UNVERIFIED}the documentation changed, but its final content does not cover what was requested (missing: ${terms.filter((t) => !matched.includes(t)).slice(0, 6).join(", ") || "the requested item"}).`,
+            `final content of ${docsAfter.map((c) => c.path).join(", ")} matched ${matched.length}/${terms.length} requested terms: ${matched.join(", ") || "none"}`,
+            "Write the requested item into the document itself."));
+          downgrade("unverified", "documentation content does not cover the request");
+        } else {
+          receipts.push({ kind: "final_content", command: "", sourceState: "final", text: content.toLowerCase(), coversTask: true,
+            summary: `final content of ${docsAfter.map((c) => c.path).join(", ")} covers the request (${matched.slice(0, 5).join(", ")})` });
+        }
       }
       if (codeChanges.length > 0) {
         issues.push(issue("MEDIUM", "DOCS_UNREQUESTED_SOURCE_CHANGE", "Safety",
@@ -537,13 +751,14 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
       break;
     }
     case "inspect": {
+      // Any real modification contradicts a request that asked only for analysis.
       const real = changes.filter((c) => c.kind !== "other" || c.status !== "added");
       if (real.length > 0) {
-        issues.push(issue("MEDIUM", "INSPECT_UNREQUESTED_CHANGE", "Safety",
+        issues.push(issue("HIGH", "INSPECT_UNREQUESTED_CHANGE", "Safety",
           `Files changed although the request only asked for inspection or explanation: ${real.map((c) => c.path).join(", ")}.`,
           `workspace changes: ${real.map((c) => `${c.status}:${c.path}`).join(", ")}`,
           "Do not modify files when the user only asked for analysis."));
-        downgrade("unverified", "unrequested modification");
+        downgrade("contradicted", "files modified during an inspection-only request");
       }
       break;
     }
@@ -552,5 +767,7 @@ export function runWorkspaceVerificationChecks(input: PappyInput): WorkspaceVeri
   }
 
   if (status === "verified" && reasons.length === 0) reasons.push(kind === "inspect" || kind === "other" ? "no unexpected workspace changes" : "evidence consistent with the request");
-  return { issues, verification: { status, taskKind: kind, reasons, testEvidence } };
+  const verification: VerificationStatus = { status, taskKind: kind, reasons, testEvidence };
+  if (receipts.length > 0) verification.behaviouralEvidence = receipts.map((r) => r.summary);
+  return { issues, verification, receipts };
 }

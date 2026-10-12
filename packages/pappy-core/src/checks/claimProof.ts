@@ -80,6 +80,26 @@ function getExecutionEvents(input: PappyInput) {
   });
 }
 
+/**
+ * Every command the host recorded running, whether or not it succeeded. "I
+ * ran the test suite" is a claim about execution, not about the outcome: a
+ * failed run is the receipt for an honestly reported failure. Whether the
+ * account's *conclusion* matches the output is judged elsewhere (the
+ * tests-pass claim, TEST_OUTPUT_CONTRADICTS_CLAIM, the workspace checks).
+ */
+function getRecordedCommandEvents(input: PappyInput) {
+  return (input.toolEvents ?? []).filter((entry) =>
+    Boolean(extractToolCommand(entry.raw) || extractToolOutput(entry.raw) || /run_command|start_process|execute/i.test(entry.tool)),
+  );
+}
+
+function executionPointer(event: { tool: string; ok: boolean; summary: string; raw?: unknown }): string {
+  const evidence = summarizeToolEvidence(event.raw);
+  return evidence
+    ? `toolEvent: tool=${event.tool} ok=${event.ok} ${evidence}`
+    : `toolEvent: tool=${event.tool} ok=${event.ok} summary="${event.summary}"`;
+}
+
 function extractQuotedPhrases(text: string): string[] {
   const phrases: string[] = [];
   const regex = /[`"']([^`"'\n]{2,120})[`"']/g;
@@ -173,23 +193,16 @@ function findProofForCommandExecutionClaim(match: RegExpMatchArray, input: Pappy
   const normalizedClaim = normalizeForMatch(claimText);
   const quotedPhrases = extractQuotedPhrases(claimText).map(normalizeForMatch).filter(Boolean);
   const events = getExecutionEvents(input);
+  // Specific claims ("ran npm test") match the recorded command whatever its
+  // outcome; the generic fallbacks below still need a successful event.
+  const recorded = getRecordedCommandEvents(input);
 
-  for (const event of events) {
+  for (const event of recorded) {
     const haystack = normalizeForMatch(
       [event.summary, extractToolCommand(event.raw) ?? "", extractToolOutput(event.raw) ?? ""].join(" "),
     );
-    if (quotedPhrases.some((phrase) => haystack.includes(phrase))) {
-      const evidence = summarizeToolEvidence(event.raw);
-      return evidence
-        ? `toolEvent: tool=${event.tool} ok=true ${evidence}`
-        : `toolEvent: tool=${event.tool} ok=true summary="${event.summary}"`;
-    }
-    if (normalizedClaim.length > 0 && haystack.includes(normalizedClaim)) {
-      const evidence = summarizeToolEvidence(event.raw);
-      return evidence
-        ? `toolEvent: tool=${event.tool} ok=true ${evidence}`
-        : `toolEvent: tool=${event.tool} ok=true summary="${event.summary}"`;
-    }
+    if (quotedPhrases.some((phrase) => haystack.includes(phrase))) return executionPointer(event);
+    if (normalizedClaim.length > 0 && haystack.includes(normalizedClaim)) return executionPointer(event);
   }
 
   const claimTokens = normalizedClaim
@@ -197,17 +210,12 @@ function findProofForCommandExecutionClaim(match: RegExpMatchArray, input: Pappy
     .map((token) => token.replace(/^\W+|\W+$/g, ""))
     .filter((token) => token.length >= 3 && !COMMAND_CLAIM_STOPWORDS.has(token));
 
-  for (const event of events) {
+  for (const event of recorded) {
     const haystack = normalizeForMatch(
       [event.summary, extractToolCommand(event.raw) ?? "", extractToolOutput(event.raw) ?? ""].join(" "),
     );
     const tokenMatches = claimTokens.filter((token) => haystack.includes(token));
-    if (tokenMatches.length >= Math.min(2, claimTokens.length) && tokenMatches.length > 0) {
-      const evidence = summarizeToolEvidence(event.raw);
-      return evidence
-        ? `toolEvent: tool=${event.tool} ok=true ${evidence}`
-        : `toolEvent: tool=${event.tool} ok=true summary="${event.summary}"`;
-    }
+    if (tokenMatches.length >= Math.min(2, claimTokens.length) && tokenMatches.length > 0) return executionPointer(event);
   }
 
   // When the claim is entirely composed of stopwords / meta-words (e.g.
@@ -288,14 +296,29 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
     pattern: /\b(?:all\s+)?tests?\s+(?:pass(?:ed)?|are\s+(?:passing|green))\b/gi,
     label: "tests-pass claim",
     receiptType: "command_exit_0",
-    findProof(_match, input) {
-      const testEvent = (input.toolEvents ?? []).find(
-        (e) =>
-          isSuccessfulExecutionEvent(e) &&
-          /test|jest|vitest|mocha|pytest|cargo\s+test|go\s+test/i.test(
-            `${e.tool} ${e.summary} ${extractToolCommand(e.raw) ?? ""}`,
-          ),
-      );
+    findProof(match, input) {
+      const isTestEvent = (e: { tool: string; summary: string; raw?: unknown }) =>
+        /test|jest|vitest|mocha|pytest|cargo\s+test|go\s+test/i.test(`${e.tool} ${e.summary} ${extractToolCommand(e.raw) ?? ""}`);
+
+      // "7 of 8 tests pass" reports a partial result, not that the tests pass.
+      // Its receipt is a recorded test run — successful or not — whose output
+      // reports that many passing; honest reporting of a failing suite is not
+      // an unsupported success claim.
+      const before = (input.outputText ?? "").slice(Math.max(0, (match.index ?? 0) - 24), match.index ?? 0);
+      const partial = before.match(/(\d+)\s*(?:of|out\s+of|\/)\s*(\d+)\s*$/);
+      if (partial && Number(partial[1]) < Number(partial[2])) {
+        const passing = Number(partial[1]);
+        const run = (input.toolEvents ?? []).find((e) => {
+          if (!isTestEvent(e)) return false;
+          const output = extractToolOutput(e.raw) ?? "";
+          return new RegExp(`(?:#\\s*pass\\s+${passing}\\b|\\b${passing}\\s+pass(?:ed|ing)\\b|\\bpassed[^\\n]*\\b${passing}\\b)`, "i").test(output);
+        });
+        if (!run) return null;
+        const command = extractToolCommand(run.raw);
+        return `toolEvent: tool=${run.tool} ok=${run.ok} ${command ? `command="${command}"` : `summary="${run.summary}"`} reports ${passing} passing`;
+      }
+
+      const testEvent = (input.toolEvents ?? []).find((e) => isSuccessfulExecutionEvent(e) && isTestEvent(e));
       if (!testEvent) return null;
       const command = extractToolCommand(testEvent.raw);
       return command
