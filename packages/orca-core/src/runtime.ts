@@ -22,9 +22,10 @@ import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./he
 import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
-import { isAbortError, throwIfAborted } from "./abort.js";
+import { isAbortError, throwIfAborted, untilAborted } from "./abort.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
 import { BudgetRefusedError, TaskBudgetLedger, composeMirandaGates, createMirandaGate, currentBudgetLedger } from "@clawde/miranda-core";
+import { TaskLifecycle } from "./lifecycle.js";
 import { accountPass, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
 import {
   createRootPacket,
@@ -302,26 +303,88 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     deps.budgetJournal?.open(budgetLedger.taskId, budgetLedger.snapshot());
     recordTrace("budget.task", budgetLedger.snapshot());
 
+    // The task's lifecycle: every state change is traced and emitted; a
+    // cancellation request (the abort signal) moves it to CANCELLING at once,
+    // and it only becomes CANCELLED when every tracked operation has settled.
+    const lifecycle = new TaskLifecycle({ taskId });
+    lifecycle.subscribe((snapshot, transition) => {
+      if (!transition) return;
+      recordTrace("task.state", { from: transition.from, to: transition.to, reason: transition.reason, activeOperations: snapshot.activeOperations.map((o) => `${o.kind} ${o.label}`) });
+      emitter.emit({
+        type: "task:state", taskId, state: transition.to, previous: transition.from, reason: transition.reason,
+        activeOperations: snapshot.activeOperations.length,
+        ...(snapshot.unsettledOperations.length > 0 ? { unsettledOperations: snapshot.unsettledOperations.map((o) => `${o.kind} ${o.label}`) } : {}),
+      });
+    });
+    const onAbort = () => lifecycle.cancel(options?.abortSignal?.reason instanceof Error ? options.abortSignal.reason.message : "cancelled");
+    if (options?.abortSignal?.aborted) onAbort();
+    else options?.abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+    // Approval waits are a lifecycle state of their own, and a cancelled task
+    // never gets to ask: a stale request resolves to "not approved".
+    const requestToolApproval = deps.requestToolApproval
+      ? async (tool: string, args: Record<string, unknown>): Promise<boolean> => {
+          if (!lifecycle.mayDispatch) return false;
+          const previous = lifecycle.current;
+          const op = lifecycle.begin("approval", tool, true);
+          lifecycle.transition("WAITING_FOR_APPROVAL", `approval requested for ${tool}`);
+          try {
+            const approved = await deps.requestToolApproval!(tool, args);
+            // An approval that arrives after cancellation authorizes nothing.
+            return approved && lifecycle.mayDispatch;
+          } finally {
+            op.end();
+            if (lifecycle.current === "WAITING_FOR_APPROVAL") lifecycle.transition(previous === "WAITING_FOR_APPROVAL" ? "RUNNING" : previous, `approval for ${tool} settled`);
+          }
+        }
+      : undefined;
+
+    const scopedTools = tools && (() => {
+      const allowed = normalizedTaskSpec.permissions?.toolsAllowed;
+      if (!allowed) return tools;
+      if (allowed.length === 0) return undefined;
+      return createFilteredToolService(tools, allowed);
+    })();
+
     const ctx: OrcaRunCtx = {
       llm,
       runId: taskId,
       abortSignal: options?.abortSignal,
       recordTrace,
       budget: budgetLedger,
+      lifecycle,
       toolNamesAllowed: normalizedTaskSpec.permissions?.toolsAllowed,
-      tools: tools && (() => {
-        const allowed = normalizedTaskSpec.permissions?.toolsAllowed;
-        if (!allowed) return tools;
-        if (allowed.length === 0) return undefined;
-        return createFilteredToolService(tools, allowed);
-      })(),
+      // Every tool run through the runtime's service is a tracked operation
+      // and is refused once cancellation was requested.
+      tools: scopedTools && {
+        ...scopedTools,
+        execute: (name, input) => {
+          if (!lifecycle.mayDispatch) {
+            return Promise.resolve({ ok: false, output: "", error: `Tool ${name} not run: the task is ${lifecycle.current.toLowerCase()}.` });
+          }
+          return lifecycle.track("tool", name, () => scopedTools.execute(name, input));
+        },
+      },
       emit: (event) => emitter.emit(event),
       workspaceContext: effectiveWorkspaceContext,
       workspaceRoot: effectiveWorkspaceRoot,
       gate: effectiveGate,
       model: deps.model,
-      requestToolApproval: deps.requestToolApproval,
-      collectWorkspaceEvidence: evidence?.collect,
+      requestToolApproval,
+      collectWorkspaceEvidence: evidence
+        ? async () => {
+            // Evidence is judged only when nothing can still act for the task:
+            // an operation in flight (a tool that has not settled, a model
+            // request still open) makes the inventory partial, and Pappy
+            // treats a partial inventory as insufficient evidence.
+            const collected = await evidence.collect();
+            const active = lifecycle.activeOperations().filter((o) => o.kind !== "verification");
+            if (active.length > 0 && collected.available) {
+              return { ...collected, partial: true, reason: `${active.length} operation(s) still active while verifying: ${active.map((o) => `${o.kind} ${o.label}`).join(", ")}` };
+            }
+            return collected;
+          }
+        : undefined,
       verificationReceipts: [],
     };
 
@@ -399,7 +462,14 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       repairPasses++;
       if (event.type === "repair:start") {
         recordTrace("repair.start", { pass: event.pass, maxPasses: event.maxPasses });
+        lifecycle.transition("REPAIRING", `repair pass ${event.pass} of ${event.maxPasses}`);
       }
+    });
+    const unsubStages = emitter.on("maestro:start", () => {
+      lifecycle.transition("RUNNING", "Maestro started");
+    });
+    const unsubQc = emitter.on("qc:result", () => {
+      // The verdict is in; the lifecycle moves on when the runtime decides what follows.
     });
 
     emitter.emit({ type: "task:start", taskId, intent: normalizedTaskSpec.intent });
@@ -559,7 +629,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
       recordTrace("maestro.run.start", { attempt: 0, isRepair: false, task: normalizedTaskSpec });
 
-      const initialPass = await accountPass(budgetLedger, () => maestro.run(normalizedTaskSpec, ctx), effectiveGate);
+      const initialPass = await accountPass(budgetLedger, () => untilAborted(maestro.run(normalizedTaskSpec, ctx), options?.abortSignal), effectiveGate);
       const maestroResult = withPassAccounting(normalizeMaestroResult(initialPass.result), initialPass.accounting);
       persistedMaestroResult = maestroResult;
       const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
@@ -643,6 +713,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           });
         }
 
+        lifecycle.transition("VERIFYING", "initial pass complete; Pappy evaluates");
         const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
         ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
@@ -811,6 +882,12 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           name: abortError.name,
           message: abortError.message,
         });
+        // The promise rejected, but the task is not stopped until its
+        // operations have settled: wait for them, then say what never did.
+        lifecycle.cancel(abortError.message);
+        const settled = await lifecycle.drain(deps.drainTimeoutMs ?? 10_000);
+        if (!settled) lifecycle.interrupt(`${abortError.message}; operations still active after ${deps.drainTimeoutMs ?? 10_000} ms`);
+        recordTrace(settled ? "task.cancelled" : "task.interrupted", lifecycle.snapshot());
       } else if (error instanceof BudgetRefusedError) {
         // A model request was refused before dispatch and nothing above could
         // continue without it. The task is incomplete; say exactly why.
@@ -837,8 +914,21 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     recordTrace("budget.final", finalBudget);
     deps.budgetJournal?.close(budgetLedger.taskId);
     unsubRepair();
+    unsubStages();
+    unsubQc();
     unsubDewey();
     unsubMiranda();
+    options?.abortSignal?.removeEventListener("abort", onAbort);
+
+    // The lifecycle ends from the result, never from the promise: a task is
+    // COMPLETED only when it succeeded and QC did not fail; a cancellation
+    // outcome already set above wins over any late result.
+    if (!lifecycle.terminal) {
+      const succeeded = !abortError && result.status !== "FAIL" && persistedQcResult?.verdict !== "FAIL";
+      lifecycle.finish(succeeded ? "COMPLETED" : "FAILED", abortError ? abortError.message : `${result.status}: ${result.summary ?? ""}`);
+    }
+    const finalLifecycle = lifecycle.snapshot();
+    const stoppedBecause = (finalLifecycle.state === "CANCELLED" ? "cancelled" : finalLifecycle.state === "INTERRUPTED" ? "interrupted" : persistedMaestroResult?.metadata?.stoppedBecause) as RunRecord["stoppedBecause"];
 
     // ── Finalize root AHP packet ───────────────────────────────────────────
     // Collect child packets from the maestro result (if any).
@@ -936,6 +1026,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         durationMs,
         ahpPacketGraph: ahpGraph,
         budget: finalBudget,
+        lifecycle: finalLifecycle,
       },
     };
 
@@ -948,13 +1039,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       console.error("[orca-core] writeTrace failed:", error);
     }
 
-    if (abortError) {
-      throw abortError;
-    }
+    // A cancelled task reports its state through task:state and its run record;
+    // it never emits a completion summary.
+    if (!abortError) emitter.emit({ type: "task:done", taskId, status: result.status });
 
-    emitter.emit({ type: "task:done", taskId, status: result.status });
-
-    if (persistedQcResult) {
+    if (persistedQcResult && !abortError) {
       const auditIssues = persistedAuditResult ? projectAuditIssues(persistedAuditResult) : undefined;
       emitter.emit({
         type: "pipeline:summary",
@@ -979,6 +1068,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         }),
         durationMs,
         budget: finalBudget,
+        lifecycle: finalLifecycle,
         repairPasses,
         errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
         traceStages: trace.entries.map((entry) => entry.stage),
@@ -1017,7 +1107,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           role: persistedMaestroResult?.metadata?.role,
           brainDecision: persistedMaestroResult?.metadata?.brainDecision,
           status: result.status,
-          stoppedBecause: persistedMaestroResult?.metadata?.stoppedBecause,
+          stoppedBecause,
           errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
           iterationCount: persistedMaestroResult?.metadata?.iterationCount,
           outputText: result.userFacingText,
@@ -1058,6 +1148,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     } catch (error) {
       console.error("[orca-core] store.saveRun failed:", error);
     }
+
+    if (abortError) throw abortError;
 
     // Emit a human-readable AHP graph summary to stderr when AHP data is present.
     if (ahpGraph) {

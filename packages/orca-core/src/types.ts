@@ -54,6 +54,8 @@ export interface OrcaExecutionResult {
    * Carries the orchestration-level lifecycle, objective, and trace.
    */
   ahpRootPacket?: AHPPacket;
+  /** Final lifecycle snapshot: state, transitions, operations that never settled. */
+  lifecycle?: import("./lifecycle.js").TaskLifecycleSnapshot;
   /**
    * Child AHP packets linked to the root packet (one per worker branch).
    * Empty or absent for single-run (non-decomposed) tasks where the root
@@ -98,6 +100,7 @@ export interface OrcaPipelineTrace {
     durationMs: number;
     ahpPacketGraph?: import("./ahp/graph.js").AHPPacketGraph;
     budget?: import("@clawde/miranda-core").BudgetSnapshot;
+    lifecycle?: import("./lifecycle.js").TaskLifecycleSnapshot;
   };
 }
 
@@ -291,6 +294,13 @@ export interface OrcaRunCtx {
    */
   budget?: import("@clawde/miranda-core").TaskBudgetLedger;
   /**
+   * The task's lifecycle: authoritative state, cancellation, and the registry
+   * of operations acting for the task. Adapters report planning and approval
+   * waits and track their tool runs here; nothing may dispatch once
+   * `lifecycle.mayDispatch` is false.
+   */
+  lifecycle?: import("./lifecycle.js").TaskLifecycle;
+  /**
    * Miranda's gate — guards before/after every live LLM call, tool call, and QC run.
    * before_tool_run / after_tool_run: validates tool allowlist and receipts.
    * before_qc / after_qc: validates QC preconditions and verdict shape.
@@ -419,6 +429,8 @@ export interface OrcaRuntimeDeps {
   customPrices?: readonly import("@clawde/miranda-core").CustomModelPrice[];
   /** Informational ledger spanning tasks in this process; task ledgers mirror their costs into it. */
   sessionBudget?: import("@clawde/miranda-core").TaskBudgetLedger;
+  /** How long, after cancellation, to wait for active operations to settle before the task is INTERRUPTED. Default 10 s. */
+  drainTimeoutMs?: number;
   /** Persists each task's budget snapshot so unresolved reservations survive a restart. */
   budgetJournal?: import("./budget/journal.js").BudgetJournal;
   /**
@@ -481,6 +493,10 @@ export type OrcaEvent =
     }
   | { type: "repair:start";       taskId: string; pass: number; maxPasses: number }
   | { type: "task:done";          taskId: string; status: "SUCCESS" | "WARN" | "FAIL" }
+  /** The task's lifecycle state changed (see lifecycle.ts); terminal states are final. */
+  | { type: "task:state";         taskId: string; state: import("./lifecycle.js").TaskState; previous?: import("./lifecycle.js").TaskState; reason: string; activeOperations: number; unsettledOperations?: string[] }
+  /** Brain did not produce a usable plan; a deterministic route was selected, with the original goals preserved. */
+  | { type: "brain:fallback";     taskId: string; cause: "invalid_plan" | "provider_failed" | "timed_out" | "no_decision"; role: string; reason: string; preservedCriteria: string[] }
   /** The task's budget ledger changed (reservation, settlement, refusal, block). */
   | { type: "budget:update";      taskId: string; budget: import("@clawde/miranda-core").BudgetSnapshot }
   | { type: "stream:token";       taskId: string; chunk: string }
@@ -511,6 +527,8 @@ export type OrcaEvent =
       acceptanceCriteria: Array<{ id: string; text: string; required: boolean; met: boolean }>;
       durationMs: number;
       repairPasses: number;
+      /** Final lifecycle state and what never settled, when anything. */
+      lifecycle?: import("./lifecycle.js").TaskLifecycleSnapshot;
       /** Final budget figures for the task: limit, spent, unreconciled, reserved, remaining, by role/provider. */
       budget?: import("@clawde/miranda-core").BudgetSnapshot;
       /** Exception message from the agent worker, present when stoppedBecause === 'error'. */

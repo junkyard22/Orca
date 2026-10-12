@@ -705,7 +705,7 @@ describe("createOrcaRuntime", () => {
   });
 
   describe("Abort handling", () => {
-    it("propagates abort errors and skips persistence", async () => {
+    it("propagates abort errors and persists the run as cancelled", async () => {
       const store = {
         saveRun: vi.fn(),
         close: vi.fn(),
@@ -737,7 +737,9 @@ describe("createOrcaRuntime", () => {
       controller.abort(new Error("Stopped."));
 
       await expect(task).rejects.toMatchObject({ name: "AbortError" });
-      expect(store.saveRun).not.toHaveBeenCalled();
+      // Phase 5: a cancelled task is recorded (never as completed) so the history says what happened.
+      expect(store.saveRun).toHaveBeenCalledTimes(1);
+      expect(store.saveRun.mock.calls[0]?.[0]).toMatchObject({ status: "FAIL", stoppedBecause: "cancelled" });
       expect(writeTrace).toHaveBeenCalledTimes(1);
       expect(writeTrace.mock.calls[0]?.[0]?.finalResult?.status).toBe("ABORTED");
     });

@@ -14,7 +14,7 @@ export interface RunRecord {
   /** Raw Brain routing JSON stored for Moonshiner training-data export. */
   brainDecision?: string;
   status: 'SUCCESS' | 'FAIL';
-  stoppedBecause?: 'done' | 'max_iterations' | 'loop_detected' | 'error';
+  stoppedBecause?: 'done' | 'max_iterations' | 'loop_detected' | 'error' | 'cancelled' | 'interrupted';
   /** Exception message captured when stoppedBecause === 'error'. */
   errorMessage?: string;
   iterationCount?: number;

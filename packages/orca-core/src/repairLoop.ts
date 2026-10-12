@@ -11,7 +11,7 @@ import { verifyAHPPacket } from "@clawde/pappy-core";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
-import { throwIfAborted } from "./abort.js";
+import { throwIfAborted, untilAborted } from "./abort.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
 import { accountPass, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
 import type { PassAccounting } from "./budget/passAccounting.js";
@@ -259,11 +259,11 @@ export async function handleRepairLoop(
     emitter.emit({ type: "maestro:start", taskId: ctx.runId, attempt: pass, isRepair: true });
     let maestroResult: OrcaMaestroResult;
     if (ctx.budget) {
-      const pass_ = await accountPass(ctx.budget, () => maestro.run(repairSpec, ctx), ctx.gate);
+      const pass_ = await accountPass(ctx.budget, () => untilAborted(maestro.run(repairSpec, ctx), ctx.abortSignal), ctx.gate);
       maestroResult = withPassAccounting(normalizeMaestroResult(pass_.result), pass_.accounting);
       lastPass = pass_.accounting;
     } else {
-      maestroResult = normalizeMaestroResult(await maestro.run(repairSpec, ctx));
+      maestroResult = normalizeMaestroResult(await untilAborted(maestro.run(repairSpec, ctx), ctx.abortSignal));
     }
     currentArtifacts = maestroResult;
     lastOutputText = maestroResult.outputText ?? lastOutputText;
@@ -330,6 +330,7 @@ export async function handleRepairLoop(
     verifyRepairPackets(maestroResult, ctx);
     // Judge this pass with the runtime's workspace evidence and the receipts of
     // every earlier pass, so a reproduction run before the first fix still counts.
+    ctx.lifecycle?.transition("VERIFYING", `repair pass ${pass} complete; Pappy evaluates`);
     const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]));
     ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
     ctx.recordTrace?.("repair.pass.qc_result", {
