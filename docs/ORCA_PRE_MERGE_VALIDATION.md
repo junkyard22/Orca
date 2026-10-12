@@ -1,5 +1,7 @@
 # Orca pre-merge reliability validation (core reliability, phase 6)
 
+**Superseded by** `docs/ORCA_FINAL_SAFETY_VALIDATION.md` (phase 6.5, same day), which re-validates everything below and corrects two findings (grandchild processes; cancellation reported as a provider failure).
+
 **Date:** 2026-10-12 · **Branch:** `integration/core-reliability` (worktree `C:\Orca\worktrees\core-reliability`) · **Baseline:** `origin/main` `7b62cce` · **Classification:** **CONDITIONALLY READY** (see §9).
 
 This document records how the integrated phases 1–5 behave under failure, cancellation, timeout, overlap and restart; the defects found; the narrowly scoped corrections made; the disposition of every outstanding contract finding; and what still needs a human in front of the application.

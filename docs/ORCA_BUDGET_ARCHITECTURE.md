@@ -165,3 +165,7 @@ No request bypasses the task ledger: every desktop adapter is `budgetedAdapter` 
 - A provider that bills a cancelled request in full after partial generation: Orca charges the upper bound as unreconciled (never zero), which may over- or under-state the real invoice until reconciled against the provider's own usage report.
 - Prices known from the reviewed catalog only for Anthropic's API; every other paid endpoint needs a custom price under a hard budget. A stale catalog row refuses under a hard budget rather than guessing.
 - The ledger is per process; concurrent Orca processes on one account are not coordinated.
+
+### Phase 6.5 correction — cancellation identity
+
+Live validation showed a Stop during Brain planning reported as a provider failure: the OpenAI-compatible transport raised its own error type on abort, and `budgetedAdapter` rethrew it unchanged after marking the reservation unreconciled. The adapter now surfaces an `AbortError` (the transport's error as `cause`) whenever the request's signal is aborted, so callers see a cancellation, and the ledger entry reads "cancelled after dispatch". A budget refusal of a planning request is reported as the task's budget stop, never as a planning fallback. Tests: `budgetHardening.test.ts` "cancellation identity", desktop `brainFallback.test.ts`.
