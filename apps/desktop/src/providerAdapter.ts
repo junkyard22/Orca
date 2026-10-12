@@ -25,7 +25,7 @@ export function buildAdapterForProvider(
   enableThinking?: boolean,
 ): LLMAdapter {
   return budgetedAdapter(buildTransportAdapter(provider, model, enableThinking), {
-    provider: { id: provider.id, type: provider.type, name: provider.name, baseUrl: provider.baseUrl },
+    provider: { id: provider.id, type: provider.type, name: provider.name, baseUrl: provider.baseUrl, billing: provider.billing },
     defaultModel: model,
     enableThinking,
     fallback: getSessionBudget,

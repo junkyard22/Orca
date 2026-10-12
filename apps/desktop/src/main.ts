@@ -94,6 +94,7 @@ import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
 import { createBudgetJournal } from "@clawde/orca-core";
 import type { BudgetJournal } from "@clawde/orca-core";
 import { budgetWarnings, createMessageBudget, getCustomPrices, getSessionBudget, setCustomPrices } from "./budgetContext";
+import { TaskSessionManager } from "./taskSession";
 import {
   cargoReferenceAction,
   configuredCargoConnectors,
@@ -551,6 +552,7 @@ async function brainRoute(
   let decision: DecomposeDecision | null = null;
   let repairReason: string | null = null;
   let brainDecision: string | undefined;
+  let brainFailure: "invalid_plan" | "provider_failed" | "timed_out" | "no_decision" | undefined;
 
   for (let attempt = 0; attempt <= 1; attempt++) {
     const prompt = repairReason !== null
@@ -583,6 +585,9 @@ async function brainRoute(
         });
         // Loop continues for one repair attempt.
       } else {
+        // A cancelled Brain is a cancelled task, never a fallback.
+        if (isAbortError(err)) throw err;
+        brainFailure = err instanceof Error && /timed out|timeout/i.test(err.message) ? "timed_out" : "provider_failed";
         ctx.recordTrace?.("brain.route.error", {
           attempt,
           error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
@@ -591,16 +596,21 @@ async function brainRoute(
       }
     }
   }
+  if (!decision && !brainFailure) brainFailure = repairReason !== null ? "invalid_plan" : "no_decision";
 
   const fallbackDecision = auditDecomposeFallback(task);
   const routingPolicy = normalizeDesktopRoutingForExecution(task, decision, fallbackDecision);
   let resolved: DecomposeDecision = routingPolicy.decision;
   if (!decision) {
-    ctx.recordTrace?.("brain.route.fallback", {
-      reason: fallbackDecision
-        ? "brain routing did not yield a valid decision; using deterministic audit decomposition"
-        : "brain routing did not yield a valid decision; defaulting to non-brain execution role",
-    });
+    // Fallback is explicit: what Brain did (invalid plan, provider failure,
+    // timeout, nothing usable), which deterministic route replaced it, and
+    // that the user's own goals are the acceptance criteria it carries.
+    const fallbackRole = resolved.routing === "direct" ? resolved.role : resolved.departments.map((d) => d.head).join("+");
+    const reason = fallbackDecision
+      ? `Brain ${brainFailure}; using deterministic audit decomposition`
+      : `Brain ${brainFailure}; routing to ${fallbackRole} with the original goals as acceptance criteria`;
+    ctx.recordTrace?.("brain.route.fallback", { cause: brainFailure, reason, role: fallbackRole, preservedCriteria: resolved.done_criteria ?? [] });
+    ctx.emit?.({ type: "brain:fallback", taskId: ctx.runId, cause: brainFailure ?? "no_decision", role: fallbackRole, reason, preservedCriteria: resolved.done_criteria ?? [] });
   }
   if (routingPolicy.remappedBrainExecution) {
     ctx.recordTrace?.("brain.route.execution_role_remap", {
@@ -1486,8 +1496,18 @@ let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 let dewey: InstanceType<typeof Dewey> | null = null;
 let _currentSettings: OrcaSettings | null = null;
 let mcpDispose: (() => Promise<void>) | null = null;
-let activeAbortResolve: ((error?: string) => void) | null = null;
-let activeAbortController: AbortController | null = null;
+/**
+ * The task lock. Held from the moment a message starts until its task has
+ * settled — not until its reply is produced. Stop requests cancellation and
+ * answers at once; the next message waits for settlement.
+ */
+const taskSessions = new TaskSessionManager({
+  interruptAfterMs: 30_000,
+  onInterrupted: ({ id, reason }) => {
+    console.warn(`[Orca] task session ${id} interrupted: ${reason}`);
+    win?.webContents.send("orca-event", { type: "task:state", taskId: id, state: "INTERRUPTED", reason, activeOperations: 0 });
+  },
+});
 let appAuthStatus: AppAuthStatus = {
   enabled: false,
   hasPassword: false,
@@ -1652,9 +1672,18 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
   setCustomPrices(s.pricing);
   _initWarnings.push(...budgetWarnings(s));
   for (const unresolved of budgetJournal().recover()) {
-    _initWarnings.push(
-      `A previous session ended with model requests still in flight (task ${unresolved.taskId}, started ${unresolved.startedAt}): up to $${unresolved.exposureUsd.toFixed(4)} may have been charged without being reconciled.`,
-    );
+    const summary = `Interrupted: Orca stopped while this task was running (${unresolved.snapshot.requests.inFlight} model request(s) in flight, started ${unresolved.startedAt}). Up to $${unresolved.exposureUsd.toFixed(4)} may have been charged without being reconciled. Nothing was resumed; check the workspace before continuing.`;
+    _initWarnings.push(`A previous session ended with task ${unresolved.taskId} still running: ${summary}`);
+    // Record the interruption in the history as a failed, unverified run.
+    // Nothing is resumed and no paid request is repeated.
+    try {
+      void store.saveRun(
+        { id: unresolved.taskId, createdAt: unresolved.startedAt, intent: "(interrupted before completion)", status: "FAIL", stoppedBecause: "interrupted", summary, costUnreconciledUsd: unresolved.exposureUsd, costBasis: "upper_bound" },
+        [], [], [],
+      );
+    } catch (error) {
+      console.warn("[Orca] could not record the interrupted task:", error);
+    }
   }
 
   try {
@@ -2227,10 +2256,7 @@ function resolvePendingApprovals(approved: boolean): void {
 
 function lockApp(): AppAuthStatus {
   resolvePendingApprovals(false);
-  if (activeAbortResolve) {
-    activeAbortResolve("Locked.");
-    activeAbortResolve = null;
-  }
+  taskSessions.cancel("Locked.");
   return refreshAuthStatus(true);
 }
 
@@ -2247,8 +2273,12 @@ function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: 
 }
 
 ipcMain.on("tool:approve", (_ev, { id, approved }: { id: string; approved: boolean }) => {
-  pendingApprovals.get(id)?.(approved);
+  // A response to a dialog from a task that is no longer running authorizes
+  // nothing: the entry was already resolved as denied when the task stopped.
+  const resolve = pendingApprovals.get(id);
   pendingApprovals.delete(id);
+  const session = taskSessions.current;
+  resolve?.(approved && !!session && session.state === "running");
 });
 
 /**
@@ -2260,6 +2290,11 @@ export function requestToolApproval(
   args: Record<string, unknown>,
 ): Promise<boolean> {
   if (isAppLocked()) {
+    return Promise.resolve(false);
+  }
+  // Only a running task may ask the user; a task that is stopping gets "no".
+  const session = taskSessions.current;
+  if (!session || session.state !== "running") {
     return Promise.resolve(false);
   }
 
@@ -2553,11 +2588,12 @@ ipcMain.handle(
 
 // ── Abort control for the active task ──────────────────────────────────────
 ipcMain.on("task:abort", () => {
-  if (activeAbortResolve) {
+  // Stop is a request. Approvals are denied now, the abort signal fires now,
+  // and the task lock is released only when the task's operations settle.
+  if (taskSessions.current) {
     console.log("[Orca] ✖ task:abort requested by user");
     resolvePendingApprovals(false);
-    activeAbortResolve();
-    activeAbortResolve = null;
+    taskSessions.cancel("Stopped.");
   }
 });
 
@@ -2622,11 +2658,10 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   }
 
   // Reject concurrent requests — the agent loop is stateful and cannot safely
-  // run two tasks at the same time.  The caller should stop the active task
-  // first (task:abort) before sending a new message.
-  if (activeAbortController) {
-    return { ok: false, error: "A task is already running. Stop it before sending a new message." };
-  }
+  // run two tasks at the same time. The caller stops the active task first
+  // (task:abort) and waits for it to settle before sending a new message.
+  const busy = taskSessions.refusal();
+  if (busy) return busy;
 
   const normalizedText = String(text ?? "").slice(0, 200_000).replace(/\r\n?/g, "\n").trim();
   if (!normalizedText) {
@@ -2664,24 +2699,14 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!claire || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
-  const abortController = new AbortController();
-  activeAbortController = abortController;
-
-  // Build a promise that resolves when the user hits Stop.
-  const abortPromise = new Promise<{ ok: false; error: string }>((resolve) => {
-    activeAbortResolve = (error = "Stopped.") => {
-      if (!abortController.signal.aborted) {
-        abortController.abort(new Error(error));
-      }
-      resolve({ ok: false, error });
-    };
-  });
+  const busyNow = taskSessions.refusal();
+  if (busyNow) return busyNow;
 
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
     "maestro:agent_start", "maestro:agent_done",
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
-    "pipeline:summary", "budget:update",
+    "pipeline:summary", "budget:update", "task:state", "brain:fallback",
     "dewey:brief", "miranda:checkpoint",
     "subagent:spawned", "subagent:done", "subagent:failed",
   ];
@@ -2758,51 +2783,50 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     }),
   );
 
-  try {
-    // One budget for the whole message: narration, Brain, workers, fallbacks,
-    // repairs and Cargo summaries reserve against it, and the runtime reuses it
-    // as the task ledger. Its final figures travel with the reply.
-    const messageBudget = createMessageBudget(_currentSettings ?? { budgetUsd: 0 });
-    const taskPromise = runWithBudget(messageBudget, () => withBudgetAttribution({ gate: _runtimeGate ?? undefined }, () => claire!.handleUserMessage(cargoSyntax.message, {
-      abortSignal: abortController.signal,
-    })))
-      .then((text) => ({ ok: true as const, reply: { text } }))
-      .catch((err) => {
-        if (isAbortError(err)) {
-          return { ok: false as const, error: err.message || "Stopped." };
-        }
-        return {
-          ok: false as const,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      });
-
-    const result = await Promise.race([
-      taskPromise,
-      abortPromise,
-    ]);
-    return {
-      ...result,
-      pipelineSummary: capturedPipelineSummary,
-      budget: messageBudget.snapshot(),
-      cargoManifest: await getDewey().getManifest(),
-    };
-  } finally {
+  // One budget for the whole message: narration, Brain, workers, fallbacks,
+  // repairs and Cargo summaries reserve against it, and the runtime reuses it
+  // as the task ledger. Its final figures travel with the reply.
+  const messageBudget = createMessageBudget(_currentSettings ?? { budgetUsd: 0 });
+  type SendResult = { ok: true; reply: { text: string } } | { ok: false; error: string; cancelling?: boolean };
+  const cleanup = () => {
     if (isStreaming) {
       isStreaming = false;
       win?.webContents.send("orca:stream-end", { runId: streamRunId });
     }
-    activeAbortResolve = null;   // clean up if task finished naturally
-    if (activeAbortController === abortController) {
-      activeAbortController = null;
-    }
-    // Deny any tool approvals that the renderer never responded to.
-    // These are orphaned because the task is over and their tool calls
-    // will never execute — leaving them in the map wastes memory and
-    // would cause the next task's abort handler to resolve stale entries.
+    // Deny any tool approvals that the renderer never responded to; their
+    // tool calls will never execute now that the task has settled.
     resolvePendingApprovals(false);
     unsubs.forEach((u) => u());
-  }
+  };
+
+  // The lock is held by the session until the task settles; the reply comes
+  // back as soon as the task ends or Stop is acknowledged. Late results of a
+  // stopped task cannot act: the runtime refuses dispatch after cancellation.
+  const { session, reply } = taskSessions.begin<SendResult>(
+    (s) => runWithBudget(messageBudget, () => withBudgetAttribution({ gate: _runtimeGate ?? undefined }, () => claire!.handleUserMessage(cargoSyntax.message, {
+      abortSignal: s.signal,
+    })))
+      .then((text): SendResult => ({ ok: true, reply: { text } }))
+      .catch((err): SendResult => {
+        if (isAbortError(err)) return { ok: false, error: err.message || "Stopped." };
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }),
+    (reason) => ({ ok: false, error: reason, cancelling: true }),
+  );
+  void session.settled.then((state) => {
+    cleanup();
+    console.log(`[Orca] task session ${session.id} settled: ${state}`);
+    win?.webContents.send("orca-event", { type: "task:session", sessionId: session.id, state, budget: messageBudget.snapshot() });
+  });
+
+  const result = await reply;
+  return {
+    ...result,
+    pipelineSummary: capturedPipelineSummary,
+    budget: messageBudget.snapshot(),
+    sessionState: session.state,
+    cargoManifest: await getDewey().getManifest(),
+  };
 });
 
 // ── Single-instance lock ────────────────────────────────────────────────────

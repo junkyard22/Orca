@@ -1136,7 +1136,12 @@ export class ReactAgentAdapter implements AgentAdapter {
             requestedTool: resolvedCall.requestedTool,
             input: toolInput,
           });
-          const result = await tool.execute(toolInput, toolContext);
+          // Tracked by the task lifecycle: the task cannot settle while it runs,
+          // and nothing starts once cancellation was requested.
+          if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) throwIfAborted(ctx.abortSignal);
+          const result = ctx.lifecycle
+            ? await ctx.lifecycle.track("tool", toolName, () => tool.execute(toolInput, toolContext))
+            : await tool.execute(toolInput, toolContext);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
           const commandFileChanges = result.ok

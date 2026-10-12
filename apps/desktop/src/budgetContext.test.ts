@@ -53,7 +53,7 @@ describe("desktop budget context", () => {
     const adapter = buildAdapterForProvider(ANTHROPIC, "claude-opus-5-5");
     const message = createMessageBudget({ budgetUsd: 0.01, budgetSource: "legacy_default" });
     await expect(runWithBudget(message, () => adapter.complete({ model: "", messages: [{ role: "user", content: "x".repeat(4000) }], temperature: 0, maxTokens: 4096 })))
-      .rejects.toThrow(/would exceed the remaining task budget of \$0\.0100.*raise the task budget in Settings/);
+      .rejects.toThrow(/would exceed the remaining task budget of \$0\.0100.*historical default budget, never explicitly chosen/);
     expect(called).toBe(false);
     expect(message.snapshot().requests.refused).toBe(1);
   });

@@ -49,6 +49,13 @@ export interface ProviderEntry {
   type: ProviderType;
   /** Base API URL (without /chat/completions) */
   baseUrl: string;
+  /**
+   * How this endpoint bills, independent of where it runs: "local" (inference
+   * here, no external per-request fee), "metered" (a paid service; needs a
+   * known or custom price), "unknown" (unclassified; unpriced under a hard
+   * budget). Ollama defaults to local, everything else to unknown.
+   */
+  billing?: "local" | "metered" | "unknown";
   /** Bearer API key (empty for local Ollama). Stored encrypted in file. */
   apiKey: string;
 }

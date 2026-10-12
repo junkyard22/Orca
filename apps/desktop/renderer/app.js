@@ -331,6 +331,24 @@ orca.onOrcaEvent((e) => {
     if (statusbarCost) statusbarCost.textContent = formatBudgetLine(e.budget);
     return;
   }
+  // Lifecycle: say what the task is doing, and never call a stopped task "done".
+  if (e.type === "task:state") {
+    latestTaskState = e;
+    const label = taskStateLabel(e);
+    if (label) appendSys(label, e.state === "INTERRUPTED" ? "warn" : "info");
+    pushLiveTraceEvent(e);
+    return;
+  }
+  if (e.type === "task:session") {
+    if (e.state === "cancelled") appendSys("Stopped — all operations settled.", "info");
+    if (e.budget && statusbarCost) statusbarCost.textContent = formatBudgetLine(e.budget);
+    return;
+  }
+  if (e.type === "brain:fallback") {
+    appendSys(`Planning fell back: ${e.reason}.`, "warn");
+    pushLiveTraceEvent(e);
+    return;
+  }
 
   // Phase 1 live pipeline visibility — sanitized rows only.
   // The mapper drops chain-of-thought / token / scratchpad events at the
@@ -731,6 +749,25 @@ function attachRoleBadge(msgDiv, roleInfo) {
   lbl.appendChild(badge);
 }
 
+// ── Task lifecycle display ────────────────────────────────────────────────
+
+// Latest lifecycle event for the current task (from task:state events).
+let latestTaskState = null;
+
+// A line per state the user should know about. Stage progress is not success:
+// only COMPLETED means the work finished and QC did not fail.
+function taskStateLabel(e) {
+  switch (e.state) {
+    case "WAITING_FOR_APPROVAL": return "Waiting for your approval.";
+    case "CANCELLING": return e.activeOperations > 0
+      ? `Stopping — waiting for ${e.activeOperations} operation${e.activeOperations === 1 ? "" : "s"} to settle…`
+      : "Stopping…";
+    case "CANCELLED": return "Stopped — all operations settled.";
+    case "INTERRUPTED": return `Stopped, but not cleanly: ${e.unsettledOperations?.length ? e.unsettledOperations.join(", ") + " never settled and may still change the workspace" : e.reason}.`;
+    default: return null;
+  }
+}
+
 // ── Budget / cost display ─────────────────────────────────────────────────
 
 // Latest budget snapshot for the current task (from budget:update events).
@@ -866,6 +903,9 @@ function appendPipelineBadge(summary) {
     ["Issues", String(summary.issueCount ?? 0)],
     ["Duration", `${durationSec}s`],
     ["Repairs", String(summary.repairPasses ?? 0)],
+    ...(summary.lifecycle ? [["Task state", summary.lifecycle.state === "COMPLETED"
+      ? (summary.verdict === "PASS" ? "completed and verified" : "completed, not verified")
+      : summary.lifecycle.state.toLowerCase() + (summary.lifecycle.unsettledOperations?.length ? ` (${summary.lifecycle.unsettledOperations.map((o) => o.label).join(", ")} never settled)` : "")]] : []),
     ...budgetOutcomeRows(summary.budget),
     ...(summary.taskId ? [["Task", summary.taskId]] : []),
   ];
@@ -1850,6 +1890,14 @@ function renderProviders() {
           <button class="btn-remove" data-remove-prov="${i}" title="Remove">✕</button>
         </div>
         <input class="setting-input prov-url" placeholder="Base URL" value="${escHtml(p.baseUrl)}" />
+        <label class="setting-hint prov-billing-row">Billing:
+          <select class="prov-billing" title="How this endpoint bills — independent of where it runs. A local proxy that forwards to a paid vendor is metered.">
+            <option value=""${!p.billing ? " selected" : ""}>${p.type === "ollama" ? "default (local — no external API fee)" : "default (unknown — needs a custom price under a hard budget)"}</option>
+            <option value="local"${p.billing === "local" ? " selected" : ""}>local — runs here, no per-request external fee</option>
+            <option value="metered"${p.billing === "metered" ? " selected" : ""}>metered — paid service (set prices in Custom model prices)</option>
+            <option value="unknown"${p.billing === "unknown" ? " selected" : ""}>unknown — refused under a hard budget</option>
+          </select>
+        </label>
         <div class="provider-key-row"${needsKey ? "" : ' style="display:none"'}>
           <input type="password" class="setting-input prov-key" placeholder="API key" value="${escHtml(p.apiKey)}" autocomplete="off" />
           <button class="setting-show-btn prov-show-key" type="button">Show</button>
@@ -1879,6 +1927,13 @@ function renderProviders() {
   list.querySelectorAll(".prov-url").forEach((inp) => {
     inp.addEventListener("input", function () {
       editingSettings.providers[+this.closest(".provider-item").dataset.provIdx].baseUrl = this.value;
+    });
+  });
+
+  list.querySelectorAll(".prov-billing").forEach((sel) => {
+    sel.addEventListener("change", function () {
+      const prov = editingSettings.providers[+this.closest(".provider-item").dataset.provIdx];
+      if (this.value) prov.billing = this.value; else delete prov.billing;
     });
   });
 
