@@ -27,6 +27,12 @@ const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 &&
 const budget = Number(opt("--budget", "0.05"));
 const port = opt("--port", "3939");
 const profile = resolve(opt("--profile", join(tmpdir(), `orca-validation-${Date.now().toString(36)}`)));
+// Optional Chrome DevTools port so an observer can read the renderer and take screenshots.
+// Observation only: native dialogs are never driven through it.
+const devtoolsPort = opt("--devtools-port", "");
+// --billing metered --price <usdPer1M> makes the mock a paid provider with a custom price, so budget refusals can be seen.
+const billing = opt("--billing", "local");
+const price = Number(opt("--price", "0"));
 const userData = join(profile, "userData");
 const home = join(profile, "home");
 const workspace = join(profile, "workspace");
@@ -36,10 +42,11 @@ if (!existsSync(join(workspace, "README.md"))) writeFileSync(join(workspace, "RE
 const providerId = "prov_mock";
 const role = { providerId, model: "mock-model" };
 const settings = {
-  providers: [{ id: providerId, name: "Mock (local, no network)", type: "custom", baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "plain:mock", billing: "local" }],
+  providers: [{ id: providerId, name: "Mock (local, no network)", type: "custom", baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "plain:mock", billing }],
   roles: { brain: role, strong_model: role, cheap_model: role, utility: role, reviewer: role, narrator: role, debugger: role, reader: role },
   budgetUsd: budget,
   budgetSource: "user",
+  ...(price > 0 ? { pricing: [{ model: "mock-model", inputPer1M: price, outputPer1M: price }] } : {}),
   workspaceRoot: workspace,
   mcpServers: [],
   maxRepairPasses: 1,
@@ -53,5 +60,5 @@ const env = { ...process.env, USERPROFILE: home, HOME: home };
 delete env.ELECTRON_RUN_AS_NODE;
 
 console.log(`profile:   ${profile}\nuserData:  ${userData}\nworkspace: ${workspace}\nprovider:  http://127.0.0.1:${port}/v1 (budget $${budget})`);
-const child = spawn(electronPath, [".", `--user-data-dir=${userData}`], { cwd: desktopDir, env, stdio: "inherit" });
+const child = spawn(electronPath, [".", `--user-data-dir=${userData}`, ...(devtoolsPort ? [`--remote-debugging-port=${devtoolsPort}`] : [])], { cwd: desktopDir, env, stdio: "inherit" });
 child.on("close", (code) => { console.log(`app exited with ${code}; profile kept at ${profile}`); process.exit(code ?? 0); });

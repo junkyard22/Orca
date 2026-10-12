@@ -46,7 +46,8 @@ function replyFor(body) {
     return { text: JSON.stringify({ routing: "direct", role: "strong_model", done_criteria: ["The command `echo orca-validation` was run and its output reported."] }), slow };
   }
   if (/<tool_call>/.test(all)) {
-    const alreadyRan = /orca-validation/.test(all) && /tool_result|Tool result|result:/i.test(all);
+    // The worker already asked for the command when one of its own earlier turns carries the tool call.
+    const alreadyRan = messages.some((m) => m?.role === "assistant" && /echo orca-validation/.test(typeof m.content === "string" ? m.content : ""));
     if (!alreadyRan) return { text: 'I will run the command now.\n<tool_call>{"tool":"run_command","command":"echo orca-validation"}</tool_call>', slow };
     return { text: "FINAL ANSWER: Ran `echo orca-validation`; it printed orca-validation (exit code 0).", slow };
   }

@@ -91,10 +91,12 @@ import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
 import { runWithBudget, withBudgetAttribution } from "@clawde/miranda-core";
 import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
-import { createBudgetJournal, createWorkspaceGuard, WorkspaceProtectedError } from "@clawde/orca-core";
+import { createAbortError, createBudgetJournal, createWorkspaceGuard, WorkspaceProtectedError } from "@clawde/orca-core";
 import type { BudgetJournal, WorkspaceGuard } from "@clawde/orca-core";
 import { probeProcess } from "@yakstacks/workbench-core";
 import { budgetWarnings, createMessageBudget, getCustomPrices, getSessionBudget, setCustomPrices } from "./budgetContext";
+import { classifyBrainError, classifyMissingDecision, resolveBrainRoute } from "./brainFallback";
+import { recoveryWarnings } from "./recoveryWarnings";
 import { TaskSessionManager } from "./taskSession";
 import {
   cargoReferenceAction,
@@ -587,8 +589,12 @@ async function brainRoute(
         // Loop continues for one repair attempt.
       } else {
         // A cancelled Brain is a cancelled task, never a fallback.
-        if (isAbortError(err)) throw err;
-        brainFailure = err instanceof Error && /timed out|timeout/i.test(err.message) ? "timed_out" : "provider_failed";
+        const classified = classifyBrainError(err, ctx.abortSignal?.aborted === true);
+        if (classified.kind === "cancelled") throw isAbortError(err) ? err : createAbortError(ctx.abortSignal?.reason);
+        // A budget refusal is the task's stop, not a planning failure: no worker
+        // could run either, so the runtime reports the budget reason instead of a fallback.
+        if (classified.kind === "budget_refused") throw err;
+        brainFailure = classified.kind;
         ctx.recordTrace?.("brain.route.error", {
           attempt,
           error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
@@ -597,21 +603,18 @@ async function brainRoute(
       }
     }
   }
-  if (!decision && !brainFailure) brainFailure = repairReason !== null ? "invalid_plan" : "no_decision";
+  if (!decision && !brainFailure) brainFailure = classifyMissingDecision(repairReason !== null);
 
   const fallbackDecision = auditDecomposeFallback(task);
-  const routingPolicy = normalizeDesktopRoutingForExecution(task, decision, fallbackDecision);
+  // Fallback is explicit: what Brain did (invalid plan, provider failure,
+  // timeout, nothing usable), which deterministic route replaced it, and
+  // that the user's own goals are the acceptance criteria it carries.
+  const route = resolveBrainRoute(task, decision, fallbackDecision, brainFailure);
+  const routingPolicy = route.routing;
   let resolved: DecomposeDecision = routingPolicy.decision;
-  if (!decision) {
-    // Fallback is explicit: what Brain did (invalid plan, provider failure,
-    // timeout, nothing usable), which deterministic route replaced it, and
-    // that the user's own goals are the acceptance criteria it carries.
-    const fallbackRole = resolved.routing === "direct" ? resolved.role : resolved.departments.map((d) => d.head).join("+");
-    const reason = fallbackDecision
-      ? `Brain ${brainFailure}; using deterministic audit decomposition`
-      : `Brain ${brainFailure}; routing to ${fallbackRole} with the original goals as acceptance criteria`;
-    ctx.recordTrace?.("brain.route.fallback", { cause: brainFailure, reason, role: fallbackRole, preservedCriteria: resolved.done_criteria ?? [] });
-    ctx.emit?.({ type: "brain:fallback", taskId: ctx.runId, cause: brainFailure ?? "no_decision", role: fallbackRole, reason, preservedCriteria: resolved.done_criteria ?? [] });
+  if (route.fallback) {
+    ctx.recordTrace?.("brain.route.fallback", route.fallback);
+    ctx.emit?.({ type: "brain:fallback", taskId: ctx.runId, ...route.fallback });
   }
   if (routingPolicy.remappedBrainExecution) {
     ctx.recordTrace?.("brain.route.execution_role_remap", {
@@ -1506,8 +1509,21 @@ function workspaceGuard(): WorkspaceGuard {
       filePath: join(app.getPath('userData'), 'workspace-protection.json'),
       probe: (resource) => probeProcess({ pid: resource.pid, identity: resource.identity }),
     });
+    let reverify: NodeJS.Timeout | null = null;
+    const scheduleReverify = () => {
+      if (reverify) return;
+      reverify = setInterval(() => {
+        void (async () => {
+          const guard = _workspaceGuard!;
+          const roots = [...new Set(guard.list().map((p) => p.root))];
+          if (roots.length === 0) { if (reverify) clearInterval(reverify); reverify = null; return; }
+          for (const r of roots) await guard.status(r); // probes; releases by verification when every process is gone
+        })();
+      }, 5000);
+    };
     _workspaceGuard.subscribe((event) => {
       if (event.type === "protected") {
+        scheduleReverify();
         console.warn(`[Orca] workspace protected: ${event.protection.root} (task ${event.protection.taskId})`);
         win?.webContents.send("orca-event", { type: "workspace:protected", taskId: event.protection.taskId, root: event.protection.root, reason: event.protection.reason, operations: event.protection.operations.map((o) => `${o.kind} ${o.label}`), resources: event.protection.resources.map((r) => `process ${r.pid} (${r.label})`), recovery: _workspaceGuard!.describe([event.protection]) });
       } else {
@@ -1715,33 +1731,22 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
   // reconciled are reported as possible charges, not forgotten.
   setCustomPrices(s.pricing);
   _initWarnings.push(...budgetWarnings(s));
-  for (const unresolved of budgetJournal().recover()) {
-    const summary = `Interrupted: Orca stopped while this task was running (${unresolved.snapshot.requests.inFlight} model request(s) in flight, started ${unresolved.startedAt}). Up to $${unresolved.exposureUsd.toFixed(4)} may have been charged without being reconciled. Nothing was resumed; check the workspace before continuing.`;
-    _initWarnings.push(`A previous session ended with task ${unresolved.taskId} still running: ${summary}`);
-    // Record the interruption in the history as a failed, unverified run.
-    // Nothing is resumed and no paid request is repeated.
-    try {
-      void store.saveRun(
-        { id: unresolved.taskId, createdAt: unresolved.startedAt, intent: "(interrupted before completion)", status: "FAIL", stoppedBecause: "interrupted", summary, costUnreconciledUsd: unresolved.exposureUsd, costBasis: "upper_bound" },
-        [], [], [],
-      );
-    } catch (error) {
-      console.warn("[Orca] could not record the interrupted task:", error);
+  // What the previous process left behind: open budget reservations (reported
+  // as possible charges and recorded as interrupted runs) and protected
+  // workspaces (in-process operations died with it; child processes are
+  // re-probed, and only a verified-gone process lifts the protection).
+  // Nothing is resumed, repeated, or reset on the user's behalf.
+  {
+    const corrupt: Array<{ what: string; error: string }> = [];
+    let unresolvedBudget: ReturnType<BudgetJournal["recover"]> = [];
+    try { unresolvedBudget = budgetJournal().recover(); } catch (error) { corrupt.push({ what: "The budget journal", error: error instanceof Error ? error.message : String(error) }); }
+    let guardRecovery: Awaited<ReturnType<WorkspaceGuard["recover"]>> = { kept: [], released: [] };
+    try { guardRecovery = await workspaceGuard().recover(); } catch (error) { corrupt.push({ what: "The workspace protection record", error: error instanceof Error ? error.message : String(error) }); }
+    const recovery = recoveryWarnings({ unresolvedBudget, guard: guardRecovery, describe: (p) => workspaceGuard().describe(p), corrupt });
+    _initWarnings.push(...recovery.warnings);
+    for (const run of recovery.runs) {
+      try { void store.saveRun(run, [], [], []); } catch (error) { console.warn("[Orca] could not record the interrupted task:", error); }
     }
-  }
-  // Workspaces a previous process left protected: in-process operations died
-  // with it; child processes are re-probed, and only a verified-gone process
-  // lifts the protection. Nothing is reset on the user's behalf.
-  try {
-    const recovered = await workspaceGuard().recover();
-    for (const release of recovered.released) {
-      _initWarnings.push(`Workspace ${release.root} was left protected by task ${release.taskId} and is released: ${release.reason}. Review the workspace for partial changes before continuing.`);
-    }
-    if (recovered.kept.length > 0) {
-      _initWarnings.push(workspaceGuard().describe(recovered.kept));
-    }
-  } catch (error) {
-    console.warn("[Orca] could not recover workspace protection:", error);
   }
 
   try {
@@ -2403,23 +2408,27 @@ ipcMain.handle("workspace:release", async () => {
   const root = activeWorkspaceRoot();
   const protections = await workspaceGuard().status(root);
   if (protections.length === 0) return { ok: true, released: [] };
-  // A native, human-answered confirmation: the user is shown exactly what was
-  // left running and takes responsibility for the workspace. Never automated.
+  // A native, human-answered confirmation. This is an override, not a
+  // release Orca can vouch for: nothing listed has been verified gone and
+  // nothing is stopped by it. The dialog says so, names what is unsettled,
+  // and the decision is recorded with the protection as it stood. Never
+  // automated.
   const choice = win && !win.isDestroyed()
     ? await dialog.showMessageBox(win, {
         type: "warning",
-        title: "Release workspace protection",
-        message: "Release this workspace for new tasks?",
-        detail: `${workspaceGuard().describe(protections)}\n\nOnly release it if you have checked that nothing listed is still writing to the workspace.`,
-        buttons: ["Cancel", "I have checked — release"],
+        title: "Override workspace protection",
+        message: "Orca has NOT confirmed that this workspace is quiet.",
+        detail: `${workspaceGuard().describe(protections)}\n\nOverriding records that you accept the risk. It does not stop anything: a process Orca could not stop keeps whatever access it has, and files it writes from now on will not be attributed to any task. Tasks started after the override run alongside it.`,
+        buttons: ["Cancel", "I accept the risk — override"],
         defaultId: 0,
         cancelId: 0,
         noLink: true,
       })
     : { response: 0 };
-  if (choice.response !== 1) return { ok: false, error: "Release cancelled." };
-  const released = await workspaceGuard().release(root, "released by the user after a manual check");
-  return { ok: true, released };
+  if (choice.response !== 1) return { ok: false, error: "Override cancelled." };
+  const released = await workspaceGuard().override(root, { reason: "the user accepted the risk in the override dialog", acknowledged: true });
+  console.warn(`[Orca] workspace protection overridden by the user: ${root} (${released.map((r) => r.taskId).join(", ")}); generation ${workspaceGuard().generation(root)}`);
+  return { ok: true, released, override: true };
 });
 
 ipcMain.handle("auth:status", () => appAuthStatus);

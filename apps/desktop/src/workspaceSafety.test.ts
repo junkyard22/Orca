@@ -72,15 +72,16 @@ describe("workspace safety across sessions", () => {
     expect(await guard.status(root)).toEqual([]);
   });
 
-  it("a user release is explicit and recorded; it is the only way out while a process is still alive", async () => {
+  it("a user override is explicit and recorded as an accepted risk; it is the only way out while a process is still alive", async () => {
     const guard = createWorkspaceGuard({ probe: () => "alive" });
     const root = "/ws";
     guard.protect(root, { taskId: "A", reason: "was interrupted", resources: [{ kind: "process", pid: 10, label: "pnpm test", startedAt: "t", reason: "kill not confirmed" }] });
     expect(await guard.status(root)).toHaveLength(1);
     await sleep(20);
     expect(await guard.status(root)).toHaveLength(1);     // time alone changes nothing
-    const released = await guard.release(root, "released by the user after a manual check");
-    expect(released).toMatchObject([{ by: "user", reason: "released by the user after a manual check" }]);
+    const released = await guard.override(root, { reason: "the user accepted the risk in the override dialog", acknowledged: true });
+    expect(released).toMatchObject([{ by: "override", reason: "the user accepted the risk in the override dialog", generation: 1 }]);
+    expect(guard.overrides()[0]!.protection.resources.map((r) => r.pid)).toEqual([10]);
     expect(await guard.status(root)).toEqual([]);
   });
 });

@@ -359,7 +359,8 @@ orca.onOrcaEvent((e) => {
   }
   if (e.type === "workspace:released") {
     if (!e.remaining) hideWorkspaceBanner();
-    appendSys(`Workspace released (${e.by}): ${e.reason}.`, "info");
+    if (e.by === "override") appendSys(`Workspace protection overridden — recorded as your decision, nothing was verified or stopped: ${e.reason}.`, "warn");
+    else appendSys(`Workspace released (${e.by === "settlement" ? "all work settled" : "every process verified gone"}): ${e.reason}.`, "info");
     return;
   }
 
@@ -775,12 +776,12 @@ function showWorkspaceBanner(recoveryText) {
     text.className = "workspace-banner-text";
     const btn = document.createElement("button");
     btn.className = "workspace-banner-release";
-    btn.textContent = "I have checked — release workspace";
+    btn.textContent = "I accept the risk — override protection";
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       try {
         const r = await orca.releaseWorkspace();
-        if (!r?.ok) appendSys(r?.error || "Release cancelled.", "info");
+        if (!r?.ok) appendSys(r?.error || "Override cancelled.", "info");
       } catch (err) {
         appendSys(String(err), "error");
       } finally {
@@ -826,6 +827,11 @@ function taskStateLabel(e) {
   }
 }
 
+function taskWasStopped() {
+  const st = latestTaskState?.state;
+  return st === "CANCELLING" || st === "CANCELLED" || st === "INTERRUPTED";
+}
+
 // ── Budget / cost display ─────────────────────────────────────────────────
 
 // Latest budget snapshot for the current task (from budget:update events).
@@ -841,7 +847,9 @@ function formatBudgetLine(b) {
   if (b.unreconciledUsd > 0) parts.push(`${usd(b.unreconciledUsd)} unreconciled`);
   if (b.reservedUsd > 0) parts.push(`${usd(b.reservedUsd)} reserved`);
   if (b.unpricedRequests > 0) parts.push(`${b.unpricedRequests} unpriced`);
-  if (b.blocked) parts.push("stopped by budget");
+  // A ledger blocked after the user pressed Stop is not a budget stop: the
+  // cancelled request stays unreconciled, which blocks the (already ended) task.
+  if (b.blocked) parts.push(taskWasStopped() ? "blocked after Stop" : "stopped by budget");
   return parts.join(" · ");
 }
 
@@ -961,9 +969,19 @@ function appendPipelineBadge(summary) {
     ["Issues", String(summary.issueCount ?? 0)],
     ["Duration", `${durationSec}s`],
     ["Repairs", String(summary.repairPasses ?? 0)],
-    ...(summary.lifecycle ? [["Task state", summary.lifecycle.state === "COMPLETED"
-      ? (summary.verdict === "PASS" ? "completed and verified" : "completed, not verified")
-      : summary.lifecycle.state.toLowerCase() + (summary.lifecycle.unsettledOperations?.length ? ` (${summary.lifecycle.unsettledOperations.map((o) => o.label).join(", ")} never settled)` : "")]] : []),
+    // The lifecycle from the runtime's summary, or — when the task ended before a
+    // summary existed (a budget stop, a Stop during planning) — the last task:state
+    // event for this task. A missing row would read as "nothing to report".
+    ...((() => {
+      const lc = summary.lifecycle ?? (latestTaskState && latestTaskState.taskId === summary.taskId
+        ? { state: latestTaskState.state, unsettledOperations: (latestTaskState.unsettledOperations ?? []).map((label) => ({ label })), unsettledResources: latestTaskState.unsettledResources ?? [] }
+        : null);
+      if (!lc) return [];
+      const left = [...(lc.unsettledOperations ?? []).map((o) => o.label), ...(lc.unsettledResources ?? []).map((r) => (typeof r === "string" ? r : `process ${r.pid}`))];
+      return [["Task state", lc.state === "COMPLETED"
+        ? (summary.verdict === "PASS" ? "completed and verified" : "completed, not verified")
+        : lc.state.toLowerCase() + (left.length ? ` (${left.join(", ")} never settled)` : "")]];
+    })()),
     ...budgetOutcomeRows(summary.budget),
     ...(summary.taskId ? [["Task", summary.taskId]] : []),
   ];
