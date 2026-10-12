@@ -52,9 +52,20 @@ export interface CustomModelPrice extends ModelTariff {
   note?: string;
 }
 
+/**
+ * How a provider endpoint bills, as opposed to where it runs. A loopback or
+ * private address says nothing about billing: it may be Ollama on this
+ * machine, or a proxy that forwards to a metered vendor.
+ *   local    — inference runs here with no per-request external fee
+ *   metered  — a paid service; needs a known or custom price
+ *   unknown  — not classified; treated as unpriced under a hard budget
+ */
+export type ProviderBilling = "local" | "metered" | "unknown";
+
 export interface PriceProvider {
   id?: string;
   type: string;
+  billing?: ProviderBilling;
   name?: string;
   baseUrl?: string;
 }
@@ -211,7 +222,12 @@ export function resolvePrice(lookup: PriceLookup): PriceResolution {
     return { status: "unknown", model, providerLabel, note: `no reviewed price for ${model} on the Anthropic API; check ${ANTHROPIC_PRICING_SOURCE} and set a custom price in Settings` };
   }
 
-  if (provider.type === "ollama" || isLocalEndpoint(provider.baseUrl)) {
+  // Billing, not network location, decides whether inference is free of
+  // external charges. Ollama defaults to local; any other endpoint on this
+  // machine or a private network is a gateway of unknown billing unless the
+  // provider is classified "local" in Settings.
+  const billing = provider.billing ?? (provider.type === "ollama" ? "local" : "unknown");
+  if (billing === "local") {
     return {
       status: "local", model, providerLabel,
       tariff: { inputPer1M: 0, outputPer1M: 0 },
@@ -219,9 +235,12 @@ export function resolvePrice(lookup: PriceLookup): PriceResolution {
     };
   }
 
+  const local = isLocalEndpoint(provider.baseUrl);
   return {
     status: "unknown", model, providerLabel,
-    note: `no reviewed price for ${model} on ${providerLabel}; set a custom price for this model in Settings (OpenRouter publishes per-model prices at /api/v1/models)`,
+    note: local
+      ? `${providerLabel} is reached at a local or private address but its billing is not classified: if it runs the model here with no external fee, set its billing to "local" in Settings; if it forwards to a paid service, set a custom price for ${model}`
+      : `no reviewed price for ${model} on ${providerLabel}; set a custom price for this model in Settings (OpenRouter publishes per-model prices at /api/v1/models)`,
   };
 }
 

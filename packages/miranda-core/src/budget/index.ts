@@ -6,7 +6,7 @@ export {
   resolvePrice,
   tariffForPrompt,
 } from "./pricing.js";
-export type { CatalogPrice, CustomModelPrice, ModelTariff, PriceLookup, PriceProvider, PriceResolution, PriceStatus } from "./pricing.js";
+export type { CatalogPrice, CustomModelPrice, ModelTariff, PriceLookup, PriceProvider, PriceResolution, PriceStatus, ProviderBilling } from "./pricing.js";
 export { INPUT_BOUND_MARGIN, MESSAGE_OVERHEAD_TOKENS, REQUEST_OVERHEAD_TOKENS, inputTokenBound } from "./tokenBound.js";
 export { BudgetRefusedError, TaskBudgetLedger } from "./ledger.js";
 export type {

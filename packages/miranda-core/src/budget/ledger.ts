@@ -269,7 +269,7 @@ export class TaskBudgetLedger {
       const snapshot = this.snapshot();
       return {
         ...base, kind: "refused_limit", allowed: false, reservationUsd: reservation,
-        reason: `reserving $${reservation.toFixed(4)} for ${request.model} (${bound.toLocaleString()} input-token bound × $${tariffForPrompt(price, bound)!.inputPer1M}/M + ${maxTokens.toLocaleString()} max output × $${tariffForPrompt(price, bound)!.outputPer1M}/M) would exceed the remaining task budget of $${Math.max(0, remaining).toFixed(4)} (limit $${this.limitUsd!.toFixed(2)}, spent $${snapshot.spentUsd.toFixed(4)}, unreconciled $${snapshot.unreconciledUsd.toFixed(4)}, reserved $${snapshot.reservedUsd.toFixed(4)}); raise the task budget in Settings or use a cheaper model/shorter prompt`,
+        reason: `reserving $${reservation.toFixed(4)} for ${request.model} (${bound.toLocaleString()} input-token bound × $${tariffForPrompt(price, bound)!.inputPer1M}/M + ${maxTokens.toLocaleString()} max output × $${tariffForPrompt(price, bound)!.outputPer1M}/M) would exceed the remaining task budget of $${Math.max(0, remaining).toFixed(4)} (limit $${this.limitUsd!.toFixed(2)}, spent $${snapshot.spentUsd.toFixed(4)}, unreconciled $${snapshot.unreconciledUsd.toFixed(4)}, reserved $${snapshot.reservedUsd.toFixed(4)}); ${this.limitSource === "legacy_default" ? "this is Orca's historical default budget, never explicitly chosen — set the budget you intend in Settings → General (0 disables the hard limit)" : "raise the task budget in Settings or use a cheaper model/shorter prompt"}`,
       };
     }
     return { ...base, kind: "authorized", allowed: true, reservationUsd: reservation, reason: `reserved $${reservation.toFixed(4)} of $${(remaining ?? 0).toFixed(4)} remaining for ${request.model}` };
@@ -354,12 +354,22 @@ export class TaskBudgetLedger {
 
     const tariff = price.status !== "stale" ? tariffForPrompt(price, u.promptTokens) : undefined;
     let cost = 0;
+    let cacheWriteUnpriced = false;
     if (tariff) {
-      const cached = Math.min(u.cachedPromptTokens ?? 0, u.promptTokens);
+      // Cache writes are billed above the base input rate. Anthropic reports
+      // them as part of the prompt; they are priced at the write rate when it
+      // is known. Without a known write rate the base rate would under-charge,
+      // so the write is priced at the base rate *and* flagged: a hard budget
+      // then stops rather than trust a figure known to be low.
+      const written = Math.min(u.cacheCreationTokens ?? 0, u.promptTokens);
+      const cached = Math.min(u.cachedPromptTokens ?? 0, u.promptTokens - written);
       const cachedRate = tariff.cacheReadPer1M ?? tariff.inputPer1M;
-      cost = usd(((u.promptTokens - cached) * tariff.inputPer1M + cached * cachedRate + u.completionTokens * tariff.outputPer1M) / 1_000_000);
+      const writeRate = tariff.cacheWritePer1M ?? tariff.inputPer1M;
+      cacheWriteUnpriced = written > 0 && tariff.cacheWritePer1M === undefined && price.status !== "local";
+      cost = usd(((u.promptTokens - cached - written) * tariff.inputPer1M + cached * cachedRate + written * writeRate + u.completionTokens * tariff.outputPer1M) / 1_000_000);
       entry.costUsd = cost;
-      entry.costBasis = "measured";
+      entry.costBasis = cacheWriteUnpriced ? "estimate" : "measured";
+      if (cacheWriteUnpriced) entry.notes.push(`${written} cache-creation tokens priced at the base input rate because no cache-write rate is known for ${entry.model}; the true charge is higher`);
       this.spent = usd(this.spent + cost);
     } else {
       entry.costBasis = "none";
@@ -369,7 +379,9 @@ export class TaskBudgetLedger {
     this.record("budget.settled", { id: entry.id, model: entry.model, role: entry.role, stage: entry.stage, usage: u, costUsd: entry.costUsd, costBasis: entry.costBasis, reservationUsd: reservation.reservationUsd, ...this.totals() });
     this.aggregate(entry, cost, 0, u);
 
-    if (this.hardBudget && tariff && cost > reservation.reservationUsd + EPSILON) {
+    if (this.hardBudget && cacheWriteUnpriced) {
+      this.block("refused_pricing_unknown", `a response from ${entry.model} wrote ${u.cacheCreationTokens} tokens to the provider's cache and no cache-write rate is known for it; the charge cannot be bounded, so no further paid requests are made in this task (set a custom price with cacheWritePer1M in Settings)`);
+    } else if (this.hardBudget && tariff && cost > reservation.reservationUsd + EPSILON) {
       entry.notes.push(`actual cost $${cost.toFixed(6)} exceeded the reservation $${reservation.reservationUsd.toFixed(6)}`);
       this.block("refused_unreconciled", `a response from ${entry.model} cost $${cost.toFixed(4)}, more than its $${reservation.reservationUsd.toFixed(4)} reservation; the reservation bound cannot be trusted, so no further paid requests are made in this task`);
     } else if (this.hardBudget && this.remaining() !== null && this.remaining()! < -EPSILON) {

@@ -27,7 +27,12 @@ export interface OpenAIUsagePayload {
    */
   prompt_tokens_details?: {
     cached_tokens?: number;
+    /** Some gateways surface Anthropic's cache writes here. */
+    cache_creation_tokens?: number;
   };
+  /** Anthropic Messages-API shape, passed through by some compatible gateways. */
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
 }
 
 /**
@@ -61,12 +66,15 @@ export function toTokenUsage(
   const total = payload.total_tokens ?? prompt! + completion!;
   if (!Number.isSafeInteger(total) || total !== prompt! + completion!) return null;
 
-  const cachedTokens = payload.prompt_tokens_details?.cached_tokens;
+  const cachedTokens = payload.prompt_tokens_details?.cached_tokens ?? payload.cache_read_input_tokens;
+  const cacheCreation = payload.prompt_tokens_details?.cache_creation_tokens ?? payload.cache_creation_input_tokens;
+  const nonNegativeInt = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
 
   return {
     promptTokens: prompt!,
     completionTokens: completion!,
     totalTokens: total,
-    ...(cachedTokens !== undefined && { cachedPromptTokens: cachedTokens }),
+    ...(nonNegativeInt(cachedTokens) && { cachedPromptTokens: cachedTokens }),
+    ...(nonNegativeInt(cacheCreation) && cacheCreation > 0 && { cacheCreationTokens: cacheCreation }),
   };
 }

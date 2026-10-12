@@ -67,4 +67,11 @@ export interface TokenUsage {
    * report the field — 0 would be indistinguishable from a genuine cache miss.
    */
   cachedPromptTokens?: number;
+  /**
+   * Prompt tokens the provider wrote into its cache on this request, when it
+   * reports them (Anthropic's `cache_creation_input_tokens`). Cache writes are
+   * billed above the base input rate, so the budget ledger prices them
+   * separately and fails closed when the write rate is unknown.
+   */
+  cacheCreationTokens?: number;
 }

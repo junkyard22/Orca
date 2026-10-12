@@ -58,7 +58,9 @@ describe("price resolution", () => {
     const p = resolvePrice({ provider: OLLAMA, model: "llama3.2", now: NOW });
     expect(p).toMatchObject({ status: "local", tariff: { inputPer1M: 0, outputPer1M: 0 } });
     expect(p.note).toMatch(/electricity, hardware and hosting costs are not accounted/);
-    expect(resolvePrice({ provider: { type: "custom", baseUrl: "http://192.168.1.20:8080/v1" }, model: "local-model", now: NOW }).status).toBe("local");
+    // Phase 5: a private-network endpoint is not assumed free; it is local only when its billing says so.
+    expect(resolvePrice({ provider: { type: "custom", baseUrl: "http://192.168.1.20:8080/v1" }, model: "local-model", now: NOW }).status).toBe("unknown");
+    expect(resolvePrice({ provider: { type: "custom", baseUrl: "http://192.168.1.20:8080/v1", billing: "local" }, model: "local-model", now: NOW }).status).toBe("local");
     expect(isLocalEndpoint("https://api.openai.com/v1")).toBe(false);
     expect(isLocalEndpoint("http://10.0.0.5:11434")).toBe(true);
   });
