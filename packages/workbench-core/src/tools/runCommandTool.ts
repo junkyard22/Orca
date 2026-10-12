@@ -5,6 +5,7 @@ import * as fs from "fs";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
 import { evaluateCommandPolicy, createSandboxPolicy } from "./sandbox.js";
 import { createAbortError, throwIfAborted } from "./abort.js";
+import { captureProcessIdentity } from "./processIdentity.js";
 import { resolveWorkspacePath } from "./workspacePath.js";
 
 const COMMAND_ENV_ALLOWLIST = new Set([
@@ -193,6 +194,7 @@ export const runCommandTool: Tool = {
       let timer: NodeJS.Timeout | undefined;
       let abortFailTimer: NodeJS.Timeout | undefined;
 
+      const spawnedAt = new Date().toISOString();
       const child = spawn(command, [], {
         cwd,
         env: commandEnvironment(process.env),
@@ -227,8 +229,30 @@ export const runCommandTool: Tool = {
         aborted = true;
         abortError = createAbortError(ctx.abortSignal?.reason);
         terminateChildProcess(child);
+        // The kill was requested; only the child's close confirms it. If that
+        // confirmation does not come, the tool gives up waiting but says so:
+        // the error names the process (pid and creation time) so the task
+        // lifecycle can keep the workspace protected until it is verified gone.
         abortFailTimer = setTimeout(() => {
-          fail(abortError ?? createAbortError(ctx.abortSignal?.reason));
+          void (async () => {
+            const pid = child.pid;
+            if (settled || pid == null || child.exitCode !== null || child.signalCode !== null) {
+              fail(abortError ?? createAbortError(ctx.abortSignal?.reason));
+              return;
+            }
+            const identity = await captureProcessIdentity(pid);
+            if (settled) return;
+            const error = abortError ?? createAbortError(ctx.abortSignal?.reason);
+            (error as Error & { unsettledResource?: unknown }).unsettledResource = {
+              kind: "process",
+              pid,
+              label: command.length > 120 ? `${command.slice(0, 117)}...` : command,
+              startedAt: spawnedAt,
+              ...(identity ? { identity } : {}),
+              reason: "its termination was requested on Stop but the process had not exited after 750 ms",
+            };
+            fail(error);
+          })();
         }, 750);
       };
 
