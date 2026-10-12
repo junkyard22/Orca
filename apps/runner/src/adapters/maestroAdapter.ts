@@ -29,7 +29,7 @@ import type {
   OrcaLLMService,
   WorkspaceContext,
 } from "@clawde/orca-core";
-import { createFilteredToolService, extractToolNamesFromPrompt } from "@clawde/orca-core";
+import { budgetGateContext, createFilteredToolService, extractToolNamesFromPrompt } from "@clawde/orca-core";
 import type { AHPPacket, GateResult } from "@clawde/miranda-core";
 import { runAgentLoop } from "@clawde/agent-loop-core";
 export { formatToolResult, normalizeToolText, parseToolCalls } from "@clawde/agent-loop-core";
@@ -402,11 +402,7 @@ function isGateStop(gateResult: GateResult): boolean {
   return !gateResult.allowed || gateResult.verdict === "CONFIRM_REQUIRED";
 }
 
-// Neutral placeholders until live per-call cost accounting is threaded here.
-const NEUTRAL_LLM_BUDGET_CONTEXT = {
-  budgetUsed: 0,
-  budgetLimit: Infinity,
-} as const;
+
 
 function createGateBlockedResult(
   orch: OrchestrationResult,
@@ -917,7 +913,7 @@ async function runSingleAgent(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "maestro_no_tools_stream",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetGateContext(ctx),
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,
@@ -1153,7 +1149,7 @@ async function routeRequest(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "maestro_brain_route_complete",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetGateContext(ctx),
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,
@@ -1390,7 +1386,7 @@ async function runSubagentPool(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "maestro_synthesis_complete",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetGateContext(ctx),
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
         allowed: gateResult.allowed,
