@@ -65,3 +65,20 @@ describe("surviving descendants", () => {
     expect(await findSurvivingDescendants(0, new Date().toISOString())).toBeNull();
   });
 });
+
+describe("scan coalescing", () => {
+  it.skipIf(!scanAvailable)("scans requested within the window share one enumeration; each still sees its own command's descendants", async () => {
+    const { survivorScanStatistics } = await import("./processIdentity.js");
+    const before = survivorScanStatistics();
+    const results = await Promise.all(Array.from({ length: 5 }, () => runCommandTool.execute(
+      { command: `node -e "console.log(1)"` },
+      { workspaceRoot: process.cwd(), runId: "r", sandbox: createSandboxPolicy({ extraAllowedCommands: ["node"] }), requestApproval: async () => true },
+    )));
+    const scans = await Promise.all(results.map((r) => (r as unknown as { pendingResources: Pending }).pendingResources));
+    const after = survivorScanStatistics();
+    expect(scans.every((s) => s.status === "done" && s.resources.length === 0)).toBe(true);
+    expect(after.requests - before.requests).toBe(5);
+    expect(after.enumerations - before.enumerations).toBeLessThan(5);
+    expect(after.enumerations - before.enumerations).toBeGreaterThanOrEqual(1);
+  });
+});

@@ -96,17 +96,51 @@ export interface SurvivingProcess extends ProcessIdentity {
   relation: "descendant" | "orphan";
 }
 
+type WindowsRow = { ProcessId: number; ParentProcessId: number; Name?: string; c: string };
+
+/**
+ * One enumeration serves every scan requested within a short window. The
+ * enumeration starts only after the window closes, so its snapshot is taken
+ * after each sharing request was made — i.e. after each command's shell had
+ * exited — which is exactly what an individual scan would see. An
+ * enumeration already in flight is never shared (its snapshot may predate
+ * a later request). The guarantee is unchanged; the cost of a burst of
+ * parallel commands drops from one enumeration per command to one.
+ */
+const COALESCE_WINDOW_MS = 150;
+let scheduled: { promise: Promise<string | undefined>; timer: NodeJS.Timeout } | null = null;
+const scanStats = { requests: 0, enumerations: 0 };
+
+/** How many scans were requested and how many enumerations actually ran (diagnostics / tests). */
+export function survivorScanStatistics(): { requests: number; enumerations: number } {
+  return { ...scanStats };
+}
+
+function coalescedEnumeration(start: () => Promise<string | undefined>): Promise<string | undefined> {
+  scanStats.requests++;
+  if (scheduled) return scheduled.promise;
+  let resolve!: (v: string | undefined) => void;
+  const promise = new Promise<string | undefined>((r) => { resolve = r; });
+  const timer = setTimeout(() => {
+    scheduled = null;
+    scanStats.enumerations++;
+    start().then(resolve, () => resolve(undefined));
+  }, COALESCE_WINDOW_MS);
+  scheduled = { promise, timer };
+  return promise;
+}
+
 export async function findSurvivingDescendants(rootPid: number, spawnedAtIso: string): Promise<SurvivingProcess[] | null> {
   if (process.env["ORCA_PROCESS_SCAN"] === "off") return null;
   if (!Number.isInteger(rootPid) || rootPid <= 0) return null;
   if (process.platform === "win32") {
-    const out = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-      "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate | ForEach-Object { [pscustomobject]@{ ProcessId=$_.ProcessId; ParentProcessId=$_.ParentProcessId; Name=$_.Name; c=$(if($_.CreationDate){$_.CreationDate.ToString('o')}else{''}) } } | ConvertTo-Json -Compress"], SCAN_TIMEOUT_MS);
+    const out = await coalescedEnumeration(() => run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate | ForEach-Object { [pscustomobject]@{ ProcessId=$_.ProcessId; ParentProcessId=$_.ParentProcessId; Name=$_.Name; c=$(if($_.CreationDate){$_.CreationDate.ToString('o')}else{''}) } } | ConvertTo-Json -Compress"], SCAN_TIMEOUT_MS));
     if (!out) return null;
-    let rows: Array<{ ProcessId: number; ParentProcessId: number; Name?: string; c: string }>;
+    let rows: WindowsRow[];
     try {
       const parsed = JSON.parse(out) as unknown;
-      rows = Array.isArray(parsed) ? parsed as typeof rows : [parsed as typeof rows[number]];
+      rows = Array.isArray(parsed) ? parsed as WindowsRow[] : [parsed as WindowsRow];
     } catch {
       return null;
     }
@@ -150,7 +184,7 @@ export async function findSurvivingDescendants(rootPid: number, spawnedAtIso: st
     }
     return found;
   }
-  const out = await run("ps", ["-eo", "pid=,pgid=,lstart="], SCAN_TIMEOUT_MS);
+  const out = await coalescedEnumeration(() => run("ps", ["-eo", "pid=,pgid=,lstart="], SCAN_TIMEOUT_MS));
   if (!out) return null;
   const found: SurvivingProcess[] = [];
   for (const line of out.split("\n")) {
