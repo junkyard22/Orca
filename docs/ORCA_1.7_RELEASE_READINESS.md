@@ -173,3 +173,52 @@ Last known-good state preserved: `origin/main` `7b62cce`; `integration/core-reli
 4. **Push `main`** to GitHub (62+ local commits; not done).
 5. **Install** the candidate over Orca 1.6.0 (replaces the installed app; the profile is kept) — not done.
 6. **Publish** a release — not done.
+
+---
+
+## 15. Final acceptance session — 2026-10-13 (evening), in progress
+
+Candidate under test at the end of the session: **rc4, Orca 1.7.0 @ `8e4f46b1`** (unsigned; `C:\Orca\worktrees\main-rc\apps\desktop\release\`; SHA-256 portable `11814B3F…0241E`, installer `1B6B0270…2803C`; asar 11,538,184 bytes, 21 entries). Earlier candidates kept under `C:\Orca\rc-artifacts\` (rc3 @ `d535a9c3`, rc2 @ `cd5b427e`, rc1 @ `0aef6bf8`, 1.6.0-rc @ `9018cb30`). Commits added today after `b1a17ad`: `d535a9c` (a failed Anthropic model listing is reported as a fallback, not a listing), `8e4f46b` (the fallback note carries the provider's error message).
+
+### 15.1 H1–H7 on the packaged candidate (rc2 @ `cd5b427e`, isolated profile, mock on 127.0.0.1 — no outbound code path in the mock; all commands `node -e …`, never `echo`)
+
+| # | Expected | Human observation | Host evidence (`profile-human/userData/pipeline-traces/`) | Result |
+|---|---|---|---|---|
+| H1 | Card shows tool, command, workspace, task; Deny default | Card as expected; Deny focused; "Always approve" unchecked (screenshot) | `run_…_fld7si`: RUNNING → WAITING_FOR_APPROVAL | **PASS** |
+| H2 | Approve runs exactly the requested action | Two cards (initial + repair pass), each approved by one click | waits 14.7 s and 13.2 s; one execution each, output `h1-approve`; nothing before approval | **PASS** |
+| H3 | Deny prevents execution | Two Denied cards | `run_…_4cdscp`: waits 56.4 s and 1.1 s; "Command execution denied by user"; output empty; nothing in the workspace | **PASS** |
+| H4 | Timeout denies without fallback | Untouched | `run_…_1t4u7r`: two waits of exactly 60.0 s; denied; no fallback action | **PASS** |
+| H5 | Global red Stop with the card open | CANCELLED panel, "Stopped — all operations settled" | `run_…_r5pswg`: WAITING_FOR_APPROVAL → CANCELLING → CANCELLED in 1 ms; no dispatch after Stop | **PASS** |
+| H6 | Card's "Stop task" | First attempt timed out untouched (recorded, not counted); second attempt: "Stopped — not approved", CANCELLED | `run_…_ww6hkt`: stopped 1.7 s after the card; no dispatch after Stop | **PASS** |
+| H7 | Override dialog names the risk, needs acknowledgment, Cancel default | Banner read; dialog opened; Cancel pressed → "Override cancelled.", banner stayed | 0 overrides in `workspace-protection.json`; protection lifted by verification 2 s after the stand-in process ended | **PASS** |
+
+Observation: a timed-out approval is recorded with the same "denied by user" text as a click; the trace timing distinguishes them.
+
+### 15.2 Step 2 — packaged mock-provider integration (same profile)
+
+Brain, routing, worker, Miranda before/after gates, budget stages, Pappy (honest FAIL on the mock's canned criteria), repair, cancellation, restart recovery with protection and the history sidebar all have trace evidence from the H runs. Export dry-run on a **copy** of the profile DB: 0 records for PASS, WARN and FAIL; the two cancelled runs skipped as `stopped_before_completion:cancelled`; no training activated. Observations: cancelled runs carry the placeholder summary "Unknown error" in the DB (UI says stopped); repair-exhausted FAIL runs persist the repair loop's summary without Pappy's eligibility tag, so desktop honest failures are not exportable today (conservative; follow-up).
+
+### 15.3 Defect found while preparing the rehearsal — fixed, rebuilt
+
+With an organization-level Anthropic key, Settings → Fetch models showed "11 model(s) loaded" although the listing had failed: the code fell back silently to the built-in list. Fixed in `d535a9c` (+ `8e4f46b`): the result says whether the provider answered; a fallback is shown as "Provider did not confirm its model list (HTTP status: provider reason) … availability and the API key are unverified". With the fix the real reason appeared — *"This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header"* — and a workspace-scoped key then listed 13 models, including `claude-sonnet-4-6`. Follow-up (product): optional per-provider `anthropic-workspace-id` for organization-level keys. Tests: `modelListing.test.ts` (6). Automated smoke of rc3 passed (startup, pipeline, Stop → CANCELLED, card with Deny default); note: one approval in that smoke window was clicked by the human by mistake, harmlessly (`console.log('rc3')` in the scratch workspace).
+
+### 15.4 Live rehearsal (authorized by the human; Option A, direct Anthropic API)
+
+- Profile: isolated; key typed by the human into Settings, stored encrypted, never read by the agent; every role `claude-sonnet-4-6`; billing metered; catalog price $3 / $15 / $0.30 / $3.75 per 1M, reviewed 2026-10-12, status `known`; `maxRepairPasses 1`; workspace = disposable repo (`parse` throws on empty input; baseline 3 pass / 2 fail).
+- Model availability: confirmed by the provider's own listing (13 models, dated IDs present).
+- **Refusal check ($0.01):** refused before dispatch — "reserving $0.0220 for claude-sonnet-4-6 (2,211 input-token bound × $3/M + 1,024 max output × $15/M) would exceed the remaining task budget of $0.0100"; $0 spent. **PASS.**
+- **Test A** ("Fix the failing test in src/parse.js and run the tests.", budget $0.50): Brain routed direct → debugger with the right done criteria; the worker prefixed every path with the workspace folder name (`project/src/parse.js` → ENOENT), looped on the same three failing reads (`loop_detected`), edited nothing, ran nothing, and in the repair pass claimed "Ran all test suites". **Pappy FAIL** (confidence 0; `FIX_SOURCE_CHANGE_MISSING`, `TOOL_MISSING`, `PROOF_CLAIM_UNVERIFIED` ×3, `REQUIRED_RECEIPT_MISSING` ×5, `CORE_GOAL_MISSING`, `AGENT_LOOP_DETECTED`); not eligible; narrator reported the failure honestly. Workspace unchanged (git clean; tests still 3/2). No approval card arose (no command was requested). **Task outcome FAIL; reliability properties PASS** (no false success, objective preserved, honest accounting).
+- **Spending:** task ledger $0.1844 (brain $0.0057, 1,697 in / 43 out; debugger $0.1787, 5,005 in / 10,911 out; unreconciled $0); message-level $0.1865 (narrator's closing call). **Cumulative $0.1865 of the $1.00 ceiling** (tracked from the ledger between tasks; to be compared with the Anthropic console).
+- **Defect found (accounting persistence):** the `runs` row stores the last pass only ($0.1349, 3,799 in / 8,235 out) because `costUsd`/tokens come from `persistedMaestroResult.metadata`; the ledger and the UI are correct. Smallest fix: persist the task ledger's final snapshot (`spentUsd`, `unreconciledUsd`, token totals). **Not yet applied** — planned after Test B, followed by the final regression and a rebuild.
+- **Observation:** the worker's path handling (workspace-folder prefix, no recovery from ENOENT) is a tooling-usability issue, not a safety one; follow-up: state in tool descriptions that paths are relative to the workspace root and tolerate a leading workspace-folder segment.
+- **Test B (cancellation): not yet run — awaiting the human's authorization.** Optional second Test A attempt (~$0.19) within the ceiling: the human's call.
+
+### 15.5 Where this leaves the classification (end of 2026-10-13)
+
+- **RELEASE CANDIDATE VALIDATED — yes** for rc2 @ `cd5b427e` (automated + H1–H7 human acceptance). rc4 @ `8e4f46b1` differs only in the model-listing path and passed the automated smoke; the human checks were not repeated on it.
+- **LIVE REHEARSAL VALIDATED — not yet:** refusal and Test A done (Test A: honest FAIL, reliability properties held, task not accomplished); Test B pending; the persisted-cost fix pending.
+- **PRODUCTION RELEASE READY — no.**
+
+### 15.6 Next session
+
+1. Authorize and run Test B (cancellation) on rc4; record evidence and cumulative spend. 2. Decide on a second Test A attempt. 3. Apply the persisted-cost fix with a regression test; run the full regression; rebuild (rc5) and re-run the automated smoke. 4. Update §1–§14 of this report with final figures, classify, and decide on push/sign/install/publish.
