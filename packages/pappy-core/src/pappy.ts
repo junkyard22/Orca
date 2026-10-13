@@ -191,6 +191,8 @@ interface CriterionReceipt {
   partial?: boolean;
   evidence: string[];
   strength: EvidenceStrength;
+  /** Lexical match only (no identifier anchors the requirement): candidate evidence, never proof. */
+  candidate?: "lexical";
   /**
    * True when the criterion is about code behaviour (a symbol, an
    * implementation, tests, a parameter) rather than about the response text or
@@ -604,15 +606,35 @@ function verifyAcceptanceCriterion(
       }
       const { covered, matched, terms } = textCoversRequirement(contents.join("\n"), ac.text);
       if (covered) {
+        const anchored = extractCriterionSymbols(ac.text).length > 0;
+        if (anchored) {
+          return {
+            proved: true,
+            evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")}; final content contains ${matched.slice(0, 5).join(", ")}`],
+            strength: "independent",
+            assessment: {
+              requires: ac.text,
+              satisfiedBy: `the final content of ${changedNamed.join(", ")} containing what the criterion asks for`,
+              supportedBy: [`${changedNamed.join(", ")} changed on disk`, `final content names ${matched.slice(0, 5).join(", ")}`],
+              sufficient: true,
+            },
+          };
+        }
+        // No identifier anchors the requirement: that the document uses its
+        // words (${matched}/${terms}) is candidate evidence for a human, not
+        // proof that it says what was asked. Never VERIFIED on this alone.
         return {
-          proved: true,
-          evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")}; final content contains ${matched.slice(0, 5).join(", ")}`],
+          proved: false,
+          partial: true,
+          candidate: "lexical",
+          evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")}; final content uses ${matched.length} of ${terms.length} of the requirement's words (${matched.slice(0, 5).join(", ")}) — candidate evidence, not proof`],
           strength: "independent",
           assessment: {
             requires: ac.text,
-            satisfiedBy: `the final content of ${changedNamed.join(", ")} containing what the criterion asks for`,
-            supportedBy: [`${changedNamed.join(", ")} changed on disk`, `final content names ${matched.slice(0, 5).join(", ")}`],
-            sufficient: true,
+            satisfiedBy: `a human reading of ${changedNamed.join(", ")} confirming it says what the criterion asks, or a requirement anchored on an identifier or a documented validation`,
+            supportedBy: [`${changedNamed.join(", ")} changed on disk`, `final content uses the requirement's words: ${matched.slice(0, 5).join(", ")}`],
+            sufficient: false,
+            needed: `human review of ${changedNamed.join(", ")} (word overlap cannot show the requested content is present and correct)`,
           },
         };
       }
@@ -761,7 +783,7 @@ function buildCriteriaLedger(
       receipt = requireBehaviouralEvidence(ac, receipt, context);
     }
     receipt = requireAttributableEvidence(ac, receipt, input, context);
-    const { proved, partial, evidence, strength, assessment } = receipt;
+    const { proved, partial, evidence, strength, assessment, candidate } = receipt;
     let status: ReceiptEntry["status"] = proved ? "PROVED" : partial ? "PARTIAL" : "MISSING";
     if (mandatory && ac.required && status === "PROVED" && strength === "self_reported") {
       status = "UNVERIFIED";
@@ -776,6 +798,7 @@ function buildCriteriaLedger(
       status,
       evidence,
       strength,
+      ...(candidate ? { candidate } : {}),
     };
     if (mandatory && ac.required) {
       entry.assessment = assessment ?? {
@@ -819,8 +842,25 @@ function buildMissingReceiptIssues(
   // HIGH, worded as insufficient proof — because a change is not a result.
   // Legacy callers (no workspace evidence) keep the MEDIUM note: for them a
   // diff that omits the symbol is a property of diff formatting, not of the work.
+  // Candidate evidence (a document that uses the requirement's words): not
+  // proof, so the run is not verified and not trainable, but not shown wrong
+  // either — a human decides. MEDIUM, with the review need stated.
+  const candidates: Omit<Issue, "issueId">[] = receiptLedger
+    .filter((entry) => entry.status === "PARTIAL" && entry.candidate === "lexical")
+    .map((entry) => ({
+      severity: "MEDIUM" as const,
+      code: "RECEIPT_LEXICAL_CANDIDATE",
+      category: "Proof" as const,
+      description: `Not verified (candidate evidence only): ${entry.ref} — the named file changed and its final content uses the requirement's words, which does not show it says what was asked; needs human review — ${entry.required_receipt.details}`,
+      expected_receipt: entry.assessment?.satisfiedBy ?? `${entry.required_receipt.type}: ${entry.required_receipt.details}`,
+      evidence: `${entry.ref}: status=PARTIAL; candidate=lexical; evidence=${JSON.stringify(entry.evidence)}`,
+      fix_hint: entry.assessment?.needed ? `Provide ${entry.assessment.needed}.` : `Have a human confirm the document says what ${entry.ref} asks.`,
+      message: `Receipt ${entry.ref} is candidate evidence only (lexical match).`,
+      suggestedFix: `Review the document for ${entry.ref}, or anchor the requirement on an identifier or a documented validation.`,
+    }));
+
   const partial: Omit<Issue, "issueId">[] = receiptLedger
-    .filter((entry) => entry.status === "PARTIAL")
+    .filter((entry) => entry.status === "PARTIAL" && entry.candidate !== "lexical")
     .map((entry) => ({
       severity: mandatory ? ("HIGH" as const) : ("MEDIUM" as const),
       code: "RECEIPT_PARTIAL",
@@ -851,7 +891,7 @@ function buildMissingReceiptIssues(
       suggestedFix: `Satisfy ${entry.ref} with verifiable evidence before marking the task complete.`,
     }));
 
-  return [...missing, ...unverified, ...partial];
+  return [...missing, ...unverified, ...partial, ...candidates];
 }
 
 // ---------------------------------------------------------------------------

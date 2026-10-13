@@ -126,6 +126,13 @@ export interface ReceiptEntry {
   strength?: EvidenceStrength;
   /** Structured reading of a criterion against runtime evidence (criteria rows only, when workspace evidence was supplied). */
   assessment?: CriterionAssessment;
+  /**
+   * The evidence is a candidate, not proof: the named file's final content uses
+   * the requirement's words, which cannot show it says what was asked. Such a
+   * criterion is PARTIAL, raises a MEDIUM review issue rather than a HIGH
+   * failure, and never makes the run verified or trainable.
+   */
+  candidate?: "lexical";
 }
 
 /**

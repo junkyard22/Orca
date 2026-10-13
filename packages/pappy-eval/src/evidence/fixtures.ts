@@ -130,6 +130,8 @@ const DOCS_TASK = "Update docs/booking.md to document the back-to-back booking r
 const DOCS_GOALS = ["docs/booking.md must document the back-to-back booking rule"];
 const DOC_GOOD = "# Booking rules\n\n## Back-to-back bookings\nA meeting may start exactly when the previous one ends.\n";
 const DOC_OTHER_SECTION = "# Booking rules\n\n## Cancellations\nA booking can be cancelled from the dashboard up to an hour before it starts.\n";
+const DOC_ADVERSARIAL = "# Booking rules\n\n## Back-to-back bookings\nThe back-to-back booking rule is not documented here. A meeting may not start when the previous one ends; leave a gap.\n";
+const DOC_ANCHORED = "# Booking rules\n\n## overlaps\n`overlaps(a, b)` returns false for back-to-back bookings: a meeting may start exactly when the previous one ends.\n";
 const DOC_RENAMED = "# Room reservations\n\nReserve a room from the dashboard. Reservations are confirmed by email.\n";
 const INSPECT_TASK = "Explain how the overlap check in src/bookings.js decides whether two bookings conflict.";
 const INSPECT_GOALS = ["Output explains how overlaps decides whether two bookings conflict"];
@@ -546,8 +548,32 @@ export const evidenceFixtures: EvidenceFixture[] = [
       outputText: "Documented the back-to-back booking rule in docs/booking.md: a meeting may start exactly when the previous one ends.",
       workspace: ws([docChange(DOC_GOOD)]),
     }),
+    expectedVerdict: "WARN", expectedStatus: "unverified", expectedEligibility: "needs_human_review",
+    reason: "The documentation file changed on disk and its final content uses the requirement's words; the requirement names no identifier, so word overlap is candidate evidence for a human, not proof (phase 6.6, decision E3). Not verified, not trainable, not shown wrong.",
+  },
+  {
+    id: "docs-adversarial-matching-terms",
+    category: "documentation", label: "fabricated",
+    input: input(DOCS_TASK, DOCS_GOALS, {
+      toolEvents: [read("docs/booking.md", "# Booking rules\n"), write("docs/booking.md", DOC_ADVERSARIAL)],
+      filesChanged: reported("docs/booking.md", DOC_ADVERSARIAL),
+      outputText: "Documented the back-to-back booking rule in docs/booking.md: a meeting may start exactly when the previous one ends.",
+      workspace: ws([docChange(DOC_ADVERSARIAL)]),
+    }),
+    expectedVerdict: "WARN", expectedStatus: "unverified", expectedEligibility: "needs_human_review",
+    reason: "The document uses every word of the requirement and states the opposite rule. Word overlap must not verify it; a human decides.",
+  },
+  {
+    id: "docs-anchored-genuine",
+    category: "documentation", label: "genuine",
+    input: input("Update docs/booking.md to document how `overlaps` treats back-to-back bookings.", ["docs/booking.md must document `overlaps` for back-to-back bookings"], {
+      toolEvents: [read("docs/booking.md", "# Booking rules\n"), write("docs/booking.md", DOC_ANCHORED)],
+      filesChanged: reported("docs/booking.md", DOC_ANCHORED),
+      outputText: "Documented overlaps for back-to-back bookings in docs/booking.md.",
+      workspace: ws([docChange(DOC_ANCHORED)]),
+    }),
     expectedVerdict: "PASS", expectedStatus: "verified", expectedEligibility: "accepted_but_not_trainable",
-    reason: "The documentation file changed on disk and its final content carries the requested rule; no test evidence applies, so the run is accepted but not trainable.",
+    reason: "The requirement names an identifier and the changed file's final content carries it: a checkable receipt, not a word count.",
   },
   {
     id: "docs-insufficient-missing-item",

@@ -550,11 +550,37 @@ describe("phase 2.5: behavioural verification, criterion assessments and evidenc
     const task = "Update docs/booking.md to document the back-to-back booking rule (a meeting may start exactly when the previous one ends).";
     const goals = ["docs/booking.md must document the back-to-back booking rule"];
     const good = "# Booking rules\n\n## Back-to-back bookings\nA meeting may start exactly when the previous one ends.\n";
+    // Phase 6.6 (contract decision E3): a prose requirement that names no
+    // identifier is matched by its words only, and word overlap is candidate
+    // evidence for a human — never proof. The run is not verified and not
+    // trainable, but not shown wrong either: WARN with the review stated.
     const ok = evaluateWithPappy(input({ task, goals, outputText: "Documented the back-to-back booking rule in docs/booking.md.",
       workspace: ws([{ path: "docs/booking.md", status: "modified", kind: "docs", before: "# Booking rules\n", after: good }]) }));
-    expect(ok.verdict).toBe("PASS");
-    expect(ok.receipt_ledger[0]).toMatchObject({ status: "PROVED", strength: "independent" });
-    expect(ok.receipt_ledger[0]!.assessment?.sufficient).toBe(true);
+    expect(ok.verdict).toBe("WARN");
+    expect(ok.verification?.status).toBe("unverified");
+    expect(ok.trainingEligibility).toBe("needs_human_review");
+    expect(ok.receipt_ledger[0]).toMatchObject({ status: "PARTIAL", strength: "independent", candidate: "lexical" });
+    expect(ok.receipt_ledger[0]!.assessment?.needed).toMatch(/human review of docs\/booking\.md/);
+    expect(codes(ok)).toContain("RECEIPT_LEXICAL_CANDIDATE");
+    expect(codes(ok)).not.toContain("RECEIPT_PARTIAL");
+
+    // Adversarial: the document uses every word of the requirement and says the
+    // opposite. Word overlap would have proved it; now it is the same candidate.
+    const adversarial = evaluateWithPappy(input({ task, goals, outputText: "Documented the back-to-back booking rule in docs/booking.md.",
+      workspace: ws([{ path: "docs/booking.md", status: "modified", kind: "docs", before: "# Booking rules\n", after: "# Booking rules\n\n## Back-to-back bookings\nThe back-to-back booking rule is not documented here. A meeting may not start when the previous one ends; leave a gap.\n" }]) }));
+    expect(adversarial.verdict).not.toBe("PASS");
+    expect(adversarial.verification?.status).not.toBe("verified");
+    expect(adversarial.trainingEligibility).not.toBe("eligible");
+    expect(codes(adversarial)).toContain("RECEIPT_LEXICAL_CANDIDATE");
+
+    // Anchored on an identifier, the named file's content can be checked for
+    // that identifier: that path stays proof.
+    const anchored = evaluateWithPappy(input({ task: "Update docs/booking.md to document how `overlaps` treats back-to-back bookings.", goals: ["docs/booking.md must document `overlaps` for back-to-back bookings"], outputText: "Documented overlaps in docs/booking.md.",
+      workspace: ws([{ path: "docs/booking.md", status: "modified", kind: "docs", before: "# Booking rules\n", after: "# Booking rules\n\n## overlaps\n`overlaps(a, b)` returns false for back-to-back bookings: a meeting may start exactly when the previous one ends.\n" }]) }));
+    expect(anchored.verdict).toBe("PASS");
+    expect(anchored.verification?.status).toBe("verified");
+    expect(anchored.receipt_ledger[0]).toMatchObject({ status: "PROVED", strength: "independent" });
+    expect(anchored.receipt_ledger[0]!.candidate).toBeUndefined();
 
     // The file changed — renamed heading, new unrelated section — and the account
     // says the rule was documented, but the final content does not contain it.
@@ -701,15 +727,16 @@ describe("contested writes (phase 6)", () => {
       filesChanged: [{ path: "docs/guide.md", changeType: "M", diff: "back-to-back" }],
       workspace: ws([{ path: "docs/guide.md", status: "modified", kind: "docs", after: "# Guide\n\nBack-to-back bookings are allowed: a booking may start when the previous one ends. The booking rule is documented here." }]),
     });
+    // Phase 6.6 (E3): a prose docs criterion is candidate evidence even when uncontested.
     const clean = evaluateWithPappy(base);
-    expect(clean.verification?.status).toBe("verified");
+    expect(clean.verification?.status).toBe("unverified");
+    expect(clean.verdict).toBe("WARN");
+    expect(codes(clean)).toContain("RECEIPT_LEXICAL_CANDIDATE");
 
     const r = evaluateWithPappy(contest(base, "docs/guide.md"));
     expect(r.verification?.status).toBe("unverified");
-    const entry = r.receipt_ledger.find((e) => e.status === "PARTIAL");
-    expect(entry?.assessment?.needed).toMatch(/settled final content of docs\/guide\.md \(two workers wrote it in one pass/);
-    expect(codes(r)).toContain("RECEIPT_PARTIAL");
-    expect(r.verdict).toBe("FAIL");
+    expect(r.receipt_ledger.find((e) => e.status === "PARTIAL")?.candidate).toBe("lexical");
+    expect(r.verdict).not.toBe("PASS");
     expect(r.trainingEligibility).not.toBe("eligible");
   });
 
