@@ -46,10 +46,18 @@ function replyFor(body) {
     return { text: JSON.stringify({ routing: "direct", role: "strong_model", done_criteria: ["The command `echo orca-validation` was run and its output reported."] }), slow };
   }
   if (/<tool_call>/.test(all)) {
-    // The worker already asked for the command when one of its own earlier turns carries the tool call.
-    const alreadyRan = messages.some((m) => m?.role === "assistant" && /echo orca-validation/.test(typeof m.content === "string" ? m.content : ""));
-    if (!alreadyRan) return { text: 'I will run the command now.\n<tool_call>{"tool":"run_command","command":"echo orca-validation"}</tool_call>', slow };
-    return { text: "FINAL ANSWER: Ran `echo orca-validation`; it printed orca-validation (exit code 0).", slow };
+    // The command the worker asks to run comes from the request itself
+    // ("run <command> and report ..."); default: echo orca-validation. The
+    // worker already asked when one of its own turns carries the tool call.
+    // Read the request from the user turns only: the worker's system prompt also says "run ... and report".
+    const userText = messages.filter((m) => m?.role === "user").map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? ""))).join("\n");
+    const matches = [...userText.matchAll(/\brun\s+(.+?)\s+and\s+report\b/gi)].map((m) => m[1].trim()).filter((c) => c.length < 200);
+    const requested = matches.at(-1);
+    const command = requested && requested.length < 200 ? requested : "echo orca-validation";
+    const alreadyRan = messages.some((m) => m?.role === "assistant" && typeof m.content === "string" && m.content.includes("<tool_call>"));
+    if (!alreadyRan) return { text: "I will run the command now.\n<tool_call>" + JSON.stringify({ tool: "run_command", command }) + "</tool_call>", slow };
+    const denied = messages.some((m) => m?.role === "user" && /denied|not approved|not permitted|requires approval/i.test(typeof m.content === "string" ? m.content : ""));
+    return { text: denied ? "FINAL ANSWER: The command was not approved, so it did not run. I could not complete the request." : "FINAL ANSWER: Ran `" + command + "`; see the tool output above for its result.", slow };
   }
   return { text: slow ? "This is a deliberately slow reply from the mock provider. Press Stop whenever you like." : "Mock provider reply: the request was received and answered locally. No network was used.", slow };
 }
@@ -94,7 +102,7 @@ const server = createServer((req, res) => {
     if (/\bFAIL\b/.test(user)) { res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "mock provider failure (FAIL control word)" } })); return; }
     const model = body.model ?? "mock-model";
     const { text, slow } = replyFor(body);
-    console.log(`[mock] ${new Date().toISOString()} stream=${!!body.stream} slow=${slow} → ${text.slice(0, 60).replace(/\n/g, " ")}`);
+    console.log(`[mock] ${new Date().toISOString()} stream=${!!body.stream} slow=${slow} → ${text.slice(0, 110).replace(/\n/g, " ")}`);
     if (body.stream) { sse(res, text, model, slow); return; }
     const payload = { id: `chatcmpl-mock-${Date.now()}`, object: "chat.completion", model, choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }] };
     if (!noUsage) payload.usage = { prompt_tokens: 200, completion_tokens: 40, total_tokens: 240 };
