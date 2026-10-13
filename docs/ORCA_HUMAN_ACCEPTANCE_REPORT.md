@@ -1,150 +1,144 @@
 # Orca human acceptance report (core reliability, phase 6.6)
 
-**Date:** 2026-10-12 · **Branch:** `integration/core-reliability` (worktree `C:\Orca\worktrees\core-reliability`) · **Baseline:** `origin/main` `7b62cce` · **Previous report:** `docs/ORCA_FINAL_SAFETY_VALIDATION.md` · **Classification:** **CONDITIONALLY READY** (§13) — the human checks and the six contract decisions below are the remaining gates, and this report stops at them.
+**Dates:** 2026-10-12 (preparation) · 2026-10-13 (human checks, contract decisions, corrections) · **Branch:** `integration/core-reliability` (worktree `C:\Orca\worktrees\core-reliability`) · **Baseline:** `origin/main` `7b62cce` · **Previous report:** `docs/ORCA_FINAL_SAFETY_VALIDATION.md` · **Classification:** **CONDITIONALLY READY** (§13).
 
-Everything deterministic in the phase 6.6 brief was done. Everything that needs a person — three approval checks, the override-dialog inspection, and six contract decisions — is staged and **PENDING**, not assumed.
+The human presenter completed the desktop acceptance checks on the source build and decided the six contract exceptions. Two decisions required changes (E1, E3); both are made, tested and ready for reconsideration (§5). Three presenter-found defects were fixed (§2). What remains open is listed exactly (§10, §13).
 
 ## 1. Branch and HEAD
 
-`integration/core-reliability`; phase 6.6 commits are listed in §9 (recorded at commit time). Working tree clean after them. Nothing on `origin/main` is missing from the branch.
+`integration/core-reliability`; phase 6.6 commits in §9. Working tree clean after the final commit. Nothing on `origin/main` is missing from the branch.
 
-## 2. Manual desktop acceptance (Part 1)
+## 2. Manual desktop acceptance (Part 1) — witnessed by the presenter
 
-**Environment, verified:** source build (`node build-main.mjs`; no installer, no package); isolated profile under `%LOCALAPPDATA%\Temp\orca-audit\phase6\profile-c` (scratch `userData`, `HOME`, workspace); the mock provider listens on `127.0.0.1:3939` only and contains no outbound call of any kind (`grep` for `fetch(`, `http.request`, `net.connect`, `axios`, `undici` in `scripts/desktop-validation/mock-provider.mjs`: none); the seeded settings name no other provider; no GitHub token is set; no installed Orca or Summit kit is touched (the app runs from `apps/desktop` with `ELECTRON_RUN_AS_NODE` removed and its own `--user-data-dir`). The app is launched visibly with **no DevTools port**: nothing in this phase reads or drives the window.
+**Environment, verified:** source build (`node build-main.mjs`; no installer); isolated profile `%LOCALAPPDATA%\Temp\orca-audit\phase6\profile-c` (scratch `userData`, `HOME`, workspace); mock provider on `127.0.0.1:3939` only, with no outbound call in its source; no other provider in the seeded settings; no GitHub token; nothing of the installed Orca or any Summit kit touched; **no DevTools port** — nothing read or drove the window; the presenter typed, clicked and sent screenshots, and every result below was cross-checked against the pipeline trace, the protection file, the mock's log and the app's log.
 
-**Checks A, B, C — PENDING (human).** The staged steps are in §7 (rows 3, 4, 7). The agent does not click, inspect, or confirm any of them; it records what the presenter reports. Rows that only an automated witness saw remain marked as such.
+| Check | Presenter observed (screenshots) | Runtime cross-check | Result |
+|---|---|---|---|
+| **13b override dialog** | Native dialog "Override workspace protection": "Orca has NOT confirmed that this workspace is quiet."; lists pid 18396 (node sleeper); "It does not stop anything: a process Orca could not stop keeps whatever access it has …"; Cancel focused as default; only affirmative button "I accept the risk — override"; no wording presents it as safe. Presenter pressed Cancel; banner stayed. | After Cancel: protection intact, generation 0, overrides 0, no override/release in the app log. Sleeper ended only after name, command line and creation time matched; app logged "released … by verification: every process was verified gone" within 8 s. | **PASS** — acknowledgement is one click on the explicitly worded button (no typed text) |
+| **3 approval presentation** | In-app modal "Tool call request": tool `run_command`, args `Command: node -e "console.log('orca-validation')"`, 47 s countdown, "Always approve run_command this session" unticked, Deny (plain), Approve (highlighted). | Trace: WAITING_FOR_APPROVAL entered before any execution. | **PARTIAL** — workspace not shown, task binding not shown, Approve visually primary (all three addressed in the fix below; the fixed card has not yet been inspected) |
+| **4 Approve** | Six "run_command ✓ Approved" cards, each after "Waiting for your approval."; badge FAIL (`AGENT_LOOP_DETECTED`). | Trace `run_…w4ul34`: WAITING_FOR_APPROVAL six times, each settled before its execution; six host-observed `orca-validation` outputs; loop caused by the mock's turn detection (fixed), not by Orca; workspace unchanged. | **PASS**, pending one detail: whether the presenter clicked six times or ticked "Always approve" (asked; not yet answered — if the box was ticked, Approve is PARTIAL) |
+| **4 Deny** | Two "run_command ✗ Denied" cards (initial + repair pass); final reply "The command was not approved, so it did not run"; badge FAIL. | Trace `run_…8rc1b1`: two approval requests, both denied; both tool results `ok:false "Command execution denied by user"`; zero executions; no output anywhere; workspace unchanged. | **PASS** — denial never shown as executed; no carry-over to the repair pass |
+| **7 Stop while approval pending — first attempt** | "It won't let me click stop or do anything unless I click on the card." | The modal (`#tool-approval-dialog`, fixed, z-index 999) covered the Stop button. | **DEFECT, fixed** (see below) |
+| **7 — second attempt, "Stop task" on the card** | "Stopped — all operations settled.", "Stopped.", badge Task state cancelled, 0 repairs; no Approved card, no output. | Trace `run_…lb519c`: WAITING_FOR_APPROVAL → CANCELLING → CANCELLED; one tool request, no result; three model calls all before Stop, none after (mock log ends at the worker's tool-call turn); app log "task:abort requested by user". The card is dismissed by Stop, so no late click is possible from the UI; the runtime refusing a late approval is unit-tested. | **PASS** |
+| **7 — variant, red Stop button with the card open** | not yet reported | — | **PENDING (presenter)** |
+| **5 approval timeout** | not performed in 6.6 | Phase 6.5's claim was wrong (§7 correction) | **PENDING** |
+
+**Corrections to phase 6.5.** The claim that an approval card had appeared and timed out (rows 3 and 5) was wrong: the traces show the `echo` command was auto-approved by the sandbox's safe-command allowlist (by design) and no approval was ever requested; my DOM probe had matched a hidden element. Row 5 is PENDING; row 3 was first witnessed today with a non-allowlisted command.
+
+**Defects found by the presenter and fixed (renderer only):**
+1. Stop unreachable while an approval is pending → "Stop task" action on the card; the card closes on CANCELLING / CANCELLED / INTERRUPTED; Deny gets keyboard focus (Enter denies); the card shows the workspace folder (`79319ba`).
+2. A protection that survived a restart was never re-verified on the 5-second timer → `recover()` now announces kept protections (`d6871af`).
+3. Not fixed, noted: the fallback badge shows "Verdict FAIL / ERROR Stopped." beside "Task state cancelled"; the banner duplicates the start-up warning text.
 
 ## 3. Workspace override review (Part 2)
 
-**Dialog inspection — PENDING (human).** `scripts/desktop-validation/stage-override.mjs --profile <dir>` starts one harmless sleeper (`node`, 20 minutes, touches nothing) and records it in the profile's `workspace-protection.json` as a process a previous task could not confirm stopped. On launch the banner appears; the presenter opens the native dialog and **presses Cancel** (the sleeper is the stand-in for an uncontrolled writer; no override is performed while it runs). What to confirm is in §7, row 13b. Ending the sleeper from Task Manager shows the protection lifting by *verification* (status line "Workspace released (every process verified gone)"), which is the contrast the brief asks for.
-
-**Override accounting — PASS (deterministic, `packages/orca-core/src/overrideAccounting.test.ts`, 3 tests):** an override is recorded in the audit log with the protection as it stood (operations and processes intact); the workspace generation goes 0 → 1; the interrupted task's run record stays `FAIL / interrupted`; its lifecycle stays INTERRUPTED and its late tool call, approval request and model call are still refused; the budget's unreconciled amount is unchanged; the next task still asks for approval like any task (the override granted no authority); an override without the literal `acknowledged: true` is refused; events and logs say `verification: every process was verified gone` for a verified release and `override: the user accepted the risk …` for an override. The renderer labels them "Workspace released (every process verified gone)" versus "Workspace protection overridden — recorded as your decision, nothing was verified or stopped".
+Dialog inspected by the presenter: PASS (§2, 13b). Override accounting, deterministic (`overrideAccounting.test.ts`, 3): recorded with the protection as it stood; generation 0 → 1; interrupted run and lifecycle unchanged; late tool / approval / model calls still refused; unreconciled budget unchanged; next task still gated; literal acknowledgement required; events distinguish `verification` from `override`. Renderer labels: "Workspace released (every process verified gone)" vs "Workspace protection overridden — recorded as your decision, nothing was verified or stopped".
 
 ## 4. Process-survivor performance (Part 3)
 
-`scripts/profiling/survivor-scan-bench.mjs --samples 10` (disposable `node -e` commands in a scratch directory; Windows, Node 24.11.1). The phase 6.5 figure of ≈3.4 s came from a benchmark that ran the scan from inside a heavier process; measured directly, one enumeration costs ≈0.6 s (PowerShell start 0.24 s + CIM query ≈0.35 s + formatting), and all alternatives tried (CSV, `Get-Process`, a creation-date WQL filter) cost the same because the query dominates.
+Unchanged from the preparation run (`scripts/profiling/survivor-scan-bench.mjs --samples 10`, idle host): one enumeration ≈ 0.6 s (PowerShell start 0.24 s + CIM query ≈ 0.35 s), not the 3.4 s a heavier benchmark process had shown. Scans requested within 150 ms share one enumeration taken after the window closes (same guarantee): 10 parallel commands 2.4 s → 1.0 s for all scans; 10 sequential 188 ms per command end to end; a build's children: 0 survivors; a detached grandchild: reported, protected while alive, released on the first check after it exited; `ORCA_PROCESS_SCAN=off`: "unknown", never "none". Node CPU 0.64 s over 23.5 s; RSS +5 MB. QC waits ≤ 8 s for a pending scan, so a task whose last action was a command pays ≈ 0.8 s once before verification.
 
-| Scenario | Command (p50 / p95 / max) | Scan (p50 / p95 / max) | End-to-end | Notes |
-|---|---|---|---|---|
-| one short command (n = 10) | 78 / 92 / 123 ms | 768 / 796 / 820 ms | 859 / 878 / 898 ms | scan = 150 ms coalescing window + ≈0.6 s enumeration, asynchronous |
-| 10 sequential commands | 985 ms for all | last scan done at 1,884 ms | 188 ms per command | scans overlap the next command |
-| 20 sequential commands | 3,253 ms | 4,292 ms | 215 ms per command | |
-| 10 independent parallel commands | 259 ms | 977 ms | — | **one** enumeration served all ten (before coalescing: 2,368 ms, ten enumerations) |
-| build creating children (n = 5) | 308 / 308 / 327 ms | 773 / 777 / 777 ms | — | 0 survivors (children exited) |
-| detached grandchild | 96 ms | 762 ms | — | grandchild reported as "orphan of: node grandchild.js"; workspace protected while alive; settled on the first check after it exited (0 ms) |
-| normal exit, no descendants | 79 ms | 790 ms | — | `done`, 0 survivors |
-| scan unavailable (`ORCA_PROCESS_SCAN=off`) | 76 ms | 0 ms | — | `unknown` — reported, never read as "none" |
+## 5. Six contract exceptions — decisions and evidence (Part 4 §6)
 
-Overhead: Node CPU 0.64 s over 23.5 s of benchmark wall time; RSS 67 → 72 MB; each enumeration is a short-lived PowerShell child (its CPU is outside Node). Effect on a worker: a command's *result* is not delayed at all; QC waits for a pending scan (≤ 8 s) so the last command before verification adds ≈0.8 s once; parallel commands are not serialised.
+Checker status unchanged: REVIEW REQUIRED, 15 × Rule 4 + 1 × Rule 5, 0 BLOCKED; nothing suppressed.
 
-**Optimisation implemented (the smallest):** scans requested within a 150 ms window share one enumeration that starts after the window closes. Safety is unchanged: the snapshot is taken after every sharing request was made, i.e. after each command's shell had exited, which is exactly what an individual scan sees; an enumeration already in flight is never shared. Verified by `survivingProcesses.test.ts` "scan coalescing" (5 concurrent commands, fewer than 5 enumerations, each with its own correct result). Not done, and why: scoping the query by creation date (same cost); caching (a stale snapshot could miss a survivor); skipping the scan for "known-safe" commands (absence of evidence is not safety).
+| # | File | Decision (2026-10-13) | Status |
+|---|---|---|---|
+| E1 | `pappy-core/src/pappy.ts` | **Require changes / additional evidence** — show the full training path for honest failures; segregate positive and negative; correct if needed | **Done — ready for reconsideration** (below) |
+| E2 | `checks/workspaceVerification.ts` | **Approved** — downgrade and final-source rules intentional, preserved | closed |
+| E3 | `checks/evidenceTerms.ts` | **Require changes** — lexical match is candidate evidence, not proof; add adversarial examples; no automatic VERIFIED without reliable evidence | **Done — ready for reconsideration** (below) |
+| E4 | `checks/completeness.ts` | **Approved** — subordinate to the criteria ledger | closed |
+| E5 | `checks/claimProof.ts` | **Approved** — partial-result honesty preserved | closed |
+| E6 | `apps/runner/src/index.ts` | **Approved for Rule 5 only**; the runner's missing workspace guard to be documented and assessed separately, not accepted by this approval | closed as a Rule 5 exception; runner limitation in §10 |
 
-## 5. Six contract exceptions — individual decisions (Part 4 §6)
+**E1 — what was already enforced, what was missing, what changed.** Already enforced, now demonstrated end to end in `packages/orca-core/src/export/trainingPath.test.ts` through the production Pappy port (`createPappyPort`) and the real `exportTrainingData`: an honest, contradicted failure is verdict FAIL, evidence `contradicted`, eligibility `eligible`; every `contradicted` downgrade in `workspaceVerification.ts` (12 sites) carries a HIGH or CRITICAL issue, so such a run can never be PASS; the default export is the positive set (`verdict: 'PASS'`) and excludes the run by verdict before any tag is read; a FAIL export is an explicit request. **Genuine gap found and closed (`1b2b990`):** a FAIL record fell through to the WARN score of 7, which a score-based consumer could read as a decent success example. FAIL now scores 0 and every record carries `metadata.outcome` (`success` / `partial_success` / `honest_failure`); no Brain record is emitted for FAIL exports. A run whose account claims success against contradicting evidence is `rejected` (also tested). Segregation is therefore by verdict filter, by score and by an explicit label.
 
-Status: REVIEW REQUIRED (15 × Rule 4, 1 × Rule 5, 0 BLOCKED). Rule 4 flags any file under `pappy-core/src/checks/`, `pappy.ts`, or a pappy-core path matching `verdict|repair|qc`; Rule 5 flags `apps/runner/src/index.ts` by name. **Decisions are the human's; the recommendation column is advice, not approval.**
-
-| # | Rule / file | Relevant code | Why it triggered | Why intentional | Impact | Tests | Remaining risk | Recommendation | **Decision** |
-|---|---|---|---|---|---|---|---|---|---|
-| E1 | 4 · `packages/pappy-core/src/pappy.ts` | `buildCriteriaLedger`, `requireBehaviouralEvidence`, `requireAttributableEvidence`, `deriveTrainingEligibility`, `deriveVerificationStatus`, evidence requests | path match | phases 2 / 2.5 / 6.5: a required criterion needs criterion-specific, worker-independent evidence; a contradicted claim is never trainable; unresolved attribution is never trainable | verification: stricter; training: stricter; authorization: none; no FAIL downgraded; Miranda `afterQC` untouched | `pappy.test.ts` 50, `workspaceVerification.test.ts` 43, `integrationStress.test.ts`, suites 23/23·12/23·15/23, corpus 45/45 | relevance is lexical (documented) | **Approve** | ☐ PENDING |
-| E2 | 4 · `packages/pappy-core/src/checks/workspaceVerification.ts` | `runWorkspaceVerificationChecks`: partial inventory, test-edit checks, behavioural receipts, source-state fingerprints, contested writes (LOW / LOW+attribution / MEDIUM) | path match | the host's own evidence judged instead of the worker's account | downgrades and issues only; never upgrades | 43 + evidence corpus + stress tests | lexical; survivor scan is a lower bound (not this file) | **Approve** | ☐ PENDING |
-| E3 | 4 · `packages/pappy-core/src/checks/evidenceTerms.ts` | `distinctiveTerms`, `withoutFilePaths`, `textCoversRequirement` | path match | file names must not count as symbols; docs must contain the requested item | relevance matching only; fixed two false acceptances | `criterionSymbols.test.ts`, `claimProof.test.ts` 24, corpus | lexical | **Approve** | ☐ PENDING |
-| E4 | 4 · `packages/pappy-core/src/checks/completeness.ts` | `testsExpected` with `withoutProhibitions`, keyword root-cause fixes | path match | "do not modify the existing tests" must not read as "tests requested" | fewer false "tests requested" readings | `completeness.test.ts` 40, corpus | lexical | **Approve** | ☐ PENDING |
-| E5 | 4 · `packages/pappy-core/src/checks/claimProof.ts` | partial pass counts ("7 of 8 pass") are not pass claims; stronger `CLAIM_SUCCESS_PATTERN` | path match | a partial result must not prove success | catches more unproven claims | `claimProof.test.ts` 24, corpus | lexical | **Approve** | ☐ PENDING |
-| E6 | 5 · `apps/runner/src/index.ts` | `budgetedAdapter(...)`, `ORCA_BUDGET_USD`, `ORCA_PRICING_JSON`, `providerAcceptsTemperature` / `EnableThinking`, `sessionBudget` | file on Rule 5's list | the CLI must account every request the way the desktop does | no user-facing text changed; refusals surface through the runtime summary as before; no diagnostic leaks | runner suite 107, `runtimeBudget.test.ts` | none identified | **Approve** | ☐ PENDING |
-
-Nothing was suppressed; the checker still reports all sixteen.
+**E3 — what was already enforced, what was missing, what changed.** Already enforced: the 60 % rule applied only to a *changed* named file, so it could promote nothing without an on-disk change; training was protected because docs tasks carry no test evidence. Genuine gap: the rule could make a prose documentation criterion PROVED and the run **verified** from word overlap alone — a document using the requirement's words and stating the opposite would have been verified. **Changed (`4a951f1`):** lexical matching is candidate evidence. Only an identifier-anchored requirement whose identifiers the final content carries is PROVED; a prose requirement matched by words is PARTIAL with `candidate: "lexical"`, issue `RECEIPT_LEXICAL_CANDIDATE` (MEDIUM, needs human review), verdict WARN at best, status `unverified`, eligibility `needs_human_review`. Adversarial examples added as asked: unit (`workspaceVerification.test.ts`: terms present + opposite content → not verified; identifier-anchored → verified) and corpus (`docs-adversarial-matching-terms` → WARN/unverified/needs_human_review; `docs-anchored-genuine` → PASS/verified). `docs-genuine` relabelled with the registry entry stating this decision as the reason; corpus 47/47, 0 false acceptances, 0 false rejections; original suites unchanged. Nothing in Pappy's acceptance criteria, Moonshiner's positive eligibility or Miranda's authorization was weakened.
 
 ## 6. Ten false positives (Part 4 §7)
 
-| # | File | Why it is a false positive | Unsafe execution or verdict handling? |
-|---|---|---|---|
-| F1 | `packages/pappy-core/src/checks/workspaceVerification.test.ts` | a test file under `checks/`; no runtime behaviour | no — it is the evidence for E2 |
-| F2–F10 | `packages/pappy-core/src/checks/__fixtures__/find-fix/` — `ISSUE.md`, `base_npmtest.out`, `base_subset.out`, `bookings.base.txt`, `bookings.fixed.txt`, `bookings.test.base.txt`, `bookings.test.tamper.txt`, `fixed_npmtest.out`, `tamper_npmtest.out` | fixture data read only by tests and the evaluation corpus | no — they are the corpus the verdicts are measured against |
+Unchanged and still reported by the checker: `checks/workspaceVerification.test.ts` (a test file) and the nine `checks/__fixtures__/find-fix/*` data files. None executes or decides anything at runtime; they are the evidence and corpus behind E1–E5.
 
-Rationale kept here and in PROJECT_STATE item 1h; the checker is unchanged so the record stays auditable on every run.
+## 7. Checklist accounting (Part 5)
 
-## 7. Corrected checklist accounting (Part 5)
+Thirteen rows plus the override dialog (13b). `A` = automated witness through the DevTools port in phase 6.5; `H` = human presenter in phase 6.6.
 
-Phase 6.5 reported 9 PASS + 2 PARTIAL + 3 PENDING = 14 for 13 rows: row 2 had been counted both as PASS and as PARTIAL. Correct: **8 PASS, 2 PARTIAL, 3 PENDING = 13** (plus the override dialog, 13b, which was always PENDING). Full record (`A` = automated witness through the DevTools port in phase 6.5; `H` = must be witnessed by a human):
-
-| Id | Check | Expected | Observed (phase 6.5) | Witness | Status | Evidence | Remaining action |
+| Id | Check | Expected | Observed | Witness | Status | Evidence | Remaining action |
 |---|---|---|---|---|---|---|---|
-| 1 | Startup, isolated profile | window, "ready", no warnings, scratch workspace | as expected | A | PASS | `shot-01-startup.png`, `app-a.log` | H: confirm visually (optional) |
-| 2 | Provider configuration | Billing select works; metered + price refuses | seeded settings took effect (local and metered) | A | PARTIAL | `shot-07-budget-refusal.png` | H: change Billing in Settings, save, observe |
-| 3 | Approval presentation | dialog names tool and action, workspace understandable, no secrets, safe default, bound to the active task | card appeared ("Tool call request … Deny · Approve"); not inspected | — | PENDING | `shot-06-approval.png` (card present, scrolled) | **H: inspect** (§2 A) |
-| 4 | Approve / Deny | Approve runs only that command; Deny runs nothing and is never shown as executed | not clicked | — | PENDING | — | **H: click both** (§2 B) |
-| 5 | Approval timeout | auto-deny at 60 s, worker told, no execution | as expected | A | PASS | transcript in `RESULTS-2026-10-12.md` | — |
-| 6 | Stop during a model request | Stopping… → Stopped — settled; `cancelled`; no fallback | defect found and fixed; after the fix as expected | A | PASS | `shot-03-stop.png` | — |
-| 7 | Stop while approval pending | CANCELLING, approval invalid, late click inert, no further requests, `cancelled` | not performed | — | PENDING | unit: `runtimeCancellation.test.ts` | **H: perform** (§2 C) |
-| 8 | Task state badges | truthful state; never green after Stop | `failed`, `cancelled`, `failed (process … never settled)`; missing row fixed | A | PASS | transcripts | — |
-| 9 | Brain fallback visibility | "Planning fell back: … invalid_plan …" | as expected | A | PASS | transcript | — |
-| 10 | Budget refusal display | refused before dispatch, actionable text, mock not contacted | as expected; refused planning call shown as fallback → fixed | A | PASS | `shot-07-budget-refusal.png`, mock log 39 → 39 | — |
-| 11 | Pappy verification result | fabricated claim → FAIL with the issue | `PROOF_CLAIM_UNVERIFIED`, FAIL | A | PASS | `shot-02-hello.png` | — |
-| 12 | Recovery after restart | init warning with exposure; run `interrupted` | as expected | A | PASS | `shot-04-recovery.png` | — |
-| 13 | Workspace lock / protection banner | "still stopping" refusal; banner with recovery text | banner observed (orphan false positive, released by verification); "still stopping" not observable (Brain cancels in ms) | A | PARTIAL | `shot-06-approval.png` | H: see 13b |
-| 13b | Override dialog | unsafe clearly stated; unsettled listed; "does not stop"; literal acknowledgement; default Cancel; "I accept the risk — override"; never "verified safe" | not opened | — | PENDING | staged by `stage-override.mjs` | **H: open, inspect, Cancel** (§3) |
+| 1 | Startup, isolated profile | window, ready, scratch workspace | as expected (6.5); presenter saw the same window today | A, H | PASS | `shot-01`, screenshots 2026-10-13 | — |
+| 2 | Provider configuration | Billing select; metered + price refuses | seeded settings took effect | A | PARTIAL | `shot-07` | H: change Billing in Settings and save |
+| 3 | Approval presentation | tool, command, workspace, safe default, task binding | tool and command shown; workspace, binding missing; Approve primary (fixed after) | H | PARTIAL | screenshot 11 | H: inspect the fixed card once more |
+| 4 | Approve / Deny | one approval = one execution; deny = none | six approvals → six executions, each approved first; deny → zero | H | PASS (Approve detail pending: clicks vs checkbox) | traces w4ul34, 8rc1b1; screenshots 12–16 | H: confirm six clicks |
+| 5 | Approval timeout | auto-deny at 60 s | not performed (6.5 claim withdrawn) | — | PENDING | — | H: leave a card untouched 60 s |
+| 6 | Stop during a model request | Stopping → Stopped, cancelled, no fallback | as expected after the 6.5 fix | A | PASS | `shot-03` | — |
+| 7 | Stop while approval pending | CANCELLING, approval invalid, no execution | first attempt: Stop unreachable (defect, fixed); second: as expected via "Stop task" | H | PASS (card path); red-Stop variant PENDING | trace lb519c; screenshot 17 | H: red Stop with a card open |
+| 8 | Task state badges | truthful; never green after Stop | `failed`, `cancelled` shown | A, H | PASS | screenshots | note: "Verdict FAIL" shown for a cancelled task |
+| 9 | Brain fallback visibility | fallback line | "Planning fell back: Brain invalid_plan …" seen today | A, H | PASS | screenshots 7, 15 | — |
+| 10 | Budget refusal display | refused before dispatch | as expected (6.5); mock not contacted | A | PASS | `shot-07` | — |
+| 11 | Pappy verification result | fabricated claim → FAIL | `PROOF_CLAIM_UNVERIFIED` FAIL (6.5); today `REQUIRED_RECEIPT_MISSING` FAIL on the mock's thin answers | A, H | PASS | screenshots | — |
+| 12 | Recovery after restart | init warning, run interrupted | as expected | A | PASS | `shot-04` | — |
+| 13 | Workspace lock / banner | "still stopping"; banner | banner witnessed by the presenter today (13b) | A, H | PARTIAL | screenshots 4–5 | H: "still stopping" needs a slow non-cancellable tool |
+| 13b | Override dialog | unsafe stated, unsettled listed, does not stop, default Cancel, explicit acknowledgement, not "safe" | all six confirmed | H | PASS | screenshot 5; protection file | — |
+
+Totals: PASS 9 (1, 4, 6, 7, 8, 9, 10, 11, 12) + 13b; PARTIAL 3 (2, 3, 13); PENDING 1 (5), plus the row 7 red-Stop variant and the row 4 click detail.
 
 ## 8. Complete regression results (Part 6)
 
 | Check | Result |
 |---|---|
-| `pnpm -r --no-bail test` (after the last code change) | **1,891 passed · 0 failed · 1 skipped** (orca-core 312, pappy-core 393, miranda-core 236+1, workbench-core 63, desktop 292, runner 107, others unchanged; +7 since phase 6.5: overrideAccounting 3, agentDispatch 3, scan coalescing 1) |
-| Miranda authorization (`miranda-core` 236+1 skipped), desktop `toolAuthorization` / `llmGate` | pass |
-| lifecycle / cancellation (`lifecycle`, `runtimeCancellation`, `runtimeWorkspaceSafety`, `taskSession`, `workspaceSafety`) | pass |
-| workspace ownership / survivors (`workspaceGuard`, `overrideAccounting`, `survivingProcesses` incl. coalescing, `processIdentity`, `runCommandCancellation`) | pass |
-| Pappy suites | 23/23 · 12/23 · 15/23 · evidence 45/45 (FA 0/33, FR 0/11) — unchanged |
-| Moonshiner eligibility/export (`exportTrainingData.test.ts`, `integrationStress`) | pass |
-| Brain/Maestro routing (`brainFallback`, `routingPolicy`, `repairRouting`) | pass |
-| budget / provider (`budget`, `budgetHardening`, `runtimeBudget`, `journal`, `providerPolicy`, `openaiCompat`) | pass |
-| desktop mock-provider assets (`node --check`; live run in phase 6.5) | pass |
-| worker dispatch (`agentDispatch.test.ts`, new) | pass |
-| tsc all packages + scripts; desktop bundle; renderer | 0 errors |
+| `pnpm -r --no-bail test`, idle host | **1,896 passed · 0 failed · 1 skipped** (orca-core 315, pappy-core 393, pappy-eval 150, miranda-core 236+1, workbench-core 63, desktop 292, runner 107, others unchanged; +5 since the preparation run: trainingPath 2, pappy-eval +2, guard recovery 1) |
+| the same suite run concurrently with the type checks and evaluation jobs | one timing benchmark (`budget.test.ts` "reserves and settles thousands of requests in well under a second": 1.10 s vs the 1 s bound) failed under contention and passes alone; not a code change |
+| Miranda authorization (236 + 1 skipped), desktop `toolAuthorization` / `llmGate` | pass |
+| lifecycle / cancellation; workspace ownership / survivors; override accounting; worker dispatch | pass |
+| Pappy suites | 23/23 · 12/23 · 15/23 · evidence **47/47** (FA 0/33, FR 0/11; `docs-genuine` relabelled by decision E3, two fixtures added) |
+| Moonshiner eligibility / export (`exportTrainingData.test.ts`, `trainingPath.test.ts`) | pass |
+| Brain / Maestro routing; budget / provider; desktop (292) | pass |
+| tsc all packages + scripts; desktop bundle; renderer and validation scripts | 0 errors |
 | contract checker | REVIEW REQUIRED, 15 × Rule 4 + 1 × Rule 5, 0 BLOCKED |
 
-No evaluation expectation was changed; no assertion was weakened.
+No evaluation expectation was changed to fit; the one relabel is by human decision and recorded as such.
 
 ## 9. Files modified and commit hashes (phase 6.6)
 
-Recorded in PROJECT_STATE at commit time. Files: `packages/workbench-core/src/tools/processIdentity.ts` (scan coalescing, `survivorScanStatistics`), `survivingProcesses.test.ts`; `packages/orca-core/src/overrideAccounting.test.ts` (new); `apps/desktop/src/agents/ReactAgentAdapter.ts` (lifecycle check before every model call), `agents/agentDispatch.test.ts` (new); `scripts/profiling/survivor-scan-bench.mjs` (new), `scripts/desktop-validation/stage-override.mjs` (new), `RESULTS-2026-10-12.md` (accounting); docs.
+`777f100` scan coalescing + benchmark · `916ea7f` worker dispatch honours the lifecycle; override accounting tests · `d31de5c` staging script, checklist accounting · `e36362e` report, PROJECT_STATE · `d6871af` recovered protections announced · `1b2b990` export: FAIL = negative example (E1) · `4a951f1` lexical matching = candidate evidence (E3) · `79319ba` Stop reachable from the approval card · `f123144` mock worker command from the request · `a632931` docs · final docs/PROJECT_STATE commit: see `git log` (the commit after `a632931`).
 
-## 10. Remaining operational risks
+## 10. Remaining operational risks (Task 3)
 
-- Three approval checks and the override dialog are unwitnessed by a human (staged; §2, §3).
-- Six contract exceptions await a decision (§5).
-- No real-provider run on this branch; the rehearsal plan (§11) needs separate authorization.
-- The survivor scan is a lower bound and can flag unrelated short-lived orphans (released by verification within seconds); hosts without PowerShell / `ps` get "unknown" and no scan-based protection.
-- An external process that ignored the kill cannot be fenced; an override records that the user accepts it.
-- Prices known only for Anthropic's API; other paid endpoints need a custom price under a hard budget.
+| Item | Classification |
+|---|---|
+| Row 5 (approval timeout), row 7 red-Stop variant, row 3 re-inspection of the fixed card, row 2 Settings edit, row 4 click detail | ACCEPTED LIMITATION — AWAITING HUMAN APPROVAL (witness pending; nothing indicates a defect) |
+| E1 and E3 reconsideration | awaiting the human's decision on the changes made |
+| **Runner CLI has no workspace guard** (E6 follow-up). The runner (`apps/runner`, `private: true`, not part of the desktop package) runs one task per process with tools enabled and `WORKSPACE_ROOT` from the environment; an interrupted CLI task drains ≤ 10 s, records survivors in the trace (`task.notes`, `workspace.unprotected`), but persists no protection, so a second CLI invocation in the same workspace is not refused. Assessment: write-capable CLI tasks are safe only for a developer who reads the trace; they are not releasable as a product surface without wiring `createWorkspaceGuard` (a file under `~/.orca`) into the runner — a small change, not made in this phase. | ACCEPTED LIMITATION — AWAITING HUMAN APPROVAL for the dev-only CLI; **RELEASE BLOCKER** if the CLI is distributed |
+| Survivor scan is a lower bound; unrelated short-lived orphans can be flagged (released by verification within seconds); hosts without PowerShell / `ps` get "unknown" | ACCEPTED LIMITATION — AWAITING HUMAN APPROVAL |
+| An external process that ignored the kill cannot be fenced; an override records that the user accepts it | ACCEPTED LIMITATION — AWAITING HUMAN APPROVAL |
+| Safe-command allowlist (`echo`, read-only git, …) auto-approves by design | ACCEPTED LIMITATION — AWAITING HUMAN APPROVAL (documented; the human may want `requireApprovalForAll`) |
+| Approve remains the visually prominent button; cancelled task badge reads "Verdict FAIL"; banner duplicates the start-up warning | POST-RELEASE IMPROVEMENT |
+| Prices known only for Anthropic's API; no real-provider run on this branch | RELEASE BLOCKER for a public release (the rehearsal, §11) — not for source merge |
 
-## 11. Live AI rehearsal plan (Part 7) — plan only, not authorized
+## 11. Live AI rehearsal plan (Task 4) — plan only; no paid request without separate authorization
 
-1. **Isolation.** `launch-isolated.mjs --profile <new dir>` with a disposable workspace containing a small real project (e.g. the `find-fix` booking fixture copied as a repo); scratch `HOME`; no GitHub token; MCP servers off.
-2. **Initiation.** The human types the first message and presses Send; nothing is scripted.
-3. **Provider.** One Anthropic provider, `billing: metered`, a model present in the reviewed catalog (e.g. `claude-sonnet-5-5`), API key entered in Settings by the human for the session and removed afterwards; `models:fetch` confirms access before any task.
-4. **Budget.** Hard task budget **$0.50**; the catalog price is shown in the badge; the refusal path is exercised once with a $0.01 budget before the real run.
-5. **Dialogs.** Every tool approval answered by the human; the override dialog opened only if a protection appears.
-6. **Verification.** Pappy's real requirements: the task must produce a reproduction, a change and a passing run on the final source; the badge must show "completed and verified" only then.
-7. **Reconciliation.** After each task: status line confirmed figures vs the provider's usage; `unreconciled` must be $0 when usage was reported; a cancelled request must show as unreconciled upper bound.
-8. **Stop during a command.** A task that runs `node -e "setTimeout(()=>{},60000)"` (approved); Stop at 10 s; expect CANCELLING → CANCELLED (kill confirmed) or INTERRUPTED + protection; no late output.
-9. **Stop during an approval.** Trigger an approval, press Stop, then click Approve: nothing runs; `cancelled`.
-10. **Recovery.** Kill the app during a streaming reply; relaunch the same profile; init warning with the exposure; nothing resumed.
-11. **Evidence.** Keep `pipeline-traces/`, `budget-journal.json`, `workspace-protection.json`, the mock-free provider usage page, and screenshots of every dialog.
-12. **Criteria.** PASS: every step as expected and the invoice matches the ledger within the provider's rounding. PARTIAL: a step deviates without a safety consequence (e.g. a label). FAIL: any request after Stop, any unverified run shown as verified, any approval taken without a click, any spend over the hard budget, any workspace write after INTERRUPTED without protection.
+1. **Isolation.** `launch-isolated.mjs --profile <new dir>`; disposable workspace = a fresh `git init` of the `find-fix` booking fixture (`packages/pappy-core/src/checks/__fixtures__/find-fix`, with `package.json` scripts.test = `node --test`); scratch `HOME`; no GitHub token; MCP servers off.
+2. **Human initiation.** The presenter enters the Anthropic key in Settings for the session (removed afterwards), picks `claude-sonnet-5-5` (reviewed catalog price), sets Billing `metered`, confirms model access with the Settings "fetch models" action, and types every message.
+3. **Budget.** Hard task budget **$0.50**, shown in the badge; first a $0.01 budget to witness a refusal before dispatch, then $0.50.
+4. **The task.** "Users report a meeting cannot start exactly when the previous one ends. Fix the overlap check in src/bookings.js, run the tests, and do not modify the existing tests." Normal path Brain → Maestro → debugger → Miranda (approval for `npm test`) → Pappy.
+5. **Completion criterion, objective.** `npm test` on the final source reports 8/8 (host-observed in the trace's `agent.tool.result`), `src/bookings.js` changed, test files unchanged; badge "completed and verified"; `training_eligibility=eligible evidence=verified` in the stored summary. The model's own statement counts for nothing.
+6. **Cancellation scenario.** Second task: "Run `node -e "setTimeout(()=>{},60000)"` and report" — approve, press Stop at ~10 s: expect CANCELLING → CANCELLED (kill confirmed) or INTERRUPTED + protection; no output after Stop. Third: trigger an approval, press "Stop task" on the card: nothing runs, `cancelled`.
+7. **Recovery.** Kill the app during a streaming reply; relaunch the profile; init warning with the exposure; nothing resumed.
+8. **Reconciliation.** Compare the status line's confirmed figures with the Anthropic usage page for the key; `unreconciled` must be $0 when usage was reported; the cancelled request must show as an unreconciled upper bound.
+9. **Evidence.** Keep `pipeline-traces/`, `budget-journal.json`, `workspace-protection.json`, the provider usage page, and a screenshot of every dialog, under a dated folder next to `RESULTS-2026-10-12.md`.
+10. **Criteria.** PASS: every step as expected and the invoice matches the ledger within provider rounding. PARTIAL: a deviation without safety consequence (a label, a wording). FAIL: any request after Stop, any unverified run shown as verified, any approval taken without a click, any spend over the hard budget, any workspace write after INTERRUPTED without protection.
 
-**Any paid API execution requires separate explicit authorization.** Completing this plan is not that authorization.
+## 12. Production integration plan (Task 5 / Part 8)
 
-## 12. Recommended production merge sequence (Part 8 §13)
-
-- **References.** `integration/core-reliability` (phase 6.6 HEAD in PROJECT_STATE) onto `origin/main` `7b62cce`; 39 + phase 6.6 commits; 136 files, source, tests, fixtures, docs and validation scripts only. Checked by file list and by name: no `release/`, `dist`, `.exe`, `.asar`, key/certificate, `.env`, Summit or staging asset, log, or personal path.
-- **Database.** `runs` gains `cost_unreconciled_usd REAL` and `cost_basis TEXT` (idempotent `ALTER TABLE` at open; phase 4).
-- **Settings.** New optional fields `budgetSource`, `pricing[]`, `providers[].billing`; existing files load unchanged (historical $0.10 labelled; Ollama local, other endpoints unknown). New userData files `budget-journal.json`, `workspace-protection.json`.
-- **User-visible changes.** Evidence-less code changes fail with an evidence request; budget refusals and unreconciled costs shown; Stop answers at once and the next message waits for settlement; a workspace can stay protected after a task with an explicit, recorded override; contested writes judged as §4 of the previous report; "summarize the facts"-shaped departments go to Narrator; a cancelled planning call is a cancellation, a refused one a budget stop; a command's surviving descendants protect the workspace.
-- **Contract.** Six exceptions pending human approval (§5); ten false positives recorded (§6); checker unchanged.
-- **Post-merge tests.** `pnpm -r test`, `pnpm contract:check:strict`, the four Pappy suites, `build-main.mjs`; then a packaged build and the 13-row checklist on it (new authorization).
-- **Rollback.** Revert the merge commit; the extra columns and files are inert for older code.
-- **Release validation.** The live rehearsal (§11) is a release gate even after merge approval; a packaged build is a separate authorization.
-- **Limitations carried.** §10.
+- **References.** `integration/core-reliability` (HEAD in PROJECT_STATE) onto `origin/main` `7b62cce`; 50 commits; 140 files: source, tests, fixtures, docs, validation and profiling scripts only — no build output, installer, key, `.env`, Summit or staging asset, log, or personal path (checked by file list and by name).
+- **Database.** `runs` + `cost_unreconciled_usd`, `cost_basis` (idempotent `ALTER TABLE`).
+- **Settings.** New optional fields `budgetSource`, `pricing[]`, `providers[].billing`; existing files load unchanged. New userData files `budget-journal.json`, `workspace-protection.json`.
+- **User-visible changes.** Evidence-less code changes fail with an evidence request; prose documentation tasks now need a human review (WARN) unless the requirement names an identifier; budget refusals and unreconciled costs shown; Stop answers at once and the next message waits for settlement; a workspace can stay protected after a task, released only by verification or a recorded override; approvals can be stopped from the card; surviving child processes protect the workspace; FAIL exports are labelled negative.
+- **Contract.** E2, E4, E5, E6 (Rule 5) approved by the human on 2026-10-13; E1 and E3 changed and awaiting reconsideration; ten false positives recorded; checker unchanged.
+- **Post-merge tests.** `pnpm -r test`, `pnpm contract:check:strict`, the four Pappy suites, `build-main.mjs`; then a packaged build and the checklist on it (new authorization).
+- **Rollback.** Revert the merge commit; extra columns and files are inert for older code.
+- **Release validation.** The live rehearsal (§11) and a packaged build are release gates after merge approval, each needing its own authorization.
 
 ## 13. Final readiness classification
 
-**CONDITIONALLY READY.** Source-level validation passes with no confirmed defect open. Merge into `main` is blocked only by human acts: the three approval checks and the override inspection (staged, PENDING), and the six contract decisions (PENDING). Distribution of a public release is further gated by the live rehearsal and a packaged build, both needing separate authorization. This is not READY FOR HUMAN MERGE APPROVAL until the PENDING rows are witnessed and the decisions recorded; it is not NOT READY, because nothing outstanding is a confirmed failure.
+**CONDITIONALLY READY**, for source merge into `main` once the human (a) reconsiders E1 and E3 on the evidence in §5, and (b) reports the pending witness items (row 5, the row 7 red-Stop variant, the row 4 click detail, and a look at the fixed approval card). No confirmed security, workspace-safety, cancellation, verification or budget defect is open: the three defects found by the presenter are fixed and witnessed or covered by tests. **Not ready for public distribution** until the live rehearsal (§11) and a packaged build pass; the runner CLI is a dev tool and must not ship without a workspace guard.
