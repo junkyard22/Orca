@@ -30,7 +30,15 @@ export async function listAnthropicModels(apiKey: string, fallback: readonly str
       if (ids.length) return { models: ids, listed: true };
       note = "the provider returned an empty model list";
     } else {
-      note = `the provider answered HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}${res.status === 401 || res.status === 403 ? " (check the API key)" : ""}`;
+      // Anthropic's error body carries a short reason ({"error":{"type","message"}})
+      // that never echoes the key; show it so a 400/401 is actionable.
+      let reason = "";
+      try {
+        const body = (await res.json()) as { error?: { type?: string; message?: string } };
+        const msg = body?.error?.message ?? body?.error?.type;
+        if (typeof msg === "string" && msg.trim()) reason = `: ${msg.trim().slice(0, 160)}`;
+      } catch { /* non-JSON body: status alone */ }
+      note = `the provider answered HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}${reason}${res.status === 401 || res.status === 403 ? " (check the API key)" : ""}`;
     }
   } catch (error) {
     note = `the request failed: ${error instanceof Error ? error.message : String(error)}`;

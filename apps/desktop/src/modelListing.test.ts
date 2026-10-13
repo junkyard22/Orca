@@ -10,13 +10,20 @@ describe("Anthropic model listing", () => {
     expect(r).toEqual({ models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"], listed: true });
   });
 
-  it("a rejected key is not a listing: the fallback is returned and marked, with the status in the note", async () => {
-    const fetchImpl = async () => ({ ok: false, status: 401, statusText: "Unauthorized", json: async () => ({}) });
+  it("a rejected key is not a listing: the fallback is returned and marked, with the status and the provider's reason in the note", async () => {
+    const fetchImpl = async () => ({ ok: false, status: 401, statusText: "Unauthorized", json: async () => ({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }) });
     const r = await listAnthropicModels("bad", FALLBACK, fetchImpl);
     expect(r.listed).toBe(false);
     expect(r.models).toEqual([...FALLBACK]);
-    expect(r.note).toMatch(/HTTP 401/);
+    expect(r.note).toMatch(/HTTP 401 Unauthorized: invalid x-api-key/);
     expect(r.note).toMatch(/check the API key/);
+  });
+
+  it("a 400 with a JSON reason shows the reason; a non-JSON body shows the status alone", async () => {
+    const withReason = async () => ({ ok: false, status: 400, statusText: "Bad Request", json: async () => ({ error: { type: "invalid_request_error", message: "x-api-key header is invalid" } }) });
+    expect((await listAnthropicModels("k", FALLBACK, withReason)).note).toBe("the provider answered HTTP 400 Bad Request: x-api-key header is invalid");
+    const noJson = async () => ({ ok: false, status: 502, statusText: "Bad Gateway", json: async () => { throw new SyntaxError("not json"); } });
+    expect((await listAnthropicModels("k", FALLBACK, noJson)).note).toBe("the provider answered HTTP 502 Bad Gateway");
   });
 
   it("a network failure is a fallback with the error in the note", async () => {
