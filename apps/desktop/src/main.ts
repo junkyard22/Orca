@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -2395,6 +2395,21 @@ function requestSingleToolApproval(
     }, 60_000);
   });
 }
+
+// ── Build identity: what this executable is ────────────────────────────────
+// build-main.mjs writes build-info.json beside main.js (commit, ref, dirty,
+// builtAt). The renderer shows it so a running app can always say which
+// source it came from; a missing or unreadable file degrades to the package
+// version alone rather than inventing provenance.
+ipcMain.handle("app:build-info", async () => {
+  const base = { version: app.getVersion(), packaged: app.isPackaged };
+  try {
+    const info = JSON.parse(readFileSync(join(__dirname, "build-info.json"), "utf8")) as Record<string, unknown>;
+    return { ...base, ...info, version: typeof info["version"] === "string" ? info["version"] : base.version };
+  } catch {
+    return base;
+  }
+});
 
 // ── Workspace protection: what is still unsettled, and an explicit release ──
 ipcMain.handle("workspace:protection", async () => {

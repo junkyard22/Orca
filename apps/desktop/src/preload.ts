@@ -67,8 +67,26 @@ export type SessionSummary = {
   intent:      string;
   role?:       string;
   status:      "SUCCESS" | "FAIL";
+  /**
+   * Why the run ended. A run the user stopped ("cancelled") or that the app
+   * lost ("interrupted") is persisted with status FAIL and no verdict; the
+   * pair (status, stoppedBecause) is the whole truth — status alone is not.
+   */
+  stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "error" | "cancelled" | "interrupted";
+  verdict?:    "PASS" | "WARN" | "FAIL";
   outputText?: string;
   costUsd?:    number;
+};
+
+/** What was built: version from package.json, provenance from build-main.mjs. */
+export type BuildInfo = {
+  version:      string;
+  commit?:      string;
+  commitShort?: string;
+  ref?:         string;
+  dirty?:       boolean;
+  builtAt?:     string;
+  packaged:     boolean;
 };
 
 export type CargoSnapshot = {
@@ -91,6 +109,9 @@ contextBridge.exposeInMainWorld("orca", {
   onInitStatus: (cb: (s: InitStatus) => void): void => {
     ipcRenderer.on("init-status", (_, s: InitStatus) => cb(s));
   },
+
+  getBuildInfo: (): Promise<BuildInfo> =>
+    ipcRenderer.invoke("app:build-info"),
 
   getSettings: (): Promise<OrcaSettings | null> =>
     ipcRenderer.invoke("settings:get"),
