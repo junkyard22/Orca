@@ -22,7 +22,7 @@
 
 | Commit | Content |
 |---|---|
-| *(filled in by the follow-up docs commit)* | this report + `PROJECT_STATE.md` |
+| `58b9a7d` | this report + `PROJECT_STATE.md` (recorded by the next commit, which changes only this row) |
 
 ## 2. Source merge strategy and result
 
