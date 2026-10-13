@@ -39,11 +39,13 @@ export interface TrainingRecord {
   teacher: string;
   /** Role tag for Moonshiner filtering (e.g. 'strong_model', 'brain'). */
   role: string;
-  /** Quality score: 10 for PASS, 7 for WARN. */
+  /** Quality score: 10 for PASS, 7 for WARN, 0 for an honest FAIL (negative example). */
   score: number;
   metadata: {
     taskType: string;
     verdict: string;
+    /** success (PASS) · partial_success (WARN) · honest_failure (FAIL, exported only on request): the training polarity. */
+    outcome: "success" | "partial_success" | "honest_failure";
     iterations: number;
     repairPasses: number;
     taskId: string;
@@ -59,7 +61,17 @@ export interface ExportSummary {
 }
 
 const MIN_OUTPUT_LENGTH = 50;
-const SCORE_BY_VERDICT: Record<string, number> = { PASS: 10, WARN: 7 };
+// Quality score by verdict. A FAIL record is only ever exported on explicit
+// request (verdict: 'FAIL'); it is a negative example and must never carry a
+// positive-looking score — before phase 6.6 it fell through to the WARN
+// score of 7, which a score-based consumer could have read as a decent
+// success example.
+const SCORE_BY_VERDICT: Record<string, number> = { PASS: 10, WARN: 7, FAIL: 0 };
+
+/** What the record teaches, stated outright so no consumer has to infer it from the score. */
+function outcomeOf(verdict: string): "success" | "partial_success" | "honest_failure" {
+  return verdict === "PASS" ? "success" : verdict === "WARN" ? "partial_success" : "honest_failure";
+}
 
 const SECRET_PATTERNS: Array<{ reason: string; pattern: RegExp }> = [
   { reason: "aws_access_key", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
@@ -232,7 +244,7 @@ export async function exportTrainingData(
       continue;
     }
 
-    const score = SCORE_BY_VERDICT[run.verdict] ?? 7;
+    const score = SCORE_BY_VERDICT[run.verdict] ?? 0;
     const teacherRole = run.role ?? 'unknown';
 
     records.push({
@@ -244,6 +256,7 @@ export async function exportTrainingData(
       metadata: {
         taskType: teacherRole,
         verdict: run.verdict,
+        outcome: outcomeOf(run.verdict),
         iterations,
         repairPasses,
         taskId: run.id,
@@ -270,6 +283,7 @@ export async function exportTrainingData(
         metadata: {
           taskType: 'brain',
           verdict: 'PASS',
+          outcome: 'success',
           iterations: 1,
           repairPasses: 0,
           taskId: run.id,
