@@ -254,6 +254,7 @@ function updateWelcomeWorkspace() {
   if (!el) return;
   orca.getSettings().then((s) => {
     const root = s?.workspaceRoot?.trim();
+    currentWorkspaceRoot = root || "";
     if (root) {
       // Show just the last path segment to keep the hint short.
       const name = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || root;
@@ -334,6 +335,7 @@ orca.onOrcaEvent((e) => {
   // Lifecycle: say what the task is doing, and never call a stopped task "done".
   if (e.type === "task:state") {
     latestTaskState = e;
+    if (e.state === "CANCELLING" || e.state === "CANCELLED" || e.state === "INTERRUPTED") dismissApprovalForStop();
     const label = taskStateLabel(e);
     if (label) appendSys(label, e.state === "INTERRUPTED" ? "warn" : "info");
     pushLiveTraceEvent(e);
@@ -2545,6 +2547,26 @@ function startApprovalTimer(onTimeout) {
   approvalTimerInterval = setInterval(tick, 1000);
 }
 
+let currentWorkspaceRoot = "";
+
+// The user pressed Stop (from the card, or anywhere) while this request was
+// pending: the main process has already denied it, so nothing is sent back;
+// the card says the task was stopped rather than that the user denied the call.
+function dismissApprovalForStop() {
+  clearApprovalTimer();
+  const dialog = document.getElementById("tool-approval-dialog");
+  if (dialog.style.display === "none") return;
+  const id = dialog.dataset.approvalId;
+  const card = toolCallCards.get(id);
+  if (card) {
+    card.classList.replace("pending", "denied");
+    card.querySelector(".tool-card-status").textContent = "\u23F9 Stopped — not approved";
+  }
+  toolCallCards.delete(id);
+  dialog.style.display = "none";
+  document.getElementById("chk-always-approve").checked = false;
+}
+
 function resolveApproval(approved) {
   clearApprovalTimer();
   const dialog = document.getElementById("tool-approval-dialog");
@@ -2585,14 +2607,24 @@ orca.onToolRequest((id, tool, args) => {
   document.getElementById("approval-tool-name").textContent  = tool;
   document.getElementById("approval-tool-name-2").textContent = tool;
   document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
+  document.getElementById("approval-workspace").textContent = currentWorkspaceRoot || "(not set)";
   dialog.dataset.approvalId = id;
   dialog.style.display      = "flex";
+  // The safe answer is the keyboard default: Enter denies, Approve needs a deliberate click.
+  document.getElementById("btn-deny-tool").focus();
 
   startApprovalTimer(() => resolveApproval(false));
 });
 
 document.getElementById("btn-approve-tool").addEventListener("click", () => resolveApproval(true));
 document.getElementById("btn-deny-tool").addEventListener("click",    () => resolveApproval(false));
+// Stop must be reachable while an approval is pending: the modal must never
+// hold the task hostage. Stop the task; the request is left unanswered (the
+// main process denies every pending approval when the task stops).
+document.getElementById("btn-stop-task-approval").addEventListener("click", () => {
+  orca.abortTask();
+  dismissApprovalForStop();
+});
 
 // ── Chat session sidebar ──────────────────────────────────────────────────
 

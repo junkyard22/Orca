@@ -2444,3 +2444,17 @@ body.hide-pipeline .live-trace-panel .ltp-role { display: none; }
   cursor: pointer;
 }
 .workspace-banner-release:disabled { opacity: 0.6; cursor: default; }
+
+/* Stop must stay reachable while an approval is pending. */
+.btn-stop-task {
+  margin-right: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.btn-stop-task:hover { border-color: var(--danger); color: var(--danger); }
+.btn-deny:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
