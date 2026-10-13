@@ -133,3 +133,20 @@ Limitations added: the survivor scan is a lower bound (processes that left the g
 - A protection that survives a restart is announced like a new one, so the desktop's 5-second re-verification covers it (`workspaceGuard.recover()` emits `protected`).
 - Survivor scans requested within 150 ms share one enumeration taken after the window closes (same guarantee; see `survivor-scan-bench.mjs`).
 - Known, not fixed: the fallback badge labels a cancelled task "Verdict FAIL / ERROR Stopped." beside "Task state cancelled"; the safe-command allowlist (`echo` and other read-only commands) auto-approves by design, so an approval check must use a non-allowlisted command.
+
+## Persisted form of a stopped run (1.7.0)
+
+A run the user stopped, or that the app lost, is stored in `runs` as `status = FAIL` with `stopped_because = cancelled` or `interrupted` and, unless Pappy had already judged it, no verdict. The `status` column has only `SUCCESS` and `FAIL`; the pair (`status`, `stopped_because`) is the whole truth and `status` alone must not be read as "failed". Nothing rewrites historical rows.
+
+What each consumer does with the pair (reviewed 2026-10-13):
+
+| Consumer | Behaviour |
+|---|---|
+| Desktop history sidebar and a reopened session | reads `stoppedBecause`: a stopped run is shown as stopped (not "failed"), and reopening it shows "This run was stopped / interrupted before it finished — no verdict was recorded" with a CANCELLED / INTERRUPTED outcome panel instead of a FAIL badge (1.7.0; before, it was listed as failed) |
+| Moonshiner export (`exportTrainingData`) | skips every cancelled / interrupted run before the verdict filter (`stopped_before_completion:<reason>`), so a stopped run is never a positive or a negative example even when a verdict was recorded before the stop (1.7.0) |
+| Pappy | never reads persisted runs; a stopped task's evidence is partial by construction and no verdict is invented |
+| Start-up recovery (`recoveryWarnings`) | writes `status FAIL` + `stoppedBecause interrupted` for tasks a dead process left behind, with the budget exposure as `cost_basis upper_bound` |
+| `getStats().passRate` | counts PASS verdicts over all runs; a stopped run has no verdict and lowers the rate like any unjudged run (documented; the statistic is not used by the app) |
+| Retry / repair | nothing retries from persisted status; repairs happen inside the task and never after cancellation |
+
+Regression coverage: `packages/orca-core/src/export/stoppedRuns.test.ts`; the persisted pair is asserted in `runtimeCancellation.test.ts`, `runtime.test.ts`, `runtimeWorkspaceSafety.test.ts` and `recoveryWarnings.test.ts`.

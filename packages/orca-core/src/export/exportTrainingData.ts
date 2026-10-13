@@ -166,6 +166,19 @@ export async function exportTrainingData(
   const records: TrainingRecord[] = [];
 
   for (const run of runs) {
+    // 0. A run that stopped before it finished — the user pressed Stop, or
+    // the process died — is not an example of anything. It is persisted as
+    // status FAIL with stoppedBecause cancelled/interrupted and usually no
+    // verdict; when Pappy had already judged a pass before the stop, that
+    // verdict describes work that was then abandoned. Neither a positive nor a
+    // negative example, whichever verdict is requested.
+    if (run.stoppedBecause === 'cancelled' || run.stoppedBecause === 'interrupted') {
+      const key = `stopped_before_completion:${run.stoppedBecause}`;
+      skipReasons[key] = (skipReasons[key] ?? 0) + 1;
+      skipped++;
+      continue;
+    }
+
     // 1. Verdict filter
     if (run.verdict !== targetVerdict) {
       skipReasons['wrong_verdict'] = (skipReasons['wrong_verdict'] ?? 0) + 1;
