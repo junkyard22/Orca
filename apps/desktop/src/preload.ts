@@ -183,7 +183,8 @@ contextBridge.exposeInMainWorld("orca", {
   // ── Model discovery ──────────────────────────────────────────────────────
   // Fetch available models from a provider using its current (possibly unsaved)
   // connection details. Returns { ok, models?, error? }.
-  fetchModels: (p: { type: string; baseUrl: string; apiKey: string }): Promise<{ ok: boolean; models?: string[]; error?: string }> =>
+  /** `listed: false` means the names are Orca's built-in list (autocomplete only), not the provider's answer; `note` says why. */
+  fetchModels: (p: { type: string; baseUrl: string; apiKey: string }): Promise<{ ok: boolean; models?: string[]; listed?: boolean; note?: string; error?: string }> =>
     ipcRenderer.invoke("models:fetch", p),
 
   // ── Session history ──────────────────────────────────────────────────────

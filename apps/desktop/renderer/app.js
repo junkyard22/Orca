@@ -2073,9 +2073,16 @@ function renderProviders() {
       const result = await orca.fetchModels({ type: prov.type, baseUrl: prov.baseUrl, apiKey: prov.apiKey });
       this.disabled = false;
       this.textContent = "Fetch models";
-      if (result.ok && result.models?.length) {
+      if (result.ok && result.models?.length && result.listed === false) {
+        // Built-in names for autocomplete only: the provider did not answer,
+        // so neither the key nor the models' availability is confirmed.
         fetchedModels.set(prov.id, result.models);
-        statusEl.textContent = `${result.models.length} model(s) loaded — type in a role field to autocomplete.`;
+        statusEl.textContent = `Provider did not confirm its model list (${result.note ?? "no answer"}). Showing ${result.models.length} built-in name(s) for autocomplete only — availability and the API key are unverified.`;
+        statusEl.style.color = "var(--warn, #e0a640)";
+        updateModelDataLists();
+      } else if (result.ok && result.models?.length) {
+        fetchedModels.set(prov.id, result.models);
+        statusEl.textContent = `${result.models.length} model(s) listed by the provider — type in a role field to autocomplete.`;
         statusEl.style.color = "var(--accent)";
         updateModelDataLists();
       } else {
