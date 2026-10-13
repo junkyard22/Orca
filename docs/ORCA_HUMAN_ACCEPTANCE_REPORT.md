@@ -32,12 +32,12 @@ Tests: `workspaceVerification.test.ts` "identifier presence is not a claim" (4 c
 
 | # | File | Human decision | Status after this phase |
 |---|---|---|---|
-| E1 | `pappy-core/src/pappy.ts` | Require changes / evidence (2026-10-13) | **Changes made (`1b2b990`): FAIL exports scored 0 with `outcome: honest_failure`; path demonstrated end to end. Awaiting the human's final confirmation.** |
+| E1 | `pappy-core/src/pappy.ts` | Require changes / evidence (2026-10-13) → **APPROVED (2026-10-13, production integration brief)**: honest-failure export with a distinct negative outcome, no positive-success contamination | closed (`1b2b990`) |
 | E2 | `checks/workspaceVerification.ts` | **Approved** | closed |
-| E3 | `checks/evidenceTerms.ts` (and the presence path in `pappy.ts`) | Require changes (2026-10-13) | **Changes made in two rounds (`4a951f1`, `5f137c6`); evidence in §2. Awaiting the human's reconsideration.** |
+| E3 | `checks/evidenceTerms.ts` (and the presence path in `pappy.ts`) | Require changes (2026-10-13) → **APPROVED (2026-10-13, production integration brief)**: substantive documentation claims cannot be verified by identifier presence or lexical matching alone; human review when semantic evidence is unavailable is the intended, conservative outcome | closed (`4a951f1`, `5f137c6`) |
 | E4 | `checks/completeness.ts` | **Approved** | closed |
 | E5 | `checks/claimProof.ts` | **Approved** | closed |
-| E6 | `apps/runner/src/index.ts` | **Approved for Rule 5 only** | closed as a Rule 5 exception; the runner's missing workspace guard is tracked in §10 and is not covered by the approval |
+| E6 | `apps/runner/src/index.ts` | **Approved for Rule 5 only** (reconfirmed 2026-10-13) | closed as a Rule 5 exception. The runner's missing workspace guard is an **accepted limitation** on three conditions recorded by the human: (1) the desktop does not delegate write-capable execution to the CLI path — verified: no desktop source references the runner; (2) the CLI is not distributed or supported as an executable — it is `private` and absent from the desktop package; (3) the gap remains a blocker before any future CLI distribution |
 
 Ten false positives (a test file, nine fixtures) remain visible in every checker run; the checker is unchanged: REVIEW REQUIRED, 15 × Rule 4 + 1 × Rule 5, 0 BLOCKED.
 
@@ -86,7 +86,7 @@ No fixture label was changed to improve a score; both relabels follow a human de
 
 | Item | Classification |
 |---|---|
-| Human confirmation of E1 and reconsideration of E3 | decision pending |
+| E1 and E3 | **approved** by the human on 2026-10-13 (production integration brief); all six exceptions dispositioned, none self-approved |
 | Check A (fixed card appearance) and the cancelled-panel re-check | PENDING witness (optional: both fixes are covered by the renderer syntax check and the desktop suite, not by a human eye yet) |
 | Runner CLI without a workspace guard (E6 follow-up) | ACCEPTED LIMITATION — AWAITING HUMAN APPROVAL for the dev-only CLI; RELEASE BLOCKER if the CLI is distributed |
 | Pappy cannot judge substantive documentation wording; such tasks need a human reader or an identifier-only requirement | ACCEPTED LIMITATION (by decision E3) |
@@ -98,7 +98,7 @@ No fixture label was changed to improve a score; both relabels follow a human de
 
 ## 8. Integration assessment (Task 5)
 
-- **Source merge into `main`: CONDITIONAL GO.** Every deterministic safety check passes, the human desktop acceptance is complete except one optional re-inspection, and no verification, authorization, cancellation, workspace-safety or budget defect is open. It becomes **GO** when the human confirms E1 and approves E3; nothing else blocks the merge request. GO is a request for human merge authorization, not a merge.
+- **Source merge into `main`: GO.** Every deterministic safety check passes, the human desktop acceptance is complete except one optional re-inspection, no verification, authorization, cancellation, workspace-safety or budget defect is open, and all six contract exceptions were dispositioned by the human (E1 and E3 approved on 2026-10-13). The merge itself is authorized and recorded in `docs/ORCA_PRODUCTION_INTEGRATION_REPORT.md`.
 - **Supervised real-provider rehearsal:** ready to be authorized separately (plan unchanged); not run.
 - **Packaging and distribution:** not ready — requires the rehearsal, a packaged build with the checklist run on it, and a decision on the runner CLI.
 
