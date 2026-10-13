@@ -84,3 +84,13 @@ Contract decision E3 (human reviewer): a 60 % lexical match is candidate evidenc
 | false rejections (should-accept) | 0/11 | 0/11 |
 
 The original 23-fixture corpus is unchanged: 23/23 · 12/23 · 15/23.
+
+## Final acceptance — E3 second round (2026-10-13)
+
+| Fixture | Before | After | Why |
+|---|---|---|---|
+| `docs-anchored-genuine` | PASS / verified / accepted_but_not_trainable | WARN / unverified / needs_human_review | relabelled: the identifier's presence had proved a substantive claim about it; the reviewer's adversarial case showed presence is not a claim (registry entry in `evidence.test.ts`) |
+| `docs-anchored-opposite-claim` (new, fabricated) | — | WARN / unverified / needs_human_review | the document names `overlaps` and states the opposite behaviour; the old rule verified it |
+| `docs-mention-only-genuine` (new, genuine) | — | PASS / verified / accepted_but_not_trainable | the requirement asks only that the identifier appear |
+
+Results: 49/49 fully matched · 0/33 false acceptances · 0/11 false rejections. Original corpus unchanged: 23/23 · 12/23 · 15/23.

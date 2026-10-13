@@ -142,3 +142,24 @@ Nothing here automates a VERIFIED outcome; the way to a verified documentation t
 ## Training path for honest failures (phase 6.6, contract decision E1)
 
 Demonstrated end to end (`packages/orca-core/src/export/trainingPath.test.ts`, through the production Pappy port and the real export): an honestly reported failure that the evidence contradicts is verdict FAIL, evidence `contradicted`, eligibility `eligible` (the honesty rule). Every `contradicted` downgrade in `workspaceVerification.ts` travels with a HIGH or CRITICAL issue, so a contradicted run can never be PASS. The export's default is the positive set (`verdict: 'PASS'`), from which the run is excluded by its verdict before any tag is read; a FAIL export is an explicit request, and its records are now labelled as negative examples — `score: 0` (previously the WARN score 7 by fallthrough) and `metadata.outcome: "honest_failure"` — with no PASS-tagged Brain record beside them.
+
+## Identifier presence is not a claim (final acceptance, E3 second round, 2026-10-13)
+
+The reviewer's adversarial case — "Document that `budgetedAdapter` refuses unpriced models under a hard budget" against a document saying it *permits* them — was PROVED / PASS / verified through the symbol-presence path (the identifier appeared in a file the runtime saw change), as were a missing behaviour, a wrong number, a misleading negation and an unrelated description. Training was protected only because documentation tasks carry no test evidence.
+
+Rule (`requireSubstantiveEvidence`, `pappy.ts`): a receipt proved only by an identifier's presence satisfies the criterion when the criterion asks for nothing but the mention ("docs/x.md must mention `foo`" — after removing identifiers and mention-words, no distinctive term remains). When the criterion makes a substantive claim about the identifier, presence is candidate evidence: PARTIAL with `candidate: "lexical"`, `RECEIPT_LEXICAL_CANDIDATE` (MEDIUM), WARN / `unverified` / `needs_human_review`, with the explanation "presence of `foo` cannot show that what is said about it (…) is present and correct". A host-recorded run on the final source that covers the criterion verifies the *behaviour*; the receipt stays a candidate and its note says the wording still needs a reader. Code-behaviour criteria of code-change tasks are governed by the behavioural rule and are untouched.
+
+Outcomes (all through the real Pappy and, for the opposite claim, the real export):
+
+| Document | Criterion | Verdict | Evidence | Eligibility | Positive export |
+|---|---|---|---|---|---|
+| opposite claim ("permits") | PARTIAL, candidate | WARN | unverified | needs_human_review | excluded (also from a WARN export) |
+| missing behaviour | PARTIAL, candidate | WARN | unverified | needs_human_review | excluded |
+| wrong number ($5.00 for $0.50) | PARTIAL, candidate | WARN | unverified | needs_human_review | excluded |
+| misleading negation ("does not refuse") | PARTIAL, candidate | WARN | unverified | needs_human_review | excluded |
+| unrelated description | PARTIAL, candidate | WARN | unverified | needs_human_review | excluded |
+| genuinely correct wording | PARTIAL, candidate | WARN | unverified | needs_human_review | excluded — no keyword rule can tell it from the others; a human reading or an identifier-only requirement is the way to verified |
+| mention-only requirement, identifier present | PROVED | PASS | verified | accepted_but_not_trainable | excluded (not trainable: no test evidence) |
+| bug fix proved by a full suite on the final source | PROVED | PASS | verified | eligible | unchanged |
+
+Residual ambiguity, stated: Pappy cannot tell a correct substantive documentation statement from an incorrect one; it now says so instead of guessing. Tests: `workspaceVerification.test.ts` "identifier presence is not a claim" (4), `trainingPath.test.ts` (adversarial export), corpus `docs-anchored-genuine` (relabelled), `docs-anchored-opposite-claim`, `docs-mention-only-genuine`.
