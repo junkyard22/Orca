@@ -151,3 +151,19 @@ describe("lifecycle residues", () => {
     expect(Date.now() - started).toBeLessThan(100);
   });
 });
+
+describe("recovery announces surviving protections (phase 6.6)", () => {
+  it("a protection kept at restart emits 'protected' so the host re-verifies it; one released by verification emits 'released'", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orca-guard-announce-"));
+    const file = join(dir, "protection.json");
+    const first = createWorkspaceGuard({ filePath: file, probe: () => "alive" });
+    first.protect("/alive", { taskId: "A", reason: "was interrupted", resources: [proc(7)] });
+    first.protect("/gone", { taskId: "B", reason: "was interrupted", resources: [proc(8)] });
+    const second = createWorkspaceGuard({ filePath: file, probe: (r) => (r.pid === 7 ? "alive" : "gone") });
+    const events: string[] = [];
+    second.subscribe((e) => events.push(e.type === "protected" ? `protected ${e.protection.taskId}` : `released ${e.release.taskId} by ${e.release.by}`));
+    const recovered = await second.recover();
+    expect(recovered.kept.map((p) => p.taskId)).toEqual(["A"]);
+    expect(events.sort()).toEqual(["protected A", "released B by verification"]);
+  });
+});

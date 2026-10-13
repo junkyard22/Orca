@@ -4,7 +4,7 @@
  *
  *   node scripts/desktop-validation/stage-override.mjs --profile <dir>
  *
- * Starts one harmless sleeper process (node, 20 minutes, touches nothing)
+ * Starts one harmless sleeper process (node, --minutes, default 180; touches nothing)
  * and records it in the profile's workspace-protection.json as a process
  * a previous task could not confirm stopped. On the next launch of the app
  * with that profile, the protection banner appears and the presenter can
@@ -22,13 +22,15 @@ import { pathToFileURL } from "node:url";
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 const profile = resolve(opt("--profile", ""));
+// How long the harmless sleeper lives; long enough for an unhurried inspection.
+const minutes = Number(opt("--minutes", "180"));
 if (!profile) { console.error("usage: stage-override.mjs --profile <dir>"); process.exit(2); }
 const userData = join(profile, "userData");
 const workspace = join(profile, "workspace");
 mkdirSync(userData, { recursive: true }); mkdirSync(workspace, { recursive: true });
 
 const wb = await import(pathToFileURL(resolve("packages/workbench-core/dist/index.js")).href);
-const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 20 * 60 * 1000)"], { detached: true, stdio: "ignore", windowsHide: true });
+const sleeper = spawn(process.execPath, ["-e", `setTimeout(() => {}, ${minutes} * 60 * 1000)`], { detached: true, stdio: "ignore", windowsHide: true });
 sleeper.unref();
 const identity = await wb.captureProcessIdentity(sleeper.pid);
 

@@ -338,6 +338,9 @@ export function createWorkspaceGuard(options: WorkspaceGuardOptions = {}): Works
       }
     }
     persist();
+    // A protection that survived the restart is announced like a new one, so a
+    // host that re-verifies protected roots (and shows them) treats it the same.
+    for (const p of kept) emit({ type: "protected", protection: p });
     return { kept, released };
   };
 
