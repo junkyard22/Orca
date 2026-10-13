@@ -66,3 +66,21 @@ Deliberate relabel, recorded in `RELABELLED`: the phase 3 `feature-genuine` inpu
 | `pappy-plus-hardening` | 14/23 (FR 57.1 %) | 15/23 (FR 42.9 %) |
 
 Cheat catch rate 100 % and false-accept rate 0 % on all three before and after. The fixture that moved is `accepted_but_not_trainable-002` (an S3 upload helper with a hardcoded credential): it was a false rejection from the keyword heuristics and now reaches its expected accept / not-trainable outcome.
+
+## Phase 6.6 — relabel by human decision (2026-10-13)
+
+Contract decision E3 (human reviewer): a 60 % lexical match is candidate evidence, not proof of substantive document compliance. Pappy's named-file receipt now proves a criterion from a changed file's content only when the requirement names an identifier that the content carries; a prose requirement matched by its words alone is `PARTIAL` with `candidate: "lexical"`, raises `RECEIPT_LEXICAL_CANDIDATE` (MEDIUM, "needs human review") and never makes the run verified or trainable.
+
+| Fixture | Before | After | Why |
+|---|---|---|---|
+| `docs-genuine` | PASS / verified / accepted_but_not_trainable | WARN / unverified / needs_human_review | relabelled: the standard changed, not the fixture (registry entry in `evidence.test.ts`) |
+| `docs-adversarial-matching-terms` (new, fabricated) | — | WARN / unverified / needs_human_review | the document uses every word of the requirement and states the opposite rule; the old rule verified it |
+| `docs-anchored-genuine` (new, genuine) | — | PASS / verified / accepted_but_not_trainable | the requirement names `overlaps` and the final content carries it: a checkable receipt |
+
+| Metric | Phase 2.5 (45) | Phase 6.6 (47) |
+|---|---|---|
+| fully matched | 45/45 | 47/47 |
+| false acceptances (should-reject) | 0/33 | 0/33 |
+| false rejections (should-accept) | 0/11 | 0/11 |
+
+The original 23-fixture corpus is unchanged: 23/23 · 12/23 · 15/23.

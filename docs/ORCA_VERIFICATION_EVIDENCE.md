@@ -129,3 +129,16 @@ Baseline inventory: one `git ls-files` (or walk) plus a hash of every file ≤ 2
 - A criterion the ledger cannot anchor (no symbol, no named file, not about the output) is still `MISSING` — a pre-existing limitation, now visible as such.
 - Non-test commands carry no host source-state fingerprint; their placement relies on the ordered tool trace.
 - The eval corpus (`packages/pappy-eval`) supplies no workspace evidence, so its verdict metrics are unchanged while its training-eligibility expectations for evidence-less runs no longer match (closed loophole, reported, not redefined).
+
+## Candidate evidence (phase 6.6, contract decision E3)
+
+Lexical matching of a named file's final content is **candidate evidence**, not proof, for requirements that need semantic judgment. The ledger keeps two paths apart:
+
+- **Identifier-anchored requirement** ("docs/booking.md must document `overlaps` …"): the changed file's final content must carry every identifier named — a checkable receipt; `PROVED`, strength independent.
+- **Prose requirement** ("docs/booking.md must document the back-to-back booking rule"): word overlap (`textCoversRequirement`, ≥ 60 % of the distinctive words) only shows the document is *about* the requirement. The receipt is `PARTIAL` with `candidate: "lexical"`, the issue is `RECEIPT_LEXICAL_CANDIDATE` (MEDIUM, "needs human review"), the verdict is WARN unless something else fails, the verification status is `unverified`, and training eligibility is `needs_human_review`. A document that uses the requirement's words and says the opposite reaches exactly the same state — never `verified`.
+
+Nothing here automates a VERIFIED outcome; the way to a verified documentation task is an identifier-anchored requirement, a documented validation command, or a human reading. Tests: `workspaceVerification.test.ts` ("documentation is verified against the final content on disk …", adversarial and anchored cases), corpus fixtures `docs-genuine` (relabelled), `docs-adversarial-matching-terms`, `docs-anchored-genuine`.
+
+## Training path for honest failures (phase 6.6, contract decision E1)
+
+Demonstrated end to end (`packages/orca-core/src/export/trainingPath.test.ts`, through the production Pappy port and the real export): an honestly reported failure that the evidence contradicts is verdict FAIL, evidence `contradicted`, eligibility `eligible` (the honesty rule). Every `contradicted` downgrade in `workspaceVerification.ts` travels with a HIGH or CRITICAL issue, so a contradicted run can never be PASS. The export's default is the positive set (`verdict: 'PASS'`), from which the run is excluded by its verdict before any tag is read; a FAIL export is an explicit request, and its records are now labelled as negative examples — `score: 0` (previously the WARN score 7 by fallthrough) and `metadata.outcome: "honest_failure"` — with no PASS-tagged Brain record beside them.
