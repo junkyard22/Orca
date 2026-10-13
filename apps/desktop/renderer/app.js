@@ -560,18 +560,24 @@ function buildPipelineSummaryFromEvents(result) {
     : 0;
   const repairPasses = pipelineEventLog.filter((e) => e.type === "repair:start" && e.taskId === taskId).length;
 
+  // A task the user stopped (or that was interrupted) was never judged by
+  // Pappy: it has no verdict, and "FAIL" would say it was judged and failed.
+  // The outcome is the lifecycle state, and "Stopped." is not an error.
+  const endedState = latestTaskState && latestTaskState.taskId === taskId ? latestTaskState.state : null;
+  const stopped = endedState === "CANCELLED" || endedState === "INTERRUPTED" || endedState === "CANCELLING"
+    || result?.cancelling === true || result?.error === "Stopped.";
   return {
     type: "pipeline:summary",
     taskId: taskId,
     role: currentRole?.role ?? "unknown",
-    verdict: result?.ok ? "PASS" : "FAIL",
+    verdict: stopped ? (endedState === "INTERRUPTED" ? "INTERRUPTED" : "CANCELLED") : (result?.ok ? "PASS" : "FAIL"),
     confidence: undefined,
     issueCount: 0,
     issues: [],
     acceptanceCriteria: [],
     durationMs,
     repairPasses,
-    errorMessage: result?.ok === false ? result.error : undefined,
+    errorMessage: result?.ok === false && !stopped ? result.error : undefined,
   };
 }
 
@@ -937,7 +943,8 @@ function appendPipelineBadge(summary) {
     ? window.PipelineTrace.badgeRoleLabel(summary)
     : String(summary.role ?? "unknown");
 
-  const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : "fail";
+  const stoppedOutcome = summary.verdict === "CANCELLED" || summary.verdict === "INTERRUPTED";
+  const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : stoppedOutcome ? "stopped" : "fail";
   // Pappy's confidence is a heuristic issue-count score, not a calibrated
   // probability. Label it as such, and show nothing when Pappy did not run.
   const heuristicScore = typeof summary.confidence === "number" ? `${Math.round(summary.confidence * 100)}%` : null;
@@ -966,7 +973,7 @@ function appendPipelineBadge(summary) {
   // ── Outcome summary ─────────────────────────────────────────────────────
   const outcomeRows = [
     ["Role", displayRole],
-    ["Verdict", summary.verdict ?? "unknown"],
+    ["Verdict", stoppedOutcome ? `none — task ${summary.verdict.toLowerCase()} before Pappy judged it` : (summary.verdict ?? "unknown")],
     ...(heuristicScore ? [["Heuristic score", `${heuristicScore} (issue-count heuristic, not calibrated)`]] : []),
     ["Issues", String(summary.issueCount ?? 0)],
     ["Duration", `${durationSec}s`],

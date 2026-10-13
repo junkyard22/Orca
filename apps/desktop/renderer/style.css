@@ -2458,3 +2458,7 @@ body.hide-pipeline .live-trace-panel .ltp-role { display: none; }
 }
 .btn-stop-task:hover { border-color: var(--danger); color: var(--danger); }
 .btn-deny:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
+
+/* A stopped task has no verdict: neutral, not red. */
+.pb-verdict.stopped { color: var(--text-muted); }
+.pb-verdict.stopped::before { background: var(--text-muted); }
