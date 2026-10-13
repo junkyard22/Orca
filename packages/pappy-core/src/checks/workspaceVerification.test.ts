@@ -573,14 +573,21 @@ describe("phase 2.5: behavioural verification, criterion assessments and evidenc
     expect(adversarial.trainingEligibility).not.toBe("eligible");
     expect(codes(adversarial)).toContain("RECEIPT_LEXICAL_CANDIDATE");
 
-    // Anchored on an identifier, the named file's content can be checked for
-    // that identifier: that path stays proof.
+    // Anchored on an identifier but substantive ("for back-to-back bookings"):
+    // the identifier's presence is candidate evidence too (final acceptance,
+    // E3 second round) — the words beside it may say the opposite.
     const anchored = evaluateWithPappy(input({ task: "Update docs/booking.md to document how `overlaps` treats back-to-back bookings.", goals: ["docs/booking.md must document `overlaps` for back-to-back bookings"], outputText: "Documented overlaps in docs/booking.md.",
       workspace: ws([{ path: "docs/booking.md", status: "modified", kind: "docs", before: "# Booking rules\n", after: "# Booking rules\n\n## overlaps\n`overlaps(a, b)` returns false for back-to-back bookings: a meeting may start exactly when the previous one ends.\n" }]) }));
-    expect(anchored.verdict).toBe("PASS");
-    expect(anchored.verification?.status).toBe("verified");
-    expect(anchored.receipt_ledger[0]).toMatchObject({ status: "PROVED", strength: "independent" });
-    expect(anchored.receipt_ledger[0]!.candidate).toBeUndefined();
+    expect(anchored.verdict).toBe("WARN");
+    expect(anchored.verification?.status).toBe("unverified");
+    expect(anchored.receipt_ledger[0]).toMatchObject({ status: "PARTIAL", candidate: "lexical" });
+
+    // Mention-only: the requirement asks for nothing but the identifier's presence, and presence proves it.
+    const mention = evaluateWithPappy(input({ task: "Update docs/booking.md to mention `overlaps`.", goals: ["docs/booking.md must mention `overlaps`"], outputText: "Mentioned overlaps in docs/booking.md.",
+      workspace: ws([{ path: "docs/booking.md", status: "modified", kind: "docs", before: "# Booking rules\n", after: "# Booking rules\n\nSee `overlaps`.\n" }]) }));
+    expect(mention.verdict).toBe("PASS");
+    expect(mention.verification?.status).toBe("verified");
+    expect(mention.receipt_ledger[0]).toMatchObject({ status: "PROVED", strength: "independent" });
 
     // The file changed — renamed heading, new unrelated section — and the account
     // says the rule was documented, but the final content does not contain it.
@@ -744,5 +751,54 @@ describe("contested writes (phase 6)", () => {
     const attributed = verifiedScenario();
     attributed.workspace = { ...attributed.workspace!, changes: [{ ...srcFixed, writers: ["engineer"] }] };
     expect(evaluateWithPappy(attributed).verification?.status).toBe("verified");
+  });
+});
+
+describe("identifier presence is not a claim (final acceptance, E3)", () => {
+  const TASK = "Update docs/budget.md to document that `budgetedAdapter` refuses unpriced models under a hard budget.";
+  const GOAL = "Document that `budgetedAdapter` refuses unpriced models under a hard budget.";
+  const doc = (after: string) => ws([{ path: "docs/budget.md", status: "modified", kind: "docs", before: "# Budget\n", after }]);
+  const run = (goal: string, after: string, task = TASK) => evaluateWithPappy(input({ task, goals: [goal], outputText: "Documented budgetedAdapter in docs/budget.md.", filesChanged: [{ path: "docs/budget.md", changeType: "M", diff: after }], workspace: doc(after) }));
+  const candidate = (r: ReturnType<typeof evaluateWithPappy>, label: string) => {
+    expect(r.receipt_ledger[0], label).toMatchObject({ status: "PARTIAL", candidate: "lexical" });
+    expect(r.verification?.status, label).toBe("unverified");
+    expect(r.verdict, label).toBe("WARN");
+    expect(r.trainingEligibility, label).toBe("needs_human_review");
+    expect(codes(r), label).toContain("RECEIPT_LEXICAL_CANDIDATE");
+    expect(r.receipt_ledger[0]!.assessment?.needed, label).toMatch(/human review of the document's statement about budgetedadapter/i);
+  };
+
+  it("a substantive claim about an identifier is never proved by the identifier's presence — opposite, missing, wrong number, negation, unrelated, and even correct wording are candidate evidence for a human", () => {
+    candidate(run(GOAL, "# Budget\n\n`budgetedAdapter` permits unpriced models under a hard budget.\n"), "opposite claim");
+    candidate(run(GOAL, "# Budget\n\n`budgetedAdapter` wraps every provider adapter and records usage.\n"), "missing behaviour");
+    candidate(run("Document that `budgetedAdapter` reserves at most $0.50 per request under a hard budget.", "# Budget\n\n`budgetedAdapter` reserves at most $5.00 per request under a hard budget.\n"), "wrong number");
+    candidate(run(GOAL, "# Budget\n\n`budgetedAdapter` does not refuse unpriced models under a hard budget; it logs them.\n"), "misleading negation");
+    candidate(run(GOAL, "# Budget\n\n`budgetedAdapter` is exported from miranda-core and takes a provider and a default model.\n"), "unrelated description");
+    candidate(run(GOAL, "# Budget\n\n`budgetedAdapter` refuses unpriced models under a hard budget: the request is rejected before dispatch with a pricing reason.\n"), "genuinely correct (no keyword rule can tell it from the others)");
+  });
+
+  it("a requirement that only asks for the identifier to be mentioned is proved by its presence", () => {
+    const r = run("docs/budget.md must mention `budgetedAdapter`.", "# Budget\n\nSee `budgetedAdapter`.\n", "Update docs/budget.md to mention `budgetedAdapter`.");
+    expect(r.receipt_ledger[0]).toMatchObject({ status: "PROVED", strength: "independent" });
+    expect(r.verdict).toBe("PASS");
+    expect(r.verification?.status).toBe("verified");
+    expect(r.trainingEligibility).toBe("accepted_but_not_trainable");
+  });
+
+  it("a host-recorded run on the final source that covers the criterion verifies the behaviour, not the document's wording: still a candidate, and the note says which part is verified", () => {
+    const after = "# Budget\n\n`budgetedAdapter` permits unpriced models under a hard budget.\n";
+    const r = evaluateWithPappy(input({ task: TASK, goals: [GOAL], outputText: "Documented budgetedAdapter in docs/budget.md and ran the budget tests.",
+      toolEvents: [cmd("npm test", "fixed_npmtest.out")],
+      workspace: ws([{ path: "docs/budget.md", status: "modified", kind: "docs", before: "# Budget\n", after }], [hostRun("npm test", "fixed_npmtest.out", "final")]) }));
+    expect(r.receipt_ledger[0]).toMatchObject({ status: "PARTIAL", candidate: "lexical" });
+    expect(r.verification?.status).toBe("unverified");
+    expect(r.receipt_ledger[0]!.assessment?.needed).toMatch(/behaviour is host-verified; the wording is not/);
+  });
+
+  it("code-behaviour criteria of code-change tasks are untouched: a bug fix proved by a passing full suite on the final source stays verified", () => {
+    const r = evaluateWithPappy(SCENARIOS["A. reproduce 7/8, correct fix, full suite 8/8"]!);
+    expect(r.verdict).toBe("PASS");
+    expect(r.verification?.status).toBe("verified");
+    expect(r.receipt_ledger[0]).toMatchObject({ status: "PROVED" });
   });
 });

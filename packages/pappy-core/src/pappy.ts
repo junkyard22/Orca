@@ -39,7 +39,7 @@ import { runClaimProofChecks } from "./checks/claimProof.js";
 import { runBrainChecks }      from "./checks/brain.js";
 import { runIntegrityChecks }  from "./checks/integrity.js";
 import { extractCriterionSymbols, findCriterionSymbols } from "./checks/criterionSymbols.js";
-import { textCoversRequirement } from "./checks/evidenceTerms.js";
+import { distinctiveTerms, textCoversRequirement } from "./checks/evidenceTerms.js";
 import { buildRepairTask, repairTaskToString } from "./repair.js";
 
 type OrcaProfileEvent = Record<string, unknown>;
@@ -193,6 +193,8 @@ interface CriterionReceipt {
   strength: EvidenceStrength;
   /** Lexical match only (no identifier anchors the requirement): candidate evidence, never proof. */
   candidate?: "lexical";
+  /** Proved by the presence of the criterion's identifier(s) in evidence, not by anything about what is said of them. */
+  presenceOnly?: true;
   /**
    * True when the criterion is about code behaviour (a symbol, an
    * implementation, tests, a parameter) rather than about the response text or
@@ -533,6 +535,7 @@ function verifyAcceptanceCriterion(
       if (onDisk.length > 0) {
         return {
           proved: true,
+          presenceOnly: true,
           evidence: [`criterion symbol(s) ${named} present in files the runtime saw change`],
           strength: "independent",
           behavioural: true,
@@ -550,6 +553,7 @@ function verifyAcceptanceCriterion(
       if (!independent.available && inHostOutput.length > 0) {
         return {
           proved: true,
+          presenceOnly: true,
           evidence: [`criterion symbol(s) ${named} present in host-recorded command output`],
           strength: "corroborated",
           behavioural: true,
@@ -558,6 +562,7 @@ function verifyAcceptanceCriterion(
       if (legacyCorroborated) {
         return {
           proved: true,
+          presenceOnly: true,
           evidence: [
             `criterion symbol(s) ${named} present in ${inCode.length > 0 ? "changed code" : "the run account"}`,
             ...(hasFiles ? [`filesChanged: ${input.filesChanged!.length} file(s)`] : []),
@@ -610,6 +615,7 @@ function verifyAcceptanceCriterion(
         if (anchored) {
           return {
             proved: true,
+            presenceOnly: true,
             evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")}; final content contains ${matched.slice(0, 5).join(", ")}`],
             strength: "independent",
             assessment: {
@@ -723,6 +729,74 @@ function requireBehaviouralEvidence(
 }
 
 /**
+ * Words that describe the act of mentioning rather than a claim about the
+ * identifier: a requirement left with none of its distinctive words once the
+ * identifiers and these are removed asks only that the identifier appear.
+ */
+const MENTION_WORDS = new Set([
+  "mention", "mentions", "mentioned", "mentioning", "reference", "references", "referenced", "referencing",
+  "include", "includes", "included", "including", "contain", "contains", "contained", "containing",
+  "list", "lists", "listed", "listing", "name", "names", "named", "naming", "show", "shows", "shown", "showing",
+  "appear", "appears", "appeared", "present", "exist", "exists", "export", "exports", "exported", "define", "defines", "defined",
+  "document", "documents", "documented", "documenting", "describe", "describes", "described", "describing",
+  "cover", "covers", "covered", "explain", "explains", "explained", "note", "notes", "noted", "docs", "documentation", "readme",
+  "section", "page", "file", "files", "heading", "paragraph", "sentence", "line", "lines",
+]);
+
+/**
+ * Presence is not a claim. A criterion anchored on an identifier is proved by
+ * that identifier's presence only when it asks for nothing more than the
+ * mention ("docs/x.md must mention `foo`"). When it makes a substantive
+ * claim about the identifier ("document that `foo` refuses unpriced
+ * models"), the identifier appearing in a changed file — beside words that
+ * may say the opposite — cannot show the claim holds. No keyword rule
+ * understands the sentence; so the receipt becomes candidate evidence for a
+ * human, with the explanation of what presence could and could not show. A
+ * host-recorded run on the final source that covers the criterion proves the
+ * *behaviour*; it still cannot vouch for what a document says, so the
+ * candidate note says the behaviour is verified and only the wording needs
+ * a reader. Code-behaviour criteria in code-change tasks are not routed here:
+ * they already need a behavioural receipt (requireBehaviouralEvidence).
+ */
+function requireSubstantiveEvidence(
+  ac: AcceptanceCriterion,
+  receipt: CriterionReceipt,
+  context: LedgerContext,
+): CriterionReceipt {
+  if (!receipt.proved || !receipt.presenceOnly) return receipt;
+  const symbols = extractCriterionSymbols(ac.text).map((s) => s.toLowerCase());
+  const substantive = distinctiveTerms(ac.text).filter((t) => !symbols.includes(t.toLowerCase()) && !MENTION_WORDS.has(t.toLowerCase()));
+  if (substantive.length === 0) return receipt; // mention-only: presence is exactly what was asked
+  const named = symbols.join(", ");
+  const supporter = supportingReceipt(ac, context.receipts);
+  const behaviourVerified = supporter !== undefined && supporter.sourceState === "final";
+  return {
+    proved: false,
+    partial: true,
+    candidate: "lexical",
+    evidence: [
+      ...receipt.evidence,
+      behaviourVerified
+        ? `the behaviour is host-verified (${supporter!.summary}), but whether the document states it correctly needs a reader`
+        : `presence of ${named} cannot show that what is said about it (${substantive.slice(0, 6).join(", ")}) is present and correct — candidate evidence, not proof`,
+    ],
+    strength: receipt.strength,
+    behavioural: receipt.behavioural,
+    assessment: {
+      requires: ac.text,
+      satisfiedBy: behaviourVerified
+        ? `a human reading confirming the document states the host-verified behaviour of ${named}`
+        : `a human reading confirming the document says what the criterion asks about ${named}, or a host-recorded run on the final source that shows it`,
+      supportedBy: [...receipt.evidence, ...(behaviourVerified ? [supporter!.summary] : [])],
+      sufficient: false,
+      needed: behaviourVerified
+        ? `human review of the document's statement about ${named} (its behaviour is host-verified; the wording is not)`
+        : `human review of the document's statement about ${named}, or a host-recorded run on the final source that shows ${substantive.slice(0, 4).join(", ")}`,
+    },
+  };
+}
+
+/**
  * A criterion proved by the final content of a named file that two workers
  * wrote in the same pass rests on evidence nobody can attribute: unless a
  * host-recorded run on the final source speaks for the task, the receipt
@@ -782,6 +856,8 @@ function buildCriteriaLedger(
     if (independent.available && receipt.behavioural && CODE_CHANGE_KINDS.has(context.taskKind)) {
       receipt = requireBehaviouralEvidence(ac, receipt, context);
     }
+    // Code-behaviour criteria of code-change tasks are governed by the behavioural rule above.
+    if (independent.available && !(receipt.behavioural && CODE_CHANGE_KINDS.has(context.taskKind))) receipt = requireSubstantiveEvidence(ac, receipt, context);
     receipt = requireAttributableEvidence(ac, receipt, input, context);
     const { proved, partial, evidence, strength, assessment, candidate } = receipt;
     let status: ReceiptEntry["status"] = proved ? "PROVED" : partial ? "PARTIAL" : "MISSING";
@@ -851,7 +927,7 @@ function buildMissingReceiptIssues(
       severity: "MEDIUM" as const,
       code: "RECEIPT_LEXICAL_CANDIDATE",
       category: "Proof" as const,
-      description: `Not verified (candidate evidence only): ${entry.ref} — the named file changed and its final content uses the requirement's words, which does not show it says what was asked; needs human review — ${entry.required_receipt.details}`,
+      description: `Not verified (candidate evidence only): ${entry.ref} — ${entry.evidence[entry.evidence.length - 1] ?? "the evidence names the requirement's terms, which does not show it says what was asked"}; needs human review — ${entry.required_receipt.details}`,
       expected_receipt: entry.assessment?.satisfiedBy ?? `${entry.required_receipt.type}: ${entry.required_receipt.details}`,
       evidence: `${entry.ref}: status=PARTIAL; candidate=lexical; evidence=${JSON.stringify(entry.evidence)}`,
       fix_hint: entry.assessment?.needed ? `Provide ${entry.assessment.needed}.` : `Have a human confirm the document says what ${entry.ref} asks.`,

@@ -22,6 +22,8 @@ export const KNOWN_GAPS: Record<string, string> = {};
  * verification standard itself changes, and says so here.
  */
 export const RELABELLED: Record<string, string> = {
+  "docs-anchored-genuine":
+    "final acceptance, E3 second round (2026-10-13): was PASS/verified/accepted_but_not_trainable from the identifier's presence. The reviewer's adversarial case (`budgetedAdapter` documented as *permitting* unpriced models) showed presence is not a claim; a substantive requirement about an identifier is now candidate evidence (WARN/unverified/needs_human_review). `docs-mention-only-genuine` keeps the presence-only path that remains proof; `docs-anchored-opposite-claim` is the case the old rule verified.",
   "docs-genuine":
     "phase 6.6, contract decision E3: was PASS/verified/accepted_but_not_trainable. A prose requirement that names no identifier is matched by its words only, and the human reviewer ruled that word overlap is candidate evidence, not proof of substantive compliance. Now WARN/unverified/needs_human_review; `docs-anchored-genuine` shows the identifier-anchored path that remains proof, and `docs-adversarial-matching-terms` the case the old rule would have verified.",
   "feature-insufficient-unexercised":

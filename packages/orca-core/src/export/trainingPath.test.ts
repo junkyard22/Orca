@@ -81,3 +81,32 @@ describe("training path for an honest, contradicted failure", () => {
     expect(claiming.issues.some((i) => i.severity === "HIGH" || i.severity === "CRITICAL")).toBe(true);
   });
 });
+
+describe("training path for an adversarial document (E3)", () => {
+  it("an identifier-anchored documentation claim that the document contradicts is WARN / unverified / needs_human_review through the real port, and the positive export excludes it", async () => {
+    const task = "Update docs/budget.md to document that `budgetedAdapter` refuses unpriced models under a hard budget.";
+    const after = "# Budget\n\n`budgetedAdapter` permits unpriced models under a hard budget.\n";
+    const result = createPappyPort().evaluate({
+      task, goals: ["Document that `budgetedAdapter` refuses unpriced models under a hard budget."],
+      outputText: "Documented budgetedAdapter in docs/budget.md.",
+      filesChanged: [{ path: "docs/budget.md", changeType: "M", diff: after }], toolEvents: [], metadata: { stoppedBecause: "done" }, constraints: {},
+      workspace: { available: true, provenance: "runtime-snapshot", baselineFiles: 3, changes: [{ path: "docs/budget.md", status: "modified", kind: "docs", before: "# Budget\n", after }] },
+    });
+    expect(result.verdict).toBe("WARN");
+    expect(result.verification?.status).toBe("unverified");
+    expect(result.trainingEligibility).toBe("needs_human_review");
+    expect(result.receipt_ledger[0]).toMatchObject({ status: "PARTIAL", candidate: "lexical" });
+    const run = { id: "adv-1", createdAt: "2026-10-13T00:00:00.000Z", intent: task, status: "WARN", verdict: result.verdict, role: "strong_model", outputText: "Documented budgetedAdapter in docs/budget.md.", summary: result.internalSummary, iterations: 1, repairPasses: 0 } as unknown as RunRecord;
+    const dir = mkdtempSync(join(tmpdir(), "orca-training-adv-"));
+    try {
+      const positive = await exportTrainingData(storeWith([run]), { outputPath: join(dir, "pass.jsonl") } as never);
+      expect(positive.exported).toBe(0);
+      // Even an explicit WARN export refuses it: the eligibility tag says needs_human_review.
+      const warn = await exportTrainingData(storeWith([run]), { outputPath: join(dir, "warn.jsonl"), verdict: "WARN" } as never);
+      expect(warn.exported).toBe(0);
+      expect(Object.keys(warn.skipReasons).join(",")).toMatch(/needs_human_review/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

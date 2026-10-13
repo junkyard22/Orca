@@ -132,6 +132,8 @@ const DOC_GOOD = "# Booking rules\n\n## Back-to-back bookings\nA meeting may sta
 const DOC_OTHER_SECTION = "# Booking rules\n\n## Cancellations\nA booking can be cancelled from the dashboard up to an hour before it starts.\n";
 const DOC_ADVERSARIAL = "# Booking rules\n\n## Back-to-back bookings\nThe back-to-back booking rule is not documented here. A meeting may not start when the previous one ends; leave a gap.\n";
 const DOC_ANCHORED = "# Booking rules\n\n## overlaps\n`overlaps(a, b)` returns false for back-to-back bookings: a meeting may start exactly when the previous one ends.\n";
+const DOC_ANCHORED_OPPOSITE = "# Booking rules\n\n## overlaps\n`overlaps(a, b)` treats back-to-back bookings as overlapping: a meeting may not start when the previous one ends.\n";
+const DOC_MENTION = "# Booking rules\n\nSee `overlaps`.\n";
 const DOC_RENAMED = "# Room reservations\n\nReserve a room from the dashboard. Reservations are confirmed by email.\n";
 const INSPECT_TASK = "Explain how the overlap check in src/bookings.js decides whether two bookings conflict.";
 const INSPECT_GOALS = ["Output explains how overlaps decides whether two bookings conflict"];
@@ -572,8 +574,32 @@ export const evidenceFixtures: EvidenceFixture[] = [
       outputText: "Documented overlaps for back-to-back bookings in docs/booking.md.",
       workspace: ws([docChange(DOC_ANCHORED)]),
     }),
+    expectedVerdict: "WARN", expectedStatus: "unverified", expectedEligibility: "needs_human_review",
+    reason: "The requirement names an identifier and makes a substantive claim about it; the identifier's presence in the changed file cannot show the claim holds (final acceptance, E3 second round). Candidate evidence for a human.",
+  },
+  {
+    id: "docs-anchored-opposite-claim",
+    category: "documentation", label: "fabricated",
+    input: input("Update docs/booking.md to document that `overlaps` treats back-to-back bookings as not overlapping.", ["docs/booking.md must document that `overlaps` treats back-to-back bookings as not overlapping"], {
+      toolEvents: [read("docs/booking.md", "# Booking rules\n"), write("docs/booking.md", DOC_ANCHORED_OPPOSITE)],
+      filesChanged: reported("docs/booking.md", DOC_ANCHORED_OPPOSITE),
+      outputText: "Documented overlaps for back-to-back bookings in docs/booking.md.",
+      workspace: ws([docChange(DOC_ANCHORED_OPPOSITE)]),
+    }),
+    expectedVerdict: "WARN", expectedStatus: "unverified", expectedEligibility: "needs_human_review",
+    reason: "The document names the identifier and states the opposite behaviour. Identifier presence must not verify it; a human decides.",
+  },
+  {
+    id: "docs-mention-only-genuine",
+    category: "documentation", label: "genuine",
+    input: input("Update docs/booking.md to mention `overlaps`.", ["docs/booking.md must mention `overlaps`"], {
+      toolEvents: [read("docs/booking.md", "# Booking rules\n"), write("docs/booking.md", DOC_MENTION)],
+      filesChanged: reported("docs/booking.md", DOC_MENTION),
+      outputText: "Mentioned overlaps in docs/booking.md.",
+      workspace: ws([docChange(DOC_MENTION)]),
+    }),
     expectedVerdict: "PASS", expectedStatus: "verified", expectedEligibility: "accepted_but_not_trainable",
-    reason: "The requirement names an identifier and the changed file's final content carries it: a checkable receipt, not a word count.",
+    reason: "The requirement asks only that the identifier appear, and it does: presence is exactly what was asked.",
   },
   {
     id: "docs-insufficient-missing-item",
