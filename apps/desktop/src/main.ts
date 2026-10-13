@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { mkdirSync, readFileSync } from "node:fs";
+import { sendWhenLoaded } from "./initStatus";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -2263,13 +2264,16 @@ function createWindow(): void {
   win.once("ready-to-show", async () => {
     win!.show();
     win!.focus();
+    // init-status must not be sent into the gap before app.js has registered
+    // its listener (ready-to-show is first paint, not script completion); a
+    // message sent then is silently lost and the window stays on "starting…".
     try {
       const settings = await loadSettings();
       const err = await initOrca(settings);
-      win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+      sendWhenLoaded(win?.webContents, "init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      win?.webContents.send("init-status", { ok: false, error: `Startup error: ${msg}`, tools: _bootstrapTools, warnings: _initWarnings });
+      sendWhenLoaded(win?.webContents, "init-status", { ok: false, error: `Startup error: ${msg}`, tools: _bootstrapTools, warnings: _initWarnings });
     }
     emitAuthStatus();
   });
@@ -2641,7 +2645,7 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
     const chosen: OrcaSettings = { ...s, budgetSource: "user" };
     await saveSettings(chosen);
     const err = await initOrca(chosen);
-    win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+    sendWhenLoaded(win?.webContents, "init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
