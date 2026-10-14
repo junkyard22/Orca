@@ -1,0 +1,18 @@
+"use strict";
+
+/**
+ * parse(text) — parse a decimal integer from a string.
+ * Returns 0 for an empty or whitespace-only string.
+ * Throws RangeError for anything that is not an integer.
+ */
+function parse(text) {
+  const trimmed = String(text).trim();
+  if (trimmed === "") return 0;
+  const value = parseInt(trimmed, 10);
+  if (!Number.isInteger(value) || String(value) !== trimmed) {
+    throw new RangeError(`not an integer: ${JSON.stringify(text)}`);
+  }
+  return value;
+}
+
+module.exports = { parse };

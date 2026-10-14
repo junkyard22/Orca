@@ -1,0 +1,24 @@
+"use strict";
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { parse } = require("../src/parse.js");
+
+test("parses a plain integer", () => {
+  assert.equal(parse("42"), 42);
+});
+
+test("trims surrounding whitespace", () => {
+  assert.equal(parse("  7 "), 7);
+});
+
+test("returns 0 for an empty string", () => {
+  assert.equal(parse(""), 0);
+});
+
+test("returns 0 for a whitespace-only string", () => {
+  assert.equal(parse("   "), 0);
+});
+
+test("rejects a non-integer", () => {
+  assert.throws(() => parse("abc"), RangeError);
+});

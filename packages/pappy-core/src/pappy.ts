@@ -29,7 +29,7 @@ import type {
   TaskKind,
   VerificationStatus,
 } from "./types.js";
-import { runWorkspaceVerificationChecks } from "./checks/workspaceVerification.js";
+import { classifyPath, runWorkspaceVerificationChecks } from "./checks/workspaceVerification.js";
 import type { BehaviouralReceipt } from "./checks/workspaceVerification.js";
 import { runSafetyChecks }       from "./checks/safety.js";
 import { runToolResultChecks }   from "./checks/toolResults.js";
@@ -202,6 +202,15 @@ interface CriterionReceipt {
    * the final source before they count as proved.
    */
   behavioural?: boolean;
+  /**
+   * A bug-fix criterion about a source file: only a reproduction that the
+   * final source resolves, or a regression test the final suite ran, speaks
+   * for it — a passing suite on its own does not show the reported defect is
+   * the one that was fixed.
+   */
+  requiresReproduction?: true;
+  /** A criterion about running the tests and their passing: decided by the host's final suite. */
+  testRun?: true;
   /** Filled in when the criterion was read against runtime evidence. */
   assessment?: CriterionAssessment;
 }
@@ -209,9 +218,20 @@ interface CriterionReceipt {
 const CODE_CHANGE_KINDS = new Set<TaskKind>(["bugfix", "feature", "refactor"]);
 
 /** The behavioural receipt that speaks for this criterion, if any. */
-function supportingReceipt(ac: AcceptanceCriterion, receipts: readonly BehaviouralReceipt[]): BehaviouralReceipt | undefined {
+function supportingReceipt(ac: AcceptanceCriterion, receipts: readonly BehaviouralReceipt[], requiresReproduction = false): BehaviouralReceipt | undefined {
+  if (requiresReproduction) return receipts.find((r) => r.kind === "reproduction" || r.kind === "regression_test");
   return receipts.find((r) => r.coversTask || textCoversRequirement(r.text, ac.text).covered);
 }
+
+/**
+ * "Tests are run and all pass", "the test suite passes", "run the tests": a
+ * criterion about the test run itself. Criteria asking for tests to be
+ * written are matched earlier and keep their own verifier.
+ */
+/** A criterion that names the reported failure itself. */
+const REFERS_TO_DEFECT = /\b(?:fail\w*|bugs?|broken|defects?|regressions?|errors?|crash\w*|exceptions?)\b/i;
+
+const TEST_RUN_CRITERION = /\b(?:(?:re-?)?run|ran|execut(?:e|es|ed|ing))\b[^.]{0,40}\b(?:tests?|test suite|specs?)\b|\b(?:tests?|test suite|specs?)\b[^.]{0,40}\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?)\b/i;
 
 /**
  * Verify an acceptance criterion against specific evidence in the output.
@@ -240,6 +260,7 @@ function verifyAcceptanceCriterion(
   ac: AcceptanceCriterion,
   input: PappyInput,
   independent: IndependentEvidence,
+  taskKind: TaskKind,
 ): CriterionReceipt {
   const outputText = input.outputText ?? "";
   const hasOutput  = outputText.trim().length > 0;
@@ -502,12 +523,23 @@ function verifyAcceptanceCriterion(
     };
   }
 
+  // A criterion that names a documentation file the runtime saw change is a
+  // claim about that document, whatever identifiers it mentions: it goes to the
+  // named-file rule below (E3 — word overlap and identifier presence are
+  // candidate evidence for a reader). Without this, "README.md documents that
+  // parse returns 0" in a bug fix was read as a code symbol ("README") and
+  // proved by the code's test receipt.
+  const namesChangedDocument = independent.available &&
+    [...ac.text.matchAll(/(?<![\w/])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]{1,8})(?![\w/])/g)]
+      .map((m) => normalizePath(m[1]!))
+      .some((p) => independent.changedPaths.has(p) && classifyPath(p) === "docs");
+
   // Identifier-anchored behavioural criteria — "<symbol> must <do something>",
   // the dominant shape for coding work. These match none of the verifiers above
   // and previously fell straight to fail-closed, which is why correct work
   // naming a real symbol had no way to produce a receipt at all.
   const symbols = extractCriterionSymbols(ac.text);
-  if (symbols.length > 0) {
+  if (symbols.length > 0 && !namesChangedDocument) {
     // Joined with spaces because this only ever feeds a substring check.
     const changedCode = presentFiles.map((f) => `${f.path} ${f.diff ?? ""}`).join(" ");
     const { inCode, inAccount } = findCriterionSymbols(symbols, changedCode, outputText);
@@ -592,6 +624,26 @@ function verifyAcceptanceCriterion(
       .map((m) => normalizePath(m[1]!))
       .filter((p) => /[\/.]/.test(p) && !/^\d+\.\d+$/.test(p));
     const changedNamed = namedPaths.filter((p) => independent.changedPaths.has(p));
+    // In a bug fix, feature or refactor, a criterion naming source files the
+    // runtime saw change is about code behaviour, not about words in the
+    // file: "The failing test in src/parse.js is identified and fixed" was
+    // judged by whether parse.js contained "failing" and "identified" (1.7.0
+    // rehearsal). The change on disk is the implementation receipt; whether
+    // it is a correction is decided by the host-recorded behavioural receipts
+    // (requireBehaviouralEvidence). Documents and tests keep the content rule.
+    if (changedNamed.length > 0 && CODE_CHANGE_KINDS.has(taskKind) && changedNamed.every((p) => classifyPath(p) === "source")) {
+      return {
+        proved: true,
+        evidence: [`named file(s) changed on disk: ${changedNamed.join(", ")} (a code change; its behaviour, not the criterion's wording, decides the criterion)`],
+        strength: "independent",
+        behavioural: true,
+        // Where a reproduction applies: the criterion itself refers to the
+        // reported failure ("the failing test", "the bug"). Other criteria of a
+        // bug fix follow the task-level rule (reproduction required only when
+        // asked; a passing full suite otherwise speaks for the task).
+        ...(taskKind === "bugfix" && REFERS_TO_DEFECT.test(ac.text) ? { requiresReproduction: true as const } : {}),
+      };
+    }
     if (changedNamed.length > 0) {
       const contents = changedNamed.map((p) => independent.changedFiles.get(p)).filter((c): c is string => typeof c === "string");
       if (contents.length === 0) {
@@ -662,9 +714,46 @@ function verifyAcceptanceCriterion(
     }
   }
 
+  // A criterion about running the tests and their passing, in a code-change
+  // task with runtime evidence: decided by the host's own full run on the
+  // final source (requirePassingSuite), never by the worker's account of it.
+  if (independent.available && CODE_CHANGE_KINDS.has(taskKind) && TEST_RUN_CRITERION.test(ac.text)) {
+    return { proved: false, evidence: [], strength: "none", behavioural: true, testRun: true };
+  }
+
   // Unknown semantic criteria have no deterministic verifier. Fail closed:
   // unrelated output or file activity is not criterion-specific proof.
   return { proved: false, evidence: [], strength: "none" };
+}
+
+/**
+ * A test-run criterion is proved by a host-recorded full suite that passed on
+ * the final source. Those receipts exist only when the final full run was
+ * readable, exited 0 with no failures and did not shrink the suite (see the
+ * task-level checks); a partial run, a failing run or the worker's claim
+ * produces none.
+ */
+function requirePassingSuite(ac: AcceptanceCriterion, context: LedgerContext): CriterionReceipt {
+  const suite = context.receipts.find((r) => r.kind === "reproduction" || r.kind === "full_suite" || r.kind === "regression_test");
+  const satisfiedBy = "a host-recorded full test run on the final source that passes";
+  if (suite) {
+    return {
+      proved: true,
+      evidence: [`host-recorded test run on the final source: ${suite.summary}`],
+      strength: "independent",
+      behavioural: true,
+      testRun: true,
+      assessment: { requires: ac.text, satisfiedBy, supportedBy: [suite.summary], sufficient: true },
+    };
+  }
+  return {
+    proved: false,
+    evidence: [],
+    strength: "none",
+    behavioural: true,
+    testRun: true,
+    assessment: { requires: ac.text, satisfiedBy, supportedBy: [], sufficient: false, needed: `${satisfiedBy} (none was recorded)` },
+  };
 }
 
 /**
@@ -681,8 +770,10 @@ function requireBehaviouralEvidence(
 ): CriterionReceipt {
   const symbols = extractCriterionSymbols(ac.text);
   const what = symbols.length > 0 ? symbols.join(", ") : "the requested behaviour";
-  const satisfiedBy = `a host-recorded test or validation run on the final source that exercises ${what}`;
-  const supporter = supportingReceipt(ac, context.receipts);
+  const satisfiedBy = receipt.requiresReproduction
+    ? "a test run that showed the failure on the task-start source and passes on the final source, or a regression test the final suite ran"
+    : `a host-recorded test or validation run on the final source that exercises ${what}`;
+  const supporter = supportingReceipt(ac, context.receipts, receipt.requiresReproduction === true);
   if (receipt.proved && supporter) {
     return {
       ...receipt,
@@ -700,7 +791,9 @@ function requireBehaviouralEvidence(
     return {
       proved: false,
       partial: true,
-      evidence: [...receipt.evidence, `no behavioural receipt on the final source exercises ${what}`],
+      evidence: [...receipt.evidence, receipt.requiresReproduction
+        ? "no reproduction resolved on the final source and no regression test ran, so the change is not shown to correct the reported defect"
+        : `no behavioural receipt on the final source exercises ${what}`],
       strength: receipt.strength,
       behavioural: true,
       assessment: {
@@ -708,9 +801,11 @@ function requireBehaviouralEvidence(
         satisfiedBy,
         supportedBy: receipt.evidence,
         sufficient: false,
-        needed: unrelated.length > 0
-          ? `a test or validation run that exercises ${what} (the recorded ${unrelated.map((r) => r.kind.replace(/_/g, " ")).join(", ")} does not name it)`
-          : `a test or validation run on the final source that exercises ${what}`,
+        needed: receipt.requiresReproduction
+          ? "run the tests before changing the code to show the failure and again after the fix, or add a regression test for the defect and run the full suite"
+          : unrelated.length > 0
+            ? `a test or validation run that exercises ${what} (the recorded ${unrelated.map((r) => r.kind.replace(/_/g, " ")).join(", ")} does not name it)`
+            : `a test or validation run on the final source that exercises ${what}`,
       },
     };
   }
@@ -852,8 +947,10 @@ function buildCriteriaLedger(
   const mandatory = input.workspace !== undefined;
 
   for (const ac of criteria) {
-    let receipt = verifyAcceptanceCriterion(ac, input, independent);
-    if (independent.available && receipt.behavioural && CODE_CHANGE_KINDS.has(context.taskKind)) {
+    let receipt = verifyAcceptanceCriterion(ac, input, independent, context.taskKind);
+    if (receipt.testRun) {
+      receipt = requirePassingSuite(ac, context);
+    } else if (independent.available && receipt.behavioural && CODE_CHANGE_KINDS.has(context.taskKind)) {
       receipt = requireBehaviouralEvidence(ac, receipt, context);
     }
     // Code-behaviour criteria of code-change tasks are governed by the behavioural rule above.
