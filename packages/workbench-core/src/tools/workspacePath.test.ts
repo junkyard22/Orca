@@ -26,7 +26,9 @@ describe("workspace folder prefix", () => {
     try {
       expect(stripWorkspaceFolderPrefix(ws.root, "project/src/parse.js")).toBe(["src", "parse.js"].join(sep));
       expect(stripWorkspaceFolderPrefix(ws.root, "project\\src")).toBe("src");
-      expect(stripWorkspaceFolderPrefix(ws.root, "project")).toBe("project"); // a single segment is left alone
+      // The workspace's own name alone is the workspace root (live: `list_directory "project"` was ENOENT).
+      expect(stripWorkspaceFolderPrefix(ws.root, "project")).toBe(".");
+      expect(resolveWorkspacePath(ws.root, "project")).toBe(ws.real);
       expect(resolveWorkspacePath(ws.root, "project/src/parse.js")).toBe(join(ws.real, "src", "parse.js"));
       expect(resolveWorkspacePath(ws.root, "src/parse.js")).toBe(join(ws.real, "src", "parse.js"));
     } finally { ws.dispose(); }

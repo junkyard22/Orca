@@ -22,12 +22,14 @@ function isWithin(root: string, candidate: string): boolean {
 export function stripWorkspaceFolderPrefix(workspace: string, requestedPath: string): string {
   const name = path.basename(workspace);
   if (!name) return requestedPath;
-  const segments = requestedPath.split(/[\\/]+/);
-  if (segments.length < 2 || segments[0] !== name) return requestedPath;
+  const segments = requestedPath.split(/[\\/]+/).filter((s) => s.length > 0);
+  if (segments.length < 1 || segments[0] !== name) return requestedPath;
   const ownNamedChild = path.join(workspace, name);
   try {
     if (fs.statSync(ownNamedChild).isDirectory()) return requestedPath;
   } catch { /* no subfolder of the workspace's own name: the prefix is the workspace itself */ }
+  // "project" alone, for a workspace called "project", is the workspace root
+  // (live: `list_directory "project"` came back ENOENT on every attempt).
   return segments.slice(1).join(path.sep) || ".";
 }
 
