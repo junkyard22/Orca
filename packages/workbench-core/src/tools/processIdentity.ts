@@ -82,9 +82,13 @@ export async function probeProcess(record: ProcessIdentity): Promise<ProcessLive
  * so the tree can be rebuilt from one enumeration; a pid reused since the
  * root was spawned is excluded by creation time. POSIX reparents orphans to
  * init, so membership of the root's process group (the tool spawns the root
- * detached, as a group leader) is used instead. Processes that left the
- * group (`setsid`) or were started by something else are not found: the
- * caller reports the scan as a lower bound, never as proof of a quiet tree.
+ * detached, as a group leader) finds the chain that stayed in the group, and
+ * a process created while the command ran whose parent is gone is reported as
+ * a suspected descendant ("orphan"), which is how a detached grandchild that
+ * called setsid is caught. Processes started by something else during the
+ * command window can be flagged the same way, and a process that stayed
+ * hidden behind a live unrelated parent is not found: the caller reports the
+ * scan as a lower bound, never as proof of a quiet tree.
  *
  * Returns null when the scan could not run (no PowerShell / ps, timeout):
  * "unknown", which the caller must not treat as "none".
@@ -184,15 +188,50 @@ export async function findSurvivingDescendants(rootPid: number, spawnedAtIso: st
     }
     return found;
   }
-  const out = await coalescedEnumeration(() => run("ps", ["-eo", "pid=,pgid=,lstart="], SCAN_TIMEOUT_MS));
+  const out = await coalescedEnumeration(() => run("ps", ["-eo", "pid=,ppid=,pgid=,comm=,lstart="], SCAN_TIMEOUT_MS));
   if (!out) return null;
-  const found: SurvivingProcess[] = [];
-  for (const line of out.split("\n")) {
-    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+  return parsePosixSurvivors(out, rootPid, spawnedAtIso, process.pid, processExists);
+}
+
+/**
+ * POSIX counterpart of the Windows walk. Group members are descendants; a
+ * process created while the command ran whose parent is gone (reparented to
+ * init, or to a subreaper) is a suspected descendant — a detached grandchild
+ * calls setsid and leaves the group, which is exactly the case the scan
+ * exists for, so group membership alone is a blind spot (CI on Linux showed
+ * it). Exported for parsing tests; the enumeration itself is `ps`.
+ */
+export function parsePosixSurvivors(
+  psOutput: string,
+  rootPid: number,
+  spawnedAtIso: string,
+  selfPid: number,
+  exists: (pid: number) => ProcessLiveness = processExists,
+): SurvivingProcess[] {
+  const spawnedAt = Date.parse(spawnedAtIso);
+  type Row = { pid: number; ppid: number; pgid: number; name: string; started: string };
+  const rows: Row[] = [];
+  for (const line of psOutput.split("\n")) {
+    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
     if (!m) continue;
-    const pid = Number(m[1]);
-    if (Number(m[2]) !== rootPid || pid === rootPid) continue;
-    found.push({ pid, identity: m[3]!.trim(), relation: "descendant" });
+    rows.push({ pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), name: m[4]!, started: m[5]!.trim() });
+  }
+  const alive = new Set(rows.map((r) => r.pid));
+  const found: SurvivingProcess[] = [];
+  const seen = new Set<number>([rootPid]);
+  for (const r of rows) {
+    if (r.pgid !== rootPid || r.pid === rootPid) continue;
+    seen.add(r.pid);
+    found.push({ pid: r.pid, identity: r.started, name: r.name, relation: "descendant" });
+  }
+  for (const r of rows) {
+    if (seen.has(r.pid) || r.pid === selfPid || alive.has(r.ppid) && r.ppid !== 1) continue;
+    // Created before the command started: cannot be its descendant (2 s slack for `lstart` granularity).
+    const created = Date.parse(r.started);
+    if (Number.isFinite(created) && Number.isFinite(spawnedAt) && created < spawnedAt - 2000) continue;
+    if (r.ppid === 1 && !Number.isFinite(created)) continue; // unparseable start time: say nothing about long-lived init children
+    seen.add(r.pid);
+    if (exists(r.pid) === "alive") found.push({ pid: r.pid, identity: r.started, name: r.name, relation: "orphan" });
   }
   return found;
 }
