@@ -1767,6 +1767,18 @@ body.light .auth-card {
 }
 .session-cost { color: var(--text-dim); }
 .session-failed .session-intent { color: var(--text-muted); }
+/* Stopped (cancelled / interrupted): muted like failed, but not a failure. */
+.session-stopped .session-intent { color: var(--text-muted); font-style: italic; }
+
+/* Which build this is, under the welcome text. */
+.welcome-version {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  text-align: center;
+  opacity: 0.6;
+  font-family: var(--font-mono);
+  margin-top: 4px;
+}
 
 .sidebar-empty {
   font-size: 12px;

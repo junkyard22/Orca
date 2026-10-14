@@ -44,7 +44,7 @@ importers:
         version: 5.9.3
 
   apps/desktop:
-    dependencies:
+    devDependencies:
       '@clawde/agent-loop-core':
         specifier: workspace:*
         version: link:../../packages/agent-loop-core
@@ -75,19 +75,15 @@ importers:
       '@clawde/tool-bootstrap':
         specifier: workspace:*
         version: link:../../packages/tool-bootstrap
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.35
       '@yakstacks/workbench-core':
         specifier: workspace:*
         version: link:../../packages/workbench-core
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
-      maestro-core:
-        specifier: workspace:*
-        version: link:../../packages/maestro-core
-    devDependencies:
-      '@types/node':
-        specifier: ^20.0.0
-        version: 20.19.35
       electron:
         specifier: ^41.10.5
         version: 41.10.5
@@ -97,6 +93,9 @@ importers:
       esbuild:
         specifier: '>=0.28.1'
         version: 0.28.1
+      maestro-core:
+        specifier: workspace:*
+        version: link:../../packages/maestro-core
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

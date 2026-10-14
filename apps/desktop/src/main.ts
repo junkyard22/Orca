@@ -1,6 +1,8 @@
 import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { sendWhenLoaded } from "./initStatus";
+import { listAnthropicModels, type ModelListing } from "./modelListing";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -2263,13 +2265,16 @@ function createWindow(): void {
   win.once("ready-to-show", async () => {
     win!.show();
     win!.focus();
+    // init-status must not be sent into the gap before app.js has registered
+    // its listener (ready-to-show is first paint, not script completion); a
+    // message sent then is silently lost and the window stays on "starting…".
     try {
       const settings = await loadSettings();
       const err = await initOrca(settings);
-      win!.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+      sendWhenLoaded(win?.webContents, "init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      win?.webContents.send("init-status", { ok: false, error: `Startup error: ${msg}`, tools: _bootstrapTools, warnings: _initWarnings });
+      sendWhenLoaded(win?.webContents, "init-status", { ok: false, error: `Startup error: ${msg}`, tools: _bootstrapTools, warnings: _initWarnings });
     }
     emitAuthStatus();
   });
@@ -2395,6 +2400,21 @@ function requestSingleToolApproval(
     }, 60_000);
   });
 }
+
+// ── Build identity: what this executable is ────────────────────────────────
+// build-main.mjs writes build-info.json beside main.js (commit, ref, dirty,
+// builtAt). The renderer shows it so a running app can always say which
+// source it came from; a missing or unreadable file degrades to the package
+// version alone rather than inventing provenance.
+ipcMain.handle("app:build-info", async () => {
+  const base = { version: app.getVersion(), packaged: app.isPackaged };
+  try {
+    const info = JSON.parse(readFileSync(join(__dirname, "build-info.json"), "utf8")) as Record<string, unknown>;
+    return { ...base, ...info, version: typeof info["version"] === "string" ? info["version"] : base.version };
+  } catch {
+    return base;
+  }
+});
 
 // ── Workspace protection: what is still unsettled, and an explicit release ──
 ipcMain.handle("workspace:protection", async () => {
@@ -2552,7 +2572,7 @@ ipcMain.handle("workspace:select", async () => {
 
 async function fetchModelsFromProvider(
   p: { type: string; baseUrl: string; apiKey: string },
-): Promise<string[]> {
+): Promise<ModelListing> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (p.apiKey) headers["Authorization"] = `Bearer ${p.apiKey}`;
 
@@ -2561,38 +2581,30 @@ async function fetchModelsFromProvider(
     const res  = await fetch(`${base}/api/tags`);
     if (!res.ok) throw new Error(`Ollama returned ${res.status}`);
     const data = (await res.json()) as { models?: Array<{ name: string }> };
-    return (data.models ?? []).map((m) => m.name).sort();
+    return { models: (data.models ?? []).map((m) => m.name).sort(), listed: true };
   }
 
   if (p.type === "anthropic") {
-    // Anthropic exposes GET /v1/models; fall back to a known list if it fails.
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/models", {
-        headers: {
-          "x-api-key":         p.apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { data?: Array<{ id: string }> };
-        const ids = (data.data ?? []).map((m) => m.id).sort();
-        if (ids.length) return ids;
-      }
-    } catch { /* fall through to static list */ }
-    // Offline fallback: the documented current IDs (see modelCatalog.ts for the review date).
-    return [...KNOWN_ANTHROPIC_MODELS];
+    // Anthropic exposes GET /v1/models. When it does not answer, the built-in
+    // list is returned for autocomplete only, and the result says so: a
+    // fallback proves nothing about the key or about availability.
+    return listAnthropicModels(p.apiKey, KNOWN_ANTHROPIC_MODELS);
   }
 
   // Alibaba Coding Plan: no /models endpoint — return known model list directly.
   if (p.type === "alibaba_coding_plan") {
-    return [
-      "qwen3.5-plus",
-      "qwen3-coder-plus",
-      "qwen3-coder-next",
-      "qwen3-coder-flash",
-      "qwen3-235b-a22b",
-      "glm-5",
-    ];
+    return {
+      models: [
+        "qwen3.5-plus",
+        "qwen3-coder-plus",
+        "qwen3-coder-next",
+        "qwen3-coder-flash",
+        "qwen3-235b-a22b",
+        "glm-5",
+      ],
+      listed: false,
+      note: "this provider has no model-list endpoint",
+    };
   }
 
   // OpenAI-compatible: GET /models
@@ -2600,7 +2612,7 @@ async function fetchModelsFromProvider(
   const res  = await fetch(`${base}/models`, { headers });
   if (!res.ok) throw new Error(`Provider returned ${res.status}`);
   const data = (await res.json()) as { data?: Array<{ id: string }> };
-  return (data.data ?? []).map((m) => m.id).sort();
+  return { models: (data.data ?? []).map((m) => m.id).sort(), listed: true };
 }
 
 ipcMain.handle("models:fetch", async (_ev, p: { type: string; baseUrl: string; apiKey: string }) => {
@@ -2609,8 +2621,8 @@ ipcMain.handle("models:fetch", async (_ev, p: { type: string; baseUrl: string; a
   }
 
   try {
-    const models = await fetchModelsFromProvider(p);
-    return { ok: true, models };
+    const listing = await fetchModelsFromProvider(p);
+    return { ok: true, models: listing.models, listed: listing.listed, note: listing.note };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -2626,7 +2638,7 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
     const chosen: OrcaSettings = { ...s, budgetSource: "user" };
     await saveSettings(chosen);
     const err = await initOrca(chosen);
-    win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
+    sendWhenLoaded(win?.webContents, "init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

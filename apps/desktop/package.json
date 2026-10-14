@@ -1,7 +1,7 @@
 {
   "name": "@clawde/desktop",
-  "version": "1.6.0",
-  "description": "Orca — AI coding assistant desktop app",
+  "version": "1.7.0",
+  "description": "Orca — AI coding assistant desktop app (1.7.0 Core Reliability)",
   "author": "Clawde",
   "private": true,
   "main": "dist-main/main.js",
@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {
+  "devDependencies": {
     "@clawde/agent-loop-core": "workspace:*",
     "@clawde/benson-core": "workspace:*",
     "@clawde/claire-core": "workspace:*",
@@ -25,9 +25,7 @@
     "@clawde/tool-bootstrap": "workspace:*",
     "@yakstacks/workbench-core": "workspace:*",
     "dotenv": "^16.4.0",
-    "maestro-core": "workspace:*"
-  },
-  "devDependencies": {
+    "maestro-core": "workspace:*",
     "@types/node": "^20.0.0",
     "electron": "^41.10.5",
     "electron-builder": "^26.15.7",
@@ -61,7 +59,8 @@
     "files": [
       "dist-main/**",
       "renderer/**",
-      "!**/*.map"
+      "!**/*.map",
+      "!node_modules/**"
     ],
     "win": {
       "icon": "orca.ico",

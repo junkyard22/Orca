@@ -30,6 +30,7 @@ if (!window.orca) {
     fetchModels:       async () => ({ ok: false, models: [] }),
     listSessions:      async () => [],
     loadSession:       async () => null,
+    getBuildInfo:      async () => null,
     deleteSession:     async () => ({ ok: false, error: "No Electron context" }),
     abortTask:         () => {},
     onStreamStart:     () => () => {},
@@ -249,7 +250,25 @@ function applyInitStatus(s) {
   return handleInitStatus(s);
 }
 
+// The app says which build it is: version from the package, commit and
+// clean/dirty state from build-info.json. A dirty tree is shown as such.
+let buildInfoShown = false;
+function updateWelcomeVersion() {
+  if (buildInfoShown) return;
+  const el = document.getElementById("welcome-version");
+  if (!el || typeof orca.getBuildInfo !== "function") return;
+  orca.getBuildInfo().then((b) => {
+    if (!b || !b.version) return;
+    buildInfoShown = true;
+    const build = b.commitShort ? ` · build ${b.commitShort}${b.dirty ? " (modified source)" : ""}` : "";
+    el.textContent = `Orca ${b.version}${build}`;
+    el.title = [b.ref ? `ref ${b.ref}` : "", b.builtAt ? `built ${b.builtAt}` : "", b.packaged === false ? "unpackaged (source build)" : ""].filter(Boolean).join(" · ");
+    document.title = `Orca ${b.version}`;
+  }).catch(() => {});
+}
+
 function updateWelcomeWorkspace() {
+  updateWelcomeVersion();
   const el = document.getElementById("welcome-workspace");
   if (!el) return;
   orca.getSettings().then((s) => {
@@ -2054,9 +2073,16 @@ function renderProviders() {
       const result = await orca.fetchModels({ type: prov.type, baseUrl: prov.baseUrl, apiKey: prov.apiKey });
       this.disabled = false;
       this.textContent = "Fetch models";
-      if (result.ok && result.models?.length) {
+      if (result.ok && result.models?.length && result.listed === false) {
+        // Built-in names for autocomplete only: the provider did not answer,
+        // so neither the key nor the models' availability is confirmed.
         fetchedModels.set(prov.id, result.models);
-        statusEl.textContent = `${result.models.length} model(s) loaded — type in a role field to autocomplete.`;
+        statusEl.textContent = `Provider did not confirm its model list (${result.note ?? "no answer"}). Showing ${result.models.length} built-in name(s) for autocomplete only — availability and the API key are unverified.`;
+        statusEl.style.color = "var(--warn, #e0a640)";
+        updateModelDataLists();
+      } else if (result.ok && result.models?.length) {
+        fetchedModels.set(prov.id, result.models);
+        statusEl.textContent = `${result.models.length} model(s) listed by the provider — type in a role field to autocomplete.`;
         statusEl.style.color = "var(--accent)";
         updateModelDataLists();
       } else {
@@ -2688,7 +2714,11 @@ async function refreshSessionList() {
   function renderItem(s) {
     const label  = truncateSession(s.intent, 50);
     const date   = fmtSessionDate(s.createdAt);
-    const failed = s.status === "FAIL" ? ' session-failed' : '';
+    // A run the user stopped, or that the app lost, is persisted as
+    // status FAIL + stoppedBecause cancelled/interrupted. It was not judged
+    // and did not fail: it stopped. Status alone must not be read as failure.
+    const stopped = s.stoppedBecause === "cancelled" || s.stoppedBecause === "interrupted";
+    const failed = stopped ? ' session-stopped' : s.status === "FAIL" ? ' session-failed' : '';
     return `<div class="session-item${failed}" data-sid="${escapeHtml(s.id)}" title="${escapeHtml(s.intent)}">
       <div class="session-intent">${escapeHtml(label)}</div>
       <div class="session-meta"><span>${escapeHtml(date)}</span></div>
@@ -2736,13 +2766,29 @@ async function loadSession(id) {
   setTopbarTitle(session.intent);
 
   appendMsg("user", session.intent);
+  const sessionStopped = session.stoppedBecause === "cancelled" || session.stoppedBecause === "interrupted";
   if (session.outputText) {
     appendMsg("orca", cleanPipelineOutput(session.outputText));
+  } else if (sessionStopped) {
+    appendSys(session.stoppedBecause === "cancelled"
+      ? "This run was stopped before it finished — no verdict was recorded."
+      : "This run was interrupted before it finished (the app or the task ended) — no verdict was recorded.", "info");
   } else if (session.status === "FAIL") {
     appendSys("This run failed — no output was recorded.", "warn");
   }
   if (session.pipelineSummary) {
     appendPipelineBadge(session.pipelineSummary);
+  } else if (sessionStopped && !session.verdict) {
+    // Stopped before Pappy judged it: the outcome is the lifecycle state, not a verdict.
+    appendPipelineBadge({
+      role: session.role ?? "unknown",
+      verdict: session.stoppedBecause === "cancelled" ? "CANCELLED" : "INTERRUPTED",
+      confidence: undefined,
+      issueCount: 0,
+      issues: [],
+      acceptanceCriteria: [],
+      repairPasses: session.repairPasses ?? 0,
+    });
   } else if (session.verdict) {
     appendPipelineBadge({
       role: session.role ?? "unknown",
