@@ -2,6 +2,7 @@ import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { mkdirSync, readFileSync } from "node:fs";
 import { sendWhenLoaded } from "./initStatus";
+import { constraintGateFor, workerMustNotWriteFiles } from "./workerConstraints";
 import { listAnthropicModels, type ModelListing } from "./modelListing";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -668,14 +669,6 @@ async function brainRoute(
 // Tier 2: ReactAgentAdapter (ReAct loop implementation) 
 // Tier 3: RoleAgentAdapter (role-aware wrapper)
 
-/**
- * Returns true when the objective text describes a command-execution task
- * (running build, test, or lint pipelines — no file authoring expected).
- */
-function isCommandExecutionObjective(objective: string): boolean {
-  const t = objective.toLowerCase();
-  return /\b(run the (tests?|build|lint)|run (tests?|build|lint)|npm run|npm test|pnpm run|pnpm test|yarn run|yarn test|build and test|build\/test(?:\/lint)?|execute these|execute this)\b/.test(t);
-}
 
 function buildMaestroAdapter(
   /** Per-role LLM adapters. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
@@ -748,6 +741,8 @@ function buildMaestroAdapter(
     objective: string,
     sourcePacket?: AHPPacket,
     repairInstruction?: string,
+    /** Per-task-kind evidence guidance (verificationGuidance): the worker must see it. */
+    guidanceGoals: string[] = [],
   ): AHPPacket | undefined => {
     if (!ctx.ahpRootPacket) return undefined;
     const safeRole = role.replace(/[^a-z0-9_-]/gi, "_");
@@ -760,6 +755,11 @@ function buildMaestroAdapter(
             type: "goal",
             value: goal,
           })),
+          // The packet is what the worker reads; guidance added only to the
+          // agent task never reached the model (1.7.0 rehearsal traces).
+          ...guidanceGoals
+            .filter((goal) => !(task.goals ?? []).includes(goal))
+            .map((goal, index) => ({ id: `guidance-${index}`, type: "goal", value: goal })),
           ...deweyBriefLines(task).map((line, index) => ({
             id: `context-${index}`,
             type: "context",
@@ -781,7 +781,7 @@ function buildMaestroAdapter(
     const packetConstraints = sourcePacket
       ? [...sourcePacket.constraints]
       : [
-          ...(isCommandExecutionObjective(objective)
+          ...(workerMustNotWriteFiles(task, objective)
             ? [{ rule: "no_file_writes", enforcer: "miranda" }]
             : []),
           ...Object.entries(task.constraints ?? {}).map(([rule, value]) => ({
@@ -938,6 +938,7 @@ function buildMaestroAdapter(
       options.objective,
       options.sourcePacket,
       options.repairInstruction,
+      guidance,
     );
     if (options.subagent) {
       ctx.emit?.({
@@ -969,26 +970,7 @@ function buildMaestroAdapter(
 
     // Build a per-worker gate that enforces AHP constraints from the child packet.
     // This is scoped per-run so the constraint state never leaks across workers.
-    const constraintGate = childPacket && childPacket.constraints.length > 0
-      ? createMirandaGate({
-          ahpPacket: childPacket,
-          checkConstraint: (constraint, gateCtx) => {
-            if (constraint.rule === "no_file_writes") {
-              return gateCtx.tool !== "write_file";
-            }
-            return true;
-          },
-          onViolation: (packet, violated) => {
-            packet.verdict = AHPVerdict.VIOLATION;
-            appendAHPTrace(packet, {
-              timestamp: new Date().toISOString(),
-              state: packet.lifecycle,
-              actor: "miranda",
-              note: `Constraint violation blocked tool call: ${violated.map((c) => c.rule).join(", ")}`,
-            });
-          },
-        })
-      : undefined;
+    const constraintGate = constraintGateFor(childPacket);
     const workerGate = composeMirandaGates(ctx.gate, constraintGate);
 
     const agentCtx: AgentRunContext = {
