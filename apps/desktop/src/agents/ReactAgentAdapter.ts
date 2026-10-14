@@ -274,14 +274,51 @@ function parseCodeBlockToolCalls(
   while ((match = codeBlockRe.exec(text)) !== null) {
     const body = match[1]!.trim();
     if (!body || body.length < 3) continue;
-    // Try JSON-format first: {"tool": "name", ...}
-    const jsonCall = parseToolCallBody(body);
-    if (jsonCall) { calls.push(jsonCall); continue; }
+    // Only a JSON object with a "tool" key counts here. The lenient
+    // "name {...}" reading used inside <tool_call> tags must not run on
+    // ordinary code: in the 1.7.0 rehearsal a proposed fix
+    // ("function parse(text) { ... }") was dispatched as a tool named
+    // "function".
+    const json = parseJsonObject(body);
+    if (json && typeof json["tool"] === "string" && json["tool"]) {
+      const { tool, ...input } = json;
+      calls.push({ tool: tool as string, input });
+      continue;
+    }
     // Try function-call-format: toolName("arg1", "arg2")
     const fnCall = parseFunctionCallSyntax(body);
     if (fnCall) calls.push(fnCall);
   }
   return calls;
+}
+
+/**
+ * Keep only the first tool call of a response. When the first call came from a
+ * <tool_call> block, the output is cut right after that block, so text the
+ * model wrote after it (invented results, further calls, a premature FINAL
+ * ANSWER) never enters the conversation.
+ */
+export function enforceSingleToolCall(
+  output: string,
+  calls: Array<{ tool: string; input: Record<string, unknown> }>,
+): { calls: Array<{ tool: string; input: Record<string, unknown> }>; output: string; dropped: number } {
+  if (calls.length <= 1) return { calls, output, dropped: 0 };
+  const close = output.indexOf("</tool_call>");
+  const truncated = close !== -1 ? output.slice(0, close + "</tool_call>".length) : output;
+  return { calls: calls.slice(0, 1), output: truncated, dropped: calls.length - 1 };
+}
+
+/** A failed command's error, with the command and the directory it ran in. */
+export function withCommandContext(
+  toolName: string,
+  input: Record<string, unknown>,
+  workspaceRoot: string | undefined,
+  error: string | undefined,
+): string | undefined {
+  if (toolName !== "run_command" || typeof input["command"] !== "string") return error;
+  const cwd = typeof input["cwd"] === "string" && input["cwd"].trim() ? input["cwd"] : "(workspace root)";
+  const root = workspaceRoot ? ` — workspace root: ${workspaceRoot}` : "";
+  return [error ?? "Command failed", `command: ${input["command"]}`, `cwd: ${cwd}${root}`].join("\n");
 }
 
 function parseToolCalls(text: string): {
@@ -559,11 +596,30 @@ function buildTaskPromptContract(task: AgentTask, packet?: AHPPacket): TaskPromp
   };
 }
 
+/**
+ * Where tools run. The rehearsal workers were only shown "Workspace: project
+ * (C:\\...\\project)" and read it as a folder to enter: they prefixed paths
+ * with "project/", ran "cd project && npm test" and passed the parent folder
+ * as cwd (refused by the workspace boundary).
+ */
+function renderWorkspaceSection(workspaceRoot: string | undefined): string[] {
+  if (!workspaceRoot) return [];
+  return [
+    "",
+    "### Workspace",
+    `Every tool already runs inside the workspace root: ${workspaceRoot}`,
+    "- Use paths relative to it (for example `src/index.ts`); do not prefix them with the workspace folder's name.",
+    "- run_command starts in this directory: do not `cd` into the workspace folder, and leave `cwd` unset unless you need a subfolder of it.",
+    "- Tools cannot reach anything outside this directory.",
+  ];
+}
+
 function renderTaskPrompt(
   role: RoleName,
   contract: TaskPromptContract,
   toolPrompt: string,
   fileWriteDirective: string,
+  workspaceRoot?: string,
 ): string {
   if (contract.promptSource === "ahp_packet") {
     const lines: string[] = [
@@ -576,6 +632,7 @@ function renderTaskPrompt(
     }
 
     lines.push("", "### Objective", contract.intent);
+    lines.push(...renderWorkspaceSection(workspaceRoot));
 
     if (contract.goals.length > 0) {
       lines.push("", "### Inputs", ...contract.goals.map((goal) => `- ${goal}`));
@@ -603,6 +660,7 @@ function renderTaskPrompt(
     "",
     "## Goals",
     ...contract.goals.map((goal) => `- ${goal}`),
+    ...renderWorkspaceSection(workspaceRoot),
   ];
 
   if (contract.doneCriteria.length > 0) {
@@ -720,6 +778,7 @@ export class ReactAgentAdapter implements AgentAdapter {
       needsFileWrite
         ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline - use the tool.**\n\n"
         : "",
+      ctx.workspaceRoot,
     );
     const result = await runAgentLoop(this.systemPrompt, taskPrompt, toolService, sharedCtx, contract.doneCriteria);
     return {
@@ -791,7 +850,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     const fileWriteDirective = needsFileWrite
       ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline - use the tool.**\n\n"
       : "";
-    const taskContext = renderTaskPrompt(this.role, contract, toolPrompt, fileWriteDirective);
+    const taskContext = renderTaskPrompt(this.role, contract, toolPrompt, fileWriteDirective, ctx.workspaceRoot);
 
     const fullSystemPrompt = `${this.systemPrompt}${REACT_PROMPT_BLOCK}`;
 
@@ -874,7 +933,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         const modelOutput = response.content;
         throwIfAborted(ctx.abortSignal);
         lastModelOutput = modelOutput;
-        messages.push({ role: "assistant", content: modelOutput });
+        const assistantIndex = messages.push({ role: "assistant", content: modelOutput }) - 1;
         ctx.recordTrace?.("agent.iteration.response", {
           role: this.role,
           iteration: iterationCount,
@@ -917,13 +976,32 @@ export class ReactAgentAdapter implements AgentAdapter {
           console.log(`[ReactAgent] No Thought block found in iteration ${iterationCount} - model may have skipped format`);
         }
 
-        const { calls: toolCalls, malformedCount } = parseToolCalls(modelOutput);
+        const parsedToolCalls = parseToolCalls(modelOutput);
+        const malformedCount = parsedToolCalls.malformedCount;
         ctx.recordTrace?.("agent.iteration.tool_parse", {
           role: this.role,
           iteration: iterationCount,
           malformedCount,
-          toolCalls,
+          toolCalls: parsedToolCalls.calls,
         });
+        // One tool call per response, as the prompt says. A response with
+        // several calls was written without seeing any result: in the 1.7.0
+        // rehearsal the model invented "Result:" blocks between calls (file
+        // contents that did not exist) and Orca executed every call, kept the
+        // invented results in the conversation, and once accepted a FINAL
+        // ANSWER written before any result. Only the first call runs; the
+        // rest of the response is cut from the conversation.
+        const singleCall = enforceSingleToolCall(modelOutput, parsedToolCalls.calls);
+        const toolCalls = singleCall.calls;
+        if (singleCall.dropped > 0) {
+          messages[assistantIndex] = { role: "assistant", content: singleCall.output };
+          ctx.recordTrace?.("agent.tool.extra_calls_dropped", {
+            role: this.role,
+            iteration: iterationCount,
+            executed: toolCalls[0]?.tool,
+            dropped: singleCall.dropped,
+          });
+        }
 
         const hasRawToolCallTag = modelOutput.includes("<tool_call>");
         if (hasRawToolCallTag && malformedCount > 0 && toolCalls.length === 0) {
@@ -972,7 +1050,8 @@ export class ReactAgentAdapter implements AgentAdapter {
           consecutiveParseFailures = 0;
         }
 
-        const cleanedOutput = stripToolCalls(modelOutput);
+        const effectiveOutput = singleCall.output;
+        const cleanedOutput = stripToolCalls(effectiveOutput);
         const finalAnswer = extractFinalAnswer(cleanedOutput);
         if (finalAnswer) {
           finalAnswerFound = true;
@@ -1088,7 +1167,10 @@ export class ReactAgentAdapter implements AgentAdapter {
           };
           const beforeToolGate = ctx.gate?.beforeToolRun(gateCtx);
           if (beforeToolGate && !beforeToolGate.allowed) {
-            const gateError = beforeToolGate.reason || `Tool "${toolName}" blocked by Miranda`;
+            const gateReason = beforeToolGate.reason || `Tool "${toolName}" blocked by Miranda`;
+            const gateError = /workspace boundary/i.test(gateReason)
+              ? `${gateReason}: the request reaches outside the workspace root (${gateCtx.workspaceRoot}). Use paths and a cwd inside it.`
+              : gateReason;
             const gateResult = sharedFormatToolResult(toolName, false, "", gateError);
             messages.push({ role: "user", content: gateResult });
             ctx.recordTrace?.("agent.tool.blocked", {
@@ -1169,8 +1251,21 @@ export class ReactAgentAdapter implements AgentAdapter {
 
           cumulativeToolCallCount++;
 
-          const toolResult = sharedFormatToolResult(toolName, result.ok, result.output, result.error);
+          const toolResult = sharedFormatToolResult(
+            toolName,
+            result.ok,
+            result.output,
+            result.ok ? result.error : withCommandContext(toolName, toolInput, ctx.workspaceRoot, result.error),
+          );
           messages.push({ role: "user", content: toolResult });
+          if (singleCall.dropped > 0) {
+            messages.push({
+              role: "user",
+              content:
+                `Only your first tool call (${toolName}) was executed; the other ${singleCall.dropped} call(s) in that response were discarded, together with everything you wrote after the first call. ` +
+                "Tool results come only from the host, in <tool_result> blocks: never write a result yourself. Make one tool call per response and wait for its result.",
+            });
+          }
 
           const enrichedRaw = { ...toolInput } as Record<string, unknown>;
           if (commandFileChanges.length > 0) {
@@ -1291,10 +1386,10 @@ export class ReactAgentAdapter implements AgentAdapter {
           const lastEvent = toolsUsed[toolsUsed.length - toolCalls.indexOf(call) - 1];
           return lastEvent?.ok === true;
         });
-        const hasTextResponse = stripToolCalls(modelOutput).trim().length > 0;
-        const noDanglingToolCall = !modelOutput.includes("<tool_call>") ||
+        const hasTextResponse = stripToolCalls(effectiveOutput).trim().length > 0;
+        const noDanglingToolCall = !effectiveOutput.includes("<tool_call>") ||
           (toolCalls.length > 0 &&
-           !modelOutput.slice(modelOutput.lastIndexOf("</tool_call>") + 12).includes("<tool_call>"));
+           !effectiveOutput.slice(effectiveOutput.lastIndexOf("</tool_call>") + 12).includes("<tool_call>"));
 
         if (
           stoppedBecause === "max_iterations" &&
