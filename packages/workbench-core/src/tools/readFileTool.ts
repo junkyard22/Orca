@@ -10,7 +10,7 @@ export const readFileTool: Tool = {
     properties: {
       path: {
         type: "string",
-        description: "Absolute or workspace-relative path to the file.",
+        description: "Absolute or workspace-relative path to the file. Relative paths start inside the workspace root itself; do not prefix them with the workspace folder's name.",
       },
     },
     required: ["path"],

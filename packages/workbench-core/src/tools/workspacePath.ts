@@ -11,6 +11,27 @@ function isWithin(root: string, candidate: string): boolean {
 }
 
 /**
+ * A relative path that starts with the workspace folder's own name, when the
+ * workspace has no subfolder of that name, is the model naming the workspace
+ * rather than a directory inside it ("project/src/parse.js" for a workspace
+ * called "project"). The live 1.7.0 rehearsal lost a whole task to this:
+ * every read came back ENOENT and the worker looped. The segment is dropped
+ * only in that unambiguous case; a real subfolder with the workspace's name
+ * is addressed as written.
+ */
+export function stripWorkspaceFolderPrefix(workspace: string, requestedPath: string): string {
+  const name = path.basename(workspace);
+  if (!name) return requestedPath;
+  const segments = requestedPath.split(/[\\/]+/);
+  if (segments.length < 2 || segments[0] !== name) return requestedPath;
+  const ownNamedChild = path.join(workspace, name);
+  try {
+    if (fs.statSync(ownNamedChild).isDirectory()) return requestedPath;
+  } catch { /* no subfolder of the workspace's own name: the prefix is the workspace itself */ }
+  return segments.slice(1).join(path.sep) || ".";
+}
+
+/**
  * Resolve a tool path beneath the configured workspace, following any existing
  * symlinks/junctions before returning it. Missing descendants are rebuilt from
  * their nearest real ancestor so an existing link cannot redirect the access.
@@ -19,7 +40,7 @@ export function resolveWorkspacePath(workspaceRoot: string, requestedPath: strin
   const workspace = path.resolve(workspaceRoot);
   const candidate = path.isAbsolute(requestedPath)
     ? path.resolve(requestedPath)
-    : path.resolve(workspace, requestedPath);
+    : path.resolve(workspace, stripWorkspaceFolderPrefix(workspace, requestedPath));
 
   if (!isWithin(workspace, candidate)) {
     throw new Error(`Path is outside the workspace: ${requestedPath}`);
