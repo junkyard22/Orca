@@ -10,7 +10,7 @@ export const listDirectoryTool: Tool = {
     properties: {
       path: {
         type: "string",
-        description: "Absolute or workspace-relative path to the directory.",
+        description: "Absolute or workspace-relative path to the directory. Relative paths start inside the workspace root itself; do not prefix them with the workspace folder's name.",
       },
     },
     required: ["path"],
