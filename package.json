@@ -28,6 +28,11 @@
       "esbuild",
       "electron"
     ],
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-ch52-4w7c-c8xp"
+      ]
+    },
     "overrides": {
       "esbuild": ">=0.28.1",
       "vite": ">=8.1.0",
@@ -56,7 +61,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.12.0",
-    "node-gyp": "^12.2.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

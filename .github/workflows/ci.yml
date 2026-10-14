@@ -106,6 +106,14 @@ jobs:
       # that specific CVE via pnpm.auditConfig.ignoreCves over re-scoping the
       # whole gate — an explicit, reviewable exception rather than a silent
       # blind spot.
+      #
+      # Exceptions in force (root package.json → pnpm.auditConfig.ignoreGhsas):
+      #   GHSA-ch52-4w7c-c8xp  http-cache-semantics (high) — no patched version
+      #     exists; reached only through electron-builder → @electron/get →
+      #     got → cacheable-request, the packaging tool's download helper. It
+      #     is not in the packaged app (the asar carries the esbuild bundle and
+      #     the renderer only; verified 2026-10-14). Re-check when
+      #     electron-builder or @electron/get ships a release that drops it.
       - name: Audit dependencies
         run: pnpm audit --audit-level high
 
