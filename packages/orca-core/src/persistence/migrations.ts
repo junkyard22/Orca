@@ -96,6 +96,15 @@ export function runMigrations(db: Database): void {
     // Column already exists — safe to ignore.
   }
 
+  // Add budget accounting columns: unreconciled upper bound and the basis of cost_usd (idempotent migration)
+  for (const column of ["cost_unreconciled_usd REAL", "cost_basis TEXT"]) {
+    try {
+      db.run(`ALTER TABLE runs ADD COLUMN ${column};`);
+    } catch {
+      // Column already exists — safe to ignore.
+    }
+  }
+
   // Rename legacy role identifiers in existing rows (idempotent — no-op when already renamed)
   try {
     db.run(`UPDATE runs SET role = 'strong_model' WHERE role = 'coder_strong';`);

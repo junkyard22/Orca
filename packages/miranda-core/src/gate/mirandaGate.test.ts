@@ -20,6 +20,7 @@ import { describe, it, expect } from "vitest";
 import * as path from "node:path";
 import {
   classifyToolPermissionRequirement,
+  classifyToolVerb,
   composeMirandaGates,
   createMirandaGate,
   transitionAHPLifecycle,
@@ -734,5 +735,83 @@ describe("AHP lifecycle transitions (unchanged)", () => {
 
   it("allows RUNNING → COMPLETE", () => {
     expect(() => transitionAHPLifecycle(AHPLifecycle.RUNNING, AHPLifecycle.COMPLETE)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MCP classification and path-boundary regressions (core reliability phase 1)
+// ---------------------------------------------------------------------------
+
+describe("connector tool verb classification", () => {
+  it("classifies GitHub mutations as writes, including verbs Miranda used to miss", () => {
+    for (const tool of [
+      "github-mcp_push_files", "github-mcp_fork_repository", "github-mcp_add_issue_comment",
+      "github-mcp_star_repository", "github-mcp_add_sub_issue", "github-mcp_assign_copilot_to_issue",
+      "github-mcp_run_workflow", "github-mcp_rerun_workflow_run", "github-mcp_dismiss_notification",
+      "github-mcp_request_copilot_review", "github-mcp_create_or_update_file", "github-mcp_merge_pull_request",
+      "desktop-commander_set_config_value", "slack_post_message", "memory_create_entities", "execute_sql",
+    ]) {
+      expect(classifyToolVerb(tool), tool).toBe("write");
+      expect(classifyToolPermissionRequirement(tool, [tool]), tool).toBe("connector_write");
+    }
+  });
+
+  it("keeps GitHub reads as reads even when the name contains a noun that is also a verb", () => {
+    for (const tool of [
+      "github-mcp_get_file_contents", "github-mcp_get_tag", "github-mcp_get_release_by_tag",
+      "github-mcp_get_latest_release", "github-mcp_get_label", "github-mcp_list_label",
+      "github-mcp_get_workflow_run", "github-mcp_get_issue_comments", "github-mcp_list_releases",
+      "github-mcp_search_code", "brave_web_search", "fetch", "query", "read_graph", "get-library-docs",
+    ]) {
+      expect(classifyToolVerb(tool), tool).toBe("read");
+      expect(classifyToolPermissionRequirement(tool, [tool]), tool).toBe("connector_read");
+    }
+  });
+
+  it("treats a strong mutation verb anywhere in the name as a write", () => {
+    expect(classifyToolVerb("get_or_create_label")).toBe("write");
+    expect(classifyToolVerb("list_then_delete")).toBe("write");
+  });
+
+  it("reports names without a recognised verb as unknown (the desktop layer requires approval for them)", () => {
+    for (const tool of ["sequentialthinking", "resolve-library-id", "puppeteer_navigate", "acme_frobnicate"]) {
+      expect(classifyToolVerb(tool), tool).toBe("unknown");
+    }
+  });
+});
+
+describe("MCP path arguments and the workspace boundary", () => {
+  const workspaceRoot = path.resolve("workspace");
+
+  it("checks every entry of a `paths` array against the workspace", () => {
+    const r = createMirandaGate().beforeToolRun(makeToolCtx({
+      tool: "desktop-commander_read_multiple_files",
+      workspaceRoot,
+      args: { paths: [path.join(workspaceRoot, "a.js"), path.resolve("outside", ".ssh", "id_rsa")] },
+    }));
+    expect(r.allowed).toBe(false);
+    expect(r.violations?.join(" ")).toMatch(/outside.*workspace/i);
+  });
+
+  it("checks the source of a move, not only the destination", () => {
+    const r = createMirandaGate().beforeToolRun(makeToolCtx({
+      tool: "desktop-commander_move_file",
+      workspaceRoot,
+      args: { source: path.resolve("outside", "a.txt"), destination: path.join(workspaceRoot, "a.txt") },
+    }));
+    expect(r.allowed).toBe(false);
+  });
+
+  it("checks `src`/`dest` pairs and nested `files[].path` entries", () => {
+    const gate = createMirandaGate();
+    expect(gate.beforeToolRun(makeToolCtx({ tool: "some_tool", workspaceRoot, args: { src: path.resolve("elsewhere", "a"), dest: path.join(workspaceRoot, "b") } })).allowed).toBe(false);
+    expect(gate.beforeToolRun(makeToolCtx({ tool: "some_tool", workspaceRoot, args: { files: [{ path: path.resolve("elsewhere", "x") }] } })).allowed).toBe(false);
+  });
+
+  it("does not treat non-path strings under those keys as escapes", () => {
+    const gate = createMirandaGate();
+    expect(gate.beforeToolRun(makeToolCtx({ tool: "some_tool", workspaceRoot, args: { source: "https://example.com/data.json" } })).allowed).toBe(true);
+    expect(gate.beforeToolRun(makeToolCtx({ tool: "some_tool", workspaceRoot, args: { target: "main" } })).allowed).toBe(true);
+    expect(gate.beforeToolRun(makeToolCtx({ tool: "read_file", workspaceRoot, args: { path: path.join(workspaceRoot, "src", "inside.txt") } })).allowed).toBe(true);
   });
 });

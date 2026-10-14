@@ -243,19 +243,34 @@
               </div>
               <div class="setting-group">
                 <label class="setting-label" for="set-budget"
-                  >Budget per request (USD)</label
+                  >Budget per task (USD)</label
                 >
                 <p class="setting-hint">
-                  Miranda stops spending when this limit is reached.
+                  Covers every model request for one message: narration, Brain, workers, fallbacks and repairs.
+                  Each request is reserved against it before it is sent and refused if it would exceed what remains;
+                  the reservation is an upper bound from the request size and the model's documented limits.
+                  0 = no hard limit (spending is still tracked and shown).
                 </p>
                 <input
                   type="number"
                   id="set-budget"
                   class="setting-input setting-input--sm"
-                  min="0.01"
-                  max="10"
+                  min="0"
+                  max="1000"
                   step="0.01"
                 />
+                <p class="setting-hint" id="set-budget-source"></p>
+              </div>
+              <div class="setting-group mt-14">
+                <label class="setting-label" for="set-pricing"
+                  >Custom model prices (JSON, optional)</label
+                >
+                <p class="setting-hint">
+                  Orca prices Anthropic API models from a reviewed catalog. Any other model needs a price here before it can run under a hard budget,
+                  e.g. [{"providerId":"prov_x","model":"openai/gpt-4o-mini","inputPer1M":0.15,"outputPer1M":0.60}] (USD per million tokens).
+                  Local Ollama / loopback endpoints need none (no external API charge; electricity and hardware are not counted).
+                </p>
+                <textarea id="set-pricing" class="setting-input" rows="4" spellcheck="false"></textarea>
               </div>
               <div class="setting-group mt-14">
                 <label class="setting-label" for="set-repairs"
@@ -512,6 +527,10 @@
             <span class="approval-label">Args</span>
             <pre class="approval-args" id="approval-args"></pre>
           </div>
+          <div class="approval-row">
+            <span class="approval-label">Workspace</span>
+            <code class="approval-value" id="approval-workspace"></code>
+          </div>
         </div>
         <div class="approval-footer">
           <label class="approval-always-row">
@@ -519,6 +538,7 @@
             <span>Always approve <code id="approval-tool-name-2"></code> this session</span>
           </label>
           <div class="approval-actions">
+            <button class="btn-stop-task" id="btn-stop-task-approval" title="Stop the whole task; this request is not approved">Stop task</button>
             <button class="btn-deny" id="btn-deny-tool">Deny</button>
             <button class="btn-approve" id="btn-approve-tool">Approve</button>
           </div>
@@ -526,6 +546,7 @@
       </div>
     </div>
 
+    <script src="provider-options.js"></script>
     <script src="pipeline-trace.js"></script>
     <script src="app.js"></script>
   </body>

@@ -11,8 +11,10 @@ import { verifyAHPPacket } from "@clawde/pappy-core";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult } from "./helpers.js";
-import { throwIfAborted } from "./abort.js";
+import { throwIfAborted, untilAborted } from "./abort.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
+import { accountPass, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
+import type { PassAccounting } from "./budget/passAccounting.js";
 
 type RepairSubagentRun = NonNullable<OrcaMaestroResult["subagentRuns"]>[number];
 
@@ -127,22 +129,32 @@ export async function handleRepairLoop(
   let lastOutputText: string | undefined = initialOutputText;
   let spentUsd = spentSoFarUsd ?? 0;
   let currentArtifacts = initialArtifacts;
+  let lastPass: PassAccounting | undefined;
 
   for (let pass = 1; pass <= maxPasses; pass++) {
     throwIfAborted(ctx.abortSignal);
     // ── Budget guard — abort before spending more ──────────────────────────
-    if (budgetUsd && budgetUsd > 0 && spentUsd >= budgetUsd) {
+    // The task ledger is the authority: it knows what was reconciled, what is
+    // unreconciled and what is reserved. The legacy metadata sum is the
+    // fallback for callers that run without a ledger.
+    const ledgerStop = budgetStopReason(ctx.budget, lastPass);
+    const legacyStop = (!ctx.budget || ctx.budget.snapshot().requests.total === 0) && budgetUsd && budgetUsd > 0 && spentUsd >= budgetUsd
+      ? `Budget cap $${budgetUsd.toFixed(4)} reached ($${spentUsd.toFixed(4)} spent)`
+      : undefined;
+    if (ledgerStop || legacyStop) {
+      const snapshot = ctx.budget?.snapshot();
       ctx.recordTrace?.("repair.budget_stop", {
         pass,
         maxPasses,
-        budgetUsd,
-        spentUsd,
-        lastOutputText,
+        budgetUsd: snapshot?.limitUsd ?? budgetUsd,
+        spentUsd: snapshot?.accountedUsd ?? spentUsd,
+        reason: ledgerStop ?? legacyStop,
+        budget: snapshot,
       });
       return {
         status: "FAIL",
         userFacingText: lastOutputText,
-        summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${spentUsd.toFixed(4)} spent). Skipped ${maxPasses - pass + 1} repair pass(es).`,
+        summary: `${ledgerStop && snapshot ? formatBudgetStop(ledgerStop, snapshot) : legacyStop} Skipped ${maxPasses - pass + 1} repair pass(es).`,
         ...(currentArtifacts ? { artifacts: currentArtifacts } : {}),
         qcResult: currentQC,
       };
@@ -245,16 +257,39 @@ export async function handleRepairLoop(
     });
 
     emitter.emit({ type: "maestro:start", taskId: ctx.runId, attempt: pass, isRepair: true });
-    const maestroResult = normalizeMaestroResult(await maestro.run(repairSpec, ctx));
+    let maestroResult: OrcaMaestroResult;
+    if (ctx.budget) {
+      const pass_ = await accountPass(ctx.budget, () => untilAborted(maestro.run(repairSpec, ctx), ctx.abortSignal), ctx.gate);
+      maestroResult = withPassAccounting(normalizeMaestroResult(pass_.result), pass_.accounting);
+      lastPass = pass_.accounting;
+    } else {
+      maestroResult = normalizeMaestroResult(await untilAborted(maestro.run(repairSpec, ctx), ctx.abortSignal));
+    }
     currentArtifacts = maestroResult;
     lastOutputText = maestroResult.outputText ?? lastOutputText;
-    spentUsd += maestroResult.metadata?.costUsd ?? 0;
+    spentUsd += (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
     ctx.recordTrace?.("repair.pass.maestro_result", {
       pass,
       spentUsd,
+      budget: ctx.budget?.snapshot(),
       maestroResult,
     });
     emitter.emit({ type: "maestro:done", taskId: ctx.runId, attempt: pass, isRepair: true, hasOutput: !!maestroResult.outputText });
+
+    // A repair pass that could not get a single model request past the budget
+    // produced nothing worth judging; stop here and say why, before QC.
+    const passStop = lastPass && lastPass.settled === 0 ? budgetStopReason(ctx.budget, lastPass) : undefined;
+    if (passStop && ctx.budget) {
+      const snapshot = ctx.budget.snapshot();
+      ctx.recordTrace?.("repair.budget_stop", { pass, maxPasses, reason: passStop, budget: snapshot });
+      return {
+        status: "FAIL",
+        userFacingText: lastOutputText,
+        summary: `${formatBudgetStop(passStop, snapshot)} Repair pass ${pass} made no model request.`,
+        artifacts: maestroResult,
+        qcResult: currentQC,
+      };
+    }
 
     // Evaluate THIS pass's maestroResult (latest artifacts) against the
     // ORIGINAL task constraints — the benchmark is always the user's goal,
@@ -293,7 +328,11 @@ export async function handleRepairLoop(
     }
 
     verifyRepairPackets(maestroResult, ctx);
-    const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult));
+    // Judge this pass with the runtime's workspace evidence and the receipts of
+    // every earlier pass, so a reproduction run before the first fix still counts.
+    ctx.lifecycle?.transition("VERIFYING", `repair pass ${pass} complete; Pappy evaluates`);
+    const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]));
+    ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
     ctx.recordTrace?.("repair.pass.qc_result", {
       pass,
       verdict: nextQC.verdict,

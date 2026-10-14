@@ -1,0 +1,62 @@
+
+> room-booking@1.0.0 test
+> node --test
+
+TAP version 13
+# Subtest: parses 24-hour times
+ok 1 - parses 24-hour times
+  ---
+  duration_ms: 1.0003
+  type: 'test'
+  ...
+# Subtest: rejects malformed times
+ok 2 - rejects malformed times
+  ---
+  duration_ms: 0.2767
+  type: 'test'
+  ...
+# Subtest: books a free slot
+ok 3 - books a free slot
+  ---
+  duration_ms: 0.3594
+  type: 'test'
+  ...
+# Subtest: rejects a booking that overlaps an existing meeting
+ok 4 - rejects a booking that overlaps an existing meeting
+  ---
+  duration_ms: 0.2349
+  type: 'test'
+  ...
+# Subtest: rejects a booking inside an existing meeting
+ok 5 - rejects a booking inside an existing meeting
+  ---
+  duration_ms: 0.2222
+  type: 'test'
+  ...
+# Subtest: the same time in a different room is fine
+ok 6 - the same time in a different room is fine
+  ---
+  duration_ms: 0.1252
+  type: 'test'
+  ...
+# Subtest: a meeting can start exactly when the previous one ends (ISSUE.md)
+ok 7 - a meeting can start exactly when the previous one ends (ISSUE.md)
+  ---
+  duration_ms: 0.2063
+  type: 'test'
+  ...
+# Subtest: rejects bookings that end before they start
+ok 8 - rejects bookings that end before they start
+  ---
+  duration_ms: 0.148
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 107.0261

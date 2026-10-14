@@ -1,8 +1,65 @@
+import { classifyTaskKind } from "@clawde/orca-core";
 import type { OrcaTaskSpec } from "@clawde/orca-core";
 import type { DecomposeDecision, DepartmentTask, RoleName } from "maestro-core";
 
 export const DEFAULT_EXECUTION_ROLE: RoleName = "narrator";
 const COMMAND_VERIFICATION_ROLE: RoleName = "debugger";
+
+/**
+ * The worker a request falls back to when Brain produced no usable plan,
+ * chosen by what the request asks for. A request that changes code never
+ * falls back to Narrator (a non-editing role); it goes to the debugger for a
+ * defect, the strong model for a feature, refactor or documentation change,
+ * the reader for inspection, and Narrator only for conversation-shaped work.
+ */
+export function fallbackExecutionRole(task: OrcaTaskSpec): RoleName {
+  const text = requestText(task);
+  const kind = classifyTaskKind(text);
+  switch (kind) {
+    case "bugfix": return "debugger";
+    case "feature":
+    case "refactor":
+    case "docs": return "strong_model";
+    case "inspect": return restatesKnownInformation(text) ? DEFAULT_EXECUTION_ROLE : "reader";
+    default: return DEFAULT_EXECUTION_ROLE;
+  }
+}
+
+/**
+ * Pappy's "inspect" kind covers two different jobs: gathering information
+ * from the workspace (review, audit, explain how X in src/ works) and
+ * restating information already in hand (summarize the facts, report the
+ * findings, tell the user what was found). The first needs the reader, who
+ * can open files; the second is a response, which is Narrator's job. The
+ * rule looks at the object of the request, not at particular phrasings: a
+ * response-shaped verb whose object is prior information or the user, with
+ * nothing in the workspace named, is a response.
+ */
+const RESPONSE_VERB = /\b(summari[sz]e|describe|explain|report\s+on|tell\s+me|recap|restate|present)\b/i;
+const KNOWN_INFORMATION = /\b(facts?|findings?|results?|conclusions?|outcomes?|answers?|the\s+above|these|this|so\s+far|what\s+(?:you|we)\s+(?:found|learned|have|know)|for\s+the\s+user|in\s+plain\s+(?:english|language|words)|the\s+(?:output|conversation|discussion|thread))\b/i;
+const WORKSPACE_OBJECT = /\b(code|codebase|source|repo(?:sitory)?|project|module|package|file|files|folder|director(?:y|ies)|function|class|method|component|service|schema|config(?:uration)?|architecture|implementation|tests?|logs?|diff|commit|branch|src|lib)\b|[\w./\\-]+\.(?:[cm]?[jt]sx?|py|go|rs|java|rb|md|json|ya?ml|toml|css|html)\b/i;
+
+export function restatesKnownInformation(text: string): boolean {
+  return RESPONSE_VERB.test(text) && KNOWN_INFORMATION.test(text) && !WORKSPACE_OBJECT.test(text);
+}
+
+function requestText(task: OrcaTaskSpec): string {
+  return [task.originalUserMessage, task.intent, ...(task.goals ?? [])].filter((p): p is string => typeof p === "string" && p.length > 0).join("\n");
+}
+
+/** The request with its command lines removed: "pnpm build" names a command to run, not a change to make. */
+function withoutCommandLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*[-*]?\s*[`'"]?(?:pnpm|npm|npx|yarn|bun|cargo|go|pytest|python3?|node|make)\b/i.test(line))
+    .join("\n");
+}
+
+/** Whether the request asks for code, tests or documents to be changed (prohibitions stripped). */
+export function requestsChanges(task: OrcaTaskSpec): boolean {
+  const kind = classifyTaskKind(withoutCommandLines(requestText(task)));
+  return kind === "bugfix" || kind === "feature" || kind === "refactor" || kind === "docs";
+}
 
 export type RoutingPolicyResult = {
   decision: DecomposeDecision;
@@ -10,18 +67,19 @@ export type RoutingPolicyResult = {
   remapReason?: "audit_fallback" | "command_verification" | "direct_default" | "department_default" | "missing_decision";
 };
 
-function remapDepartment(department: DepartmentTask): { department: DepartmentTask; remapped: boolean } {
+function remapDepartment(department: DepartmentTask, task: OrcaTaskSpec): { department: DepartmentTask; remapped: boolean } {
   if (department.head !== "brain") {
     return { department, remapped: false };
   }
 
+  const role = fallbackExecutionRole({ ...task, originalUserMessage: department.subtask, intent: department.subtask, goals: [] });
   return {
     department: {
       ...department,
-      head: DEFAULT_EXECUTION_ROLE,
+      head: role,
       context: department.context
-        ? `${department.context}\n\nRouting note: Brain planned this task; ${DEFAULT_EXECUTION_ROLE} executes it.`
-        : `Routing note: Brain planned this task; ${DEFAULT_EXECUTION_ROLE} executes it.`,
+        ? `${department.context}\n\nRouting note: Brain planned this task; ${role} executes it.`
+        : `Routing note: Brain planned this task; ${role} executes it.`,
     },
     remapped: true,
   };
@@ -38,7 +96,10 @@ export function normalizeDesktopRoutingForExecution(
   decision: DecomposeDecision | null,
   auditFallback: DecomposeDecision | null,
 ): RoutingPolicyResult {
-  if (asksForCommandVerification(task)) {
+  // Command verification is a route only when running commands *is* the
+  // request. "Fix the bug, then run the tests" asks for a fix: its objective
+  // and the user's goals stay the acceptance criteria, and Pappy judges them.
+  if (asksForCommandVerification(task) && !requestsChanges(task)) {
     const requestedCommands = extractRequestedCommands(task);
     const commandCriteria = requestedCommands.length > 0
       ? [
@@ -64,10 +125,12 @@ export function normalizeDesktopRoutingForExecution(
   }
 
   if (!decision) {
+    // No usable plan: a worker that can do the kind of work requested, with
+    // the user's own goals preserved as the acceptance criteria.
     return {
       decision: auditFallback ?? {
         routing: "direct",
-        role: DEFAULT_EXECUTION_ROLE,
+        role: fallbackExecutionRole(task),
         done_criteria: task.goals ?? [],
       },
       remappedBrainExecution: !auditFallback,
@@ -91,14 +154,15 @@ export function normalizeDesktopRoutingForExecution(
     return {
       decision: {
         ...decision,
-        role: DEFAULT_EXECUTION_ROLE,
+        role: fallbackExecutionRole(task),
+        done_criteria: decision.done_criteria?.length ? decision.done_criteria : (task.goals ?? []),
       },
       remappedBrainExecution: true,
       remapReason: "direct_default",
     };
   }
 
-  const remappedDepartments = decision.departments.map(remapDepartment);
+  const remappedDepartments = decision.departments.map((department) => remapDepartment(department, task));
   const anyRemapped = remappedDepartments.some((entry) => entry.remapped);
   if (!anyRemapped) {
     return { decision, remappedBrainExecution: false };

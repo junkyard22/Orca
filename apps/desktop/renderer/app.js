@@ -254,6 +254,7 @@ function updateWelcomeWorkspace() {
   if (!el) return;
   orca.getSettings().then((s) => {
     const root = s?.workspaceRoot?.trim();
+    currentWorkspaceRoot = root || "";
     if (root) {
       // Show just the last path segment to keep the hint short.
       const name = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || root;
@@ -325,6 +326,45 @@ orca.onOrcaEvent((e) => {
   }
   // Token/cost estimate — saved and rendered below the completed reply.
   if (e.type === "run:stats") { pendingStats = e; return; }
+  // Budget ledger moved (reservation, settlement, refusal): keep the status bar current.
+  if (e.type === "budget:update") {
+    latestBudget = e.budget;
+    if (statusbarCost) statusbarCost.textContent = formatBudgetLine(e.budget);
+    return;
+  }
+  // Lifecycle: say what the task is doing, and never call a stopped task "done".
+  if (e.type === "task:state") {
+    latestTaskState = e;
+    if (e.state === "CANCELLING" || e.state === "CANCELLED" || e.state === "INTERRUPTED") dismissApprovalForStop();
+    const label = taskStateLabel(e);
+    if (label) appendSys(label, e.state === "INTERRUPTED" ? "warn" : "info");
+    pushLiveTraceEvent(e);
+    return;
+  }
+  if (e.type === "task:session") {
+    if (e.state === "cancelled") appendSys("Stopped — all operations settled.", "info");
+    if (e.budget && statusbarCost) statusbarCost.textContent = formatBudgetLine(e.budget);
+    return;
+  }
+  if (e.type === "brain:fallback") {
+    appendSys(`Planning fell back: ${e.reason}.`, "warn");
+    pushLiveTraceEvent(e);
+    return;
+  }
+  // Workspace safety is not task state: a task can be over while something it
+  // started still writes. Say so, and offer the explicit release.
+  if (e.type === "workspace:protected") {
+    showWorkspaceBanner(e.recovery);
+    appendSys("Workspace protected — nothing will run in it until the listed work settles or you release it.", "warn");
+    pushLiveTraceEvent(e);
+    return;
+  }
+  if (e.type === "workspace:released") {
+    if (!e.remaining) hideWorkspaceBanner();
+    if (e.by === "override") appendSys(`Workspace protection overridden — recorded as your decision, nothing was verified or stopped: ${e.reason}.`, "warn");
+    else appendSys(`Workspace released (${e.by === "settlement" ? "all work settled" : "every process verified gone"}): ${e.reason}.`, "info");
+    return;
+  }
 
   // Phase 1 live pipeline visibility — sanitized rows only.
   // The mapper drops chain-of-thought / token / scratchpad events at the
@@ -497,7 +537,8 @@ function buildPipelineSummaryFromEvents(result) {
       taskId: qcEvent.taskId,
       role: currentRole?.role ?? "unknown",
       verdict: qcEvent.verdict,
-      confidence: qcEvent.verdict === "PASS" ? 1 : qcEvent.verdict === "WARN" ? 0.8 : 0.5,
+      // Only Pappy produces its heuristic score; never invent one here.
+      confidence: typeof qcEvent.confidence === "number" ? qcEvent.confidence : undefined,
       issueCount: qcEvent.issueCount ?? 0,
       issues: normalizePipelineIssues(qcEvent.issues),
       acceptanceCriteria: [],
@@ -519,18 +560,24 @@ function buildPipelineSummaryFromEvents(result) {
     : 0;
   const repairPasses = pipelineEventLog.filter((e) => e.type === "repair:start" && e.taskId === taskId).length;
 
+  // A task the user stopped (or that was interrupted) was never judged by
+  // Pappy: it has no verdict, and "FAIL" would say it was judged and failed.
+  // The outcome is the lifecycle state, and "Stopped." is not an error.
+  const endedState = latestTaskState && latestTaskState.taskId === taskId ? latestTaskState.state : null;
+  const stopped = endedState === "CANCELLED" || endedState === "INTERRUPTED" || endedState === "CANCELLING"
+    || result?.cancelling === true || result?.error === "Stopped.";
   return {
     type: "pipeline:summary",
     taskId: taskId,
     role: currentRole?.role ?? "unknown",
-    verdict: result?.ok ? "PASS" : "FAIL",
-    confidence: result?.ok ? 1 : 0.5,
+    verdict: stopped ? (endedState === "INTERRUPTED" ? "INTERRUPTED" : "CANCELLED") : (result?.ok ? "PASS" : "FAIL"),
+    confidence: undefined,
     issueCount: 0,
     issues: [],
     acceptanceCriteria: [],
     durationMs,
     repairPasses,
-    errorMessage: result?.ok === false ? result.error : undefined,
+    errorMessage: result?.ok === false && !stopped ? result.error : undefined,
   };
 }
 
@@ -724,6 +771,115 @@ function attachRoleBadge(msgDiv, roleInfo) {
   lbl.appendChild(badge);
 }
 
+// ── Workspace protection banner ───────────────────────────────────────────
+
+let workspaceBanner = null;
+
+function showWorkspaceBanner(recoveryText) {
+  if (!workspaceBanner) {
+    workspaceBanner = document.createElement("div");
+    workspaceBanner.id = "workspace-banner";
+    workspaceBanner.className = "workspace-banner";
+    const text = document.createElement("pre");
+    text.className = "workspace-banner-text";
+    const btn = document.createElement("button");
+    btn.className = "workspace-banner-release";
+    btn.textContent = "I accept the risk — override protection";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const r = await orca.releaseWorkspace();
+        if (!r?.ok) appendSys(r?.error || "Override cancelled.", "info");
+      } catch (err) {
+        appendSys(String(err), "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    workspaceBanner.appendChild(text);
+    workspaceBanner.appendChild(btn);
+    messages.parentElement.insertBefore(workspaceBanner, messages);
+  }
+  workspaceBanner.querySelector(".workspace-banner-text").textContent = recoveryText || "Workspace protected.";
+  workspaceBanner.hidden = false;
+}
+
+function hideWorkspaceBanner() {
+  if (workspaceBanner) workspaceBanner.hidden = true;
+}
+
+// On load, a protection left by a previous session is shown before any message is sent.
+orca.getWorkspaceProtection?.().then((status) => {
+  if (status?.protections?.length) showWorkspaceBanner(status.recovery);
+}).catch(() => {});
+
+// ── Task lifecycle display ────────────────────────────────────────────────
+
+// Latest lifecycle event for the current task (from task:state events).
+let latestTaskState = null;
+
+// A line per state the user should know about. Stage progress is not success:
+// only COMPLETED means the work finished and QC did not fail.
+function taskStateLabel(e) {
+  switch (e.state) {
+    case "WAITING_FOR_APPROVAL": return "Waiting for your approval.";
+    case "CANCELLING": return e.activeOperations > 0
+      ? `Stopping — waiting for ${e.activeOperations} operation${e.activeOperations === 1 ? "" : "s"} to settle…`
+      : "Stopping…";
+    case "CANCELLED": return "Stopped — all operations settled.";
+    case "INTERRUPTED": {
+      const left = [...(e.unsettledOperations ?? []), ...(e.unsettledResources ?? [])];
+      return `Stopped, but not cleanly: ${left.length ? left.join(", ") + " never settled and may still change the workspace" : e.reason}. The workspace stays protected until this settles or you release it.`;
+    }
+    default: return null;
+  }
+}
+
+function taskWasStopped() {
+  const st = latestTaskState?.state;
+  return st === "CANCELLING" || st === "CANCELLED" || st === "INTERRUPTED";
+}
+
+// ── Budget / cost display ─────────────────────────────────────────────────
+
+// Latest budget snapshot for the current task (from budget:update events).
+let latestBudget = null;
+
+// One line of confirmed figures. Estimates are labelled, unknowns are said.
+function formatBudgetLine(b) {
+  if (!b) return "";
+  const usd = (n) => `$${Number(n ?? 0).toFixed(4)}`;
+  const parts = [];
+  if (b.limitUsd !== null && b.limitUsd !== undefined) parts.push(`${usd(b.spentUsd)} of $${Number(b.limitUsd).toFixed(2)} confirmed`);
+  else parts.push(`${usd(b.spentUsd)} confirmed (no hard limit)`);
+  if (b.unreconciledUsd > 0) parts.push(`${usd(b.unreconciledUsd)} unreconciled`);
+  if (b.reservedUsd > 0) parts.push(`${usd(b.reservedUsd)} reserved`);
+  if (b.unpricedRequests > 0) parts.push(`${b.unpricedRequests} unpriced`);
+  // A ledger blocked after the user pressed Stop is not a budget stop: the
+  // cancelled request stays unreconciled, which blocks the (already ended) task.
+  if (b.blocked) parts.push(taskWasStopped() ? "blocked after Stop" : "stopped by budget");
+  return parts.join(" · ");
+}
+
+// Rows for the pipeline badge: what was configured, spent, pending, remaining, and by whom.
+function budgetOutcomeRows(b) {
+  if (!b) return [];
+  const usd = (n) => `$${Number(n ?? 0).toFixed(4)}`;
+  const rows = [];
+  rows.push(["Task budget", b.limitUsd === null || b.limitUsd === undefined ? "none (tracked, not limited)" : `$${Number(b.limitUsd).toFixed(2)}${b.limitSource === "legacy_default" ? " (historical default, never chosen)" : ""}`]);
+  rows.push(["Spent (confirmed)", `${usd(b.spentUsd)} · ${(b.inputTokens ?? 0).toLocaleString()} in / ${(b.outputTokens ?? 0).toLocaleString()} out tokens`]);
+  if (b.unreconciledUsd > 0) rows.push(["Unreconciled", `${usd(b.unreconciledUsd)} upper bound (usage not reported)`]);
+  if (b.reservedUsd > 0) rows.push(["Reserved", usd(b.reservedUsd)]);
+  if (b.limitUsd !== null && b.limitUsd !== undefined) rows.push(["Remaining", usd(b.remainingUsd)]);
+  if (b.unpricedRequests > 0) rows.push(["Unpriced requests", `${b.unpricedRequests} (no reviewed or custom price)`]);
+  const byRole = Object.entries(b.byRole ?? {}).map(([role, agg]) => `${role} ${usd(agg.spentUsd)}${agg.unreconciledUsd > 0 ? ` (+${usd(agg.unreconciledUsd)} unreconciled)` : ""}`);
+  if (byRole.length) rows.push(["By role", byRole.join(", ")]);
+  const byProvider = Object.entries(b.byProvider ?? {}).map(([provider, agg]) => `${provider} ${usd(agg.spentUsd)}`);
+  if (byProvider.length) rows.push(["By provider", byProvider.join(", ")]);
+  if (b.blocked) rows.push(["Budget stop", b.blocked.reason]);
+  return rows;
+}
+
 // ── Token / cost stats pill ───────────────────────────────────────────────
 
 function appendStatsPill(stats) {
@@ -787,8 +943,14 @@ function appendPipelineBadge(summary) {
     ? window.PipelineTrace.badgeRoleLabel(summary)
     : String(summary.role ?? "unknown");
 
-  const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : "fail";
-  const confidencePct = Math.round((summary.confidence ?? 1) * 100);
+  const stoppedOutcome = summary.verdict === "CANCELLED" || summary.verdict === "INTERRUPTED";
+  const verdictClass  = summary.verdict === "PASS" ? "pass" : summary.verdict === "WARN" ? "warn" : stoppedOutcome ? "stopped" : "fail";
+  // Pappy's confidence is a heuristic issue-count score, not a calibrated
+  // probability. Label it as such, and show nothing when Pappy did not run.
+  const heuristicScore = typeof summary.confidence === "number" ? `${Math.round(summary.confidence * 100)}%` : null;
+  const scoreBadgeHtml = heuristicScore
+    ? `<span class="pb-confidence" title="Heuristic issue score from Pappy (not a calibrated probability)">score ${heuristicScore}</span>`
+    : "";
   const durationSec   = ((summary.durationMs ?? 0) / 1000).toFixed(2);
   const repairText    = summary.repairPasses > 0
     ? ` · ${summary.repairPasses} repair${summary.repairPasses !== 1 ? "s" : ""}`
@@ -811,11 +973,25 @@ function appendPipelineBadge(summary) {
   // ── Outcome summary ─────────────────────────────────────────────────────
   const outcomeRows = [
     ["Role", displayRole],
-    ["Verdict", summary.verdict ?? "unknown"],
-    ["Confidence", `${confidencePct}%`],
+    ["Verdict", stoppedOutcome ? `none — task ${summary.verdict.toLowerCase()} before Pappy judged it` : (summary.verdict ?? "unknown")],
+    ...(heuristicScore ? [["Heuristic score", `${heuristicScore} (issue-count heuristic, not calibrated)`]] : []),
     ["Issues", String(summary.issueCount ?? 0)],
     ["Duration", `${durationSec}s`],
     ["Repairs", String(summary.repairPasses ?? 0)],
+    // The lifecycle from the runtime's summary, or — when the task ended before a
+    // summary existed (a budget stop, a Stop during planning) — the last task:state
+    // event for this task. A missing row would read as "nothing to report".
+    ...((() => {
+      const lc = summary.lifecycle ?? (latestTaskState && latestTaskState.taskId === summary.taskId
+        ? { state: latestTaskState.state, unsettledOperations: (latestTaskState.unsettledOperations ?? []).map((label) => ({ label })), unsettledResources: latestTaskState.unsettledResources ?? [] }
+        : null);
+      if (!lc) return [];
+      const left = [...(lc.unsettledOperations ?? []).map((o) => o.label), ...(lc.unsettledResources ?? []).map((r) => (typeof r === "string" ? r : `process ${r.pid}`))];
+      return [["Task state", lc.state === "COMPLETED"
+        ? (summary.verdict === "PASS" ? "completed and verified" : "completed, not verified")
+        : lc.state.toLowerCase() + (left.length ? ` (${left.join(", ")} never settled)` : "")]];
+    })()),
+    ...budgetOutcomeRows(summary.budget),
     ...(summary.taskId ? [["Task", summary.taskId]] : []),
   ];
   const outcomeHtml = `
@@ -1053,7 +1229,7 @@ function appendPipelineBadge(summary) {
     <div class="pipeline-badge-header">
       <span class="pb-role">${escapeHtml(displayRole)}</span>
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
-      <span class="pb-confidence">${confidencePct}%</span>
+      ${scoreBadgeHtml}
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
       <button class="pb-details-btn" type="button" aria-expanded="true">Hide <span class="pb-chevron">›</span></button>
     </div>
@@ -1090,7 +1266,7 @@ function appendPipelineBadge(summary) {
   header.innerHTML = `
       <span class="pb-role">${escapeHtml(displayRole)}</span>
       <span class="pb-verdict ${verdictClass}">${escapeHtml(summary.verdict)}</span>
-      <span class="pb-confidence">${confidencePct}%</span>
+      ${scoreBadgeHtml}
       <span class="pb-duration">${durationSec}s${escapeHtml(repairText)}</span>
       <button class="pb-details-btn" type="button" aria-expanded="true">Hide <span class="pb-chevron">›</span></button>
     `;
@@ -1315,6 +1491,9 @@ async function sendMessage() {
       if (currentRole) attachRoleBadge(msgDiv, currentRole);
     } else if (result.error === "Stopped." || result.error === "Locked.") {
       appendSys("Stopped.", "info");
+    } else if (result.workspaceProtected) {
+      showWorkspaceBanner(result.error);
+      appendSys("Not started: the workspace is still protected by an earlier task. See the notice above.", "warn");
     } else {
       appendSys(result.error ?? "Unknown error.", "error");
     }
@@ -1324,6 +1503,14 @@ async function sendMessage() {
     if (pendingStats) { appendStatsPill(pendingStats); pendingStats = null; }
     if (result.ok && result.reply?.filesChanged?.length) appendDiffCards(result.reply.filesChanged);
     const summaryToRender = pendingPipelineSummary ?? result.pipelineSummary ?? buildPipelineSummaryFromEvents(result);
+    // The message ledger's final figures travel with the reply; prefer them over
+    // the last event, and show them even when Pappy produced no summary.
+    const finalBudget = result.budget ?? latestBudget;
+    if (finalBudget) {
+      if (summaryToRender && !summaryToRender.budget) summaryToRender.budget = finalBudget;
+      if (statusbarCost) statusbarCost.textContent = formatBudgetLine(finalBudget);
+    }
+    latestBudget = null;
     const badgeEl = renderPipelineSummaryBadge(summaryToRender);
     if (badgeEl && livePanel && livePanel.setTraceLink) {
       livePanel.setTraceLink(function () {
@@ -1683,6 +1870,8 @@ inputEl.addEventListener("keydown", (e) => {
 // ── Settings panel ────────────────────────────────────────────────────────
 
 const setBudget       = document.getElementById("set-budget");
+const setBudgetSource = document.getElementById("set-budget-source");
+const setPricing      = document.getElementById("set-pricing");
 const setRepairs      = document.getElementById("set-repairs");
 const setVerbose      = document.getElementById("set-verbose");
 const setShowPipeline = document.getElementById("set-show-pipeline");
@@ -1789,6 +1978,14 @@ function renderProviders() {
           <button class="btn-remove" data-remove-prov="${i}" title="Remove">✕</button>
         </div>
         <input class="setting-input prov-url" placeholder="Base URL" value="${escHtml(p.baseUrl)}" />
+        <label class="setting-hint prov-billing-row">Billing:
+          <select class="prov-billing" title="How this endpoint bills — independent of where it runs. A local proxy that forwards to a paid vendor is metered.">
+            <option value=""${!p.billing ? " selected" : ""}>${p.type === "ollama" ? "default (local — no external API fee)" : "default (unknown — needs a custom price under a hard budget)"}</option>
+            <option value="local"${p.billing === "local" ? " selected" : ""}>local — runs here, no per-request external fee</option>
+            <option value="metered"${p.billing === "metered" ? " selected" : ""}>metered — paid service (set prices in Custom model prices)</option>
+            <option value="unknown"${p.billing === "unknown" ? " selected" : ""}>unknown — refused under a hard budget</option>
+          </select>
+        </label>
         <div class="provider-key-row"${needsKey ? "" : ' style="display:none"'}>
           <input type="password" class="setting-input prov-key" placeholder="API key" value="${escHtml(p.apiKey)}" autocomplete="off" />
           <button class="setting-show-btn prov-show-key" type="button">Show</button>
@@ -1818,6 +2015,13 @@ function renderProviders() {
   list.querySelectorAll(".prov-url").forEach((inp) => {
     inp.addEventListener("input", function () {
       editingSettings.providers[+this.closest(".provider-item").dataset.provIdx].baseUrl = this.value;
+    });
+  });
+
+  list.querySelectorAll(".prov-billing").forEach((sel) => {
+    sel.addEventListener("change", function () {
+      const prov = editingSettings.providers[+this.closest(".provider-item").dataset.provIdx];
+      if (this.value) prov.billing = this.value; else delete prov.billing;
     });
   });
 
@@ -1873,14 +2077,9 @@ function renderProviders() {
 
 // ── Render roles ───────────────────────────────────────────────────────────
 
+// Resolved by stable provider id, matching the main-process lookup — see provider-options.js.
 function buildProviderOptions(currentProviderId) {
-  if (!editingSettings?.providers?.length) {
-    return '<option value="">— add a provider first —</option>';
-  }
-  const blank = currentProviderId ? "" : '<option value="">— select —</option>';
-  return blank + editingSettings.providers
-    .map((p) => `<option value="${p.id}"${p.id === currentProviderId ? " selected" : ""}>${escHtml(p.name)}</option>`)
-    .join("");
+  return ProviderOptions.buildProviderOptions(editingSettings?.providers, currentProviderId);
 }
 
 function renderRoleList(containerId, roles, badgeClass) {
@@ -2157,6 +2356,12 @@ function openSettings() {
     }
     editingSettings        = JSON.parse(JSON.stringify(s)); // deep clone
     setBudget.value        = String(s.budgetUsd       ?? 0.10);
+    if (setBudgetSource) {
+      setBudgetSource.textContent = s.budgetSource === "legacy_default"
+        ? "This is the historical default and was never chosen; it is enforced as is. Saving records your choice."
+        : (Number(s.budgetUsd) > 0 ? "" : "0 = no hard limit; spending is tracked and shown but never refused.");
+    }
+    if (setPricing) setPricing.value = Array.isArray(s.pricing) && s.pricing.length ? JSON.stringify(s.pricing, null, 2) : "";
     setRepairs.value       = String(s.maxRepairPasses ?? 2);
     setVerbose.checked        = !!s.verbose;
     setShowPipeline.checked   = s.showPipeline !== false;
@@ -2205,9 +2410,27 @@ setSaveBtn.addEventListener("click", async () => {
   if (!editingSettings || (authKnown && authState.locked)) return;
 
   const ghTokenInput = document.getElementById("set-github-token");
+  let pricing = editingSettings.pricing;
+  if (setPricing) {
+    const text = setPricing.value.trim();
+    if (!text) pricing = [];
+    else {
+      try {
+        const parsed = JSON.parse(text);
+        if (!Array.isArray(parsed)) throw new Error("expected a JSON array");
+        pricing = parsed;
+      } catch (err) {
+        appendSys(`Custom model prices must be a JSON array of { "model", "inputPer1M", "outputPer1M" } objects: ${err.message}`, "error");
+        return;
+      }
+    }
+  }
+  const budgetInput = parseFloat(setBudget.value);
   const s = {
     ...editingSettings,
-    budgetUsd:       parseFloat(setBudget.value)   || 0.10,
+    // 0 is a real choice (no hard limit); only a blank or invalid field keeps the previous value.
+    budgetUsd:       Number.isFinite(budgetInput) && budgetInput >= 0 ? budgetInput : (editingSettings.budgetUsd ?? 0.10),
+    pricing,
     maxRepairPasses: parseInt(setRepairs.value, 10) || 0,
     verbose:         setVerbose.checked,
     showPipeline:    setShowPipeline.checked,
@@ -2331,6 +2554,26 @@ function startApprovalTimer(onTimeout) {
   approvalTimerInterval = setInterval(tick, 1000);
 }
 
+let currentWorkspaceRoot = "";
+
+// The user pressed Stop (from the card, or anywhere) while this request was
+// pending: the main process has already denied it, so nothing is sent back;
+// the card says the task was stopped rather than that the user denied the call.
+function dismissApprovalForStop() {
+  clearApprovalTimer();
+  const dialog = document.getElementById("tool-approval-dialog");
+  if (dialog.style.display === "none") return;
+  const id = dialog.dataset.approvalId;
+  const card = toolCallCards.get(id);
+  if (card) {
+    card.classList.replace("pending", "denied");
+    card.querySelector(".tool-card-status").textContent = "\u23F9 Stopped — not approved";
+  }
+  toolCallCards.delete(id);
+  dialog.style.display = "none";
+  document.getElementById("chk-always-approve").checked = false;
+}
+
 function resolveApproval(approved) {
   clearApprovalTimer();
   const dialog = document.getElementById("tool-approval-dialog");
@@ -2371,14 +2614,24 @@ orca.onToolRequest((id, tool, args) => {
   document.getElementById("approval-tool-name").textContent  = tool;
   document.getElementById("approval-tool-name-2").textContent = tool;
   document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
+  document.getElementById("approval-workspace").textContent = currentWorkspaceRoot || "(not set)";
   dialog.dataset.approvalId = id;
   dialog.style.display      = "flex";
+  // The safe answer is the keyboard default: Enter denies, Approve needs a deliberate click.
+  document.getElementById("btn-deny-tool").focus();
 
   startApprovalTimer(() => resolveApproval(false));
 });
 
 document.getElementById("btn-approve-tool").addEventListener("click", () => resolveApproval(true));
 document.getElementById("btn-deny-tool").addEventListener("click",    () => resolveApproval(false));
+// Stop must be reachable while an approval is pending: the modal must never
+// hold the task hostage. Stop the task; the request is left unanswered (the
+// main process denies every pending approval when the task stops).
+document.getElementById("btn-stop-task-approval").addEventListener("click", () => {
+  orca.abortTask();
+  dismissApprovalForStop();
+});
 
 // ── Chat session sidebar ──────────────────────────────────────────────────
 
@@ -2494,7 +2747,7 @@ async function loadSession(id) {
     appendPipelineBadge({
       role: session.role ?? "unknown",
       verdict: session.verdict,
-      confidence: session.confidence ?? 1,
+      confidence: typeof session.confidence === "number" ? session.confidence : undefined,
       issueCount: session.issueCount ?? 0,
       issues: [],
       acceptanceCriteria: [],

@@ -13,9 +13,21 @@ export { createFilteredToolService, extractToolNamesFromPrompt } from "./toolFil
 export { createMirandaLLMService } from "./adapters/mirandaLLM.js";
 export { createDirectLLMService } from "./adapters/directLLM.js";
 export { createPappyPort, createDebugPappyPort, createLoggingPappyPort } from "./adapters/pappyPort.js";
+// Pappy's task classification, so app shells can tell a worker what evidence the check will require.
+export { classifyTaskKind, isDefectFixTask, prohibitsTestEdits } from "@clawde/pappy-core";
 
 // Workspace context — capture git + file state for prompt grounding
 export { getWorkspaceContext } from "./workspaceContext.js";
+
+// Workspace evidence — the runtime's own record of what a task changed and
+// which test commands ran, handed to Pappy as evidence the worker cannot author
+export {
+  captureWorkspaceInventory,
+  createWorkspaceEvidenceCollector,
+  diffWorkspaceInventories,
+  DEFAULT_EVIDENCE_LIMITS,
+} from "./workspaceEvidence.js";
+export type { EvidenceLimits, WorkspaceEvidenceCollector, WorkspaceInventory } from "./workspaceEvidence.js";
 
 // Extension / adapter system (Phase 7)
 export {
@@ -106,3 +118,13 @@ export {
   parseAHPPacketGraph,
 } from "./ahp/graph.js";
 
+export { createBudgetJournal } from "./budget/journal.js";
+export type { BudgetJournal, UnresolvedBudgetTask } from "./budget/journal.js";
+export { accountPass, budgetGateContext, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
+export type { PassAccounting } from "./budget/passAccounting.js";
+export { TaskLifecycle, TERMINAL_TASK_STATES } from "./lifecycle.js";
+export { unsettledResourceOf } from "./lifecycle.js";
+export type { ActiveOperation, OperationHandle, OperationKind, PendingResourceScan, TaskLifecycleSnapshot, TaskState, TaskTransition, UnsettledResource } from "./lifecycle.js";
+export { createWorkspaceGuard, describeProtections, existenceProbe, WorkspaceProtectedError } from "./workspaceGuard.js";
+export type { ProcessLiveness, ProcessProbe, ProtectRecord, ProtectedOperation, WorkspaceGuard, WorkspaceGuardEvent, WorkspaceOverride, WorkspaceProtection, WorkspaceRelease } from "./workspaceGuard.js";
+export { createAbortError, isAbortError, throwIfAborted, untilAborted } from "./abort.js";

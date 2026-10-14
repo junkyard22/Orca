@@ -21,6 +21,7 @@
 import type { AHPPacket, AHPConstraint } from "../ahp/types.js";
 import { AHPLifecycle, AHPVerdict } from "../ahp/types.js";
 import * as path from "node:path";
+import type { BudgetDecision } from "../budget/ledger.js";
 
 // ---------------------------------------------------------------------------
 // AHP lifecycle transition enforcement
@@ -112,10 +113,17 @@ export interface LLMCallGateContext {
   stage: string;
   /** Model ID being invoked, e.g. "deepseek/deepseek-chat" */
   model: string;
-  /** USD spent across all stages so far in this run */
+  /** USD accounted so far in this run (spent + unreconciled + reserved) */
   budgetUsed: number;
   /** USD budget cap for this run */
   budgetLimit: number;
+  /**
+   * The task budget ledger's decision for this request, when the caller
+   * consulted it: authorized within budget, no applicable hard budget, or
+   * refused (limit would be exceeded, pricing unknown, charges unreconciled,
+   * request unbounded). A refusal blocks the call; the kind is in the reason.
+   */
+  budget?: BudgetDecision;
   /**
    * The following context-size fields are optional and purely diagnostic —
    * populated by callers that have already computed them for telemetry
@@ -382,8 +390,55 @@ export function composeMirandaGates(
   };
 }
 
-const CONNECTOR_MUTATION_PATTERN =
-  /(?:^|_)(?:create|update|delete|write|remove|send|post|put|patch|merge|close|reopen|approve|reject|clone|upload|move|rename|edit|modify)(?:_|$)/i;
+// ---------------------------------------------------------------------------
+// Connector tool verbs
+//
+// MCP tool names are `<server-id>_<operation>` and operations are verb-first
+// (`get_tag`, `push_files`, `add_issue_comment`). Nouns that happen to be
+// verbs elsewhere (`tag`, `label`, `release`, `run`, `comment`) must not turn a
+// read into a write, and a strong write verb anywhere (`get_or_create_x`)
+// must never be read as a read.
+// ---------------------------------------------------------------------------
+
+const READ_VERBS = new Set([
+  "get", "list", "search", "read", "fetch", "find", "view", "show", "describe", "query",
+  "lookup", "status", "check", "count", "retrieve", "inspect", "browse", "preview",
+]);
+
+/** Mutations wherever they appear in the name. */
+const STRONG_WRITE_VERBS = new Set([
+  "create", "update", "delete", "write", "remove", "send", "post", "put", "patch", "merge",
+  "close", "reopen", "approve", "reject", "clone", "upload", "move", "rename", "edit", "modify",
+  "push", "fork", "dispatch", "trigger", "transfer", "archive", "publish", "invite", "kill",
+  "terminate", "install", "uninstall", "deploy", "execute", "exec", "destroy", "purge",
+  "revoke", "grant", "apply", "reset", "rollback", "restore",
+]);
+
+/** Mutations only when they are the operation's leading verb (`add_x`, not `get_x_add`). */
+const LEADING_WRITE_VERBS = new Set([
+  "add", "set", "comment", "assign", "unassign", "label", "unlabel", "star", "unstar", "tag",
+  "untag", "lock", "unlock", "release", "run", "rerun", "start", "stop", "restart", "cancel",
+  "submit", "request", "dismiss", "mark", "enable", "disable", "pin", "unpin", "mute", "unmute",
+  "subscribe", "unsubscribe", "watch", "unwatch", "import", "sync", "link", "unlink",
+]);
+
+export type ToolVerbClass = "read" | "write" | "unknown";
+
+/**
+ * Classify a tool name by its verbs: "write" when a strong mutation verb appears
+ * anywhere or the first recognised verb is a mutation, "read" when the first
+ * recognised verb is a read, "unknown" when no verb is recognised. Tokens are
+ * split on `_`, `-`, `.` and whitespace, so `get-library-docs` is a read.
+ */
+export function classifyToolVerb(tool: string): ToolVerbClass {
+  const tokens = tool.toLowerCase().split(/[_\-.\s]+/).filter(Boolean);
+  if (tokens.some((token) => STRONG_WRITE_VERBS.has(token))) return "write";
+  for (const token of tokens) {
+    if (READ_VERBS.has(token)) return "read";
+    if (LEADING_WRITE_VERBS.has(token)) return "write";
+  }
+  return "unknown";
+}
 
 function toolMatches(tool: string, names: string[]): boolean {
   return names.some((name) => tool === name || tool.endsWith(`_${name}`));
@@ -420,7 +475,7 @@ export function classifyToolPermissionRequirement(
     'force_terminate',
   ])) return 'shell_exec';
   if (connectorTools.includes(tool)) {
-    return CONNECTOR_MUTATION_PATTERN.test(tool) ? 'connector_write' : 'connector_read';
+    return classifyToolVerb(tool) === "write" ? 'connector_write' : 'connector_read';
   }
   return 'none';
 }
@@ -456,7 +511,9 @@ function collectExplicitPathArguments(args: Record<string, unknown>): string[] {
   const paths: string[] = [];
   const visit = (value: unknown, key: string): void => {
     if (typeof value === "string") {
-      if (/(?:^|_)(?:path|file|filename|target|destination|cwd|dir|directory)(?:$|_)/i.test(key)) {
+      // Every key that names a local location, including plural forms and the
+      // source side of a move/copy (`paths: [...]`, `files: [{ path }]`, `source`).
+      if (/(?:^|_)(?:paths?|files?|file_?paths?|filename|target|destination|dest|source|src|cwd|dir|directory)(?:$|_)/i.test(key)) {
         paths.push(value);
       }
       return;
@@ -687,7 +744,9 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
     beforeLLMCall(ctx): GateResult {
       const violations: string[] = [];
 
-      if (ctx.budgetUsed >= ctx.budgetLimit) {
+      if (ctx.budget && !ctx.budget.allowed) {
+        violations.push(`Budget ${ctx.budget.kind}: ${ctx.budget.reason}`);
+      } else if (ctx.budgetUsed >= ctx.budgetLimit) {
         violations.push(
           `Budget exceeded: $${ctx.budgetUsed.toFixed(6)} used, limit $${ctx.budgetLimit}`,
         );
@@ -729,7 +788,7 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
 
       const result: GateResult = {
         allowed: true,
-        reason: `stage=${ctx.stage}  model=${ctx.model}  budget=$${ctx.budgetUsed.toFixed(4)}/$${ctx.budgetLimit}`,
+        reason: `stage=${ctx.stage}  model=${ctx.model}  budget=$${ctx.budgetUsed.toFixed(4)}/$${ctx.budgetLimit}${ctx.budget ? `  decision=${ctx.budget.kind}` : ""}`,
         ...(warnings.length > 0 && { warnings }),
         verdict: deriveVerdict(true, undefined, warnings),
       };

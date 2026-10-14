@@ -177,13 +177,20 @@ declare module '@clawde/orca-core' {
     abortSignal?: AbortSignal;
   }
 
+  export interface OrcaLLMResult {
+    text: string;
+    usage?: import('@clawde/miranda-core').TokenUsage | null;
+    model?: string;
+    durationMs?: number;
+  }
+
   export interface OrcaLLMService {
-    complete(prompt: string, opts?: LLMOptions): Promise<{ text: string }>;
+    complete(prompt: string, opts?: LLMOptions): Promise<OrcaLLMResult>;
     stream(
       prompt: string,
       options: LLMOptions,
       onChunk: (chunk: string) => void,
-    ): Promise<{ text: string }>;
+    ): Promise<OrcaLLMResult>;
   }
 
   export interface OrcaToolService {
@@ -311,6 +318,10 @@ declare module '@clawde/orca-core' {
     options?: { maxTokens?: number; temperature?: number }
   ): OrcaLLMService;
   export function createPappyPort(): PappyPort;
+  /** Pappy's task classification (re-exported from pappy-core). */
+  export function classifyTaskKind(task: string): "bugfix" | "refactor" | "feature" | "docs" | "inspect" | "other";
+  export function isDefectFixTask(task: string): boolean;
+  export function prohibitsTestEdits(task: string): boolean;
   export function deriveFilesChangedFromToolEvents(
     toolEvents: OrcaToolEvent[],
     filesChanged?: OrcaFileChange[]

@@ -5,6 +5,10 @@ import * as fs from "fs";
 import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
 import { evaluateCommandPolicy, createSandboxPolicy } from "./sandbox.js";
 import { createAbortError, throwIfAborted } from "./abort.js";
+import { captureProcessIdentity, findSurvivingDescendants } from "./processIdentity.js";
+
+/** A process the command left behind, in the shape the task lifecycle records. */
+interface UnsettledProcess { kind: "process"; pid: number; label: string; startedAt: string; identity?: string; reason: string }
 import { resolveWorkspacePath } from "./workspacePath.js";
 
 const COMMAND_ENV_ALLOWLIST = new Set([
@@ -193,6 +197,7 @@ export const runCommandTool: Tool = {
       let timer: NodeJS.Timeout | undefined;
       let abortFailTimer: NodeJS.Timeout | undefined;
 
+      const spawnedAt = new Date().toISOString();
       const child = spawn(command, [], {
         cwd,
         env: commandEnvironment(process.env),
@@ -200,6 +205,46 @@ export const runCommandTool: Tool = {
         shell: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
+
+      const label = command.length > 120 ? `${command.slice(0, 117)}...` : command;
+
+      // The shell's exit says nothing about what it started: a detached
+      // grandchild keeps running with whatever file access it had. After the
+      // shell is gone, its surviving descendants are looked up (one
+      // enumeration, off the tool's critical path) and handed to the caller
+      // as a non-enumerable `pendingResources` promise on the result or the
+      // error. The task lifecycle tracks that scan as an operation and records
+      // every survivor as an unsettled resource; "unknown" (scan unavailable)
+      // is reported as such, never as "none".
+      const attachScan = <T extends object>(target: T): T => {
+        const pid = child.pid;
+        if (pid == null) return target;
+        let scan: Promise<{ status: "done" | "unknown"; resources: UnsettledProcess[] }>;
+        try {
+          scan = findSurvivingDescendants(pid, spawnedAt).then(
+            (found) => found === null
+              ? { status: "unknown" as const, resources: [] as UnsettledProcess[] }
+              : {
+                  status: "done" as const,
+                  resources: found.map((f): UnsettledProcess => ({
+                    kind: "process",
+                    pid: f.pid,
+                    label: `${f.name ? f.name + " " : ""}(${f.relation} of: ${label})`,
+                    startedAt: spawnedAt,
+                    ...(f.identity ? { identity: f.identity } : {}),
+                    reason: f.relation === "descendant"
+                      ? "started by the command and still running after the command's shell exited"
+                      : "created while the command ran, its parent has exited and its ancestry cannot be established; treated as the command's until verified gone",
+                  })),
+                },
+            () => ({ status: "unknown" as const, resources: [] as UnsettledProcess[] }),
+          );
+        } catch {
+          scan = Promise.resolve({ status: "unknown" as const, resources: [] as UnsettledProcess[] });
+        }
+        Object.defineProperty(target, "pendingResources", { value: scan, enumerable: false, configurable: true });
+        return target;
+      };
 
       const finish = (result: ToolResult): void => {
         if (settled) return;
@@ -209,7 +254,7 @@ export const runCommandTool: Tool = {
         if (ctx.abortSignal) {
           ctx.abortSignal.removeEventListener("abort", onAbort);
         }
-        resolve(result);
+        resolve(attachScan(result));
       };
 
       const fail = (error: Error): void => {
@@ -220,15 +265,37 @@ export const runCommandTool: Tool = {
         if (ctx.abortSignal) {
           ctx.abortSignal.removeEventListener("abort", onAbort);
         }
-        reject(error);
+        reject(attachScan(error));
       };
 
       const onAbort = (): void => {
         aborted = true;
         abortError = createAbortError(ctx.abortSignal?.reason);
         terminateChildProcess(child);
+        // The kill was requested; only the child's close confirms it. If that
+        // confirmation does not come, the tool gives up waiting but says so:
+        // the error names the process (pid and creation time) so the task
+        // lifecycle can keep the workspace protected until it is verified gone.
         abortFailTimer = setTimeout(() => {
-          fail(abortError ?? createAbortError(ctx.abortSignal?.reason));
+          void (async () => {
+            const pid = child.pid;
+            if (settled || pid == null || child.exitCode !== null || child.signalCode !== null) {
+              fail(abortError ?? createAbortError(ctx.abortSignal?.reason));
+              return;
+            }
+            const identity = await captureProcessIdentity(pid);
+            if (settled) return;
+            const error = abortError ?? createAbortError(ctx.abortSignal?.reason);
+            (error as Error & { unsettledResource?: unknown }).unsettledResource = {
+              kind: "process",
+              pid,
+              label,
+              startedAt: spawnedAt,
+              ...(identity ? { identity } : {}),
+              reason: "its termination was requested on Stop but the process had not exited after 750 ms",
+            };
+            fail(error);
+          })();
         }, 750);
       };
 
@@ -291,13 +358,14 @@ export const runCommandTool: Tool = {
             ok: false,
             output: outputWithCode,
             error: `Command failed with exit code ${exitCode}`,
+            exitCode,
           });
         } else {
           // Include file changes in the output for the caller to parse
           const outputWithChanges = fileChanges.length > 0
             ? `${combined}\n\n<!-- Files changed: ${JSON.stringify(fileChanges)} -->`
             : combined;
-          finish({ ok: true, output: outputWithChanges });
+          finish({ ok: true, output: outputWithChanges, exitCode: 0 });
         }
       });
     });

@@ -54,6 +54,8 @@ export interface OrcaExecutionResult {
    * Carries the orchestration-level lifecycle, objective, and trace.
    */
   ahpRootPacket?: AHPPacket;
+  /** Final lifecycle snapshot: state, transitions, operations that never settled. */
+  lifecycle?: import("./lifecycle.js").TaskLifecycleSnapshot;
   /**
    * Child AHP packets linked to the root packet (one per worker branch).
    * Empty or absent for single-run (non-decomposed) tasks where the root
@@ -97,6 +99,8 @@ export interface OrcaPipelineTrace {
     repairPasses: number;
     durationMs: number;
     ahpPacketGraph?: import("./ahp/graph.js").AHPPacketGraph;
+    budget?: import("@clawde/miranda-core").BudgetSnapshot;
+    lifecycle?: import("./lifecycle.js").TaskLifecycleSnapshot;
   };
 }
 
@@ -125,9 +129,15 @@ export interface OrcaMaestroResult {
     loopEvidence?: { repeatedCall: string; occurrences: number };
     /** Exception message captured when stoppedBecause === 'error'. */
     errorMessage?: string;
+    /** Provider-reported input tokens for this pass (sum over its model requests). Absent when nothing was measured. */
     inputTokens?: number;
     outputTokens?: number;
+    /** Reconciled cost of this pass in USD (measured usage × reviewed or custom price). Absent when nothing was priced. */
     costUsd?: number;
+    /** Upper bound charged for this pass's requests whose billing outcome is unknown. */
+    costUnreconciledUsd?: number;
+    /** What `costUsd` rests on: measured usage, an upper bound, or nothing. */
+    costBasis?: "measured" | "upper_bound" | "estimate" | "none";
     filesChanged?: OrcaFileChange[];
     auditResult?: unknown;
   };
@@ -181,6 +191,17 @@ export interface LLMOptions {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * Text plus whatever the provider reported about the call. `usage` is null
+ * when the provider sent no (or inconsistent) token counts — never estimated.
+ */
+export interface OrcaLLMResult {
+  text: string;
+  usage?: import("@clawde/miranda-core").TokenUsage | null;
+  model?: string;
+  durationMs?: number;
+}
+
 export interface OrcaLLMService {
   /**
    * Generate text for a prompt.
@@ -193,7 +214,7 @@ export interface OrcaLLMService {
    * from the LLM. Falls back to a single buffered response when the adapter
    * does not support SSE streaming.
    */
-  complete(prompt: string, opts?: LLMOptions): Promise<{ text: string }>;
+  complete(prompt: string, opts?: LLMOptions): Promise<OrcaLLMResult>;
 
   /**
    * Streaming variant — fires onChunk for every incremental token and
@@ -206,7 +227,7 @@ export interface OrcaLLMService {
     prompt: string,
     options: LLMOptions,
     onChunk: (chunk: string) => void,
-  ): Promise<{ text: string }>;
+  ): Promise<OrcaLLMResult>;
 }
 
 /**
@@ -267,6 +288,19 @@ export interface OrcaRunCtx {
    */
   workspaceContext?: WorkspaceContext;
   /**
+   * The task's budget ledger: every model request is reserved here before it
+   * is sent and settled afterwards. Callers consult `budget.decide()` for the
+   * Miranda before_llm_call decision and `budget.snapshot()` for the figures.
+   */
+  budget?: import("@clawde/miranda-core").TaskBudgetLedger;
+  /**
+   * The task's lifecycle: authoritative state, cancellation, and the registry
+   * of operations acting for the task. Adapters report planning and approval
+   * waits and track their tool runs here; nothing may dispatch once
+   * `lifecycle.mayDispatch` is false.
+   */
+  lifecycle?: import("./lifecycle.js").TaskLifecycle;
+  /**
    * Miranda's gate — guards before/after every live LLM call, tool call, and QC run.
    * before_tool_run / after_tool_run: validates tool allowlist and receipts.
    * before_qc / after_qc: validates QC preconditions and verdict shape.
@@ -308,6 +342,18 @@ export interface OrcaRunCtx {
    * against the workspace root rather than process.cwd().
    */
   workspaceRoot?: string;
+  /**
+   * Compares the workspace on disk with its task-start baseline and reports
+   * the test commands the host observed. Set by the runtime when a workspace
+   * root is known; Pappy uses it as evidence the worker cannot author.
+   */
+  collectWorkspaceEvidence?: () => Promise<import("@clawde/pappy-core").WorkspaceEvidence>;
+  /**
+   * Tool receipts from earlier passes of this task, oldest first. The runtime
+   * appends each pass's receipts after verifying it, so a repair pass is judged
+   * with the reproduction evidence gathered before it.
+   */
+  verificationReceipts?: OrcaToolEvent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -370,12 +416,25 @@ export interface OrcaRuntimeDeps {
   /** Maximum repair passes before giving up on a FAIL verdict. Default: 2 */
   maxRepairPasses?: number;
   /**
-   * Per-run cost ceiling in USD. When accumulated spend across all LLM calls
-   * for a single task reaches this limit, repair passes are skipped and the
-   * best result so far is returned with status WARN.
-   * Undefined or 0 means no limit.
+   * Hard per-task budget in USD. Every model request the task makes (Brain,
+   * workers, fallbacks, repairs, utility roles) is reserved against one task
+   * ledger before it is sent and settled with the provider's reported usage;
+   * a request the remaining budget cannot cover is refused before dispatch.
+   * Undefined or 0 means no hard limit: costs are still accounted and shown.
    */
   budgetUsd?: number;
+  /** Where `budgetUsd` came from (e.g. "user", "legacy_default"), for diagnostics and the UI. */
+  budgetSource?: string;
+  /** User-configured prices for models Orca cannot price itself. */
+  customPrices?: readonly import("@clawde/miranda-core").CustomModelPrice[];
+  /** Informational ledger spanning tasks in this process; task ledgers mirror their costs into it. */
+  sessionBudget?: import("@clawde/miranda-core").TaskBudgetLedger;
+  /** How long, after cancellation, to wait for active operations to settle before the task is INTERRUPTED. Default 10 s. */
+  drainTimeoutMs?: number;
+  /** Persists each task's budget snapshot so unresolved reservations survive a restart. */
+  budgetJournal?: import("./budget/journal.js").BudgetJournal;
+  /** Refuses a task whose workspace is still protected by an earlier, unsettled task, and protects it when this task ends unsettled. */
+  workspaceGuard?: import("./workspaceGuard.js").WorkspaceGuard;
   /**
    * Miranda's gate — the compliance and governance layer.
    * Wraps every LLM call, tool execution, and QC run with validation checkpoints.
@@ -436,6 +495,14 @@ export type OrcaEvent =
     }
   | { type: "repair:start";       taskId: string; pass: number; maxPasses: number }
   | { type: "task:done";          taskId: string; status: "SUCCESS" | "WARN" | "FAIL" }
+  /** The task's lifecycle state changed (see lifecycle.ts); terminal states are final. */
+  | { type: "task:state";         taskId: string; state: import("./lifecycle.js").TaskState; previous?: import("./lifecycle.js").TaskState; reason: string; activeOperations: number; unsettledOperations?: string[]; unsettledResources?: string[] }
+  /** The task ended with operations or processes unsettled; its workspace is protected until they settle or the user releases it. */
+  | { type: "workspace:protected"; taskId: string; root: string; reason: string; operations: string[]; resources: string[]; recovery: string }
+  /** Brain did not produce a usable plan; a deterministic route was selected, with the original goals preserved. */
+  | { type: "brain:fallback";     taskId: string; cause: "invalid_plan" | "provider_failed" | "timed_out" | "no_decision"; role: string; reason: string; preservedCriteria: string[] }
+  /** The task's budget ledger changed (reservation, settlement, refusal, block). */
+  | { type: "budget:update";      taskId: string; budget: import("@clawde/miranda-core").BudgetSnapshot }
   | { type: "stream:token";       taskId: string; chunk: string }
   | { type: "stream:reset";       taskId: string }
   | { type: "dewey:brief";        taskId: string; userName: string; suggestedTone: string; relevantPreferences: string[]; relevantContext: string[] }
@@ -464,6 +531,10 @@ export type OrcaEvent =
       acceptanceCriteria: Array<{ id: string; text: string; required: boolean; met: boolean }>;
       durationMs: number;
       repairPasses: number;
+      /** Final lifecycle state and what never settled, when anything. */
+      lifecycle?: import("./lifecycle.js").TaskLifecycleSnapshot;
+      /** Final budget figures for the task: limit, spent, unreconciled, reserved, remaining, by role/provider. */
+      budget?: import("@clawde/miranda-core").BudgetSnapshot;
       /** Exception message from the agent worker, present when stoppedBecause === 'error'. */
       errorMessage?: string;
       /** Runtime trace stages captured during the run; useful when UI event logs arrive late or are unavailable. */

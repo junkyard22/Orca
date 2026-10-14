@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OrcaTaskSpec } from "@clawde/orca-core";
 import type { DecomposeDecision } from "maestro-core";
-import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
+import { fallbackExecutionRole, normalizeDesktopRoutingForExecution } from "./routingPolicy";
 
 function task(goals: string[] = []): OrcaTaskSpec {
   return {
@@ -69,6 +69,9 @@ describe("normalizeDesktopRoutingForExecution", () => {
 
     expect(result.decision.routing).toBe("decompose");
     if (result.decision.routing !== "decompose") throw new Error("expected decompose");
+    // A Brain-headed department is remapped by its own work. "Summarize the
+    // facts" restates information already gathered: a response, so Narrator
+    // (phase 6 correction of the phase 5 remap, which sent it to the reader).
     expect(result.decision.departments.map((department) => department.head)).toEqual(["narrator", "reviewer"]);
     expect(result.remappedBrainExecution).toBe(true);
   });
@@ -122,5 +125,73 @@ describe("normalizeDesktopRoutingForExecution", () => {
     });
     expect(result.remappedBrainExecution).toBe(true);
     expect(result.remapReason).toBe("command_verification");
+  });
+});
+
+describe("objective preservation and fallback roles (phase 5)", () => {
+  const request = (message: string, goals: string[] = []): OrcaTaskSpec => ({
+    originalUserMessage: message,
+    intent: message,
+    goals,
+    permissions: { fileRead: true, fileWrite: true, shellExec: true },
+  });
+
+  it("a bug-fix request that also says 'run the tests' keeps its objective: it is not turned into command verification", () => {
+    const goals = ["`overlaps` must treat a meeting that starts exactly when another ends as not overlapping"];
+    const result = normalizeDesktopRoutingForExecution(
+      request("Fix the overlap bug in src/bookings.js, then run the test suite and verify the reported problem is resolved. Do not modify the existing tests.", goals),
+      { routing: "direct", role: "debugger", done_criteria: goals },
+      null,
+    );
+    expect(result.remapReason).toBeUndefined();
+    expect(result.decision).toMatchObject({ routing: "direct", role: "debugger", done_criteria: goals });
+  });
+
+  it("running commands as the whole request is still routed to command verification", () => {
+    const result = normalizeDesktopRoutingForExecution(request("Actually run pnpm test and pnpm contract:check and report the results."), null, null);
+    expect(result.remapReason).toBe("command_verification");
+    expect(result.decision).toMatchObject({ routing: "direct", role: "debugger" });
+  });
+
+  it("a missing Brain decision falls back to a worker that can do the work, never Narrator for code changes, with the user's goals as criteria", () => {
+    const goals = ["cancelBooking must remove the booking"];
+    expect(normalizeDesktopRoutingForExecution(request("Fix the crash in src/parse.js when the input is empty.", goals), null, null).decision)
+      .toMatchObject({ routing: "direct", role: "debugger", done_criteria: goals });
+    expect(normalizeDesktopRoutingForExecution(request("Add a cancelBooking(id) function to src/bookings.js.", goals), null, null).decision)
+      .toMatchObject({ routing: "direct", role: "strong_model", done_criteria: goals });
+    expect(normalizeDesktopRoutingForExecution(request("Explain how the overlap check works in src/bookings.js."), null, null).decision)
+      .toMatchObject({ routing: "direct", role: "reader" });
+    expect(normalizeDesktopRoutingForExecution(request("What should I cook tonight?"), null, null).decision)
+      .toMatchObject({ routing: "direct", role: "narrator" });
+  });
+
+  it("direct-to-Brain execution is remapped by task kind and keeps Brain's criteria or, when it gave none, the user's goals", () => {
+    const goals = ["`parse` must not crash on empty input"];
+    const r = normalizeDesktopRoutingForExecution(request("Fix the crash in src/parse.js when the input is empty.", goals), { routing: "direct", role: "brain" }, null);
+    expect(r.decision).toMatchObject({ routing: "direct", role: "debugger", done_criteria: goals });
+    expect(r.remapReason).toBe("direct_default");
+  });
+
+  it("information gathering goes to the reader; restating known information goes to Narrator — decided by the object, not the phrase", () => {
+    const role = (text: string) => fallbackExecutionRole(request(text));
+    // Gathering: the workspace is named, or nothing says the information is already in hand.
+    expect(role("Explain the architecture")).toBe("reader");
+    expect(role("Explain how the overlap check works in src/bookings.js.")).toBe("reader");
+    expect(role("Summarize the code in the auth module")).toBe("reader");
+    expect(role("Review the tests and report on gaps")).toBe("reader");
+    expect(role("Describe what parseConfig does")).toBe("reader");
+    // Restating: the object is prior information or the user; nothing in the workspace is named.
+    expect(role("Summarize the facts")).toBe("narrator");
+    expect(role("Summarize the findings for the user")).toBe("narrator");
+    expect(role("Report on the results so far in plain English")).toBe("narrator");
+    expect(role("Tell me what you found")).toBe("narrator");
+    expect(role("Describe the conclusions above")).toBe("narrator");
+    // Restating that still names the workspace is gathering: the reader can check it.
+    expect(role("Summarize the findings about src/parse.js")).toBe("reader");
+  });
+
+  it("Brain-headed departments are remapped by the department's own work", () => {
+    const r = normalizeDesktopRoutingForExecution(request("Ship it"), { routing: "decompose", departments: [{ head: "brain", subtask: "Fix the failing test in src/a.test.js" }, { head: "brain", subtask: "Explain the architecture" }], done_criteria: ["done"] }, null);
+    expect((r.decision as { departments: Array<{ head: string }> }).departments.map((d) => d.head)).toEqual(["debugger", "reader"]);
   });
 });

@@ -22,9 +22,13 @@ import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./he
 import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
-import { isAbortError, throwIfAborted } from "./abort.js";
+import { isAbortError, throwIfAborted, untilAborted } from "./abort.js";
+import { WorkspaceProtectedError } from "./workspaceGuard.js";
+import { guardDispatch } from "./dispatchGuard.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
-import { composeMirandaGates, createMirandaGate } from "@clawde/miranda-core";
+import { BudgetRefusedError, TaskBudgetLedger, composeMirandaGates, createMirandaGate, currentBudgetLedger } from "@clawde/miranda-core";
+import { TaskLifecycle } from "./lifecycle.js";
+import { accountPass, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
 import {
   createRootPacket,
   registerChildOnRoot,
@@ -36,6 +40,7 @@ import { AHPLifecycle } from "./ahp/types.js";
 import { serializeAHPPacketGraph, formatAHPPacketGraphSummary, formatAHPPacketGraphIssuesSummary } from "./ahp/graph.js";
 import type { AHPPacketGraph } from "./ahp/graph.js";
 import { createFilteredToolService } from "./toolFilter.js";
+import { createWorkspaceEvidenceCollector } from "./workspaceEvidence.js";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -258,11 +263,27 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     const effectiveWorkspaceContext = effectiveWorkspaceRoot
       ? { ...(workspaceContext ?? {}), cwd: effectiveWorkspaceRoot }
       : workspaceContext;
+    // A workspace an earlier task left unsettled (an operation or a child
+    // process that may still write) is refused before anything is read or
+    // any model is called. The error says what was left and how to recover.
+    if (effectiveWorkspaceRoot && deps.workspaceGuard) {
+      const protections = await deps.workspaceGuard.status(effectiveWorkspaceRoot);
+      if (protections.length > 0) throw new WorkspaceProtectedError(protections);
+    }
+
     const taskId = generateRunId();
     const startTime = Date.now();
     const traceEntries: OrcaPipelineTraceEntry[] = [];
 
+    // Baseline the workspace before any worker runs, so verification compares
+    // real before/after contents and host-observed test runs rather than what
+    // the worker reports. The collector also watches the trace for test
+    // commands and fingerprints the source as each one finishes.
+    const evidence = effectiveWorkspaceRoot ? createWorkspaceEvidenceCollector(effectiveWorkspaceRoot) : undefined;
+    if (evidence) await evidence.ready;
+
     const recordTrace = (stage: string, detail?: unknown): void => {
+      evidence?.observeTrace(stage, detail);
       traceEntries.push({
         at: new Date().toISOString(),
         stage,
@@ -270,24 +291,124 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       });
     };
 
+    // One budget ledger for everything this task asks a model: the shell may
+    // have opened one for the whole user interaction (then narration and
+    // utility calls share it); otherwise the task gets its own, from the
+    // configured limit. Every reservation, settlement and refusal is traced
+    // and emitted so the UI and the journal see the figures as they move.
+    const budgetLedger = currentBudgetLedger() ?? new TaskBudgetLedger({
+      taskId,
+      limitUsd: budgetUsd ?? null,
+      limitSource: deps.budgetSource,
+      customPrices: deps.customPrices,
+      parent: deps.sessionBudget,
+    });
+    const unsubBudget = budgetLedger.subscribe({
+      trace: (stage, detail) => recordTrace(stage, detail),
+      onChange: (snapshot) => {
+        emitter.emit({ type: "budget:update", taskId, budget: snapshot });
+        deps.budgetJournal?.update(snapshot);
+      },
+    });
+    deps.budgetJournal?.open(budgetLedger.taskId, budgetLedger.snapshot());
+    recordTrace("budget.task", budgetLedger.snapshot());
+
+    // The task's lifecycle: every state change is traced and emitted; a
+    // cancellation request (the abort signal) moves it to CANCELLING at once,
+    // and it only becomes CANCELLED when every tracked operation has settled.
+    const lifecycle = new TaskLifecycle({ taskId });
+    lifecycle.subscribe((snapshot, transition) => {
+      if (!transition) return;
+      recordTrace("task.state", { from: transition.from, to: transition.to, reason: transition.reason, activeOperations: snapshot.activeOperations.map((o) => `${o.kind} ${o.label}`) });
+      emitter.emit({
+        type: "task:state", taskId, state: transition.to, previous: transition.from, reason: transition.reason,
+        activeOperations: snapshot.activeOperations.length,
+        ...(snapshot.unsettledOperations.length > 0 ? { unsettledOperations: snapshot.unsettledOperations.map((o) => `${o.kind} ${o.label}`) } : {}),
+        ...(snapshot.unsettledResources.length > 0 ? { unsettledResources: snapshot.unsettledResources.map((r) => `process ${r.pid} (${r.label})`) } : {}),
+      });
+    });
+    const onAbort = () => lifecycle.cancel(options?.abortSignal?.reason instanceof Error ? options.abortSignal.reason.message : "cancelled");
+    if (options?.abortSignal?.aborted) onAbort();
+    else options?.abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+    // Approval waits are a lifecycle state of their own, and a cancelled task
+    // never gets to ask: a stale request resolves to "not approved".
+    const requestToolApproval = deps.requestToolApproval
+      ? async (tool: string, args: Record<string, unknown>): Promise<boolean> => {
+          if (!lifecycle.mayDispatch) return false;
+          const previous = lifecycle.current;
+          const op = lifecycle.begin("approval", tool, true);
+          lifecycle.transition("WAITING_FOR_APPROVAL", `approval requested for ${tool}`);
+          try {
+            const approved = await deps.requestToolApproval!(tool, args);
+            // An approval that arrives after cancellation authorizes nothing.
+            return approved && lifecycle.mayDispatch;
+          } finally {
+            op.end();
+            if (lifecycle.current === "WAITING_FOR_APPROVAL") lifecycle.transition(previous === "WAITING_FOR_APPROVAL" ? "RUNNING" : previous, `approval for ${tool} settled`);
+          }
+        }
+      : undefined;
+
+    const scopedTools = tools && (() => {
+      const allowed = normalizedTaskSpec.permissions?.toolsAllowed;
+      if (!allowed) return tools;
+      if (allowed.length === 0) return undefined;
+      return createFilteredToolService(tools, allowed);
+    })();
+
+    // A model call made for a task that is no longer running is refused the
+    // same way a tool call is: a late worker callback cannot spend or act.
+    const guardedLLM = guardDispatch(llm, lifecycle);
+
     const ctx: OrcaRunCtx = {
-      llm,
+      llm: guardedLLM,
       runId: taskId,
       abortSignal: options?.abortSignal,
       recordTrace,
+      budget: budgetLedger,
+      lifecycle,
       toolNamesAllowed: normalizedTaskSpec.permissions?.toolsAllowed,
-      tools: tools && (() => {
-        const allowed = normalizedTaskSpec.permissions?.toolsAllowed;
-        if (!allowed) return tools;
-        if (allowed.length === 0) return undefined;
-        return createFilteredToolService(tools, allowed);
-      })(),
+      // Every tool run through the runtime's service is a tracked operation
+      // and is refused once cancellation was requested.
+      tools: scopedTools && {
+        ...scopedTools,
+        execute: (name, input) => {
+          if (!lifecycle.mayDispatch) {
+            return Promise.resolve({ ok: false, output: "", error: `Tool ${name} not run: the task is ${lifecycle.current.toLowerCase()}.` });
+          }
+          return lifecycle.track("tool", name, () => scopedTools.execute(name, input));
+        },
+      },
       emit: (event) => emitter.emit(event),
       workspaceContext: effectiveWorkspaceContext,
       workspaceRoot: effectiveWorkspaceRoot,
       gate: effectiveGate,
       model: deps.model,
-      requestToolApproval: deps.requestToolApproval,
+      requestToolApproval,
+      collectWorkspaceEvidence: evidence
+        ? async () => {
+            // Evidence is judged only when nothing can still act for the task:
+            // an operation in flight (a tool that has not settled, a model
+            // request still open) makes the inventory partial, and Pappy
+            // treats a partial inventory as insufficient evidence.
+            // A scan for processes a command left behind answers within a few
+            // seconds; it is waited for so a survivor is known before judging.
+            await lifecycle.waitForScans(8000);
+            const collected = await evidence.collect();
+            const active = lifecycle.activeOperations().filter((o) => o.kind !== "verification" && o.kind !== "scan");
+            const survivors = lifecycle.unsettledResources();
+            if (collected.available && (active.length > 0 || survivors.length > 0)) {
+              const reasons = [
+                ...(active.length > 0 ? [`${active.length} operation(s) still active while verifying: ${active.map((o) => `${o.kind} ${o.label}`).join(", ")}`] : []),
+                ...(survivors.length > 0 ? [`${survivors.length} process(es) started by the task may still be writing: ${survivors.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
+              ];
+              return { ...collected, partial: true, reason: reasons.join("; ") };
+            }
+            return collected;
+          }
+        : undefined,
+      verificationReceipts: [],
     };
 
     recordTrace("task.received", { taskSpec: normalizedTaskSpec });
@@ -364,7 +485,14 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       repairPasses++;
       if (event.type === "repair:start") {
         recordTrace("repair.start", { pass: event.pass, maxPasses: event.maxPasses });
+        lifecycle.transition("REPAIRING", `repair pass ${event.pass} of ${event.maxPasses}`);
       }
+    });
+    const unsubStages = emitter.on("maestro:start", () => {
+      lifecycle.transition("RUNNING", "Maestro started");
+    });
+    const unsubQc = emitter.on("qc:result", () => {
+      // The verdict is in; the lifecycle moves on when the runtime decides what follows.
     });
 
     emitter.emit({ type: "task:start", taskId, intent: normalizedTaskSpec.intent });
@@ -427,7 +555,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         });
 
         if (qcEnabled) {
-          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult);
+          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+          ctx.verificationReceipts?.push(...(auditMaestroResult.toolEvents ?? []));
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
           const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText });
           if (beforeQcGate) {
@@ -501,6 +630,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             issues: qcResult.issues,
             repairTask: qcResult.repairTask,
             internalSummary: qcResult.internalSummary,
+            evidenceRequests: qcResult.evidenceRequests,
           });
           result = {
             status: qcResult.verdict === "FAIL" ? "FAIL" : "SUCCESS",
@@ -522,9 +652,10 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       emitter.emit({ type: "maestro:start", taskId, attempt: 0, isRepair: false });
       recordTrace("maestro.run.start", { attempt: 0, isRepair: false, task: normalizedTaskSpec });
 
-      const maestroResult = normalizeMaestroResult(await maestro.run(normalizedTaskSpec, ctx));
+      const initialPass = await accountPass(budgetLedger, () => untilAborted(maestro.run(normalizedTaskSpec, ctx), options?.abortSignal), effectiveGate);
+      const maestroResult = withPassAccounting(normalizeMaestroResult(initialPass.result), initialPass.accounting);
       persistedMaestroResult = maestroResult;
-      const initialSpendUsd = maestroResult.metadata?.costUsd ?? 0;
+      const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
 
       // Detect tools the agent tried to call but weren't available.
       unknownTools = [
@@ -605,7 +736,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           });
         }
 
-        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult);
+        lifecycle.transition("VERIFYING", "initial pass complete; Pappy evaluates");
+        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+        ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
 
         const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText: maestroResult.outputText ?? "" });
@@ -681,6 +814,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           issues: qcResult.issues,
           repairTask: qcResult.repairTask,
           internalSummary: qcResult.internalSummary,
+          evidenceRequests: qcResult.evidenceRequests,
         });
 
         if (qcResult.verdict === "FAIL") {
@@ -708,15 +842,21 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             userFacingText: maestroResult.outputText,
             summary: qcResult.internalSummary,
           };
-        } else if (budgetUsd && budgetUsd > 0 && initialSpendUsd >= budgetUsd) {
+        } else if (budgetStopReason(budgetLedger, initialPass.accounting) || legacyBudgetStop(budgetLedger, budgetUsd, initialSpendUsd)) {
+          // The ledger decides; a Maestro that reports its own cost without
+          // going through a budgeted adapter keeps the legacy cap check.
+          const ledgerReason = budgetStopReason(budgetLedger, initialPass.accounting);
+          const snapshot = budgetLedger.snapshot();
           recordTrace("repair.skipped.budget", {
-            budgetUsd,
+            budgetUsd: snapshot.limitUsd ?? budgetUsd,
             spentUsd: initialSpendUsd,
+            reason: ledgerReason ?? legacyBudgetStop(budgetLedger, budgetUsd, initialSpendUsd),
+            budget: snapshot,
           });
           result = {
             status: "FAIL",
             userFacingText: maestroResult.outputText,
-            summary: `Budget cap $${budgetUsd.toFixed(4)} reached ($${initialSpendUsd.toFixed(4)} spent on initial pass). Repair skipped.`,
+            summary: `${ledgerReason ? formatBudgetStop(ledgerReason, snapshot) : `${legacyBudgetStop(budgetLedger, budgetUsd, initialSpendUsd)}.`} Repair skipped.`,
           };
         } else {
           throwIfAborted(options?.abortSignal);
@@ -765,6 +905,24 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           name: abortError.name,
           message: abortError.message,
         });
+        // The promise rejected, but the task is not stopped until its
+        // operations have settled: wait for them, then say what never did.
+        lifecycle.cancel(abortError.message);
+        const settled = await lifecycle.drain(deps.drainTimeoutMs ?? 10_000);
+        // Operations that ended but left a process unconfirmed already moved
+        // the task to INTERRUPTED; operations still active do so here.
+        if (!settled && !lifecycle.terminal) lifecycle.interrupt(`${abortError.message}; operations still active after ${deps.drainTimeoutMs ?? 10_000} ms`);
+        recordTrace(settled ? "task.cancelled" : "task.interrupted", lifecycle.snapshot());
+      } else if (error instanceof BudgetRefusedError) {
+        // A model request was refused before dispatch and nothing above could
+        // continue without it. The task is incomplete; say exactly why.
+        const snapshot = budgetLedger.snapshot();
+        result = {
+          status: "FAIL",
+          userFacingText: persistedMaestroResult?.outputText,
+          summary: formatBudgetStop(error.decision.reason, snapshot),
+        };
+        recordTrace("budget.stop", { kind: error.decision.kind, reason: error.decision.reason, budget: snapshot });
       } else {
         const message = error instanceof Error ? error.message : String(error);
         result = { status: "FAIL", summary: `Runtime error: ${message}` };
@@ -776,9 +934,54 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     }
 
     const durationMs = Date.now() - startTime;
+    unsubBudget();
+    const finalBudget = budgetLedger.snapshot();
+    recordTrace("budget.final", finalBudget);
+    deps.budgetJournal?.close(budgetLedger.taskId);
     unsubRepair();
+    unsubStages();
+    unsubQc();
     unsubDewey();
     unsubMiranda();
+    options?.abortSignal?.removeEventListener("abort", onAbort);
+
+    // The lifecycle ends from the result, never from the promise: a task is
+    // COMPLETED only when it succeeded and QC did not fail; a cancellation
+    // outcome already set above wins over any late result. Either way the
+    // task is not over while something it started still runs: an operation
+    // left behind by a failed or finished pass is waited for, and one that
+    // will not settle makes the task INTERRUPTED rather than quietly done.
+    if (!lifecycle.terminal && lifecycle.activeOperations().length > 0) {
+      await lifecycle.drain(deps.drainTimeoutMs ?? 10_000);
+      if (lifecycle.activeOperations().length > 0) {
+        lifecycle.interrupt(`${result.status}: operations still active after the task ended (${deps.drainTimeoutMs ?? 10_000} ms)`);
+        recordTrace("task.interrupted", lifecycle.snapshot());
+      }
+    }
+    if (!lifecycle.terminal) {
+      const succeeded = !abortError && result.status !== "FAIL" && persistedQcResult?.verdict !== "FAIL";
+      lifecycle.finish(succeeded ? "COMPLETED" : "FAILED", abortError ? abortError.message : `${result.status}: ${result.summary ?? ""}`);
+    }
+    const finalLifecycle = lifecycle.snapshot();
+    if (finalLifecycle.notes.length > 0) recordTrace("task.notes", { notes: finalLifecycle.notes });
+    // The task's state is settled; its workspace may not be. A task that was
+    // interrupted, or that ended (even COMPLETED) with a process it started
+    // still running, leaves the workspace protected until the leftovers
+    // settle, are verified gone, or the user knowingly overrides.
+    const leftover = lifecycle.activeOperations().length > 0 || lifecycle.unsettledResources().length > 0;
+    if (finalLifecycle.state === "INTERRUPTED" || leftover) {
+      const operations = lifecycle.activeOperations().map((o) => `${o.kind} ${o.label}`);
+      const resources = lifecycle.unsettledResources().map((r) => `process ${r.pid} (${r.label})`);
+      if (effectiveWorkspaceRoot && deps.workspaceGuard) {
+        const protection = deps.workspaceGuard.protect(effectiveWorkspaceRoot, { taskId, reason: finalLifecycle.state === "INTERRUPTED" ? "was interrupted with work still running" : `ended ${finalLifecycle.state.toLowerCase()}, but a process it started is still running`, lifecycle });
+        const recovery = deps.workspaceGuard.describe([protection]);
+        recordTrace("workspace.protected", { root: protection.root, operations, resources });
+        emitter.emit({ type: "workspace:protected", taskId, root: protection.root, reason: protection.reason, operations, resources, recovery });
+      } else {
+        recordTrace("workspace.unprotected", { root: effectiveWorkspaceRoot ?? null, operations, resources, note: "no workspace guard is configured; the host must keep the workspace quiet" });
+      }
+    }
+    const stoppedBecause = (finalLifecycle.state === "CANCELLED" ? "cancelled" : finalLifecycle.state === "INTERRUPTED" ? "interrupted" : persistedMaestroResult?.metadata?.stoppedBecause) as RunRecord["stoppedBecause"];
 
     // ── Finalize root AHP packet ───────────────────────────────────────────
     // Collect child packets from the maestro result (if any).
@@ -875,6 +1078,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         repairPasses,
         durationMs,
         ahpPacketGraph: ahpGraph,
+        budget: finalBudget,
+        lifecycle: finalLifecycle,
       },
     };
 
@@ -887,13 +1092,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       console.error("[orca-core] writeTrace failed:", error);
     }
 
-    if (abortError) {
-      throw abortError;
-    }
+    // A cancelled task reports its state through task:state and its run record;
+    // it never emits a completion summary.
+    if (!abortError) emitter.emit({ type: "task:done", taskId, status: result.status });
 
-    emitter.emit({ type: "task:done", taskId, status: result.status });
-
-    if (persistedQcResult) {
+    if (persistedQcResult && !abortError) {
       const auditIssues = persistedAuditResult ? projectAuditIssues(persistedAuditResult) : undefined;
       emitter.emit({
         type: "pipeline:summary",
@@ -917,6 +1120,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           };
         }),
         durationMs,
+        budget: finalBudget,
+        lifecycle: finalLifecycle,
         repairPasses,
         errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
         traceStages: trace.entries.map((entry) => entry.stage),
@@ -955,7 +1160,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           role: persistedMaestroResult?.metadata?.role,
           brainDecision: persistedMaestroResult?.metadata?.brainDecision,
           status: result.status,
-          stoppedBecause: persistedMaestroResult?.metadata?.stoppedBecause,
+          stoppedBecause,
           errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
           iterationCount: persistedMaestroResult?.metadata?.iterationCount,
           outputText: result.userFacingText,
@@ -966,6 +1171,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           inputTokens: persistedMaestroResult?.metadata?.inputTokens,
           outputTokens: persistedMaestroResult?.metadata?.outputTokens,
           costUsd: persistedMaestroResult?.metadata?.costUsd,
+          costUnreconciledUsd: persistedMaestroResult?.metadata?.costUnreconciledUsd,
+          costBasis: persistedMaestroResult?.metadata?.costBasis,
           repairPasses,
           ahpPacketGraph: ahpGraph ? JSON.stringify(ahpGraph) : undefined,
         } as RunRecord,
@@ -995,6 +1202,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       console.error("[orca-core] store.saveRun failed:", error);
     }
 
+    if (abortError) throw abortError;
+
     // Emit a human-readable AHP graph summary to stderr when AHP data is present.
     if (ahpGraph) {
       console.error(formatAHPPacketGraphSummary(ahpGraph));
@@ -1015,7 +1224,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       };
     }
 
-    return result;
+    // The caller sees the lifecycle the trace and the summary saw: a result
+    // alone cannot say whether the task settled quietly.
+    return { ...result, lifecycle: finalLifecycle, ...(persistedQcResult && !result.qcResult ? { qcResult: persistedQcResult } : {}) };
   }
 
   return {
@@ -1023,4 +1234,14 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     on: (type: OrcaEventType, handler: (event: OrcaEvent) => void) =>
       emitter.on(type, handler),
   };
+}
+
+/**
+ * Legacy cap check for a Maestro that reports `metadata.costUsd` itself and
+ * makes no request through a budgeted adapter (the ledger saw nothing).
+ */
+function legacyBudgetStop(ledger: TaskBudgetLedger, budgetUsd: number | undefined, spentUsd: number): string | undefined {
+  if (ledger.snapshot().requests.total > 0) return undefined;
+  if (!budgetUsd || budgetUsd <= 0 || spentUsd < budgetUsd) return undefined;
+  return `Budget cap $${budgetUsd.toFixed(4)} reached ($${spentUsd.toFixed(4)} spent on initial pass)`;
 }

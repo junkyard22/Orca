@@ -209,7 +209,8 @@ function createTracingPappyPort(inner: PappyPort): PappyPort {
     evaluate(input) {
       const result = inner.evaluate(input);
       const verdictColor = result.verdict === "PASS" ? C.green : result.verdict === "WARN" ? C.yellow : C.red;
-      box(`[Pappy]  verdict=${result.verdict}  confidence=${Math.round(result.confidence * 100)}%  issues=${result.issues.length}`, verdictColor);
+      const evidence = result.verification ? `  evidence=${result.verification.status}` : "";
+      box(`[Pappy]  verdict=${result.verdict}${evidence}  heuristic-score=${Math.round(result.confidence * 100)}%  issues=${result.issues.length}`, verdictColor);
 
       if (DEBUG) {
         if (result.acceptance_criteria && result.acceptance_criteria.length > 0) {

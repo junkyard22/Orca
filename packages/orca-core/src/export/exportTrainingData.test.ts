@@ -53,6 +53,8 @@ function makeRun(overrides: Partial<RunRecord>): RunRecord {
     iterationCount: 1,
     repairPasses: 0,
     outputText: "Implemented the feature with validation and tests. The output is long enough for export.",
+    // Verified against host evidence and eligible, so the filters under test are the ones that decide.
+    summary: "verdict=PASS no_issues training_eligibility=eligible evidence=verified test_evidence=true review_independence=independent review_fallback=false",
     ...overrides,
   };
 }
@@ -152,12 +154,12 @@ describe("exportTrainingData training-safety filtering", () => {
     expect(summary.skipReasons["pappy_training_eligibility:needs_human_review"]).toBe(1);
   });
 
-  it("exports safe PASS runs", async () => {
+  it("exports safe PASS runs that Pappy verified against host evidence", async () => {
     const out = outputPath();
     const store = new MemoryStore([
       makeRun({
         id: "safe-run",
-        summary: "verdict=PASS no_issues training_eligibility=eligible review_independence=independent review_fallback=false",
+        summary: "verdict=PASS no_issues training_eligibility=eligible evidence=verified test_evidence=true review_independence=independent review_fallback=false",
       }),
     ]);
 
@@ -168,5 +170,80 @@ describe("exportTrainingData training-safety filtering", () => {
     expect(summary.skipped).toBe(0);
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)["metadata"]["taskId"]).toBe("safe-run");
+  });
+
+  it("does not trust an eligibility tag that no evidence backs", async () => {
+    const out = outputPath();
+    const store = new MemoryStore([
+      // The eligibility word alone, as an older PappyPort wrote it: no evidence tag.
+      makeRun({ id: "untagged-evidence", summary: "verdict=PASS no_issues training_eligibility=eligible review_independence=independent review_fallback=false" }),
+      // Says eligible, but the runtime captured no workspace evidence.
+      makeRun({ id: "no-evidence", summary: "verdict=PASS no_issues training_eligibility=eligible evidence=not_applicable test_evidence=false review_independence=independent review_fallback=false" }),
+      makeRun({ id: "evidence-unavailable", summary: "verdict=PASS no_issues training_eligibility=eligible evidence=unavailable test_evidence=false review_independence=independent review_fallback=false" }),
+      makeRun({ id: "evidence-insufficient", summary: "verdict=PASS no_issues training_eligibility=eligible evidence=unverified test_evidence=false review_independence=independent review_fallback=false" }),
+    ]);
+
+    const summary = await exportTrainingData(store, { outputPath: out });
+
+    expect(summary.exported).toBe(0);
+    expect(summary.skipReasons["pappy_evidence:evidence_tag_missing"]).toBe(1);
+    expect(summary.skipReasons["pappy_evidence:not_applicable"]).toBe(1);
+    expect(summary.skipReasons["pappy_evidence:unavailable"]).toBe(1);
+    expect(summary.skipReasons["pappy_evidence:unverified"]).toBe(1);
+    expect(readFileSync(out, "utf8")).toBe("");
+  });
+
+  it("never exports a run with no recorded eligibility decision (legacy rows, runs that skipped Pappy)", async () => {
+    const out = outputPath();
+    const store = new MemoryStore([
+      makeRun({ id: "legacy-row", summary: undefined }),
+      makeRun({ id: "pappy-skipped", summary: "ok" }),
+      makeRun({ id: "old-format", summary: "verdict=PASS no_issues" }),
+    ]);
+
+    const summary = await exportTrainingData(store, { outputPath: out });
+
+    expect(summary.exported).toBe(0);
+    expect(summary.skipReasons["pappy_training_eligibility:missing"]).toBe(3);
+    expect(readFileSync(out, "utf8")).toBe("");
+  });
+
+  it("keeps rejected and review-pending runs out, and the Brain record with them", async () => {
+    const out = outputPath();
+    const store = new MemoryStore([
+      makeRun({ id: "fabricated", brainDecision: JSON.stringify({ routing: "direct", role: "engineer", reason: "code change" }), summary: "verdict=FAIL 2xHIGH training_eligibility=rejected evidence=contradicted test_evidence=false review_independence=independent review_fallback=false", verdict: "FAIL" }),
+      makeRun({ id: "manipulated", brainDecision: JSON.stringify({ routing: "direct", role: "engineer", reason: "code change" }), summary: "verdict=PASS 1xLOW training_eligibility=rejected evidence=verified test_evidence=true review_independence=independent review_fallback=false" }),
+      makeRun({ id: "review", brainDecision: JSON.stringify({ routing: "direct", role: "engineer", reason: "code change" }), summary: "verdict=WARN 1xMEDIUM training_eligibility=needs_human_review evidence=verified test_evidence=true review_independence=independent review_fallback=false", verdict: "WARN" }),
+    ]);
+
+    const passSummary = await exportTrainingData(store, { outputPath: out });
+    const warnSummary = await exportTrainingData(store, { outputPath: out, verdict: "WARN" });
+    const failSummary = await exportTrainingData(store, { outputPath: out, verdict: "FAIL" });
+
+    expect(passSummary.exported + warnSummary.exported + failSummary.exported).toBe(0);
+    expect(passSummary.skipReasons["pappy_training_eligibility:rejected"]).toBe(1);
+    expect(warnSummary.skipReasons["pappy_training_eligibility:needs_human_review"]).toBe(1);
+    expect(failSummary.skipReasons["pappy_training_eligibility:rejected"]).toBe(1);
+  });
+
+  it("an honest, evidence-confirmed failure is eligible but stays out of the default PASS export; it is exported only when FAIL runs are requested", async () => {
+    const out = outputPath();
+    const store = new MemoryStore([
+      makeRun({
+        id: "honest-failure",
+        verdict: "FAIL",
+        status: "FAIL",
+        outputText: "I ran the test suite: 1 of 8 tests fails. I could not find a safe change and did not modify any files.",
+        summary: "verdict=FAIL 1xHIGH training_eligibility=eligible evidence=contradicted test_evidence=false review_independence=independent review_fallback=false",
+      }),
+    ]);
+
+    const byDefault = await exportTrainingData(store, { outputPath: out });
+    expect(byDefault.exported).toBe(0);
+    expect(byDefault.skipReasons["wrong_verdict"]).toBe(1);
+
+    const failures = await exportTrainingData(store, { outputPath: out, verdict: "FAIL" });
+    expect(failures.exported).toBe(1);
+    expect(JSON.parse(readFileSync(out, "utf8").trim())["metadata"]["verdict"]).toBe("FAIL");
   });
 });

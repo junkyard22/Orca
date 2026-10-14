@@ -20,7 +20,8 @@ import "dotenv/config";
 
 import * as os from "os";
 import * as path from "path";
-import { OpenRouterAdapter, OllamaAdapter, OpenAICompatAdapter, createMirandaGate } from "@clawde/miranda-core";
+import { OpenRouterAdapter, OllamaAdapter, OpenAICompatAdapter, TaskBudgetLedger, budgetedAdapter, createMirandaGate, providerAcceptsEnableThinking, providerAcceptsTemperature } from "@clawde/miranda-core";
+import type { CustomModelPrice, PriceProvider } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
   createDirectLLMService,
@@ -187,13 +188,18 @@ async function main(): Promise<void> {
 
   let adapter;
   let settingsModelId: string | undefined;
+  // Which endpoint the adapter talks to, for pricing and budget accounting.
+  let priceProvider: PriceProvider = { type: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" };
 
   if (provider === "ollama") {
+    const baseUrl = process.env["OLLAMA_BASE_URL"] ?? "http://localhost:11434";
     adapter = new OllamaAdapter({
-      baseUrl:      process.env["OLLAMA_BASE_URL"]  ?? "http://localhost:11434",
+      baseUrl,
       defaultModel: process.env["OLLAMA_MODEL"]     ?? "llama3.2",
     });
+    priceProvider = { type: "ollama", name: "Ollama", baseUrl };
   } else if (provider === "alibaba") {
+    priceProvider = { type: "alibaba", name: "DashScope", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" };
     const apiKey = process.env["ALIBABA_CLOUD_API_KEY"]?.trim();
     if (!apiKey) {
       console.error(
@@ -226,11 +232,16 @@ async function main(): Promise<void> {
         process.exit(1);
       }
       settingsModelId = cfg.model;
+      priceProvider = { type: "custom", name: "settings provider", baseUrl: cfg.baseUrl };
       adapter = new OpenAICompatAdapter({
         baseUrl:        cfg.baseUrl,
         apiKey:         cfg.apiKey,
         defaultModel:   cfg.model,
         enableThinking: false,
+        // Anthropic endpoints reject sampling fields on newer generations and the
+        // nonstandard enable_thinking field; every other endpoint is unchanged.
+        supportsTemperature: (model) => providerAcceptsTemperature({ type: "custom", baseUrl: cfg.baseUrl }, model),
+        supportsEnableThinking: providerAcceptsEnableThinking({ type: "custom", baseUrl: cfg.baseUrl }),
       });
     } else if (provider === "settings") {
       console.error(
@@ -267,6 +278,16 @@ async function main(): Promise<void> {
   // Maestro handles all LLM calls directly using role prompts.
   // Default model matches VS Code Maestro BRAIN role setting
   const modelId = settingsModelId ?? process.env["LLM_MODEL"]?.trim() ?? "openai/gpt-4o-mini";
+  // Every model request is accounted in the task's budget ledger; with
+  // ORCA_BUDGET_USD set, requests the budget cannot cover are refused before
+  // they are sent. Unknown prices refuse under a hard budget (set
+  // ORCA_PRICING_JSON to a JSON array of custom prices) and only annotate without one.
+  const budgetUsd = Number(process.env["ORCA_BUDGET_USD"] ?? "0");
+  const customPrices: CustomModelPrice[] = (() => {
+    try { const parsed = JSON.parse(process.env["ORCA_PRICING_JSON"] ?? "[]"); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+  })();
+  const sessionBudget = new TaskBudgetLedger({ taskId: "session", limitUsd: null, customPrices });
+  adapter = budgetedAdapter(adapter, { provider: priceProvider, defaultModel: modelId, fallback: () => sessionBudget });
   const llm = createDirectLLMService(adapter, modelId);
   const gate = createMirandaGate({ verbose: process.env["MIRANDA_VERBOSE"] === "1" });
 
@@ -308,6 +329,10 @@ async function main(): Promise<void> {
     store,
     gate,
     model: modelId,
+    budgetUsd: Number.isFinite(budgetUsd) && budgetUsd > 0 ? budgetUsd : undefined,
+    budgetSource: process.env["ORCA_BUDGET_USD"] ? "user" : undefined,
+    customPrices,
+    sessionBudget,
     getWorkspaceContext: () => getWorkspaceContext(workspaceRoot),
     writeTrace: (trace) => analysisWriter.writeTrace(trace),
   });

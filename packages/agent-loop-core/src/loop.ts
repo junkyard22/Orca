@@ -1,4 +1,5 @@
 import {
+  budgetGateContext,
   extractFilesChangedFromCommandOutput,
   extractToolNamesFromPrompt,
   type OrcaFileChange,
@@ -15,11 +16,10 @@ function isGateStop(gateResult: GateResult): boolean {
   return !gateResult.allowed || gateResult.verdict === "CONFIRM_REQUIRED";
 }
 
-// Neutral placeholders until live per-call cost accounting is threaded here.
-const NEUTRAL_LLM_BUDGET_CONTEXT = {
-  budgetUsed: 0,
-  budgetLimit: Infinity,
-} as const;
+
+
+/** Characters of tool output kept as proof; long enough for a full test summary. */
+const PROOF_OUTPUT_LIMIT = 64_000;
 
 export function parseToolCalls(text: string): ParsedCall[] {
   const calls: ParsedCall[] = [];
@@ -168,7 +168,7 @@ export async function runAgentLoop(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "agent_loop_main_stream",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetGateContext(ctx),
         ...llmCallSizeContext,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {
@@ -301,8 +301,15 @@ export async function runAgentLoop(
       if (call.tool === "write_file" && result.ok && typeof call.input["content"] === "string") {
         enrichedRaw["_contentForDiff"] = call.input["content"];
       }
-      if (result.ok && outputText.trim().length > 0) {
-        enrichedRaw["_outputForProof"] = outputText.slice(0, 4000);
+      // Failed runs keep their real output too (a failing test suite is
+      // evidence), and the exit code when the tool reports one. Proof of
+      // success still requires ok:true on the event.
+      if (outputText.trim().length > 0) {
+        enrichedRaw["_outputForProof"] = outputText.slice(0, PROOF_OUTPUT_LIMIT);
+      }
+      const exitCode = (result as { exitCode?: unknown }).exitCode;
+      if (typeof exitCode === "number") {
+        enrichedRaw["_exitCodeForProof"] = exitCode;
       }
 
       toolEvents.push({
@@ -380,7 +387,7 @@ export async function runAgentLoop(
       const gateResult: GateResult = ctx.gate.beforeLLMCall({
         stage: "agent_loop_rescue_stream",
         model: ctx.model ?? "unknown",
-        ...NEUTRAL_LLM_BUDGET_CONTEXT,
+        ...budgetGateContext(ctx),
         ...llmCallSizeContext,
       });
       ctx.recordTrace?.("miranda.before_llm_call", {

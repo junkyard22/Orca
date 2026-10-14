@@ -27,7 +27,12 @@ export interface OpenAIUsagePayload {
    */
   prompt_tokens_details?: {
     cached_tokens?: number;
+    /** Some gateways surface Anthropic's cache writes here. */
+    cache_creation_tokens?: number;
   };
+  /** Anthropic Messages-API shape, passed through by some compatible gateways. */
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
 }
 
 /**
@@ -53,12 +58,23 @@ export function toTokenUsage(
 ): TokenUsage | null {
   if (!payload) return null;
 
-  const cachedTokens = payload.prompt_tokens_details?.cached_tokens;
+  // A usage object with missing or inconsistent counts is not a measurement.
+  // Report it as unknown rather than filling the gaps with zeros.
+  const prompt = payload.prompt_tokens;
+  const completion = payload.completion_tokens;
+  if (!Number.isSafeInteger(prompt) || !Number.isSafeInteger(completion) || prompt! < 0 || completion! < 0) return null;
+  const total = payload.total_tokens ?? prompt! + completion!;
+  if (!Number.isSafeInteger(total) || total !== prompt! + completion!) return null;
+
+  const cachedTokens = payload.prompt_tokens_details?.cached_tokens ?? payload.cache_read_input_tokens;
+  const cacheCreation = payload.prompt_tokens_details?.cache_creation_tokens ?? payload.cache_creation_input_tokens;
+  const nonNegativeInt = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
 
   return {
-    promptTokens: payload.prompt_tokens ?? 0,
-    completionTokens: payload.completion_tokens ?? 0,
-    totalTokens: payload.total_tokens ?? 0,
-    ...(cachedTokens !== undefined && { cachedPromptTokens: cachedTokens }),
+    promptTokens: prompt!,
+    completionTokens: completion!,
+    totalTokens: total,
+    ...(nonNegativeInt(cachedTokens) && { cachedPromptTokens: cachedTokens }),
+    ...(nonNegativeInt(cacheCreation) && cacheCreation > 0 && { cacheCreationTokens: cacheCreation }),
   };
 }

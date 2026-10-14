@@ -2412,3 +2412,53 @@ body.hide-pipeline .live-trace-panel .ltp-role { display: none; }
   margin-top: 1px;
   word-break: break-word;
 }
+
+/* ── Workspace protection banner ─────────────────────────────────────────── */
+.workspace-banner {
+  margin: 8px 12px 0;
+  padding: 10px 14px;
+  border: 1px solid #5a3a1a;
+  border-radius: 8px;
+  background: #1f170e;
+  color: #ffd9a8;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workspace-banner[hidden] { display: none; }
+.workspace-banner-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  user-select: text;
+}
+.workspace-banner-release {
+  align-self: flex-start;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #7a4f1f;
+  background: #2b1f10;
+  color: #ffd9a8;
+  cursor: pointer;
+}
+.workspace-banner-release:disabled { opacity: 0.6; cursor: default; }
+
+/* Stop must stay reachable while an approval is pending. */
+.btn-stop-task {
+  margin-right: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.btn-stop-task:hover { border-color: var(--danger); color: var(--danger); }
+.btn-deny:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
+
+/* A stopped task has no verdict: neutral, not red. */
+.pb-verdict.stopped { color: var(--text-muted); }
+.pb-verdict.stopped::before { background: var(--text-muted); }

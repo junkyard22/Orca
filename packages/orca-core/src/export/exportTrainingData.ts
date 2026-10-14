@@ -39,11 +39,13 @@ export interface TrainingRecord {
   teacher: string;
   /** Role tag for Moonshiner filtering (e.g. 'strong_model', 'brain'). */
   role: string;
-  /** Quality score: 10 for PASS, 7 for WARN. */
+  /** Quality score: 10 for PASS, 7 for WARN, 0 for an honest FAIL (negative example). */
   score: number;
   metadata: {
     taskType: string;
     verdict: string;
+    /** success (PASS) · partial_success (WARN) · honest_failure (FAIL, exported only on request): the training polarity. */
+    outcome: "success" | "partial_success" | "honest_failure";
     iterations: number;
     repairPasses: number;
     taskId: string;
@@ -59,7 +61,17 @@ export interface ExportSummary {
 }
 
 const MIN_OUTPUT_LENGTH = 50;
-const SCORE_BY_VERDICT: Record<string, number> = { PASS: 10, WARN: 7 };
+// Quality score by verdict. A FAIL record is only ever exported on explicit
+// request (verdict: 'FAIL'); it is a negative example and must never carry a
+// positive-looking score — before phase 6.6 it fell through to the WARN
+// score of 7, which a score-based consumer could have read as a decent
+// success example.
+const SCORE_BY_VERDICT: Record<string, number> = { PASS: 10, WARN: 7, FAIL: 0 };
+
+/** What the record teaches, stated outright so no consumer has to infer it from the score. */
+function outcomeOf(verdict: string): "success" | "partial_success" | "honest_failure" {
+  return verdict === "PASS" ? "success" : verdict === "WARN" ? "partial_success" : "honest_failure";
+}
 
 const SECRET_PATTERNS: Array<{ reason: string; pattern: RegExp }> = [
   { reason: "aws_access_key", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
@@ -91,14 +103,33 @@ export function detectTrainingExportExclusion(text: string): string | undefined 
  * PappyPort stamps the effective training decision into the persisted summary.
  * Keep this separate from the verdict filter: PASS/WARN/FAIL and trainability
  * intentionally answer different questions.
+ *
+ * A run is exportable only when the summary says so explicitly. A summary
+ * without the tag — a run recorded before eligibility existed, or one that
+ * never went through Pappy ("ok") — is not trustworthy legacy data: nothing
+ * checked it against evidence, so it is excluded as `missing`.
  */
 export function detectTrainingEligibilityExclusion(summary: string | undefined): string | undefined {
-  if (!summary) return undefined;
-  const match = summary.match(/\btraining_eligibility=(eligible|accepted_but_not_trainable|needs_human_review|rejected)\b/i);
-  if (!match?.[1]) return undefined;
+  const match = summary?.match(/\btraining_eligibility=(eligible|accepted_but_not_trainable|needs_human_review|rejected)\b/i);
+  if (!match?.[1]) return 'missing';
 
   const eligibility = match[1].toLowerCase();
   return eligibility === 'eligible' ? undefined : eligibility;
+}
+
+/**
+ * The export's own check on the evidence behind an eligible run, read from the
+ * tags PappyPort writes beside the eligibility: the run must have been judged
+ * against host evidence that either verified it or confirmed its honest
+ * failure. The eligibility word is not trusted on its own; a summary that says
+ * `eligible` without an evidence tag (or with evidence that was unavailable,
+ * absent, insufficient or unreadable) is excluded, whatever produced it.
+ */
+export function detectEvidenceExclusion(summary: string | undefined): string | undefined {
+  const match = summary?.match(/\bevidence=(verified|unverified|uninterpretable|contradicted|unavailable|not_applicable)\b/i);
+  if (!match?.[1]) return 'evidence_tag_missing';
+  const status = match[1].toLowerCase();
+  return status === 'verified' || status === 'contradicted' ? undefined : status;
 }
 
 async function collectEvidenceText(store: OrcaStore, runId: string): Promise<string> {
@@ -143,10 +174,22 @@ export async function exportTrainingData(
     }
 
     // 2. Pappy training-eligibility filter. A PASS is not automatically
-    // trainable; verifier provenance and integrity checks may forbid export.
+    // trainable; verifier provenance and integrity checks may forbid export,
+    // and a run with no recorded decision is never exported.
     const trainingExclusion = detectTrainingEligibilityExclusion(run.summary);
     if (trainingExclusion) {
       const key = `pappy_training_eligibility:${trainingExclusion}`;
+      skipReasons[key] = (skipReasons[key] ?? 0) + 1;
+      skipped++;
+      continue;
+    }
+
+    // 2b. Independent evidence check: eligible is exported only when the run
+    // was judged against host evidence. Missing runtime evidence is not
+    // trustworthy legacy data.
+    const evidenceExclusion = detectEvidenceExclusion(run.summary);
+    if (evidenceExclusion) {
+      const key = `pappy_evidence:${evidenceExclusion}`;
       skipReasons[key] = (skipReasons[key] ?? 0) + 1;
       skipped++;
       continue;
@@ -201,7 +244,7 @@ export async function exportTrainingData(
       continue;
     }
 
-    const score = SCORE_BY_VERDICT[run.verdict] ?? 7;
+    const score = SCORE_BY_VERDICT[run.verdict] ?? 0;
     const teacherRole = run.role ?? 'unknown';
 
     records.push({
@@ -213,6 +256,7 @@ export async function exportTrainingData(
       metadata: {
         taskType: teacherRole,
         verdict: run.verdict,
+        outcome: outcomeOf(run.verdict),
         iterations,
         repairPasses,
         taskId: run.id,
@@ -239,6 +283,7 @@ export async function exportTrainingData(
         metadata: {
           taskType: 'brain',
           verdict: 'PASS',
+          outcome: 'success',
           iterations: 1,
           repairPasses: 0,
           taskId: run.id,

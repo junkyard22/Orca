@@ -19,8 +19,7 @@ import {
   parseCargoSyntax,
 } from "@clawde/benson-core";
 import type { CargoSlashCommand } from "@clawde/benson-core";
-import { createMirandaGate } from "@clawde/miranda-core";
-import { OllamaAdapter, OpenAICompatAdapter } from "@clawde/miranda-core";
+import { createMirandaGate, KNOWN_ANTHROPIC_MODELS } from "@clawde/miranda-core";
 import type { LLMAdapter, LLMMessage as Message } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
@@ -52,6 +51,7 @@ import { buildToolBootstrap } from "@clawde/tool-bootstrap";
 import type { BootstrappedTool } from "@clawde/tool-bootstrap";
 import { createClaire } from "@clawde/claire-core";
 import type { ClaireMessage } from "@clawde/claire-core";
+import { verificationGuidance } from "./verificationGuidance";
 import {
   createMaestroCore,
   getRolePrompt,
@@ -79,13 +79,25 @@ import type {
 } from "./auth";
 import { loadSettings, saveSettings } from "./settings";
 import type { OrcaSettings, ProviderEntry, RoleEntry, McpServerConfig } from "./settings";
+import { buildAdapterForProvider } from "./providerAdapter";
+import { brainBlocker, providerWarnings } from "./providerResolution";
 import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
+import { enforceToolAuthorization } from "./toolAuthorization";
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
 import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
+import { runWithBudget, withBudgetAttribution } from "@clawde/miranda-core";
+import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
+import { createAbortError, createBudgetJournal, createWorkspaceGuard, WorkspaceProtectedError } from "@clawde/orca-core";
+import type { BudgetJournal, WorkspaceGuard } from "@clawde/orca-core";
+import { probeProcess } from "@yakstacks/workbench-core";
+import { budgetWarnings, createMessageBudget, getCustomPrices, getSessionBudget, setCustomPrices } from "./budgetContext";
+import { classifyBrainError, classifyMissingDecision, resolveBrainRoute } from "./brainFallback";
+import { recoveryWarnings } from "./recoveryWarnings";
+import { TaskSessionManager } from "./taskSession";
 import {
   cargoReferenceAction,
   configuredCargoConnectors,
@@ -543,6 +555,7 @@ async function brainRoute(
   let decision: DecomposeDecision | null = null;
   let repairReason: string | null = null;
   let brainDecision: string | undefined;
+  let brainFailure: "invalid_plan" | "provider_failed" | "timed_out" | "no_decision" | undefined;
 
   for (let attempt = 0; attempt <= 1; attempt++) {
     const prompt = repairReason !== null
@@ -553,7 +566,7 @@ async function brainRoute(
     try {
       const { text } = await runGatedLLMCall(
         ctx,
-        { stage: "brain_route", outputOf: (result) => result.text },
+        { stage: "brain_route", role: "brain", outputOf: (result) => result.text },
         () => brainLLM.complete(prompt, {
           maxTokens: 512,
           temperature: 0,
@@ -575,6 +588,13 @@ async function brainRoute(
         });
         // Loop continues for one repair attempt.
       } else {
+        // A cancelled Brain is a cancelled task, never a fallback.
+        const classified = classifyBrainError(err, ctx.abortSignal?.aborted === true);
+        if (classified.kind === "cancelled") throw isAbortError(err) ? err : createAbortError(ctx.abortSignal?.reason);
+        // A budget refusal is the task's stop, not a planning failure: no worker
+        // could run either, so the runtime reports the budget reason instead of a fallback.
+        if (classified.kind === "budget_refused") throw err;
+        brainFailure = classified.kind;
         ctx.recordTrace?.("brain.route.error", {
           attempt,
           error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
@@ -583,16 +603,18 @@ async function brainRoute(
       }
     }
   }
+  if (!decision && !brainFailure) brainFailure = classifyMissingDecision(repairReason !== null);
 
   const fallbackDecision = auditDecomposeFallback(task);
-  const routingPolicy = normalizeDesktopRoutingForExecution(task, decision, fallbackDecision);
+  // Fallback is explicit: what Brain did (invalid plan, provider failure,
+  // timeout, nothing usable), which deterministic route replaced it, and
+  // that the user's own goals are the acceptance criteria it carries.
+  const route = resolveBrainRoute(task, decision, fallbackDecision, brainFailure);
+  const routingPolicy = route.routing;
   let resolved: DecomposeDecision = routingPolicy.decision;
-  if (!decision) {
-    ctx.recordTrace?.("brain.route.fallback", {
-      reason: fallbackDecision
-        ? "brain routing did not yield a valid decision; using deterministic audit decomposition"
-        : "brain routing did not yield a valid decision; defaulting to non-brain execution role",
-    });
+  if (route.fallback) {
+    ctx.recordTrace?.("brain.route.fallback", route.fallback);
+    ctx.emit?.({ type: "brain:fallback", taskId: ctx.runId, ...route.fallback });
   }
   if (routingPolicy.remappedBrainExecution) {
     ctx.recordTrace?.("brain.route.execution_role_remap", {
@@ -898,6 +920,12 @@ function buildMaestroAdapter(
     },
   ): Promise<DecomposeWorkerRun> => {
     throwIfAborted(ctx.abortSignal);
+    // Tell the worker, as goals, what evidence Pappy will require for this kind
+    // of work. Goals only: the acceptance criteria and AHP packet are unchanged.
+    const guidance = verificationGuidance(task.originalUserMessage ?? task.intent ?? "");
+    if (guidance.length > 0) {
+      agentTask = { ...agentTask, goals: [...agentTask.goals, ...guidance.filter((g) => !agentTask.goals.includes(g))] };
+    }
     const subagentId = `${ctx.runId}:${role}:${options.workerIndex}`;
     const childPacket = createWorkerPacket(
       task,
@@ -1110,7 +1138,7 @@ function buildMaestroAdapter(
           const brainLLM = roleAdapters["brain"] ?? ctx.llm;
           const { text } = await runGatedLLMCall(
             ctx,
-            { stage: "result_synthesis", outputOf: (result) => result.text },
+            { stage: "result_synthesis", role: "brain", outputOf: (result) => result.text },
             () => brainLLM.complete(synthesisPrompt, {
               maxTokens: 2048,
               temperature: 0.2,
@@ -1460,12 +1488,86 @@ type ClaireHandle = ReturnType<typeof createClaire>;
 let runtime: OrcaRuntime | null = null;
 let claire: ClaireHandle | null = null;
 let store: SqliteStore | null = null;
+/** Miranda gate of the active runtime; the message budget scope passes decisions through it. */
+let _runtimeGate: DesktopMirandaGate | null = null;
+let _budgetJournal: BudgetJournal | null = null;
+/** Journal of in-flight budget snapshots, so reservations survive a crash and are reported on the next start. */
+function budgetJournal(): BudgetJournal {
+  if (!_budgetJournal) _budgetJournal = createBudgetJournal(join(app.getPath('userData'), 'budget-journal.json'));
+  return _budgetJournal;
+}
+let _workspaceGuard: WorkspaceGuard | null = null;
+/**
+ * Who may write to the workspace. A task that ended with an operation or a
+ * child process unsettled leaves the workspace protected (on disk, across
+ * restarts) until the leftovers settle, are verified gone, or the user
+ * releases it knowingly. Task state and workspace safety are kept apart.
+ */
+function workspaceGuard(): WorkspaceGuard {
+  if (!_workspaceGuard) {
+    _workspaceGuard = createWorkspaceGuard({
+      filePath: join(app.getPath('userData'), 'workspace-protection.json'),
+      probe: (resource) => probeProcess({ pid: resource.pid, identity: resource.identity }),
+    });
+    let reverify: NodeJS.Timeout | null = null;
+    const scheduleReverify = () => {
+      if (reverify) return;
+      reverify = setInterval(() => {
+        void (async () => {
+          const guard = _workspaceGuard!;
+          const roots = [...new Set(guard.list().map((p) => p.root))];
+          if (roots.length === 0) { if (reverify) clearInterval(reverify); reverify = null; return; }
+          for (const r of roots) await guard.status(r); // probes; releases by verification when every process is gone
+        })();
+      }, 5000);
+    };
+    _workspaceGuard.subscribe((event) => {
+      if (event.type === "protected") {
+        scheduleReverify();
+        console.warn(`[Orca] workspace protected: ${event.protection.root} (task ${event.protection.taskId})`);
+        win?.webContents.send("orca-event", { type: "workspace:protected", taskId: event.protection.taskId, root: event.protection.root, reason: event.protection.reason, operations: event.protection.operations.map((o) => `${o.kind} ${o.label}`), resources: event.protection.resources.map((r) => `process ${r.pid} (${r.label})`), recovery: _workspaceGuard!.describe([event.protection]) });
+      } else {
+        console.log(`[Orca] workspace released: ${event.release.root} by ${event.release.by}: ${event.release.reason}`);
+        win?.webContents.send("orca-event", { type: "workspace:released", taskId: event.release.taskId, root: event.release.root, by: event.release.by, reason: event.release.reason, remaining: _workspaceGuard!.list().filter((p) => p.root === event.release.root).length });
+      }
+    });
+  }
+  return _workspaceGuard;
+}
+function activeWorkspaceRoot(): string {
+  return _currentSettings?.workspaceRoot || join(homedir(), "Orca");
+}
 let fallbackPoolManager: ModelFallbackPoolManager | null = null;
 let dewey: InstanceType<typeof Dewey> | null = null;
 let _currentSettings: OrcaSettings | null = null;
 let mcpDispose: (() => Promise<void>) | null = null;
-let activeAbortResolve: ((error?: string) => void) | null = null;
-let activeAbortController: AbortController | null = null;
+/**
+ * The task lock. Held from the moment a message starts until its task has
+ * settled — not until its reply is produced. Stop requests cancellation and
+ * answers at once; the next message waits for settlement.
+ */
+const taskSessions = new TaskSessionManager({
+  interruptAfterMs: 30_000,
+  onInterrupted: ({ id, reason }) => {
+    // The lock is released so the user is not shut out, but the workspace is
+    // not: the runtime never settled, so whatever it was running may still
+    // write. Protection lifts when the runtime finally settles, or on an
+    // explicit release.
+    console.warn(`[Orca] task session ${id} interrupted: ${reason}`);
+    workspaceGuard().protect(activeWorkspaceRoot(), {
+      taskId: id,
+      reason: "did not settle after Stop",
+      operations: [{ kind: "other", label: "task runtime (never settled after Stop)", startedAt: new Date().toISOString() }],
+    });
+    win?.webContents.send("orca-event", { type: "task:state", taskId: id, state: "INTERRUPTED", reason, activeOperations: 1, unsettledOperations: ["task runtime (never settled after Stop)"] });
+  },
+  onLateSettlement: ({ id, state }) => {
+    // The runtime settled after all. The session-level record is lifted; a
+    // record the runtime itself made for unsettled processes stays.
+    console.log(`[Orca] task session ${id} settled late: ${state}`);
+    void workspaceGuard().settle(activeWorkspaceRoot(), id, "the task runtime settled after the watchdog had given up");
+  },
+});
 let appAuthStatus: AppAuthStatus = {
   enabled: false,
   hasPassword: false,
@@ -1522,26 +1624,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   );
   error.name = "AbortError";
   throw error;
-}
-
-function buildAdapterForProvider(
-  provider: ProviderEntry,
-  model: string,
-  enableThinking?: boolean,
-): LLMAdapter {
-  if (provider.type === 'ollama') {
-    return new OllamaAdapter({
-      baseUrl:      provider.baseUrl || 'http://localhost:11434',
-      defaultModel: model,
-    });
-  }
-  // openrouter, deepseek, siliconflow, openai, anthropic, zai, custom
-  return new OpenAICompatAdapter({
-    baseUrl:        provider.baseUrl,
-    apiKey:         provider.apiKey || undefined,
-    defaultModel:   model,
-    enableThinking,
-  });
 }
 
 /**
@@ -1636,18 +1718,35 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     );
   }
 
-  const brainRole = s.roles?.['brain'];
-  if (!brainRole?.providerId || !brainRole?.model) {
-    return "Brain role not configured.\nClick ⚙ Settings → add a provider and assign it to the Brain role.";
-  }
+  const brainBlocked = brainBlocker(s);
+  if (brainBlocked) return brainBlocked;
+  const brainRole = s.roles!['brain']!;
+  const provider = s.providers.find((p) => p.id === brainRole.providerId)!;
 
-  const provider = s.providers?.find((p) => p.id === brainRole.providerId);
-  if (!provider) {
-    return "Brain role points to an unknown provider.\nClick ⚙ Settings to re-configure.";
-  }
-
-  if (provider.type !== 'ollama' && !provider.apiKey) {
-    return `Provider "${provider.name}" has no API key.\nClick ⚙ Settings to add it.`;
+  // Every role that cannot run as configured is named here; nothing is
+  // reassigned on the user's behalf.
+  _initWarnings.push(...providerWarnings(s));
+  // Budget: custom prices feed every adapter; a historical default or an
+  // unlimited budget is said out loud; reservations a previous process never
+  // reconciled are reported as possible charges, not forgotten.
+  setCustomPrices(s.pricing);
+  _initWarnings.push(...budgetWarnings(s));
+  // What the previous process left behind: open budget reservations (reported
+  // as possible charges and recorded as interrupted runs) and protected
+  // workspaces (in-process operations died with it; child processes are
+  // re-probed, and only a verified-gone process lifts the protection).
+  // Nothing is resumed, repeated, or reset on the user's behalf.
+  {
+    const corrupt: Array<{ what: string; error: string }> = [];
+    let unresolvedBudget: ReturnType<BudgetJournal["recover"]> = [];
+    try { unresolvedBudget = budgetJournal().recover(); } catch (error) { corrupt.push({ what: "The budget journal", error: error instanceof Error ? error.message : String(error) }); }
+    let guardRecovery: Awaited<ReturnType<WorkspaceGuard["recover"]>> = { kept: [], released: [] };
+    try { guardRecovery = await workspaceGuard().recover(); } catch (error) { corrupt.push({ what: "The workspace protection record", error: error instanceof Error ? error.message : String(error) }); }
+    const recovery = recoveryWarnings({ unresolvedBudget, guard: guardRecovery, describe: (p) => workspaceGuard().describe(p), corrupt });
+    _initWarnings.push(...recovery.warnings);
+    for (const run of recovery.runs) {
+      try { void store.saveRun(run, [], [], []); } catch (error) { console.warn("[Orca] could not record the interrupted task:", error); }
+    }
   }
 
   try {
@@ -1723,16 +1822,31 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     }
 
     const gate = createMirandaGate({ verbose: s.verbose === true });
+    _runtimeGate = gate;
+    // Execution-time authorization sits directly in front of every tool.execute:
+    // external writes, process control and unrecognised tools need the user's
+    // approval per call, sandbox reconfiguration is refused, and every local
+    // path argument must resolve inside the workspace. Server ids let the
+    // classifier read the operation's verbs without the user-chosen prefix.
+    const mcpServerIds = mcpServers.map((srv) => srv.id);
 
     // Map BootstrappedTool[] → AgentTool[], threading abort + approval through
     const availableTools: AgentTool[] = bootstrap.allTools.map((tool: BootstrappedTool) => ({
       name: tool.name,
       description: tool.description,
       schema: tool.schema,
-      execute(input, context) {
+      async execute(input, context) {
         const effectiveWorkspaceRoot = context.workspaceRoot ?? workspaceRoot;
+        const normalizedInput = absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot);
+        const refused = await enforceToolAuthorization(tool.name, normalizedInput, {
+          workspaceRoot: effectiveWorkspaceRoot,
+          mcpServerIds,
+          requestApproval: context.requestApproval ?? requestToolApproval,
+        });
+        if (refused) return refused;
+        throwIfAborted(context.abortSignal);
         return tool.execute(
-          absolutizeDesktopCommanderInput(tool.name, input, effectiveWorkspaceRoot),
+          normalizedInput,
           {
             workspaceRoot: effectiveWorkspaceRoot,
             runId: context.runId ?? '',
@@ -1745,8 +1859,8 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     const toolService: OrcaToolService = {
       async execute(name, input) {
         const normalizedInput = absolutizeDesktopCommanderInput(name, input, workspaceRoot);
-        const toolSchema = bootstrap.allTools.find((tool) => tool.name === name)?.schema;
-        const gateCtx = { tool: name, args: normalizedInput, workspaceRoot, schema: toolSchema };
+        const selectedTool = bootstrap.allTools.find((tool) => tool.name === name);
+        const gateCtx = { tool: name, args: normalizedInput, workspaceRoot, schema: selectedTool?.schema };
         const beforeGate = gate.beforeToolRun(gateCtx);
         if (!beforeGate.allowed) {
           return {
@@ -1755,8 +1869,22 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
             error: beforeGate.reason || `Tool "${name}" blocked by Miranda`,
           };
         }
+        if (!selectedTool) return { ok: false, output: "", error: `Unknown tool: ${name}` };
+        const refused = await enforceToolAuthorization(name, normalizedInput, {
+          workspaceRoot,
+          mcpServerIds,
+          requestApproval: requestToolApproval,
+        });
+        if (refused) return refused;
 
-        const result = await bootstrap.toolService.execute(name, normalizedInput);
+        // Call the tool directly so this path carries the approval handler too
+        // (bootstrap.toolService.execute passed none, so run_command calls that
+        // need approval failed with "no approval handler" instead of asking).
+        const result = await selectedTool.execute(normalizedInput, {
+          workspaceRoot,
+          runId: "",
+          requestApproval: requestToolApproval,
+        });
         gate.afterToolRun(gateCtx, {
           ok: result.ok,
           output: result.output || result.error || "",
@@ -1810,6 +1938,11 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       writeTrace: writePipelineTrace,
       requestToolApproval,
       budgetUsd: s.budgetUsd,
+      budgetSource: s.budgetSource,
+      customPrices: getCustomPrices(),
+      sessionBudget: getSessionBudget(),
+      budgetJournal: budgetJournal(),
+      workspaceGuard: workspaceGuard(),
       gate,
       model,
     });
@@ -1827,6 +1960,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
           { gate, model: configuredNarratorModel },
           {
             stage: 'narrator_progress_lexicon',
+            role: 'narrator',
             model: configuredNarratorModel,
             budgetLimit: s.budgetUsd > 0 ? s.budgetUsd : Infinity,
             outputOf: (result) => result.content,
@@ -1882,6 +2016,10 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       const gateContext = { tool: toolName, args, workspaceRoot, schema };
       const before = resourceGate?.beforeToolRun(gateContext);
       if (before && !before.allowed) return { ok: false, output: '', error: before.reason };
+      // Cargo pre-flight reads run with the same execution-time authorization as
+      // worker tools; nothing that needs approval runs here unattended.
+      const refused = await enforceToolAuthorization(toolName, args, { workspaceRoot, mcpServerIds, requestApproval: requestToolApproval });
+      if (refused) return refused;
       const result = await invoke();
       const after = resourceGate?.afterToolRun(gateContext, {
         ok: result.ok,
@@ -1898,6 +2036,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
           { gate, model: narratorModel },
           {
             stage: "claire_narration",
+            role: "narrator",
             model: narratorModel,
             budgetLimit: s.budgetUsd > 0 ? s.budgetUsd : Infinity,
             outputOf: (result) => result.content,
@@ -1962,6 +2101,7 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
               { gate, model: summaryModel },
               {
                 stage: 'cargo_resource_summary',
+                role: 'utility',
                 model: summaryModel,
                 budgetLimit: s.budgetUsd > 0 ? s.budgetUsd : Infinity,
                 outputOf: (result) => result.content,
@@ -2180,10 +2320,7 @@ function resolvePendingApprovals(approved: boolean): void {
 
 function lockApp(): AppAuthStatus {
   resolvePendingApprovals(false);
-  if (activeAbortResolve) {
-    activeAbortResolve("Locked.");
-    activeAbortResolve = null;
-  }
+  taskSessions.cancel("Locked.");
   return refreshAuthStatus(true);
 }
 
@@ -2200,8 +2337,12 @@ function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: 
 }
 
 ipcMain.on("tool:approve", (_ev, { id, approved }: { id: string; approved: boolean }) => {
-  pendingApprovals.get(id)?.(approved);
+  // A response to a dialog from a task that is no longer running authorizes
+  // nothing: the entry was already resolved as denied when the task stopped.
+  const resolve = pendingApprovals.get(id);
   pendingApprovals.delete(id);
+  const session = taskSessions.current;
+  resolve?.(approved && !!session && session.state === "running");
 });
 
 /**
@@ -2213,6 +2354,11 @@ export function requestToolApproval(
   args: Record<string, unknown>,
 ): Promise<boolean> {
   if (isAppLocked()) {
+    return Promise.resolve(false);
+  }
+  // Only a running task may ask the user; a task that is stopping gets "no".
+  const session = taskSessions.current;
+  if (!session || session.state !== "running") {
     return Promise.resolve(false);
   }
 
@@ -2249,6 +2395,41 @@ function requestSingleToolApproval(
     }, 60_000);
   });
 }
+
+// ── Workspace protection: what is still unsettled, and an explicit release ──
+ipcMain.handle("workspace:protection", async () => {
+  const root = activeWorkspaceRoot();
+  const protections = await workspaceGuard().status(root);
+  return { root, protections, recovery: protections.length ? workspaceGuard().describe(protections) : "" };
+});
+
+ipcMain.handle("workspace:release", async () => {
+  if (isAppLocked()) return { ok: false, error: lockedError() };
+  const root = activeWorkspaceRoot();
+  const protections = await workspaceGuard().status(root);
+  if (protections.length === 0) return { ok: true, released: [] };
+  // A native, human-answered confirmation. This is an override, not a
+  // release Orca can vouch for: nothing listed has been verified gone and
+  // nothing is stopped by it. The dialog says so, names what is unsettled,
+  // and the decision is recorded with the protection as it stood. Never
+  // automated.
+  const choice = win && !win.isDestroyed()
+    ? await dialog.showMessageBox(win, {
+        type: "warning",
+        title: "Override workspace protection",
+        message: "Orca has NOT confirmed that this workspace is quiet.",
+        detail: `${workspaceGuard().describe(protections)}\n\nOverriding records that you accept the risk. It does not stop anything: a process Orca could not stop keeps whatever access it has, and files it writes from now on will not be attributed to any task. Tasks started after the override run alongside it.`,
+        buttons: ["Cancel", "I accept the risk — override"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+    : { response: 0 };
+  if (choice.response !== 1) return { ok: false, error: "Override cancelled." };
+  const released = await workspaceGuard().override(root, { reason: "the user accepted the risk in the override dialog", acknowledged: true });
+  console.warn(`[Orca] workspace protection overridden by the user: ${root} (${released.map((r) => r.taskId).join(", ")}); generation ${workspaceGuard().generation(root)}`);
+  return { ok: true, released, override: true };
+});
 
 ipcMain.handle("auth:status", () => appAuthStatus);
 
@@ -2398,15 +2579,8 @@ async function fetchModelsFromProvider(
         if (ids.length) return ids;
       }
     } catch { /* fall through to static list */ }
-    return [
-      "claude-opus-4-6",
-      "claude-sonnet-4-6",
-      "claude-haiku-4-5-20251001",
-      "claude-3-7-sonnet-20250219",
-      "claude-3-5-sonnet-20241022",
-      "claude-3-5-haiku-20241022",
-      "claude-3-opus-20240229",
-    ];
+    // Offline fallback: the documented current IDs (see modelCatalog.ts for the review date).
+    return [...KNOWN_ANTHROPIC_MODELS];
   }
 
   // Alibaba Coding Plan: no /models endpoint — return known model list directly.
@@ -2448,8 +2622,10 @@ ipcMain.handle("settings:save", async (_ev, s: OrcaSettings) => {
   }
 
   try {
-    await saveSettings(s);
-    const err = await initOrca(s);
+    // A budget saved from the Settings form is the user's choice from now on.
+    const chosen: OrcaSettings = { ...s, budgetSource: "user" };
+    await saveSettings(chosen);
+    const err = await initOrca(chosen);
     win?.webContents.send("init-status", { ok: err === null, error: err, tools: _bootstrapTools, warnings: _initWarnings });
     return { ok: true };
   } catch (err) {
@@ -2511,11 +2687,12 @@ ipcMain.handle(
 
 // ── Abort control for the active task ──────────────────────────────────────
 ipcMain.on("task:abort", () => {
-  if (activeAbortResolve) {
+  // Stop is a request. Approvals are denied now, the abort signal fires now,
+  // and the task lock is released only when the task's operations settle.
+  if (taskSessions.current) {
     console.log("[Orca] ✖ task:abort requested by user");
     resolvePendingApprovals(false);
-    activeAbortResolve();
-    activeAbortResolve = null;
+    taskSessions.cancel("Stopped.");
   }
 });
 
@@ -2580,11 +2757,10 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   }
 
   // Reject concurrent requests — the agent loop is stateful and cannot safely
-  // run two tasks at the same time.  The caller should stop the active task
-  // first (task:abort) before sending a new message.
-  if (activeAbortController) {
-    return { ok: false, error: "A task is already running. Stop it before sending a new message." };
-  }
+  // run two tasks at the same time. The caller stops the active task first
+  // (task:abort) and waits for it to settle before sending a new message.
+  const busy = taskSessions.refusal();
+  if (busy) return busy;
 
   const normalizedText = String(text ?? "").slice(0, 200_000).replace(/\r\n?/g, "\n").trim();
   if (!normalizedText) {
@@ -2622,24 +2798,21 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   if (!claire || !runtime)
     return { ok: false, error: "Orca is not initialized — open ⚙ Settings to set your API key." };
 
-  const abortController = new AbortController();
-  activeAbortController = abortController;
+  const busyNow = taskSessions.refusal();
+  if (busyNow) return busyNow;
 
-  // Build a promise that resolves when the user hits Stop.
-  const abortPromise = new Promise<{ ok: false; error: string }>((resolve) => {
-    activeAbortResolve = (error = "Stopped.") => {
-      if (!abortController.signal.aborted) {
-        abortController.abort(new Error(error));
-      }
-      resolve({ ok: false, error });
-    };
-  });
+  // A workspace still owned by an unsettled task is refused here, before
+  // Benson or any model is asked anything.
+  const protections = await workspaceGuard().status(activeWorkspaceRoot());
+  if (protections.length > 0) {
+    return { ok: false, error: workspaceGuard().describe(protections), workspaceProtected: true };
+  }
 
   const EVENT_TYPES: OrcaEventType[] = [
     "task:start", "maestro:start", "maestro:done",
     "maestro:agent_start", "maestro:agent_done",
     "qc:result",  "repair:start",  "task:done", "stream:token", "stream:reset",
-    "pipeline:summary",
+    "pipeline:summary", "budget:update", "task:state", "brain:fallback", "workspace:protected",
     "dewey:brief", "miranda:checkpoint",
     "subagent:spawned", "subagent:done", "subagent:failed",
   ];
@@ -2716,46 +2889,51 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
     }),
   );
 
-  try {
-    const taskPromise = claire.handleUserMessage(cargoSyntax.message, {
-      abortSignal: abortController.signal,
-    })
-      .then((text) => ({ ok: true as const, reply: { text } }))
-      .catch((err) => {
-        if (isAbortError(err)) {
-          return { ok: false as const, error: err.message || "Stopped." };
-        }
-        return {
-          ok: false as const,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      });
-
-    const result = await Promise.race([
-      taskPromise,
-      abortPromise,
-    ]);
-    return {
-      ...result,
-      pipelineSummary: capturedPipelineSummary,
-      cargoManifest: await getDewey().getManifest(),
-    };
-  } finally {
+  // One budget for the whole message: narration, Brain, workers, fallbacks,
+  // repairs and Cargo summaries reserve against it, and the runtime reuses it
+  // as the task ledger. Its final figures travel with the reply.
+  const messageBudget = createMessageBudget(_currentSettings ?? { budgetUsd: 0 });
+  type SendResult = { ok: true; reply: { text: string } } | { ok: false; error: string; cancelling?: boolean; workspaceProtected?: boolean };
+  const cleanup = () => {
     if (isStreaming) {
       isStreaming = false;
       win?.webContents.send("orca:stream-end", { runId: streamRunId });
     }
-    activeAbortResolve = null;   // clean up if task finished naturally
-    if (activeAbortController === abortController) {
-      activeAbortController = null;
-    }
-    // Deny any tool approvals that the renderer never responded to.
-    // These are orphaned because the task is over and their tool calls
-    // will never execute — leaving them in the map wastes memory and
-    // would cause the next task's abort handler to resolve stale entries.
+    // Deny any tool approvals that the renderer never responded to; their
+    // tool calls will never execute now that the task has settled.
     resolvePendingApprovals(false);
     unsubs.forEach((u) => u());
-  }
+  };
+
+  // The lock is held by the session until the task settles; the reply comes
+  // back as soon as the task ends or Stop is acknowledged. Late results of a
+  // stopped task cannot act: the runtime refuses dispatch after cancellation.
+  const { session, reply } = taskSessions.begin<SendResult>(
+    (s) => runWithBudget(messageBudget, () => withBudgetAttribution({ gate: _runtimeGate ?? undefined }, () => claire!.handleUserMessage(cargoSyntax.message, {
+      abortSignal: s.signal,
+    })))
+      .then((text): SendResult => ({ ok: true, reply: { text } }))
+      .catch((err): SendResult => {
+        if (isAbortError(err)) return { ok: false, error: err.message || "Stopped." };
+        if (err instanceof WorkspaceProtectedError) return { ok: false, error: err.message, workspaceProtected: true };
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }),
+    (reason) => ({ ok: false, error: reason, cancelling: true }),
+  );
+  void session.settled.then((state) => {
+    cleanup();
+    console.log(`[Orca] task session ${session.id} settled: ${state}`);
+    win?.webContents.send("orca-event", { type: "task:session", sessionId: session.id, state, budget: messageBudget.snapshot() });
+  });
+
+  const result = await reply;
+  return {
+    ...result,
+    pipelineSummary: capturedPipelineSummary,
+    budget: messageBudget.snapshot(),
+    sessionState: session.state,
+    cargoManifest: await getDewey().getManifest(),
+  };
 });
 
 // ── Single-instance lock ────────────────────────────────────────────────────

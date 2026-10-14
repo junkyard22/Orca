@@ -1,4 +1,19 @@
 export { evaluateWithPappy } from "./pappy.js";
+export {
+  classifyPath,
+  classifyTaskKind,
+  isDefectFixTask,
+  isFullSuiteCommand,
+  isTestPath,
+  parseFailingTests,
+  parseTestCounts,
+  prohibitsTestEdits,
+  runWorkspaceVerificationChecks,
+  testSegment,
+  testShape,
+} from "./checks/workspaceVerification.js";
+export type { BehaviouralReceipt, WorkspaceVerificationResult } from "./checks/workspaceVerification.js";
+export { distinctiveTerms, textCoversRequirement, textHasTerm } from "./checks/evidenceTerms.js";
 export { buildRepairTask } from "./repair.js";
 export { traceEvaluation } from "./pappy-trace.js";
 export { verifyAHPPacket } from "./ahp/evaluator.js";
@@ -30,4 +45,14 @@ export type {
   ModelReviewProvenance,
   ReviewIndependenceStatus,
   ReviewIndependence,
+  EvidenceStrength,
+  EvidenceStatus,
+  TaskKind,
+  VerificationStatus,
+  CriterionAssessment,
+  EvidenceRequest,
+  WorkspaceEvidence,
+  WorkspaceFileChange,
+  WorkspaceFileKind,
+  WorkspaceTestRun,
 } from "./types.js";

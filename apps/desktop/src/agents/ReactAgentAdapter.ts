@@ -820,6 +820,14 @@ export class ReactAgentAdapter implements AgentAdapter {
     try {
       for (let iteration = 0; iteration < this.maxIterations; iteration++) {
         throwIfAborted(ctx.abortSignal);
+        // The task lifecycle has the last word: once cancellation was
+        // requested or the task ended, no model call is made for it, whatever
+        // the signal says (defence in depth, same rule as the tool path).
+        if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) {
+          const refused = new Error(`model call not made: the task is ${ctx.lifecycle.current.toLowerCase()}.`);
+          refused.name = "AbortError";
+          throw refused;
+        }
         iterationCount = iteration + 1;
 
         if (iteration > 0) {
@@ -839,6 +847,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           ctx,
           {
             stage: "agent_iteration",
+            role: this.role,
             model: ctx.model ?? this.llmAdapter.name,
             outputOf: (result) => result.content,
           },
@@ -1135,7 +1144,12 @@ export class ReactAgentAdapter implements AgentAdapter {
             requestedTool: resolvedCall.requestedTool,
             input: toolInput,
           });
-          const result = await tool.execute(toolInput, toolContext);
+          // Tracked by the task lifecycle: the task cannot settle while it runs,
+          // and nothing starts once cancellation was requested.
+          if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) throwIfAborted(ctx.abortSignal);
+          const result = ctx.lifecycle
+            ? await ctx.lifecycle.track("tool", toolName, () => tool.execute(toolInput, toolContext))
+            : await tool.execute(toolInput, toolContext);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
           const commandFileChanges = result.ok
@@ -1165,8 +1179,15 @@ export class ReactAgentAdapter implements AgentAdapter {
           if (result.ok && isWriteToolName(toolName) && typeof toolInput.content === "string") {
             enrichedRaw["_contentForDiff"] = toolInput.content;
           }
-          if (result.ok && result.output.trim().length > 0) {
-            enrichedRaw["_outputForProof"] = result.output.slice(0, 4000);
+          // Failed runs keep their real output too (e.g. "# fail 1"), so the
+          // verifier can see a failing test suite. Proof of success still
+          // requires ok:true on the event.
+          if (result.output.trim().length > 0) {
+            enrichedRaw["_outputForProof"] = result.output.slice(0, 64_000);
+          }
+          const proofExitCode = (result as { exitCode?: unknown }).exitCode;
+          if (typeof proofExitCode === "number") {
+            enrichedRaw["_exitCodeForProof"] = proofExitCode;
           }
 
           toolsUsed.push({
@@ -1353,6 +1374,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             ctx,
             {
               stage: "agent_finalization",
+              role: this.role,
               model: ctx.model ?? this.llmAdapter.name,
               outputOf: (result) => result.content,
             },

@@ -104,9 +104,9 @@ export class SqliteStore implements OrcaStore {
           `INSERT INTO runs (
             id, created_at, intent, role, status, stopped_because,
             iteration_count, output_text, summary, verdict, confidence,
-            issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
+            issue_count, input_tokens, output_tokens, cost_usd, cost_unreconciled_usd, cost_basis, repair_passes,
             brain_decision, error_message, ahp_packet_graph
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             run.id,
             run.createdAt,
@@ -123,6 +123,8 @@ export class SqliteStore implements OrcaStore {
             run.inputTokens ?? null,
             run.outputTokens ?? null,
             run.costUsd ?? null,
+            run.costUnreconciledUsd ?? null,
+            run.costBasis ?? null,
             run.repairPasses ?? null,
             run.brainDecision ?? null,
             run.errorMessage ?? null,
@@ -206,7 +208,7 @@ export class SqliteStore implements OrcaStore {
       `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
+        issue_count, input_tokens, output_tokens, cost_usd, cost_unreconciled_usd, cost_basis, repair_passes,
         brain_decision, error_message, ahp_packet_graph
       FROM runs
       ORDER BY created_at DESC
@@ -230,6 +232,8 @@ export class SqliteStore implements OrcaStore {
       input_tokens: number | null;
       output_tokens: number | null;
       cost_usd: number | null;
+      cost_unreconciled_usd: number | null;
+      cost_basis: string | null;
       repair_passes: number | null;
       brain_decision: string | null;
       error_message: string | null;
@@ -259,6 +263,8 @@ export class SqliteStore implements OrcaStore {
       inputTokens: row.input_tokens ?? undefined,
       outputTokens: row.output_tokens ?? undefined,
       costUsd: row.cost_usd ?? undefined,
+      costUnreconciledUsd: row.cost_unreconciled_usd ?? undefined,
+      costBasis: row.cost_basis ?? undefined,
       repairPasses: row.repair_passes ?? undefined,
       brainDecision: row.brain_decision ?? undefined,
       ahpPacketGraph: row.ahp_packet_graph ?? undefined,
@@ -276,7 +282,7 @@ export class SqliteStore implements OrcaStore {
       `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
+        issue_count, input_tokens, output_tokens, cost_usd, cost_unreconciled_usd, cost_basis, repair_passes,
         brain_decision, error_message, ahp_packet_graph
       FROM runs
       WHERE id = ?`
@@ -308,6 +314,8 @@ export class SqliteStore implements OrcaStore {
       inputTokens: row.input_tokens ?? undefined,
       outputTokens: row.output_tokens ?? undefined,
       costUsd: row.cost_usd ?? undefined,
+      costUnreconciledUsd: row.cost_unreconciled_usd ?? undefined,
+      costBasis: row.cost_basis ?? undefined,
       repairPasses: row.repair_passes ?? undefined,
       brainDecision: row.brain_decision ?? undefined,
       ahpPacketGraph: row.ahp_packet_graph ?? undefined,
@@ -428,7 +436,7 @@ export class SqliteStore implements OrcaStore {
       `SELECT
         id, created_at, intent, role, status, stopped_because,
         iteration_count, output_text, summary, verdict, confidence,
-        issue_count, input_tokens, output_tokens, cost_usd, repair_passes,
+        issue_count, input_tokens, output_tokens, cost_usd, cost_unreconciled_usd, cost_basis, repair_passes,
         error_message
       FROM runs
       WHERE intent LIKE ? OR output_text LIKE ?
@@ -453,6 +461,8 @@ export class SqliteStore implements OrcaStore {
       input_tokens: number | null;
       output_tokens: number | null;
       cost_usd: number | null;
+      cost_unreconciled_usd: number | null;
+      cost_basis: string | null;
       repair_passes: number | null;
       error_message: string | null;
     }> = [];
@@ -480,6 +490,8 @@ export class SqliteStore implements OrcaStore {
       inputTokens: row.input_tokens ?? undefined,
       outputTokens: row.output_tokens ?? undefined,
       costUsd: row.cost_usd ?? undefined,
+      costUnreconciledUsd: row.cost_unreconciled_usd ?? undefined,
+      costBasis: row.cost_basis ?? undefined,
       repairPasses: row.repair_passes ?? undefined,
     }));
   }

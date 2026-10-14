@@ -6,6 +6,20 @@
 >
 > **Development-time contract check** — before starting a coding task that touches orchestration, LLM call paths, tool execution, Miranda gates, Pappy QC, or role contracts, run the checklist in [docs/ORCA_CONTRACT_CHECK.md](docs/ORCA_CONTRACT_CHECK.md).
 
+## Project State
+
+[PROJECT_STATE.md](PROJECT_STATE.md) is the shared handoff between sessions and machines.
+
+- **At the start of a session:** read it before doing anything else. Check its branch table against `git branch -a`, `git worktree list` and `git status`; if they disagree, trust git and say so.
+- **At the end of a session** (before your final report, and before ending any session that changed code, branches or tests): update it.
+  - Refresh **Last updated**, the machine, and the branch table (head commit, pushed or not, uncommitted work).
+  - Move fixes into **Implemented and verified** only when you confirmed them in the code and tests — never from a commit message or someone's report alone. Reported-but-unchecked work goes under **Unverified**, naming who reported it.
+  - Update **Outstanding problems**: close what you fixed (with the commit), add what you found.
+  - Record **Last verified tests** only for commands you actually ran in this session: date, commit, machine, command, exact result. Don't carry forward results you didn't re-run; leave the previous row with its own date.
+  - Add one line to the **Session log** (newest first, keep the last 10).
+- Commit the update with the session's other changes. If nothing else changed, commit it on its own (`docs: update PROJECT_STATE`).
+- Never record secrets, API keys, or personal paths in it.
+
 ## Contract Check
 
 `pnpm contract:check` is the development-time approval gate for architecture-sensitive changes. Run it before beginning any coding task that touches orchestration, LLM call paths, tool execution, Miranda gates, Pappy QC, Benson output, role contracts, or system contract documents.

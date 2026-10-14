@@ -50,6 +50,8 @@ export type OrcaSettings = {
   providers:       ProviderEntry[];
   roles:           Partial<Record<string, RoleEntry>>;
   budgetUsd:       number;
+  budgetSource?:   "user" | "legacy_default";
+  pricing?:        Array<{ providerId?: string; model: string; inputPer1M: number; outputPer1M: number; cacheReadPer1M?: number; maxOutputTokens?: number; note?: string }>;
   maxRepairPasses: number;
   verbose:         boolean;
   workspaceRoot:   string;
@@ -182,6 +184,14 @@ contextBridge.exposeInMainWorld("orca", {
 
   // Abort the currently running task (if any).
   abortTask: (): void => ipcRenderer.send("task:abort"),
+
+  // ── Workspace protection ─────────────────────────────────────────────────
+  // What an earlier, unsettled task left running in the workspace, and the
+  // explicit (natively confirmed) release of that protection.
+  getWorkspaceProtection: (): Promise<{ root: string; protections: unknown[]; recovery: string }> =>
+    ipcRenderer.invoke("workspace:protection"),
+  releaseWorkspace: (): Promise<{ ok: boolean; error?: string; released?: unknown[] }> =>
+    ipcRenderer.invoke("workspace:release"),
 
   // ── Streaming output ─────────────────────────────────────────────────────
   // Dedicated channels for streaming answer output to the renderer.
