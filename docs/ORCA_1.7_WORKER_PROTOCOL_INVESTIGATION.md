@@ -85,7 +85,7 @@ Safety unchanged: Miranda still authorizes every tool call; `no_file_writes` sti
   - a success claim without an edit → Pappy `contradicted`, FAIL, not eligible, `FIX_SOURCE_CHANGE_MISSING`;
   - "Run the tests and report the failures." → `no_file_writes` kept, the write refused with the reason shown to the model, source unchanged;
   - Stop before the edit → no write, source unchanged, nothing verified;
-  - `it.fails` ×2 — **KNOWN GAP**: Pappy verifies the genuine fix (§13).
+  - `it.fails` ×2 — **KNOWN GAP**: Pappy verifies the genuine fix (§13). *Resolved in §17: replaced by passing tests.*
 - Budget exhaustion during repair is covered by the existing `runtimeBudget.test.ts` ("stops halfway… skips repairs").
 
 **What these tests do not prove:** that a real model will choose the right tools. The scripted model follows the steps a capable worker takes; only a live rehearsal measures the model.
@@ -116,6 +116,8 @@ Pappy suites unchanged: 23/23 · 12/23 · 15/23 · **49/49** (FA 0/33, FR 0/11).
 
 Pappy's own verification block in the same result says `testEvidence: true` and "reproduced then resolved: … failed on the task-start source and the full suite (node --test) passes on the final source". Causes: the named-file content rule (documented for content requirements such as "docs/guide.md must document the back-to-back rule") is applied to a bug-fix criterion that names a source file, demanding the criterion's words inside the code; and the "tests are run and all pass" criterion is not linked to the passing host run. Consequence: **the live rehearsal could not have passed even with a perfect worker.** Changing this changes Pappy's acceptance standard; it was not done. The gap is recorded as two `it.fails` tests that will turn red when Pappy verifies the case.
 
+*Update: the human authorized a narrowly scoped correction. It is described in §17; the gap is closed at source level.*
+
 ## 14. Remaining limitations
 
 - Model behaviour is unproven until a live run: the fixes remove the contradictions and the invented-results path, but the model must still choose `write_file` and run the tests.
@@ -132,6 +134,37 @@ Same provider (Anthropic, workspace-scoped key), same model `claude-sonnet-4-6`,
 
 **The worker-side defect: yes**, deterministically demonstrated through the production worker loop, tools, gate and runtime. **The end-to-end outcome: no** — the Pappy false rejection (§13) still turns a genuine fix into FAIL. Orca 1.7.0 remains NO-GO until that decision is made and one live rehearsal shows a verified PASS.
 
+*Update (§17): both are now resolved at source level and shown deterministically. Orca 1.7.0 stays NO-GO until one live rehearsal shows a verified PASS with a real model.*
+
 ## Test candidate (local only)
 
 Built from `bcb802a`, clean, `ref fix/worker-edit-protocol`, Electron 41.10.7, **unsigned**; `C:\Orca\worktrees\main-rc\apps\desktop\release\` with a "TEST CANDIDATE — NOT FOR DISTRIBUTION" marker. SHA-256: `Orca 1.7.0.exe` `C6514D924729C32BD5DE842BBBCD2FB3BB0FED62E66D62C033F4176BCCF2BB06`, `Orca Setup 1.7.0.exe` `E0DA55A7076E95AFCBC5D15A358FD8BF0EE9B6276F828628EC9C7F57702219B2`. The asar contains the corrected protocol (workspace section, single-call enforcement, constraint rule, guidance inputs); a live worker prompt in the mock smoke shows the workspace section. Mock smoke: startup, pipeline, Stop → CANCELLED, approval card with Deny default, global Stop with the card open → CANCELLED, no execution. Performance: no measurable change in the mock runs; live runs will make more, shorter model calls (one call per response).
+
+This candidate predates §17 and does not contain the Pappy correction or the batch rule. A rehearsal needs a candidate rebuilt from the branch head.
+
+## 17. Pappy behavioural evidence correction and the batch rule (2026-10-14)
+
+Authorized by the human as a correction to a demonstrated false rejection, not a relaxation of independent verification. Design and outcomes: `ORCA_VERIFICATION_EVIDENCE.md`, "Behavioural criteria for code changes"; corpus: `ORCA_EVIDENCE_CORPUS.md`, "Behavioural evidence correction".
+
+**Pappy.** In a bugfix, feature or refactor task, a criterion naming a changed source file is decided by behavioural receipts on the final source, not by its words appearing in the code. A bug-fix criterion that refers to the defect also needs a resolved reproduction or a regression test. A criterion asking that tests be run and pass is decided by the host's final-suite receipt. A criterion naming a changed document follows E3 in every task kind, which closes a pre-existing false acceptance. Receipts, workspace checks and eligibility rules are unchanged.
+
+**Worker batch rule** (refines §9's single-call rule). Calls written back to back, separated only by whitespace, run as one batch, because nothing between them could be an invented result. The first non-whitespace text after a call ends the batch, and everything from there on is cut and reported to the model once. A block that does not parse, or a code-fence call, means only the first call runs. Invented `Result:` text never reaches the tool record; only the host's real output does. Cancellation is checked before and after every call in a batch.
+
+**Tests added or changed**
+
+- `pappy-core/src/checks/behaviouralCriteria.test.ts` (15): the genuine fix under both criteria phrasings, a regression test, and every adversarial case in the brief.
+- `pappy-eval` corpus: 9 fixtures; 58/58, no relabels.
+- `workerProtocolUnits.test.ts` (17): batch unit tests, two back-to-back reads with no note, invented `Result:` text never recorded, cancellation mid-batch stops dispatch.
+- `workerEditProtocol.test.ts` (7): the two `it.fails` tests became passing tests. The genuine fix is PASS / verified / eligible with every ledger entry PROVED, and the export writes one positive record (score 10, outcome success). The claim without an edit is not exported by PASS, WARN or FAIL exports. A repair pass after a wrong first edit receives Pappy's real findings, with no `no_file_writes`, completes the fix and is verified.
+
+**Results at the branch head**
+
+| Check | Result |
+|---|---|
+| `pnpm -r --no-bail test` | 1,976 passed · 0 failed · 1 skipped (baseline 1,943) |
+| TypeScript (all packages + scripts) | 0 errors |
+| `pnpm contract:check` / `:strict` | REVIEW REQUIRED, Rule 4 (Pappy QC touched, as authorized); strict exit 0; nothing BLOCKED |
+| Pappy suites | 23/23 · 12/23 · 15/23 (unchanged) · 58/58 (FA 0/39, FR 0/13) |
+| Desktop bundle | builds |
+
+**What this does not prove.** The deterministic tests use a scripted model and supply the task specification directly, so Benson and Brain do not run. Brain's live criteria are reproduced verbatim from the A3 trace. Only a live rehearsal shows that a real model chooses the edit and that Brain's criteria for that run fall under these rules.
