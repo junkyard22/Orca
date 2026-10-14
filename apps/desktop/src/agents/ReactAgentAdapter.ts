@@ -293,19 +293,31 @@ function parseCodeBlockToolCalls(
 }
 
 /**
- * Keep only the first tool call of a response. When the first call came from a
- * <tool_call> block, the output is cut right after that block, so text the
- * model wrote after it (invented results, further calls, a premature FINAL
- * ANSWER) never enters the conversation.
+ * The calls of a response that may run. A leading run of <tool_call> blocks
+ * separated only by whitespace is a batch: nothing was written between them,
+ * so nothing in them depends on an invented result. The first non-whitespace
+ * text after a call ends the batch — that is where invented "Result:" blocks,
+ * later calls built on them, and premature FINAL ANSWERs appear — and the
+ * output is cut after the last batched call so none of it enters the
+ * conversation. Calls recovered from code fences (no tags) keep the first only.
  */
-export function enforceSingleToolCall(
+export function enforceToolCallBatch(
   output: string,
   calls: Array<{ tool: string; input: Record<string, unknown> }>,
 ): { calls: Array<{ tool: string; input: Record<string, unknown> }>; output: string; dropped: number } {
   if (calls.length <= 1) return { calls, output, dropped: 0 };
-  const close = output.indexOf("</tool_call>");
-  const truncated = close !== -1 ? output.slice(0, close + "</tool_call>".length) : output;
-  return { calls: calls.slice(0, 1), output: truncated, dropped: calls.length - 1 };
+  const blocks = [...output.matchAll(/<tool_call>[\s\S]*?<\/tool_call>/g)];
+  if (blocks.length === 0) return { calls: calls.slice(0, 1), output, dropped: calls.length - 1 };
+  let batch = 1;
+  while (batch < blocks.length) {
+    const prevEnd = blocks[batch - 1]!.index! + blocks[batch - 1]![0].length;
+    if (output.slice(prevEnd, blocks[batch]!.index!).trim() !== "") break;
+    batch++;
+  }
+  // Every block must have parsed for the batch to map onto `calls`; otherwise run the first only.
+  if (blocks.length !== calls.length) batch = 1;
+  const end = blocks[batch - 1]!.index! + blocks[batch - 1]![0].length;
+  return { calls: calls.slice(0, batch), output: output.slice(0, end), dropped: calls.length - batch };
 }
 
 /** A failed command's error, with the command and the directory it ran in. */
@@ -984,22 +996,22 @@ export class ReactAgentAdapter implements AgentAdapter {
           malformedCount,
           toolCalls: parsedToolCalls.calls,
         });
-        // One tool call per response, as the prompt says. A response with
-        // several calls was written without seeing any result: in the 1.7.0
-        // rehearsal the model invented "Result:" blocks between calls (file
-        // contents that did not exist) and Orca executed every call, kept the
-        // invented results in the conversation, and once accepted a FINAL
-        // ANSWER written before any result. Only the first call runs; the
-        // rest of the response is cut from the conversation.
-        const singleCall = enforceSingleToolCall(modelOutput, parsedToolCalls.calls);
-        const toolCalls = singleCall.calls;
-        if (singleCall.dropped > 0) {
-          messages[assistantIndex] = { role: "assistant", content: singleCall.output };
+        // In the 1.7.0 rehearsal the model wrote calls with invented "Result:"
+        // blocks between them (file contents that did not exist); Orca executed
+        // every call, kept the invented results in the conversation, and once
+        // accepted a FINAL ANSWER written before any result. Calls written back
+        // to back (only whitespace between) carry no invented text and still run
+        // together; text after a call ends the batch, and everything from there
+        // on is cut from the conversation and not executed.
+        const callBatch = enforceToolCallBatch(modelOutput, parsedToolCalls.calls);
+        const toolCalls = callBatch.calls;
+        if (callBatch.dropped > 0) {
+          messages[assistantIndex] = { role: "assistant", content: callBatch.output };
           ctx.recordTrace?.("agent.tool.extra_calls_dropped", {
             role: this.role,
             iteration: iterationCount,
-            executed: toolCalls[0]?.tool,
-            dropped: singleCall.dropped,
+            executed: toolCalls.map((c) => c.tool),
+            dropped: callBatch.dropped,
           });
         }
 
@@ -1050,7 +1062,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           consecutiveParseFailures = 0;
         }
 
-        const effectiveOutput = singleCall.output;
+        const effectiveOutput = callBatch.output;
         const cleanedOutput = stripToolCalls(effectiveOutput);
         const finalAnswer = extractFinalAnswer(cleanedOutput);
         if (finalAnswer) {
@@ -1258,14 +1270,6 @@ export class ReactAgentAdapter implements AgentAdapter {
             result.ok ? result.error : withCommandContext(toolName, toolInput, ctx.workspaceRoot, result.error),
           );
           messages.push({ role: "user", content: toolResult });
-          if (singleCall.dropped > 0) {
-            messages.push({
-              role: "user",
-              content:
-                `Only your first tool call (${toolName}) was executed; the other ${singleCall.dropped} call(s) in that response were discarded, together with everything you wrote after the first call. ` +
-                "Tool results come only from the host, in <tool_result> blocks: never write a result yourself. Make one tool call per response and wait for its result.",
-            });
-          }
 
           const enrichedRaw = { ...toolInput } as Record<string, unknown>;
           if (commandFileChanges.length > 0) {
@@ -1376,6 +1380,16 @@ export class ReactAgentAdapter implements AgentAdapter {
               break;
             }
           }
+        }
+
+        // Once per response, after its executed calls' results: what was cut and why.
+        if (callBatch.dropped > 0) {
+          messages.push({
+            role: "user",
+            content:
+              `Only ${toolCalls.length === 1 ? "your first tool call" : `your first ${toolCalls.length} tool calls`} (${toolCalls.map((c) => c.tool).join(", ")}) ${toolCalls.length === 1 ? "was" : "were"} executed; the other ${callBatch.dropped} call(s) in that response were discarded, together with everything you wrote after the last executed call. ` +
+              "Tool results come only from the host, in <tool_result> blocks: never write a result yourself. Wait for the results before writing anything that depends on them.",
+          });
         }
 
         if (stoppedBecause === "loop_detected") {

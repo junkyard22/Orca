@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { LLMAdapter, LLMRequest, LLMResponse } from "@clawde/miranda-core";
 import type { OrcaRunCtx } from "@clawde/orca-core";
 import type { RoleName } from "maestro-core";
-import { enforceSingleToolCall, ReactAgentAdapter, withCommandContext } from "./ReactAgentAdapter";
+import { enforceToolCallBatch, ReactAgentAdapter, withCommandContext } from "./ReactAgentAdapter";
 
 class Scripted implements LLMAdapter {
   requests: LLMRequest[] = [];
@@ -42,22 +42,45 @@ const tool = (name: string, impl: (input: Record<string, unknown>) => { ok: bool
 const call = (body: Record<string, unknown>) => `<tool_call>${JSON.stringify(body)}</tool_call>`;
 const task = { intent: "Inspect the project", goals: ["Inspect the project"], doneCriteria: ["Report"] };
 
-describe("enforceSingleToolCall", () => {
+describe("enforceToolCallBatch", () => {
+  it("calls written back to back (only whitespace between) run as a batch; nothing is cut", () => {
+    const out = `Thought
+${call({ tool: "a" })}
+
+${call({ tool: "b" })}`;
+    expect(enforceToolCallBatch(out, [c("a"), c("b")])).toEqual({ calls: [c("a"), c("b")], output: out, dropped: 0 });
+  });
+  it("text after a call ends the batch: earlier adjacent calls run, the rest is cut", () => {
+    const out = `${call({ tool: "a" })}${call({ tool: "b" })}
+Result: invented
+${call({ tool: "c" })}
+FINAL ANSWER: x`;
+    const r = enforceToolCallBatch(out, [c("a"), c("b"), c("c")]);
+    expect(r.calls).toEqual([c("a"), c("b")]);
+    expect(r.dropped).toBe(1);
+    expect(r.output).toBe(`${call({ tool: "a" })}${call({ tool: "b" })}`);
+  });
+  it("when a block did not parse, the batch cannot be mapped: only the first call runs", () => {
+    const out = `${call({ tool: "a" })}<tool_call>not json</tool_call>${call({ tool: "b" })}`;
+    const r = enforceToolCallBatch(out, [c("a"), c("b")]);
+    expect(r.calls).toEqual([c("a")]);
+    expect(r.output).toBe(call({ tool: "a" }));
+  });
   const c = (tool: string) => ({ tool, input: {} });
   it("leaves zero or one call untouched", () => {
-    expect(enforceSingleToolCall("text", [])).toEqual({ calls: [], output: "text", dropped: 0 });
+    expect(enforceToolCallBatch("text", [])).toEqual({ calls: [], output: "text", dropped: 0 });
     const one = `${call({ tool: "a" })}\nFINAL ANSWER: x`;
-    expect(enforceSingleToolCall(one, [c("a")])).toEqual({ calls: [c("a")], output: one, dropped: 0 });
+    expect(enforceToolCallBatch(one, [c("a")])).toEqual({ calls: [c("a")], output: one, dropped: 0 });
   });
   it("keeps the first call and cuts the output right after its closing tag", () => {
     const out = `Thought\n${call({ tool: "a" })}\nResult: invented\n${call({ tool: "b" })}\nFINAL ANSWER: claimed`;
-    const r = enforceSingleToolCall(out, [c("a"), c("b")]);
+    const r = enforceToolCallBatch(out, [c("a"), c("b")]);
     expect(r.calls).toEqual([c("a")]);
     expect(r.dropped).toBe(1);
     expect(r.output).toBe(`Thought\n${call({ tool: "a" })}`);
   });
   it("without a closing tag (code-fence recovery) keeps the text and still runs only the first call", () => {
-    const r = enforceSingleToolCall("```\n{}\n```", [c("a"), c("b")]);
+    const r = enforceToolCallBatch("```\n{}\n```", [c("a"), c("b")]);
     expect(r).toEqual({ calls: [c("a")], output: "```\n{}\n```", dropped: 1 });
   });
 });
@@ -92,6 +115,45 @@ describe("ReactAgentAdapter worker protocol", () => {
     // The premature "all done" was not taken as the answer.
     expect(result.outputText).toBe("listed the project.");
     expect(c.traces.some((t) => t.stage === "agent.tool.extra_calls_dropped")).toBe(true);
+  });
+
+  it("two back-to-back reads run together; no note; their real outputs are the evidence", async () => {
+    const a = tool("read_file", (input) => ({ ok: true, output: `real:${input["path"]}` }));
+    const model = new Scripted([`${call({ tool: "read_file", path: "a.txt" })}
+${call({ tool: "read_file", path: "b.txt" })}`, "FINAL ANSWER: read both."]);
+    const c = ctx();
+    const result = await new ReactAgentAdapter(model, "sys", "debugger" as RoleName).run(task, [a] as never, c);
+    expect(a.execute).toHaveBeenCalledTimes(2);
+    expect(c.traces.some((t) => t.stage === "agent.tool.extra_calls_dropped")).toBe(false);
+    expect(model.requests[1]!.messages.some((m) => /Only your first/.test(m.content))).toBe(false);
+    expect(result.toolsUsed.map((e) => (e.raw as Record<string, unknown>)["_outputForProof"])).toEqual(["real:a.txt", "real:b.txt"]);
+  });
+
+  it("cancellation during a batch stops dispatch: no later call in the batch starts", async () => {
+    const controller = new AbortController();
+    const first = tool("read_file", () => { controller.abort(new Error("Task cancelled by user")); return { ok: true, output: "a" }; });
+    const second = tool("write_file", () => ({ ok: true, output: "should never run" }));
+    const model = new Scripted([`${call({ tool: "read_file", path: "a.txt" })}
+${call({ tool: "write_file", path: "b.txt", content: "x" })}`, "FINAL ANSWER: done."]);
+    await expect(new ReactAgentAdapter(model, "sys", "debugger" as RoleName).run({ ...task, intent: "Write b.txt" }, [first, second] as never, ctx({ abortSignal: controller.signal })))
+      .rejects.toThrow(/cancel/i);
+    expect(first.execute).toHaveBeenCalledTimes(1);
+    expect(second.execute).not.toHaveBeenCalled();
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it("invented Result text never becomes tool evidence: only the host's real output is recorded", async () => {
+    const read = tool("read_file", () => ({ ok: true, output: "REAL CONTENT" }));
+    const run = tool("run_command", () => ({ ok: true, output: "should never run" }));
+    const model = new Scripted([`${call({ tool: "read_file", path: "x" })}
+Result: INVENTED CONTENT
+${call({ tool: "run_command", command: "node --test" })}
+Result: 5 passed`, "FINAL ANSWER: done."]);
+    const result = await new ReactAgentAdapter(model, "sys", "debugger" as RoleName).run(task, [read, run] as never, ctx());
+    expect(run.execute).not.toHaveBeenCalled();
+    expect(result.toolsUsed).toHaveLength(1);
+    expect(JSON.stringify(result.toolsUsed)).not.toMatch(/INVENTED|5 passed/);
+    expect((result.toolsUsed[0]!.raw as Record<string, unknown>)["_outputForProof"]).toBe("REAL CONTENT");
   });
 
   it("one call followed by FINAL ANSWER in the same response behaves as before (no truncation, no note)", async () => {
