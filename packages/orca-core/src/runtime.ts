@@ -1151,6 +1151,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       });
     }
 
+    const ledgerIsAccountOfRecord = finalBudget.requests.total > 0;
     try {
       const saveResult = deps.store?.saveRun(
         {
@@ -1164,15 +1165,25 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           errorMessage: persistedMaestroResult?.metadata?.errorMessage ?? gateBlockReason,
           iterationCount: persistedMaestroResult?.metadata?.iterationCount,
           outputText: result.userFacingText,
-          summary: result.summary,
+          // A stopped task has no result summary of its own ("Unknown error"
+          // is the placeholder it never got past); say what happened instead.
+          summary: finalLifecycle.state === "CANCELLED" ? "Stopped before completion (cancelled by the user)."
+            : finalLifecycle.state === "INTERRUPTED" ? "Stopped before completion (interrupted: work was still running)."
+            : result.summary,
           verdict: persistedQcResult?.verdict,
           confidence: persistedQcResult?.confidence,
           issueCount: persistedQcResult?.issues.length,
-          inputTokens: persistedMaestroResult?.metadata?.inputTokens,
-          outputTokens: persistedMaestroResult?.metadata?.outputTokens,
-          costUsd: persistedMaestroResult?.metadata?.costUsd,
-          costUnreconciledUsd: persistedMaestroResult?.metadata?.costUnreconciledUsd,
-          costBasis: persistedMaestroResult?.metadata?.costBasis,
+          // The task ledger is the account of record: it covers every pass
+          // (initial and repairs) and every request, including those of a
+          // cancelled or interrupted task. The Maestro metadata describes the
+          // last pass only, and is absent when the task was stopped — the 1.7.0
+          // rehearsal persisted a repaired task at the last pass's cost and an
+          // interrupted task at no cost while the UI showed the real figures.
+          inputTokens: ledgerIsAccountOfRecord ? finalBudget.inputTokens : persistedMaestroResult?.metadata?.inputTokens,
+          outputTokens: ledgerIsAccountOfRecord ? finalBudget.outputTokens : persistedMaestroResult?.metadata?.outputTokens,
+          costUsd: ledgerIsAccountOfRecord ? finalBudget.spentUsd : persistedMaestroResult?.metadata?.costUsd,
+          costUnreconciledUsd: ledgerIsAccountOfRecord ? (finalBudget.unreconciledUsd > 0 ? finalBudget.unreconciledUsd : undefined) : persistedMaestroResult?.metadata?.costUnreconciledUsd,
+          costBasis: ledgerIsAccountOfRecord ? finalBudget.costBasis : persistedMaestroResult?.metadata?.costBasis,
           repairPasses,
           ahpPacketGraph: ahpGraph ? JSON.stringify(ahpGraph) : undefined,
         } as RunRecord,

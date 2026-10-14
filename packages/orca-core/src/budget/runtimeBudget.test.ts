@@ -132,7 +132,8 @@ describe("runtime budget enforcement", () => {
       },
     };
     const events: OrcaEvent[] = [];
-    const runtime = createOrcaRuntime({ maestro, pappy, llm: makeLLM() as never, budgetUsd: 1 });
+    const store = new MemoryStore();
+    const runtime = createOrcaRuntime({ maestro, pappy, llm: makeLLM() as never, budgetUsd: 1, store });
     runtime.on("pipeline:summary", (e) => events.push(e));
     const result = await runtime.executeTask(spec);
     expect(result.status).toBe("SUCCESS");
@@ -142,6 +143,13 @@ describe("runtime budget enforcement", () => {
     const opus = (1000 * 4 + 500 * 20) / 1_000_000;
     expect(budget.spentUsd).toBeCloseTo(sonnet * 2 + opus, 9);
     expect(budget.byProvider["Anthropic"]?.requests).toBe(3);
+    // The persisted run carries the whole task's account (all three requests
+    // across both passes), not the last pass's metadata — the 1.7.0 rehearsal
+    // found a repaired task stored at the repair pass's cost alone.
+    expect(store.runs).toHaveLength(1);
+    expect(store.runs[0]!.costUsd).toBeCloseTo(sonnet * 2 + opus, 9);
+    expect(store.runs[0]).toMatchObject({ inputTokens: 3000, outputTokens: 1500, costBasis: "measured", repairPasses: 1 });
+    expect(store.runs[0]!.costUnreconciledUsd).toBeUndefined();
   });
 
   it("a cancellation after dispatch leaves the request unreconciled and blocks the rest of the task", async () => {
@@ -152,7 +160,8 @@ describe("runtime budget enforcement", () => {
     const journalPath = join((() => { const d = mkdtempSync(join(tmpdir(), "orca-budget-")); dirs.push(d); return d; })(), "journal.json");
     const journal = createBudgetJournal(journalPath);
     const events: OrcaEvent[] = [];
-    const runtime = createOrcaRuntime({ maestro, pappy: { evaluate: () => pass("PASS") } as PappyPort, llm: makeLLM() as never, budgetUsd: 1, budgetJournal: journal });
+    const store = new MemoryStore();
+    const runtime = createOrcaRuntime({ maestro, pappy: { evaluate: () => pass("PASS") } as PappyPort, llm: makeLLM() as never, budgetUsd: 1, budgetJournal: journal, store });
     runtime.on("budget:update", (e) => events.push(e));
     await expect(runtime.executeTask(spec, { abortSignal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
     const last = events[events.length - 1] as Extract<OrcaEvent, { type: "budget:update" }>;
@@ -160,6 +169,12 @@ describe("runtime budget enforcement", () => {
     expect(last.budget.blocked?.kind).toBe("refused_unreconciled");
     // The task ended (even by abort), so the journal has nothing left to recover.
     expect(journal.recover()).toEqual([]);
+    // The stopped run is persisted with its account, not with nothing: the
+    // cancelled request's upper bound is kept, and the summary says it stopped.
+    expect(store.runs).toHaveLength(1);
+    expect(store.runs[0]).toMatchObject({ status: "FAIL", stoppedBecause: "cancelled", costBasis: "upper_bound" });
+    expect(store.runs[0]!.costUnreconciledUsd).toBeCloseTo(last.budget.unreconciledUsd, 9);
+    expect(store.runs[0]!.summary).toMatch(/^Stopped before completion \(cancelled/);
   });
 
   it("a Brain request refused outright (unknown pricing) fails the task with the reason, before any provider call", async () => {
