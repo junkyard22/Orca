@@ -24,8 +24,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LLMAdapter, LLMRequest, LLMResponse } from "@clawde/miranda-core";
-import { AHPLifecycle, createChildPacket, createOrcaRuntime, createPappyPort, registerChildOnRoot } from "@clawde/orca-core";
-import type { MaestroPort, OrcaPipelineTrace, OrcaRunCtx, OrcaTaskSpec } from "@clawde/orca-core";
+import { AHPLifecycle, createChildPacket, createOrcaRuntime, createPappyPort, exportTrainingData, registerChildOnRoot } from "@clawde/orca-core";
+import type { MaestroPort, OrcaPipelineTrace, OrcaRunCtx, OrcaStore, OrcaTaskSpec, RunRecord } from "@clawde/orca-core";
 import { listDirectoryTool, readFileTool, runCommandTool, writeFileTool } from "@yakstacks/workbench-core";
 import type { RoleName } from "maestro-core";
 import { ReactAgentAdapter } from "./ReactAgentAdapter";
@@ -119,9 +119,25 @@ class ScriptedModel implements LLMAdapter {
  * guidance; the worker's gate is the runtime gate composed with the packet's
  * constraint gate; the worker is ReactAgentAdapter with real tools.
  */
-function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: { prompt?: string; constraints?: string[] }): MaestroPort {
+type Observed = { prompt?: string; constraints?: string[]; repairPrompt?: string };
+
+class MemoryStore {
+  runs: RunRecord[] = [];
+  saveRun(run: RunRecord) { this.runs.push(run); }
+  getRecentRuns() { return this.runs; }
+  getRun(id: string) { return this.runs.find((r) => r.id === id) ?? null; }
+  getRunThoughts() { return []; }
+  getRunToolEvents() { return []; }
+  deleteRun() {}
+  searchRuns() { return []; }
+  getStats() { return { totalRuns: 0, passRate: 0, avgIterations: 0, totalCostUsd: 0 }; }
+  close() {}
+}
+
+function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed): MaestroPort {
   return {
-    run: async (_task, ctx: OrcaRunCtx) => {
+    run: async (passTask, ctx: OrcaRunCtx) => {
+      const repairing = passTask.intent === "repair";
       const objective = task.originalUserMessage!;
       const constraints = workerMustNotWriteFiles(task, objective.toLowerCase()) ? [{ rule: "no_file_writes", enforcer: "miranda" }] : [];
       const guidance = verificationGuidance(objective);
@@ -131,6 +147,8 @@ function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: { prompt
         inputs: [
           ...guidance.map((value, i) => ({ id: `guidance-${i}`, type: "goal", value })),
           { id: "context-0", type: "context", value: `Workspace: project (${ctx.workspaceRoot})` },
+          // A repair pass carries the repair instruction built from Pappy's issues, as main.ts does.
+          ...(repairing ? [{ id: "repair-directive", type: "repair_directive", value: passTask.originalUserMessage ?? "" }] : []),
         ],
         constraints,
         expectedOutput: { schema: {}, acceptanceCriteria: ["The failing test in src/parse.js is fixed", "Tests are run and all pass after the fix"] },
@@ -145,7 +163,9 @@ function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: { prompt
         [readFileTool, writeFileTool, runCommandTool, listDirectoryTool] as never,
         { ...ctx, gate: composeMirandaGates(ctx.gate, constraintGateFor(packet)), ahpPacket: packet } as never,
       );
-      observed.prompt = String((model as ScriptedModel).requests[0]?.messages.map((m) => m.content).join("\n\n") ?? "");
+      const requests = (model as ScriptedModel).requests;
+      if (repairing) observed.repairPrompt = String(requests.at(-1)?.messages.map((m) => m.content).join("\n\n") ?? "");
+      else observed.prompt = String(requests[0]?.messages.map((m) => m.content).join("\n\n") ?? "");
       return {
         outputText: result.outputText,
         toolEvents: result.toolsUsed,
@@ -156,12 +176,13 @@ function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: { prompt
   };
 }
 
-function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: { prompt?: string; constraints?: string[] }, traces: OrcaPipelineTrace[]) {
+function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, traces: OrcaPipelineTrace[], opts: { maxRepairPasses?: number; store?: MemoryStore } = {}) {
   return createOrcaRuntime({
     maestro: desktopWorker(model, task, observed),
     pappy: createPappyPort(),
     llm: { complete: async () => ({ text: "" }), stream: async () => ({ text: "" }) } as never,
-    maxRepairPasses: 0,
+    maxRepairPasses: opts.maxRepairPasses ?? 0,
+    ...(opts.store ? { store: opts.store as unknown as OrcaStore } : {}),
     requestToolApproval: async () => true,
     writeTrace: (t) => { traces.push(t); },
   });
@@ -170,7 +191,7 @@ function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: { prompt?: 
 const call = (body: Record<string, unknown>) => `<tool_call>${JSON.stringify(body)}</tool_call>`;
 const stagesOf = (t: OrcaPipelineTrace, stage: string) => t.entries.filter((e) => e.stage === stage);
 
-async function rehearsalFix(goals?: string[]) {
+async function rehearsalFix(goals?: string[], store?: MemoryStore) {
     const root = project();
     const message = "Fix the failing test in src/parse.js and run the tests.";
     const task = spec(root, message, goals ?? [message]);
@@ -186,9 +207,9 @@ async function rehearsalFix(goals?: string[]) {
       call({ tool: "run_command", command: "node --test" }),
       "FINAL ANSWER: Root cause: parse('') threw a RangeError because parseInt('') is NaN. Changed parse in src/parse.js to return 0 for empty or whitespace-only input. node --test: 5 passed, 0 failed.",
     ]);
-    const observed: { prompt?: string; constraints?: string[] } = {};
+    const observed: Observed = {};
     const traces: OrcaPipelineTrace[] = [];
-    const result = await runtimeFor(model, task, observed, traces).executeTask(task);
+    const result = await runtimeFor(model, task, observed, traces, { store }).executeTask(task);
     const trace = traces[0]!;
     return { root, model, observed, result, trace };
 }
@@ -206,7 +227,7 @@ describe("worker edit protocol (deterministic, real tools, real Pappy)", () => {
     expect(observed.prompt).toMatch(/Before changing any source code, run the project's full test suite/);
 
     // Response 1: only the first call ran; invented results and the premature claim were cut from the conversation.
-    expect(stagesOf(trace, "agent.tool.extra_calls_dropped")[0]?.detail).toMatchObject({ executed: "list_directory", dropped: 2 });
+    expect(stagesOf(trace, "agent.tool.extra_calls_dropped")[0]?.detail).toMatchObject({ executed: ["list_directory"], dropped: 2 });
     const secondRequest = model.requests[1]!.messages;
     const firstAssistant = secondRequest.find((m) => m.role === "assistant")!.content;
     expect(firstAssistant.endsWith("</tool_call>")).toBe(true);
@@ -232,21 +253,56 @@ describe("worker edit protocol (deterministic, real tools, real Pappy)", () => {
     expect(result.qcResult?.verification?.behaviouralEvidence?.join(" ")).toMatch(/reproduced then resolved[\s\S]*passes on the final source/);
   }, 60_000);
 
-  // KNOWN GAP — awaiting the human's decision (Pappy acceptance standard). With
-  // the genuine fix above, Pappy still returns FAIL: a bug-fix criterion that
-  // names src/parse.js goes through the named-file content check ("final content
-  // lacks failing, identified") and "Tests are run and all pass after the fix"
-  // is not linked to the host's passing run on the final source. it.fails keeps
-  // CI green and turns red the moment Pappy verifies this case.
+  // Was a KNOWN GAP (it.fails) until the behavioural-criteria correction in
+  // pappy-core: the genuine fix is now verified under both criteria phrasings.
   for (const [label, goals] of [["the user's goal", undefined], ["Brain's live done criteria", LIVE_CRITERIA]] as const) {
-    it.fails(`KNOWN GAP: Pappy verifies the genuine fix (criteria: ${label})`, async () => {
-      const { result } = await rehearsalFix(goals as string[] | undefined);
+    it(`Pappy verifies the genuine fix from host evidence (criteria: ${label}) and Moonshiner exports it as a positive example`, async () => {
+      const store = new MemoryStore();
+      const { result } = await rehearsalFix(goals as string[] | undefined, store);
       expect(result.qcResult?.verdict).toBe("PASS");
       expect(result.qcResult?.verification?.status).toBe("verified");
       expect(result.qcResult?.trainingEligibility).toBe("eligible");
       expect(result.lifecycle?.state).toBe("COMPLETED");
+      expect(result.qcResult?.receipt_ledger.every((e) => e.status === "PROVED")).toBe(true);
+      // verdict → eligibility tag → export: the run is a positive example.
+      expect(store.runs[0]?.summary).toMatch(/training_eligibility=eligible/);
+      expect(store.runs[0]?.summary).toMatch(/evidence=verified/);
+      const dir = mkdtempSync(join(tmpdir(), "orca-export-")); dirs.push(dir);
+      const exported = await exportTrainingData(store as unknown as OrcaStore, { outputPath: join(dir, "pass.jsonl") } as never);
+      expect(exported.exported).toBeGreaterThanOrEqual(1);
+      const records = readFileSync(join(dir, "pass.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      expect(records[0]).toMatchObject({ score: 10, metadata: { verdict: "PASS", outcome: "success" } });
     }, 60_000);
   }
+
+  it("a repair pass receives Pappy's real findings and completes the fix → verified", async () => {
+    const root = project();
+    const message = "Fix the failing test in src/parse.js and run the tests.";
+    const task = spec(root, message, LIVE_CRITERIA);
+    const model = new ScriptedModel([
+      // Pass 1: reproduces, makes a wrong edit, re-runs (still 3 pass / 2 fail) and reports it honestly.
+      call({ tool: "run_command", command: "node --test" }),
+      call({ tool: "write_file", path: "src/parse.js", content: BUGGY.replace("  const trimmed = String(text).trim();", "  const trimmed = String(text).trim();\n  // attempted fix") }),
+      call({ tool: "run_command", command: "node --test" }),
+      "FINAL ANSWER: I changed src/parse.js but node --test still reports 3 passed, 2 failed (empty and whitespace-only input).",
+      // Repair pass: edits and re-runs.
+      call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+      call({ tool: "run_command", command: "node --test" }),
+      "FINAL ANSWER: Changed parse in src/parse.js to return 0 for empty or whitespace-only input. node --test: 5 passed, 0 failed.",
+    ]);
+    const observed: Observed = {};
+    const traces: OrcaPipelineTrace[] = [];
+    const store = new MemoryStore();
+    const result = await runtimeFor(model, task, observed, traces, { maxRepairPasses: 1, store }).executeTask(task);
+    // The repair worker was told what the host evidence showed, not what the worker claimed.
+    expect(observed.repairPrompt).toMatch(/### Repair Directive/);
+    expect(observed.repairPrompt).toMatch(/final full test run failed|FIX_TESTS_FAILING|2 of 5 tests failing/i);
+    expect(observed.repairPrompt).not.toMatch(/no_file_writes/);
+    expect(readFileSync(join(root, "src", "parse.js"), "utf8")).toBe(FIXED);
+    expect(result.qcResult?.verdict).toBe("PASS");
+    expect(result.qcResult?.verification?.status).toBe("verified");
+    expect(store.runs[0]?.repairPasses).toBe(1);
+  }, 60_000);
 
   it("a worker that runs the failing tests and claims success without editing is refused (contradicted, FAIL, not eligible)", async () => {
     const root = project();
@@ -264,6 +320,14 @@ describe("worker edit protocol (deterministic, real tools, real Pappy)", () => {
     expect(result.qcResult?.verification?.status).toBe("contradicted");
     expect(result.qcResult?.trainingEligibility).not.toBe("eligible");
     expect(result.qcResult?.issues.some((i) => i.code === "FIX_SOURCE_CHANGE_MISSING")).toBe(true);
+    // Neither a positive nor (being a false claim) a negative training example.
+    const store = new MemoryStore();
+    store.saveRun({ id: "claim", createdAt: new Date().toISOString(), intent: message, status: "FAIL", verdict: result.qcResult!.verdict, summary: result.qcResult!.internalSummary, outputText: "Fixed parse in src/parse.js. node --test: 5 passed, 0 failed.", role: "debugger", iterationCount: 3, repairPasses: 0 } as unknown as RunRecord);
+    const dir = mkdtempSync(join(tmpdir(), "orca-export-")); dirs.push(dir);
+    for (const verdict of ["PASS", "WARN", "FAIL"] as const) {
+      const out = await exportTrainingData(store as unknown as OrcaStore, { outputPath: join(dir, `${verdict}.jsonl`), verdict } as never);
+      expect(out.exported, verdict).toBe(0);
+    }
   }, 60_000);
 
   it("a pure run-and-report request keeps no_file_writes: Miranda refuses the write and the worker is told why", async () => {
