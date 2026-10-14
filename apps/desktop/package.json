@@ -27,7 +27,7 @@
     "dotenv": "^16.4.0",
     "maestro-core": "workspace:*",
     "@types/node": "^20.0.0",
-    "electron": "^41.10.5",
+    "electron": "^41.10.7",
     "electron-builder": "^26.15.7",
     "esbuild": "^0.28.1",
     "typescript": "^5.7.0",
