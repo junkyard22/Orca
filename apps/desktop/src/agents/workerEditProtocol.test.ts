@@ -24,9 +24,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LLMAdapter, LLMRequest, LLMResponse } from "@clawde/miranda-core";
-import { AHPLifecycle, createChildPacket, createOrcaRuntime, createPappyPort, exportTrainingData, registerChildOnRoot } from "@clawde/orca-core";
-import type { MaestroPort, OrcaPipelineTrace, OrcaRunCtx, OrcaStore, OrcaTaskSpec, RunRecord } from "@clawde/orca-core";
-import { listDirectoryTool, readFileTool, runCommandTool, writeFileTool } from "@yakstacks/workbench-core";
+import { AHPLifecycle, createChildPacket, createOrcaRuntime, createPappyPort, createWorkspaceGuard, exportTrainingData, registerChildOnRoot } from "@clawde/orca-core";
+import type { MaestroPort, OrcaPipelineTrace, OrcaRunCtx, OrcaStore, OrcaTaskSpec, ResourceProbe, RunRecord, UnsettledResource, WorkspaceGuard } from "@clawde/orca-core";
+import { listDirectoryTool, probeProcess, readFileTool, runCommandTool, writeFileTool } from "@yakstacks/workbench-core";
 import type { RoleName } from "maestro-core";
 import { ReactAgentAdapter } from "./ReactAgentAdapter";
 import { composeMirandaGates } from "../llmGate";
@@ -134,7 +134,7 @@ class MemoryStore {
   close() {}
 }
 
-function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed): MaestroPort {
+function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, onPassEnd?: (ctx: OrcaRunCtx) => void): MaestroPort {
   return {
     run: async (passTask, ctx: OrcaRunCtx) => {
       const repairing = passTask.intent === "repair";
@@ -163,6 +163,7 @@ function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed
         [readFileTool, writeFileTool, runCommandTool, listDirectoryTool] as never,
         { ...ctx, gate: composeMirandaGates(ctx.gate, constraintGateFor(packet)), ahpPacket: packet } as never,
       );
+      onPassEnd?.(ctx);
       const requests = (model as ScriptedModel).requests;
       if (repairing) observed.repairPrompt = String(requests.at(-1)?.messages.map((m) => m.content).join("\n\n") ?? "");
       else observed.prompt = String(requests[0]?.messages.map((m) => m.content).join("\n\n") ?? "");
@@ -176,9 +177,23 @@ function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed
   };
 }
 
-function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, traces: OrcaPipelineTrace[], opts: { maxRepairPasses?: number; store?: MemoryStore } = {}) {
+type RuntimeOpts = {
+  maxRepairPasses?: number;
+  store?: MemoryStore;
+  /** As main.ts wires it: survivors are re-probed before evidence and at task end. */
+  processProbe?: ResourceProbe;
+  resourceSettleWaitMs?: number;
+  workspaceGuard?: WorkspaceGuard;
+  /** Stands in for what the survivor scan reported after the worker's commands. */
+  onPassEnd?: (ctx: OrcaRunCtx) => void;
+};
+
+function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, traces: OrcaPipelineTrace[], opts: RuntimeOpts = {}) {
   return createOrcaRuntime({
-    maestro: desktopWorker(model, task, observed),
+    maestro: desktopWorker(model, task, observed, opts.onPassEnd),
+    ...(opts.processProbe ? { processProbe: opts.processProbe } : {}),
+    ...(opts.resourceSettleWaitMs !== undefined ? { resourceSettleWaitMs: opts.resourceSettleWaitMs } : {}),
+    ...(opts.workspaceGuard ? { workspaceGuard: opts.workspaceGuard } : {}),
     pappy: createPappyPort(),
     llm: { complete: async () => ({ text: "" }), stream: async () => ({ text: "" }) } as never,
     maxRepairPasses: opts.maxRepairPasses ?? 0,
@@ -191,7 +206,7 @@ function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, t
 const call = (body: Record<string, unknown>) => `<tool_call>${JSON.stringify(body)}</tool_call>`;
 const stagesOf = (t: OrcaPipelineTrace, stage: string) => t.entries.filter((e) => e.stage === stage);
 
-async function rehearsalFix(goals?: string[], store?: MemoryStore) {
+async function rehearsalFix(goals?: string[], store?: MemoryStore, extra: Omit<RuntimeOpts, "store"> = {}) {
     const root = project();
     const message = "Fix the failing test in src/parse.js and run the tests.";
     const task = spec(root, message, goals ?? [message]);
@@ -209,7 +224,7 @@ async function rehearsalFix(goals?: string[], store?: MemoryStore) {
     ]);
     const observed: Observed = {};
     const traces: OrcaPipelineTrace[] = [];
-    const result = await runtimeFor(model, task, observed, traces, { store }).executeTask(task);
+    const result = await runtimeFor(model, task, observed, traces, { store, ...extra }).executeTask(task);
     const trace = traces[0]!;
     return { root, model, observed, result, trace };
 }
@@ -370,5 +385,104 @@ describe("worker edit protocol (deterministic, real tools, real Pappy)", () => {
     } else {
       expect(outcome.name).toBe("AbortError");
     }
+  }, 60_000);
+});
+
+// ── A5: processes recorded as survivors of the worker's test run ─────────────
+// In the live A5 rehearsal the genuine fix was refused because an operator's
+// Git Bash `sleep` loop was recorded as a survivor of `npm test`, and a repair
+// worker then rewrote correct code until its iterations ran out. These run the
+// same parse.js fix with production pieces and a process recorded after the
+// worker's commands, as the survivor scan would report it.
+describe("survivor attribution in the parse.js task (A5)", () => {
+  const unrelatedSleep = (pid: number): UnsettledResource => ({
+    kind: "process", pid, label: "sleep.exe (ownership unknown: created while node --test ran)", startedAt: new Date().toISOString(),
+    identity: "2026-10-15T09:04:37.0000000-04:00", ownership: "unknown",
+    reason: "created while the command ran under a parent that has exited; nothing ties it to the command beyond timing, but that cannot be ruled out, so it is kept until verified gone",
+  });
+  const recordAfterFirstPass = (resource: UnsettledResource) => {
+    let done = false;
+    return (ctx: OrcaRunCtx) => { if (!done) { done = true; ctx.lifecycle?.addResources([resource]); } };
+  };
+  const writesOf = (t: OrcaPipelineTrace) => stagesOf(t, "agent.tool.call").filter((e) => (e.detail as { tool?: string }).tool === "write_file").length;
+
+  it("an unrelated process that exits before the evidence is taken does not block the genuine fix: PASS / verified / eligible, nothing protected", async () => {
+    const guard = createWorkspaceGuard({ probe: () => "gone" });
+    const exitAt = Date.now() + 400; // still running when recorded; gone within the bounded wait
+    const probe: ResourceProbe = () => (Date.now() >= exitAt ? "gone" : "alive");
+    const { root, result, trace } = await rehearsalFix(LIVE_CRITERIA, undefined, { processProbe: probe, resourceSettleWaitMs: 3000, workspaceGuard: guard, onPassEnd: recordAfterFirstPass(unrelatedSleep(94001)) });
+    expect(readFileSync(join(root, "src", "parse.js"), "utf8")).toBe(FIXED);
+    expect(result.qcResult?.issues.map((i) => i.code)).not.toContain("EVIDENCE_PARTIAL");
+    expect(result.qcResult?.verdict).toBe("PASS");
+    expect(result.qcResult?.verification?.status).toBe("verified");
+    expect(result.qcResult?.trainingEligibility).toBe("eligible");
+    expect(result.qcResult?.receipt_ledger.every((e) => e.status === "PROVED")).toBe(true);
+    expect(stagesOf(trace, "lifecycle.resources.reverified")[0]?.detail).toMatchObject({ stage: "before_evidence", released: [{ pid: 94001, ownership: "unknown" }], remaining: [] });
+    expect(guard.list()).toEqual([]);
+  }, 60_000);
+
+  it("one still running when the evidence is taken: Pappy FAILs on EVIDENCE_PARTIAL (not silenced), no repair worker is sent to rewrite correct code, and the workspace is protected", async () => {
+    const guard = createWorkspaceGuard({ probe: () => "alive" });
+    const root = project();
+    const message = "Fix the failing test in src/parse.js and run the tests.";
+    const task = spec(root, message, LIVE_CRITERIA);
+    const model = new ScriptedModel([
+      call({ tool: "run_command", command: "node --test" }),
+      call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+      call({ tool: "run_command", command: "node --test" }),
+      "FINAL ANSWER: Changed parse in src/parse.js to return 0 for empty or whitespace-only input. node --test: 5 passed, 0 failed.",
+      // A repair pass, if one were wrongly dispatched, would rewrite the same file:
+      call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+      "FINAL ANSWER: rewrote it.",
+    ]);
+    const traces: OrcaPipelineTrace[] = [];
+    const result = await runtimeFor(model, task, {}, traces, { maxRepairPasses: 1, processProbe: () => "alive", resourceSettleWaitMs: 300, workspaceGuard: guard, onPassEnd: recordAfterFirstPass(unrelatedSleep(94002)) }).executeTask(task);
+    const trace = traces[0]!;
+    expect(result.qcResult?.verdict).toBe("FAIL");
+    expect(result.qcResult?.verification?.status).toBe("unverified");
+    const partial = result.qcResult?.issues.find((i) => i.code === "EVIDENCE_PARTIAL");
+    expect(partial?.description).toMatch(/unknown ownership, created while the task's commands ran, are still running/);
+    expect(partial?.description).not.toMatch(/started by the task/);
+    expect(stagesOf(trace, "repair.skipped")).toHaveLength(1);
+    expect(stagesOf(trace, "repair.pass.spec")).toHaveLength(0);
+    expect(model.requests).toHaveLength(4); // the first pass only
+    expect(writesOf(trace)).toBe(1);
+    expect(guard.list()).toHaveLength(1);
+    expect(guard.list()[0]!.resources[0]).toMatchObject({ pid: 94002, ownership: "unknown" });
+  }, 60_000);
+
+  // A real, unrelated short-lived process created while the worker's test
+  // command runs (a launcher starts it and exits at once, so its parent is
+  // gone, exactly like Git Bash's sleep.exe); the real survivor scan and the
+  // real probe. Opt-in: the stray process would be (correctly) reported by any
+  // other test's real scan running at the same moment.
+  const realProcesses = process.env["ORCA_REAL_PROCESS_TESTS"] === "1" && process.env["ORCA_PROCESS_SCAN"] !== "off";
+  it.skipIf(!realProcesses)("with real processes: an unrelated dead-parent process started during node --test is reported as ownership unknown, released once it exits, and the fix is verified", async () => {
+    const launcher = join(mkdtempSync(join(tmpdir(), "orca-unrelated-")), "launch.js");
+    writeFileSync(launcher, `require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 2500)"], { detached: true, stdio: "ignore", windowsHide: true }).unref();`);
+    const root = project();
+    const message = "Fix the failing test in src/parse.js and run the tests.";
+    const task = spec(root, message, LIVE_CRITERIA);
+    const model = new ScriptedModel([
+      call({ tool: "run_command", command: "node --test" }),
+      call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+      call({ tool: "run_command", command: "node -e \"setTimeout(()=>{},300)\" && node --test" }),
+      "FINAL ANSWER: Changed parse in src/parse.js to return 0 for empty or whitespace-only input. node --test: 5 passed, 0 failed.",
+    ], (index) => {
+      // Fired while the model is asked for the response after the write; the
+      // final test command starts right after, so the unrelated process is
+      // created inside its window. Not started by Orca.
+      if (index === 2) setTimeout(() => spawnSync(process.execPath, [launcher], { windowsHide: true }), 150);
+    });
+    const traces: OrcaPipelineTrace[] = [];
+    const guard = createWorkspaceGuard({ probe: (r) => probeProcess({ pid: r.pid, identity: r.identity }) });
+    const result = await runtimeFor(model, task, {}, traces, { processProbe: (r) => probeProcess({ pid: r.pid, identity: r.identity }), resourceSettleWaitMs: 8000, workspaceGuard: guard }).executeTask(task);
+    const reverified = stagesOf(traces[0]!, "lifecycle.resources.reverified")[0]?.detail as { released: Array<{ ownership: string; label: string }> } | undefined;
+    // The real scan caught it, named it as unknown ownership (never the command's descendant) and released it once it exited.
+    expect(reverified?.released.length).toBeGreaterThanOrEqual(1);
+    for (const r of reverified?.released ?? []) expect(r.ownership).toBe("unknown");
+    expect(result.qcResult?.issues.map((i) => i.code)).not.toContain("EVIDENCE_PARTIAL");
+    expect(result.qcResult?.verdict).toBe("PASS");
+    expect(guard.list()).toEqual([]);
   }, 60_000);
 });
