@@ -171,8 +171,10 @@ contextBridge.exposeInMainWorld("orca", {
   },
 
   // Send the user's approve/deny decision back to main.
-  approveToolCall: (id: string, approved: boolean): void =>
-    ipcRenderer.send("tool:approve", { id, approved }),
+  // The answer names the tool and command the card showed; the main process
+  // accepts it only for that exact request (approvalBroker.ts).
+  approveToolCall: (id: string, approved: boolean, shown?: { tool?: string; command?: string }): void =>
+    ipcRenderer.send("tool:approve", { id, approved, ...(shown?.tool ? { tool: shown.tool } : {}), ...(typeof shown?.command === "string" ? { command: shown.command } : {}) }),
 
   // ── Workspace selection ──────────────────────────────────────────────────
   // Opens a native folder picker and returns the chosen path (empty string if

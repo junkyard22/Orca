@@ -2555,8 +2555,10 @@ orca.onMaximizeChange((maximized) => {
 
 // ── Tool approval dialog ────────────────────────────────────────────
 
-// Tools the user has permanently approved for this session
-const sessionApprovedTools = new Set();
+// There is no session-wide approval: every tool call is decided on its own,
+// and the main process accepts an answer only for the exact request it was
+// shown (approvalBroker.ts). Live rehearsal A7: "Always approve run_command
+// this session" had approved later, different commands with no card.
 
 let approvalTimerInterval = null;
 const APPROVAL_TIMEOUT_S  = 60;
@@ -2597,7 +2599,6 @@ function dismissApprovalForStop() {
   }
   toolCallCards.delete(id);
   dialog.style.display = "none";
-  document.getElementById("chk-always-approve").checked = false;
 }
 
 function resolveApproval(approved) {
@@ -2607,18 +2608,14 @@ function resolveApproval(approved) {
   const tool = document.getElementById("approval-tool-name").textContent;
   const card = toolCallCards.get(id);
 
-  if (approved && document.getElementById("chk-always-approve").checked) {
-    sessionApprovedTools.add(tool);
-  }
-
   if (card) {
     card.classList.replace("pending", approved ? "approved" : "denied");
     card.querySelector(".tool-card-status").textContent = approved ? "\u2713 Approved" : "\u2717 Denied";
   }
   toolCallCards.delete(id);
-  orca.approveToolCall(id, approved);
+  const command = dialog.dataset.approvalCommand;
+  orca.approveToolCall(id, approved, { tool, ...(command !== undefined && dialog.dataset.hasCommand === "1" ? { command } : {}) });
   dialog.style.display = "none";
-  document.getElementById("chk-always-approve").checked = false;
 }
 
 orca.onToolRequest((id, tool, args) => {
@@ -2627,18 +2624,12 @@ orca.onToolRequest((id, tool, args) => {
   const card = appendToolCard(id, tool, args);
   toolCallCards.set(id, card);
 
-  // Auto-approve if the user approved this tool for the session
-  if (sessionApprovedTools.has(tool)) {
-    card.classList.replace("pending", "approved");
-    card.querySelector(".tool-card-status").textContent = "\u2713 Auto-approved";
-    toolCallCards.delete(id);
-    orca.approveToolCall(id, true);
-    return;
-  }
-
   const dialog = document.getElementById("tool-approval-dialog");
   document.getElementById("approval-tool-name").textContent  = tool;
-  document.getElementById("approval-tool-name-2").textContent = tool;
+  // The exact command shown is what an approval answers for.
+  const shownCommand = args && typeof args.command === "string" ? args.command : undefined;
+  dialog.dataset.hasCommand = shownCommand !== undefined ? "1" : "0";
+  dialog.dataset.approvalCommand = shownCommand ?? "";
   document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
   document.getElementById("approval-workspace").textContent = currentWorkspaceRoot || "(not set)";
   dialog.dataset.approvalId = id;

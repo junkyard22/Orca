@@ -95,6 +95,7 @@ import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
 import { runWithBudget, withBudgetAttribution } from "@clawde/miranda-core";
 import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
 import { reviewNarration } from "./narrationReview";
+import { createApprovalBroker } from "./approvalBroker";
 import { createAbortError, createBudgetJournal, createWorkspaceGuard, WorkspaceProtectedError } from "@clawde/orca-core";
 import type { HostRecord } from "@clawde/orca-core";
 import type { BudgetJournal, WorkspaceGuard } from "@clawde/orca-core";
@@ -2301,16 +2302,23 @@ ipcMain.on("win:close",    () => {
 // ── Tool approval: renderer approves/denies each tool call before it runs ──
 // When the desktop app runs tools (agent-loop mode), each call sends a
 // "tool:request" event to the renderer and blocks until the user responds.
-const pendingApprovals = new Map<string, (approved: boolean) => void>();
+// Each answer is bound to the request it answers (task, tool, exact command)
+// and must come from a person: see approvalBroker.ts. Nothing persists between
+// calls or across a restart — there is no session-wide approval.
+const approvalBroker = createApprovalBroker({
+  send: (request) => win?.webContents.send("tool:request", request),
+  isTaskRunning: (taskId) => {
+    const session = taskSessions.current;
+    return !!session && session.state === "running" && (taskId === undefined || session.id === taskId);
+  },
+  log: (message) => console.log(`[Orca] ${message}`),
+});
 let approvalQueue: Promise<void> = Promise.resolve();
 let approvalEpoch = 0;
 
-function resolvePendingApprovals(approved: boolean): void {
+function resolvePendingApprovals(_approved: false): void {
   approvalEpoch++;
-  for (const resolve of pendingApprovals.values()) {
-    resolve(approved);
-  }
-  pendingApprovals.clear();
+  approvalBroker.denyAll("the task stopped or the app was locked");
   approvalQueue = Promise.resolve();
 }
 
@@ -2332,13 +2340,17 @@ function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: 
   return { ok: true, auth: refreshAuthStatus(false) };
 }
 
-ipcMain.on("tool:approve", (_ev, { id, approved }: { id: string; approved: boolean }) => {
+ipcMain.on("tool:approve", (_ev, response: { id: string; approved: boolean; tool?: string; command?: string }) => {
   // A response to a dialog from a task that is no longer running authorizes
-  // nothing: the entry was already resolved as denied when the task stopped.
-  const resolve = pendingApprovals.get(id);
-  pendingApprovals.delete(id);
-  const session = taskSessions.current;
-  resolve?.(approved && !!session && session.state === "running");
+  // nothing; neither does one that names another command, arrives late, or
+  // arrives before a person could have read the card (approvalBroker.ts).
+  if (!response || typeof response.id !== "string") return;
+  approvalBroker.respond({
+    id: response.id,
+    approved: response.approved === true,
+    ...(typeof response.tool === "string" ? { tool: response.tool } : {}),
+    ...(typeof response.command === "string" ? { command: response.command } : {}),
+  });
 });
 
 /**
@@ -2377,19 +2389,8 @@ function requestSingleToolApproval(
   if (!win || win.isDestroyed()) {
     return Promise.resolve(false);
   }
-
-  return new Promise((resolve) => {
-    const id = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    pendingApprovals.set(id, resolve);
-    win?.webContents.send("tool:request", { id, tool, args });
-    // Auto-deny after 60 s if the user doesn't respond
-    setTimeout(() => {
-      if (pendingApprovals.has(id)) {
-        pendingApprovals.delete(id);
-        resolve(false);
-      }
-    }, 60_000);
-  });
+  // Not approved after 60 s without an answer (approvalBroker).
+  return approvalBroker.request(tool, args, taskSessions.current?.id);
 }
 
 // ── Build identity: what this executable is ────────────────────────────────
