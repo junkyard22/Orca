@@ -253,3 +253,23 @@ Eight regression tests recording the original behaviour (negative integers, zero
 - **Safety and authorization controls held:** every command needed and received a human approval; nothing executed without it; Pappy refused verification on incomplete evidence; the budget held; accounting matched across ledger, UI and persisted row.
 - **Open items before production approval:** (1) one clean rehearsal with no operator processes started during the run; (2) a design decision on the survivor-scan false positive (machine-wide orphan attribution on Windows), which can also be tripped by ordinary user activity; (3) a repair pass that receives only a non-code finding spends its iterations and ends with no answer (QC blocked) — worth a follow-up.
 - **PRODUCTION RELEASE READY — no.**
+
+## 17. Live rehearsal A6 (2026-10-15) — observed results only
+
+Candidate: test candidate from `fix/process-attribution` @ `7023d49c` (clean, unsigned; `Orca 1.7.0.exe` SHA-256 `8bc4bd0adecf929ad6cc2b079d5c0363ab1b13803ed7efbc1988b2c2f28e8b8e`), containing the process-attribution, re-verification and repair-classification corrections (`docs/ORCA_1.7_PROCESS_ATTRIBUTION.md`). Same profile, model (`claude-sonnet-4-6`), budget ($0.75) and repair setting (1) as A5; fresh disposable `project-A6` identical to the A5 baseline (13 tests, 11 / 2). Monitoring by one watcher process that starts no child processes; the operator ran no other command during the task. Evidence: `orca-audit/phase6/rc/rehearsal/A6/`.
+
+- **Execution.** Brain routed to the debugger. Pass 1: `npm test` (approved; 11 / 2 reproduction), read `src/parse.js` and the tests, `npm test` again (approved; still 11 / 2), wrote the fix (a three-line empty-input guard, plus an em-dash changed to a hyphen in the doc comment), then answered **without re-running the tests**. Four approval cards in all, every one answered by the human (2 s to 15 s); none timed out or was denied.
+- **Pappy, pass 1: FAIL**, correctly: `FIX_TESTS_NOT_RERUN`, required receipts for "the failing test is fixed" and "tests are run and pass" missing, root-cause criterion partial. All missing-evidence issues, so the repair pass was dispatched (as designed).
+- **Repair pass:** `node --test test/parse.test.js` and `npm test 2>&1` on the final source — **host-recorded 13 passed / 0 failed, both**; no further edit.
+- **Pappy, final: WARN, evidence verified**, test evidence true, training eligibility needs_human_review. Open issues: MEDIUM `COMPLETENESS_EMPTY_DIFF` and LOW `NO_OP_WRITE`, both about a file named `&1` that `run_command`'s file-change detection invented from the stream redirect in `npm test 2>&1` (no such file exists); LOW `COMPLETENESS_FILE_MISMATCH` (keyword heuristic).
+- **Process attribution:** no survivor was recorded; no workspace protection; no override.
+- **User-facing account was wrong.** The repair worker, given Pappy's issues but not told its own first pass had made the edit, reported "the fix was already in place — someone had corrected parse.js in a prior session", and Orca's final message repeated it. Pappy did not flag the misattribution.
+- **Final source:** SHA-256 `f340250f…7025`; independent post-hoc `node --test` 13 / 13 (not host-recorded). Differences from the original are limited to empty, whitespace-only and tab/newline input.
+- **Spend:** task ledger $0.360537 measured (22 requests: brain 1 / $0.005811; debugger pass 1 11 / $0.191778; repair 10 / $0.162948; 85,879 in / 6,860 out; 0 unreconciled, 0 refused). Persisted `runs.cost_usd` $0.360537 (matches). Status bar $0.3674 (+$0.0069 after the task, not attributed by the trace). Remaining task budget $0.389463. Aggregate under the approved $1.00: A5 $0.3518 + A6 $0.3674 = **$0.7192**; $0.2808 remaining.
+
+### 17.1 Classification after A6
+
+- **Live-model coding success — established in substance, not as a PASS.** A real model made a correct, contract-preserving edit; the host recorded 13 / 13 on the final source; Pappy verified the evidence. The verdict is WARN because of an Orca defect (the `2>&1` redirect parsed as a file), not because of the work.
+- **Safety and authorization controls held:** every command was approved by the human; Pappy refused the untested first pass; the repair classifier sent the repair for missing evidence; no unrelated process contaminated the evidence; accounting matched across ledger, UI and persisted row.
+- **Release-blocking defects found:** (1) `run_command`'s file-change detection treats `2>&1` (any `N>&M`) as writing a file; (2) a repair worker is not told what earlier passes changed, so the final account can misstate who made the fix — the user was told something untrue.
+- **PRODUCTION RELEASE READY — no.**
