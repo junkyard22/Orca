@@ -222,3 +222,34 @@ With an organization-level Anthropic key, Settings → Fetch models showed "11 m
 ### 15.6 Next session
 
 1. Authorize and run Test B (cancellation) on rc4; record evidence and cumulative spend. 2. Decide on a second Test A attempt. 3. Apply the persisted-cost fix with a regression test; run the full regression; rebuild (rc5) and re-run the automated smoke. 4. Update §1–§14 of this report with final figures, classify, and decide on push/sign/install/publish.
+
+## 16. Live rehearsals A4 and A5 on the corrected candidate (2026-10-14 / 2026-10-15) — observed results only
+
+Candidate: test candidate built from `fix/worker-edit-protocol` @ `6a9b7a35` (clean, unsigned), `Orca 1.7.0.exe` SHA-256 `0a32dab0d225cb9ededa196c990e0b7fe9f256249df65582903878c8d9ddba21`. Isolated rehearsal profile; Anthropic `claude-sonnet-4-6` for every role; task budget $0.75 (read from the running app); one repair pass; human approvals. Message: "Fix the failing test in src/parse.js and run the tests." Evidence: `orca-audit/phase6/rc/rehearsal/A4/` and `A5/` (traces, transcripts, screenshots, diffs, fingerprints).
+
+### 16.1 A4 (2026-10-14) — FAIL, approvals expired
+
+- The worker edited `src/parse.js` (no approval needed for workspace writes, by design). All three test commands asked for approval; each settled exactly 60.0 s later by the automatic deny — no human was present. No host-recorded test run after the edit.
+- Pappy: FAIL / unverified (first pass: `FIX_TESTS_NOT_RERUN`, AC1 partial, AC2 missing); training eligibility needs_human_review, then rejected after the repair pass.
+- The edit fixed the defect but changed established behaviour: "007" → 7, "-0" → -0, inexact large integers silently rounded. The original five tests did not cover these.
+- Spend: $0.503676 measured (23 requests; brain $0.005736, debugger $0.497940; 0 unreconciled); status bar $0.5057.
+
+### 16.2 Contract tests added before A5
+
+Eight regression tests recording the original behaviour (negative integers, zero, largest safe integer accepted; leading zeros, negative zero, plus sign, decimals/exponents/hex/trailing characters, inexact integers rejected) were committed in a fresh disposable copy (`project-A5`). The suite is now **13 tests**: original source 11 pass / 2 fail (the two defect tests); the A4 edit 10 / 3; a minimal correct fix 13 / 13.
+
+### 16.3 A5 (2026-10-15) — FAIL, verification blocked by operator-introduced processes
+
+- **Execution.** Brain routed to the debugger. The worker ran `npm test` (approved by the human after 4.0 s; reproduction), read `src/parse.js`, wrote a three-line fix (empty / whitespace-only input returns 0; nothing else changed), and ran `npm test` again (approved after 2.3 s): **host-recorded 13 passed / 0 failed on the final source.** All four approval cards were answered by the human within 7.0 s (trace timings); none timed out or was denied.
+- **Pappy, first pass:** all three acceptance criteria marked proved ("root cause identified", "failing test fixed in src/parse.js", "tests are run and all pass"); `test_evidence=true`. **Verdict FAIL** on one HIGH issue, `EVIDENCE_PARTIAL`: the survivor scan reported `sleep.exe` processes "orphan of: npm test" that might still be writing, so the workspace inventory was marked partial.
+- **Cause of those processes:** the operator's monitoring loop (Git Bash, `sleep 2` every two seconds) started short-lived `sleep.exe` processes during the command windows. The Windows survivor scan reports any process created during a command whose parent has exited as a suspected orphan (documented in `processIdentity.ts` as a known false-positive class). The project's test script is `node --test`, which starts no `sleep`. Pappy's refusal was correct for the evidence it was given; the evidence was contaminated by the rehearsal's own instrumentation.
+- **Repair pass:** given only the `EVIDENCE_PARTIAL` finding, the worker re-ran the tests three times (13 / 13 each, approved), rewrote `src/parse.js` with byte-identical content, and stopped at `max_iterations` with no answer. QC was blocked ("output text is empty"); the first-pass FAIL stands. Training eligibility: needs_human_review. The workspace stays **protected** (three flagged pids, all since exited); the protection was not released.
+- **Final source:** SHA-256 `4ebafafa…1bd3`, equal to both writes and to the state the host tests ran on; independent post-hoc `node --test` 13 / 13 (not host-recorded). Differences from the original are limited to empty, whitespace-only and tab/newline input.
+- **Spend:** task ledger $0.349968 measured (16 requests; brain 1 / $0.005916; debugger 15 / $0.344052 — first pass 5 / $0.084549, repair pass 10 / $0.259503; 59,206 in / 11,490 out; 0 unreconciled, 0 unpriced, 0 refused). Persisted `runs.cost_usd` $0.349968 (matches the ledger). Status bar $0.3518 — $0.0018 charged after the task, most likely the closing explanation (not attributed by the trace). Remaining task budget $0.4000. Aggregate for A5 $0.3518 of the newly approved $1.00.
+
+### 16.4 Where this leaves the classification
+
+- **Live-model coding success — not established.** A5 shows a real model making a correct, contract-preserving edit and the host recording 13 / 13 on the final source, and Pappy proving all three criteria — but the run's verdict is FAIL, and a PASS has not been observed.
+- **Safety and authorization controls held:** every command needed and received a human approval; nothing executed without it; Pappy refused verification on incomplete evidence; the budget held; accounting matched across ledger, UI and persisted row.
+- **Open items before production approval:** (1) one clean rehearsal with no operator processes started during the run; (2) a design decision on the survivor-scan false positive (machine-wide orphan attribution on Windows), which can also be tripped by ordinary user activity; (3) a repair pass that receives only a non-code finding spends its iterations and ends with no answer (QC blocked) — worth a follow-up.
+- **PRODUCTION RELEASE READY — no.**
