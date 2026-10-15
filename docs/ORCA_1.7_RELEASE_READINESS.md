@@ -284,3 +284,28 @@ Source-level corrections for the two A6 release-blocking defects (record: `docs/
 - **Deterministic A6 replay** (production worker loop, real tools, the 13-test suite, runtime, real Pappy, Claire): 11/2 → fix → untested first pass FAIL → repair with the host record → `npm test 2>&1` 13/13 on the final source → no phantom file → **PASS / verified / eligible**, all criteria PROVED; a false "prior session" claim is corrected in the result and in Claire's reply; the untested first pass alone is still refused. Moonshiner's default first-attempt-only export skips the repaired run (unchanged).
 - **Regression:** 2,077 passed · 0 failed · 3 skipped (baseline 2,002); TypeScript 0 errors; Pappy suites unchanged (corpus 58/58, 0/39 FA, 0/13 FR); contract check REVIEW REQUIRED (Rule 4, approved Pappy files and a new Pappy test file), exit 0; desktop bundle builds.
 - **Classification:** the A6 release blockers are resolved at source level and shown deterministically. A live PASS has not yet been observed. **PRODUCTION RELEASE READY — no** (pending one live rehearsal on a candidate containing these corrections).
+
+## 19. Live acceptance rehearsal A7 (2026-10-15) — observed results only
+
+Candidate: A7 test candidate from `fix/process-attribution` @ `892ea715` (clean, packaged, unsigned; `Orca 1.7.0.exe` SHA-256 `86b414ba4a002bef5b868655de9e17a24e12829205ce35902130d55a428786bf`). Packaged mock acceptance (scripted local provider, human approvals) passed first: untested first pass FAIL → repair with the host record → `npm test 2>&1` 13/13 → no phantom file → PASS / verified / eligible → a scripted false provenance claim corrected in the delivered message. Live: Anthropic `claude-sonnet-4-6` for every role, $0.75 task budget, one repair pass, new $1.00 aggregate allowance (owner-approved), fresh `project-A7` (13 tests, 11 / 2), single-process monitoring. Evidence: `orca-audit/phase6/rc/rehearsal/A7/`.
+
+- **Execution.** Brain routed to the debugger. First pass: reproduction `npm test` (11 / 2, approved by the human), a three-line empty-input guard written to `src/parse.js`, `npm test` again (13 / 0 on the changed source, approved by the human).
+- **Pappy, first pass: FAIL** on one HIGH `REQUIRED_RECEIPT_MISSING`: Brain's criterion "The failing test is fixed" names no file and was not linked to the reproduction and final-suite receipts.
+- **Repair pass:** dispatched for missing evidence; received the host record (the first pass's change, both test runs with their source state); no write demand; ran `npm test` (13 / 0) and changed nothing. That command was auto-approved by the renderer because "Always approve run_command this session" had been ticked on an earlier card by the human; no approval was given by automation.
+- **Pappy, final (judged against the user's original request): PASS**, no issues, **evidence verified**, test evidence true, training eligibility **eligible** (not exported; Moonshiner's default first-attempt-only export would skip a repaired run).
+- **Final source** SHA-256 `4ebafafa…1bd3` = the state the host tests ran on; 13 / 13; differs from the original only for empty, whitespace-only and tab/newline input. No phantom file, no process survivors, no workspace protection.
+- **Narration:** the delivered message ("Fixed it. The two failing tests in src/parse.js are now passing — all 13 tests green") is accurate. The runtime appended a correct but unneeded correction to the repair worker's accurate account ("Already applied in the first pass of this task") — a provenance-check false positive.
+- **Spend:** task ledger $0.135972 measured (10 requests; brain $0.005826; debugger first pass $0.114027, repair $0.016119; 0 unreconciled); persisted run $0.135972 (matches); status bar $0.1385 (+$0.0025 narration). Aggregate under the new $1.00: **$0.1385**.
+
+### 19.1 Remaining items
+
+1. **Criteria differ between passes.** The first verdict judges Brain's derived criteria; the repair verdict judges the user's original request. A7's PASS is against the user's request; Brain's "The failing test is fixed" was never shown PROVED by Pappy. Pre-existing behaviour; a design decision.
+2. **Pappy anchoring gap.** A defect criterion that names no file is not linked to reproduction / final-suite receipts. Fail-safe (it cost one repair pass, $0.016); correcting it changes Pappy's acceptance logic and needs an explicit decision.
+3. **"Always approve run_command this session"** approves every later shell command in the session, not one command. Disclosed on the card; broad in scope.
+4. **Provenance-check false positive** on accurate "already applied in the first pass" wording (appended text is correct; the trace records a contradiction that did not exist).
+5. **Release mechanics:** the candidate is unsigned and built from an unmerged feature branch (`fix/worker-edit-protocol` → `fix/process-attribution`); the contract check's REVIEW REQUIRED items (Pappy files; the repair-loop and narration changes, outside Rule 4's patterns) need human review; the installed 1.6.0 carries Demo Mode commits that are not in `main`.
+
+### 19.2 Classification
+
+- **Live-model coding success — established:** a real model made a correct, contract-preserving fix; the host recorded 13 / 13 on the final source; Pappy verified it (PASS / verified) against the user's request; accounting matched.
+- **PRODUCTION RELEASE READY — not yet:** the verified behaviour is on an unsigned candidate from unmerged branches; items 1–5 need decisions. Recommendation in the session report.
