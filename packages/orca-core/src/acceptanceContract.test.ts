@@ -28,6 +28,24 @@ describe("acceptance contract", () => {
     expect(buildAcceptanceContract(spec([]), []).goals).toEqual([MESSAGE]); // no goals: the request itself
   });
 
+  it("a Brain criterion unrelated to the request is kept as advisory, not mandatory — it can neither block a genuine fix nor replace a user goal", () => {
+    const c = buildAcceptanceContract(spec(), [...BRAIN, "Update the README with usage examples", "Output is non-empty", "src/parse.js keeps its public API"]);
+    expect(c.derivedCriteria).toEqual([...BRAIN, "src/parse.js keeps its public API"]);
+    expect(c.advisoryCriteria).toEqual(["Update the README with usage examples", "Output is non-empty"]);
+    expect(c.goals).toEqual([MESSAGE, ...BRAIN, "src/parse.js keeps its public API"]);
+    expect(c.goals[0]).toBe(MESSAGE);
+  });
+
+  it("an invented criterion is traced as advisory and is not what Pappy judges; the user's goal still is", async () => {
+    const seen: string[][] = [];
+    const pappy: PappyPort = { evaluate: (input) => { seen.push([...input.goals]); return verdict("PASS"); } };
+    const maestro: MaestroPort = { run: async () => ({ outputText: "Fixed.", doneCriteria: ["Update the README with usage examples"] }) };
+    const traces: OrcaPipelineTrace[] = [];
+    await createOrcaRuntime({ maestro, pappy, llm: makeLLM() as never, maxRepairPasses: 0, writeTrace: (t: OrcaPipelineTrace) => { traces.push(t); } } as never).executeTask(spec());
+    expect(seen).toEqual([[MESSAGE]]);
+    expect(traces[0]!.entries.find((e) => e.stage === "acceptance.contract")?.detail).toMatchObject({ advisoryCriteria: ["Update the README with usage examples"] });
+  });
+
   it("buildPappyInput judges the contract when one is given, whatever a pass's own done criteria say", () => {
     const input = buildPappyInput(spec(), { outputText: "x", doneCriteria: ["Output is non-empty"] }, undefined, undefined, [MESSAGE, ...BRAIN]);
     expect(input.goals).toEqual([MESSAGE, ...BRAIN]);
