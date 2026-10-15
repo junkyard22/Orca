@@ -26,6 +26,7 @@ if (!window.orca) {
     maximize:          () => {},
     close:             () => {},
     approveToolCall:   () => {},
+    onToolRequestSettled: () => () => {},
     selectWorkspace:   async () => "",
     fetchModels:       async () => ({ ok: false, models: [] }),
     listSessions:      async () => [],
@@ -2608,11 +2609,14 @@ function resolveApproval(approved) {
   const tool = document.getElementById("approval-tool-name").textContent;
   const card = toolCallCards.get(id);
 
-  if (card) {
-    card.classList.replace("pending", approved ? "approved" : "denied");
-    card.querySelector(".tool-card-status").textContent = approved ? "\u2713 Approved" : "\u2717 Denied";
+  // Denial is final here; an approval is shown once the main process has
+  // accepted it (onToolRequestSettled below).
+  if (card && !approved) {
+    card.classList.replace("pending", "denied");
+    card.querySelector(".tool-card-status").textContent = "\u2717 Denied";
+  } else if (card) {
+    card.querySelector(".tool-card-status").textContent = "approving\u2026";
   }
-  toolCallCards.delete(id);
   const command = dialog.dataset.approvalCommand;
   orca.approveToolCall(id, approved, { tool, ...(command !== undefined && dialog.dataset.hasCommand === "1" ? { command } : {}) });
   dialog.style.display = "none";
@@ -2638,6 +2642,25 @@ orca.onToolRequest((id, tool, args) => {
   document.getElementById("btn-deny-tool").focus();
 
   startApprovalTimer(() => resolveApproval(false));
+});
+
+// The main process's decision is what the card shows: approved, denied, timed
+// out, stopped, or refused (for example an answer that came too late).
+(orca.onToolRequestSettled ?? (() => () => {}))(({ id, approved, reason }) => {
+  const card = toolCallCards.get(id);
+  if (card) {
+    card.classList.remove("pending", "approved", "denied");
+    card.classList.add(approved ? "approved" : "denied");
+    card.querySelector(".tool-card-status").textContent = approved
+      ? "\u2713 Approved"
+      : /denied by the user/.test(reason) ? "\u2717 Denied" : `\u2717 Not approved \u2014 ${reason}`;
+  }
+  toolCallCards.delete(id);
+  const dialog = document.getElementById("tool-approval-dialog");
+  if (dialog.dataset.approvalId === id && dialog.style.display !== "none") {
+    clearApprovalTimer();
+    dialog.style.display = "none";
+  }
 });
 
 document.getElementById("btn-approve-tool").addEventListener("click", () => resolveApproval(true));

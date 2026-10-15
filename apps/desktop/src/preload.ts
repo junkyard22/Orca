@@ -170,6 +170,13 @@ contextBridge.exposeInMainWorld("orca", {
     return () => ipcRenderer.removeListener("tool:request", handler);
   },
 
+  // How the main process settled a request (approved, denied, timed out, stopped, refused).
+  onToolRequestSettled: (cb: (settled: { id: string; approved: boolean; reason: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { id: string; approved: boolean; reason: string }) => cb(data);
+    ipcRenderer.on("tool:request:settled", handler);
+    return () => ipcRenderer.removeListener("tool:request:settled", handler);
+  },
+
   // Send the user's approve/deny decision back to main.
   // The answer names the tool and command the card showed; the main process
   // accepts it only for that exact request (approvalBroker.ts).

@@ -113,6 +113,27 @@ describe("approval broker", () => {
   });
 });
 
+describe("the card is told how each request was settled", () => {
+  it("approval, denial, a refused late or fast answer, and Stop are all reported with the reason", async () => {
+    let clock = 0;
+    const settled: Array<[string, boolean, string]> = [];
+    const sent: ApprovalRequest[] = [];
+    const broker = createApprovalBroker({ send: (r) => sent.push(r), isTaskRunning: () => true, now: () => clock, onSettled: (r, a, why) => settled.push([r.id, a, why]) });
+    const a = broker.request("run_command", { command: "npm test" }, "t"); clock += 1000;
+    broker.respond({ id: sent[0]!.id, approved: true, tool: "run_command", command: "npm test" });
+    const b = broker.request("run_command", { command: "npm test" }, "t"); clock += 1;
+    broker.respond({ id: sent[1]!.id, approved: true, tool: "run_command", command: "npm test" });
+    const c = broker.request("run_command", { command: "npm test" }, "t");
+    broker.denyAll("the task stopped");
+    await Promise.all([a, b, c]);
+    expect(settled.map(([, ok, why]) => [ok, why])).toEqual([
+      [true, "approved by the user"],
+      [false, expect.stringMatching(/before a person could read it/)],
+      [false, "the task stopped"],
+    ]);
+  });
+});
+
 describe("renderer: no session-wide approval path remains", () => {
   const renderer = (f: string) => readFileSync(join(__dirname, "..", "renderer", f), "utf8");
   it("the card has no 'always approve' control and the renderer never approves on its own", () => {

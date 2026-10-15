@@ -48,6 +48,8 @@ export interface ApprovalDecision {
 export interface ApprovalBrokerOptions {
   send: (request: ApprovalRequest) => void;
   isTaskRunning: (taskId: string | undefined) => boolean;
+  /** Told how every request was settled, so the card can show what actually happened. */
+  onSettled?: (request: ApprovalRequest, approved: boolean, reason: string) => void;
   now?: () => number;
   timeoutMs?: number;
   minDecisionMs?: number;
@@ -77,6 +79,7 @@ export function createApprovalBroker(options: ApprovalBrokerOptions) {
     clearTimeout(entry.timer);
     log(`approval ${id} (${entry.request.tool}${commandOf(entry.request.args) ? ` ${commandOf(entry.request.args)}` : ""}): ${approved ? "approved" : "not approved"} — ${reason}`);
     entry.resolve(approved);
+    options.onSettled?.(entry.request, approved, reason);
   }
 
   return {

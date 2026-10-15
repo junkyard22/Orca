@@ -2312,6 +2312,9 @@ const approvalBroker = createApprovalBroker({
     return !!session && session.state === "running" && (taskId === undefined || session.id === taskId);
   },
   log: (message) => console.log(`[Orca] ${message}`),
+  // The card shows the main process's decision (a background window's timer
+  // can lag; a late click must not look like an approval).
+  onSettled: (request, approved, reason) => win?.webContents.send("tool:request:settled", { id: request.id, approved, reason }),
 });
 let approvalQueue: Promise<void> = Promise.resolve();
 let approvalEpoch = 0;
