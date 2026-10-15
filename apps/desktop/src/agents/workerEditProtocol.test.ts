@@ -18,7 +18,7 @@
  * Approvals are answered by `requestToolApproval: async () => true`, standing
  * in for a human click; the desktop's native dialog is not involved.
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,8 +29,10 @@ import type { MaestroPort, OrcaPipelineTrace, OrcaRunCtx, OrcaStore, OrcaTaskSpe
 import { listDirectoryTool, probeProcess, readFileTool, runCommandTool, writeFileTool } from "@yakstacks/workbench-core";
 import type { RoleName } from "maestro-core";
 import { ReactAgentAdapter } from "./ReactAgentAdapter";
+import { createClaire } from "@clawde/claire-core";
+import { reviewNarration } from "../narrationReview";
 import { composeMirandaGates } from "../llmGate";
-import { constraintGateFor, workerMustNotWriteFiles } from "../workerConstraints";
+import { constraintGateFor, repairSourceChangeFlag, workerMustNotWriteFiles } from "../workerConstraints";
 import { verificationGuidance } from "../verificationGuidance";
 
 const BUGGY = `"use strict";
@@ -67,8 +69,8 @@ test("rejects a non-integer", () => { assert.throws(() => parse("abc"), RangeErr
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
-/** The rehearsal project, in a folder literally called "project". */
-function project(): string {
+/** The rehearsal project, in a folder literally called "project". With `contract`, the 13-test suite used from A5 on. */
+function project(contract = false): string {
   const parent = mkdtempSync(join(tmpdir(), "orca-worker-"));
   dirs.push(parent);
   const root = join(parent, "project");
@@ -76,9 +78,21 @@ function project(): string {
   mkdirSync(join(root, "test"), { recursive: true });
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "orca-rehearsal-parse", private: true, scripts: { test: "node --test" } }, null, 2));
   writeFileSync(join(root, "src", "parse.js"), BUGGY);
-  writeFileSync(join(root, "test", "parse.test.js"), TESTS);
+  writeFileSync(join(root, "test", "parse.test.js"), contract ? TESTS + CONTRACT_TESTS : TESTS);
   return root;
 }
+
+/** The eight contract tests added before A5 (established behaviour; the original parse passes all of them). */
+const CONTRACT_TESTS = `
+test("accepts a negative integer", () => { assert.equal(parse("-7"), -7); });
+test("accepts zero", () => { assert.equal(parse("0"), 0); });
+test("accepts the largest safe integer", () => { assert.equal(parse("9007199254740991"), 9007199254740991); });
+test("rejects leading zeros", () => { assert.throws(() => parse("007"), RangeError); });
+test("rejects negative zero", () => { assert.throws(() => parse("-0"), RangeError); });
+test("rejects an explicit plus sign", () => { assert.throws(() => parse("+5"), RangeError); });
+test("rejects decimals, exponents and trailing characters", () => { for (const t of ["1.5", "1.0", "1e3", "12abc", "0x10", "4 2"]) assert.throws(() => parse(t), RangeError, t); });
+test("rejects integers that cannot be represented exactly", () => { for (const t of ["9007199254740993", "99999999999999999999", "1000000000000000000000"]) assert.throws(() => parse(t), RangeError, t); });
+`;
 
 function hostTestRun(root: string): { pass: number; fail: number } {
   const r = spawnSync(process.execPath, ["--test"], { cwd: root, encoding: "utf8" });
@@ -159,7 +173,7 @@ function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed
       observed.constraints = packet.constraints.map((c) => c.rule);
       const worker = new ReactAgentAdapter(model, "You are the Debugger.", "debugger" as RoleName);
       const result = await worker.run(
-        { intent: objective, goals: [objective], doneCriteria: packet.expectedOutput.acceptanceCriteria },
+        { intent: objective, goals: [objective], doneCriteria: packet.expectedOutput.acceptanceCriteria, ...(repairing ? repairSourceChangeFlag(passTask) : {}) },
         [readFileTool, writeFileTool, runCommandTool, listDirectoryTool] as never,
         { ...ctx, gate: composeMirandaGates(ctx.gate, constraintGateFor(packet)), ahpPacket: packet } as never,
       );
@@ -485,4 +499,108 @@ describe("survivor attribution in the parse.js task (A5)", () => {
     expect(result.qcResult?.verdict).toBe("PASS");
     expect(guard.list()).toEqual([]);
   }, 60_000);
+});
+
+// ── A6, replayed deterministically ──────────────────────────────────────────
+// Live A6: pass 1 fixed src/parse.js without re-running the tests; Pappy asked
+// for verification; the repair pass ran `npm test 2>&1` (13/13) — and Orca
+// recorded a phantom file "&1" (WARN), while the repair worker, told nothing
+// about pass 1, reported the fix as "already in place … from a prior session",
+// which Claire repeated. Here the same sequence runs through the production
+// worker loop, real tools (the project's own 13-test suite), the runtime,
+// real Pappy and Claire with a stub narrator.
+describe("A6 replay: shell redirection, repair memory and the final account", () => {
+  const MESSAGE = "Fix the failing test in src/parse.js and run the tests.";
+  const PASS_ONE = [
+    call({ tool: "run_command", command: "npm test" }),
+    call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+    "FINAL ANSWER: Root cause: parse('') threw a RangeError because parseInt('') is NaN. Added an empty-input guard in src/parse.js.",
+  ];
+
+  async function replay(repairAnswer: string) {
+    const root = project(true);
+    expect(hostTestRun(root)).toEqual({ pass: 11, fail: 2 });
+    const task = spec(root, MESSAGE, LIVE_CRITERIA);
+    const model = new ScriptedModel([...PASS_ONE, call({ tool: "run_command", command: "npm test 2>&1" }), repairAnswer]);
+    const observed: Observed = {};
+    const traces: OrcaPipelineTrace[] = [];
+    const store = new MemoryStore();
+    const result = await runtimeFor(model, task, observed, traces, { maxRepairPasses: 1, store }).executeTask(task);
+    return { root, model, observed, result, trace: traces[0]!, store };
+  }
+
+  it("the genuine fix is verified: PASS / verified / eligible, no phantom file, the repair worker is told what pass 1 did and is not pushed to rewrite it", async () => {
+    const { root, observed, result, trace, store } = await replay(
+      "FINAL ANSWER: The change made in the first pass (an empty-input guard in src/parse.js) was already on disk; I ran npm test 2>&1 on the current source: 13 passed, 0 failed.",
+    );
+    // Pass 1 was judged correctly: verification missing, not a code defect.
+    const firstQc = stagesOf(trace, "qc.run.result")[0]!.detail as { verdict: string; issues: Array<{ code: string }> };
+    expect(firstQc.verdict).toBe("FAIL");
+    expect(firstQc.issues.map((i) => i.code)).toContain("FIX_TESTS_NOT_RERUN");
+    // The repair worker received the host record, and no write demand.
+    expect(observed.repairPrompt).toMatch(/src\/parse\.js \(modified\) — changed by this task in the first pass/);
+    expect(observed.repairPrompt).toMatch(/`npm test` on the task-start source: failed \(11 passed, 2 failed\)/);
+    expect(observed.repairPrompt).toMatch(/No test has run on the current source/);
+    expect(observed.repairPrompt).toMatch(/Outstanding: verification only/);
+    expect(observed.repairPrompt).not.toMatch(/ACTION REQUIRED: Call write_file/);
+    expect(stagesOf(trace, "agent.tool.call").filter((e) => (e.detail as { tool?: string }).tool === "write_file")).toHaveLength(1);
+    // `npm test 2>&1` ran on the final source; no phantom "&1" anywhere.
+    const repairRun = JSON.stringify(stagesOf(trace, "agent.tool.result").map((e) => e.detail as { tool?: string }).filter((d) => d.tool === "run_command").at(-1));
+    expect(repairRun).toMatch(/npm test 2>&1/);
+    expect(repairRun).toMatch(/ℹ pass 13[\s\S]*ℹ fail 0/);
+    expect(repairRun).not.toMatch(/Files changed/);
+    expect(existsSync(join(root, "&1"))).toBe(false);
+    expect(JSON.stringify(trace.entries)).not.toMatch(/"path":"&1"/);
+    // Final source: the tested state.
+    expect(readFileSync(join(root, "src", "parse.js"), "utf8")).toBe(FIXED);
+    expect(hostTestRun(root)).toEqual({ pass: 13, fail: 0 });
+    // Pappy.
+    expect(result.qcResult?.verdict).toBe("PASS");
+    expect(result.qcResult?.verification?.status).toBe("verified");
+    expect(result.qcResult?.trainingEligibility).toBe("eligible");
+    expect(result.qcResult?.receipt_ledger.every((e) => e.status === "PROVED")).toBe(true);
+    expect(result.qcResult?.issues.map((i) => i.code)).not.toEqual(expect.arrayContaining(["COMPLETENESS_EMPTY_DIFF"]));
+    for (const code of ["COMPLETENESS_EMPTY_DIFF", "NO_OP_WRITE", "COMPLETENESS_FILE_MISMATCH"]) expect(result.qcResult?.issues.map((i) => i.code)).not.toContain(code);
+    // An accurate account needs no correction.
+    expect(result.provenance).toBeUndefined();
+    expect(result.hostRecord?.finalSourceTested).toBe(true);
+    // Moonshiner: the default export is first-attempt-only, so a repaired run
+    // is skipped (unchanged safeguard); an export that allows one repair pass
+    // takes it as a positive example.
+    const dir = mkdtempSync(join(tmpdir(), "orca-export-")); dirs.push(dir);
+    const byDefault = await exportTrainingData(store as unknown as OrcaStore, { outputPath: join(dir, "default.jsonl") } as never);
+    expect(byDefault.exported).toBe(0);
+    expect(byDefault.skipReasons).toMatchObject({ too_many_repairs: 1 });
+    const allowingRepair = await exportTrainingData(store as unknown as OrcaStore, { outputPath: join(dir, "repaired.jsonl"), maxRepairPasses: 1 } as never);
+    expect(allowingRepair.exported).toBe(1);
+    expect(JSON.parse(readFileSync(join(dir, "repaired.jsonl"), "utf8").trim())).toMatchObject({ score: 10, metadata: { verdict: "PASS", outcome: "success" } });
+  }, 90_000);
+
+  it("a repair worker that calls the fix pre-existing is corrected from the record — in the result and in Claire's reply", async () => {
+    const falseClaim = "FINAL ANSWER: All 13 tests pass. Turns out the fix was already in place — someone had corrected parse.js in a prior session, so nothing needed changing.";
+    const { result } = await replay(falseClaim);
+    expect(result.qcResult?.verdict).toBe("PASS"); // the work is genuine; the account was wrong
+    expect(result.provenance?.contradictions).toHaveLength(1);
+    expect(result.userFacingText).toMatch(/Correction from Orca's records: src\/parse\.js was changed by this task in the first pass; `npm test 2>&1` ran on the final source: passed \(13 passed, 0 failed\)\./);
+    // Claire, with a narrator that repeats the worker's claim, as in A6.
+    const prompts: string[] = [];
+    const claire = createClaire({
+      complete: async (messages) => { prompts.push(messages.at(-1)!.content); return "All 13 tests pass — turns out someone had already fixed parse.js in a prior session."; },
+      executeTask: async () => result as never,
+      reviewReply: (reply, r) => reviewNarration(reply, r as never),
+    });
+    const reply = await claire.handleUserMessage(MESSAGE);
+    expect(prompts.at(-1)).toMatch(/Recorded facts[\s\S]*src\/parse\.js \(modified\) — changed by this task in the first pass/);
+    expect(reply).toMatch(/Correction from Orca's records: src\/parse\.js was changed by this task in the first pass/);
+  }, 90_000);
+
+  it("still refused: pass 1's untested change with no repair is not verified", async () => {
+    const root = project(true);
+    const task = spec(root, MESSAGE, LIVE_CRITERIA);
+    const model = new ScriptedModel(PASS_ONE);
+    const result = await runtimeFor(model, task, {}, [], { maxRepairPasses: 0 }).executeTask(task);
+    expect(result.qcResult?.verdict).toBe("FAIL");
+    expect(result.qcResult?.verification?.status).toBe("unverified");
+    expect(result.qcResult?.trainingEligibility).not.toBe("eligible");
+  }, 90_000);
 });
