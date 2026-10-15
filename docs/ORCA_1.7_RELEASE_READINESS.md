@@ -309,3 +309,46 @@ Candidate: A7 test candidate from `fix/process-attribution` @ `892ea715` (clean,
 
 - **Live-model coding success — established:** a real model made a correct, contract-preserving fix; the host recorded 13 / 13 on the final source; Pappy verified it (PASS / verified) against the user's request; accounting matched.
 - **PRODUCTION RELEASE READY — not yet:** the verified behaviour is on an unsigned candidate from unmerged branches; items 1–5 need decisions. Recommendation in the session report.
+
+## 20. Release stabilization (2026-10-15)
+
+Branch `fix/release-stabilization-1.7.0` (from `fix/process-attribution` @ `64d4df6`; linear on `main` `c0b1092`, 29 commits ahead, 0 behind; local, not pushed). The four A7 items, corrected without changing any acceptance standard beyond the authorized file-less-criterion rule:
+
+| # | Defect (A7) | Root cause | Correction | Commit |
+|---|---|---|---|---|
+| 1 | Criteria changed between passes | `buildPappyInput` used the pass's Brain done criteria **instead of** the task's goals; a repair pass without Brain routing fell back to the user's goals | One acceptance contract per task (user goals, never dropped, plus Brain's added criteria), fixed after the first pass and used by every verdict and given to the repair | `7f7bc4c` |
+| 2 | "The failing test is fixed" not proved | A defect criterion naming no file had no verifier (fail-closed) | In bug-fix tasks it is proved only by a host-observed source change plus a reproduction (failed at task start, passes on the final source) or a regression test | `3d144b5` |
+| 3 | "Always approve run_command this session" | Renderer-only session list approved any later command; the main process could not tell a person's answer from the renderer's | Checkbox and session list removed; the main process accepts an answer only for the exact pending request (task, tool, command) and only after a person could have read it; the card shows the main process's decision | `13bb6df`, `3c06384` |
+| 4 | Provenance false positive | Whole-text keyword match flagged "already applied in the first pass of this task" | Sentence-level check: in-task references verified against the passes the host recorded; outside / unknown origins contradicted only by the record; quoted text ignored | `acedba0` |
+
+A7's auto-approval: the only automatic-approval code path was the renderer's session list, which required the checkbox to be ticked on an approved card; the second `npm test` card was answered after 16 s. The trace cannot show who ticked it.
+
+**Deterministic acceptance** (`desktop/workerEditProtocol.test.ts`, A7's contract, 13-test suite, production worker loop, real tools, runtime, Pappy, Claire): positive — PASS / verified / eligible on the **first** pass, all four criteria PROVED, no repair, accurate narration; repair (no post-change run) — refused, repair works to the same contract with the host record, `npm test 2>&1`, no rewrite, verified, accurate account not "corrected"; negatives — denied command, claim without edit, partial suite refused. Corpus: two A7 fixtures added (the genuine one fails under the previous rule); 60/60, 0/40 FA, 0/14 FR.
+
+**Regression** (head `3c06384`): workspace suite 2,109 passed · 0 failed · 3 skipped (2,077 before); TypeScript 0 errors; Pappy suites 23/23 · 12/23 · 15/23 unchanged; strict contract check exit 0, REVIEW REQUIRED (Rule 4: `pappy.ts` and Pappy fixtures/tests — the file-less rule is new in this round; Rule 6: `docs/ORCA_SYSTEM_CONTRACT.md` gained the approval and acceptance-contract rules); the acceptance-contract, repair, approval and narration changes are outside Rule 4's patterns and are listed here for review.
+
+**Stabilization test candidate** — `apps/desktop/release/Orca 1.7.0.exe`, built from `3c06384` (clean), ref `fix/release-stabilization-1.7.0`, **not from `main`**, **unsigned**; SHA-256 `3d975950f27cf5bde6aff38ca10a2c3b3e06eaff90a891f1b57ee18f674c772b` (installer `d3369c71ccc4af4d0d11386ef11ad44a75023365af4f8807b1f8195f5ba6eeb3`). Package: 19 entries, 11.6 MB; no tests, sources, maps, runner CLI, keys or Summit Demo Mode; version 1.7.0; all corrections present. Previous candidates archived in `C:\Orca\rc-artifacts\` (rc9 unchanged).
+
+**Packaged smoke** (isolated profiles, local mock providers, no network):
+
+| Check | Result |
+|---|---|
+| Startup, build identity (1.7.0 · `3c06384d` · clean · packaged) | PASS |
+| Approval card: tool, exact command, workspace; no "always approve" control (also after restart) | PASS |
+| Unanswered card → main process times out → card reads "Not approved — timed out"; command did not run | PASS (found and fixed the stale-card issue, `3c06384`) |
+| Approve by a person → accepted → command ran → card "Approved" | PASS (witnessed: a person approved the second card after 33.7 s) |
+| Stop during a request → "Stopped — all operations settled", CANCELLED, no verdict | PASS |
+| Restart → run history persisted; no approval carried over | PASS |
+| Kill during a request → restart → interrupted task reported and recorded | PASS |
+| Hard budget, metered unknown-cost model → refused before dispatch, $0 spent | PASS |
+| Profile written by the previous candidate opens with settings and history intact | PASS |
+| Deny click; mock coding PASS + repair + provenance with approvals; override dialog | **PENDING (human)** — covered deterministically and by live A7 |
+
+**Signing:** no code-signing certificate, environment or configuration exists; both binaries `NotSigned`.
+
+### 20.1 Classification
+
+- **SOURCE STABILIZED — yes.** All four corrections implemented and tested.
+- **INTEGRATION CANDIDATE VALIDATED — yes.** The combined source passes the full required suite.
+- **PACKAGED CANDIDATE VALIDATED — not yet.** Automated packaged checks pass; the human checks above are pending.
+- **PRODUCTION RELEASE READY — no.** Not merged into `main`; unsigned; human checks and contract review pending; release not approved.
