@@ -62,6 +62,14 @@ export interface OrcaExecutionResult {
    * was finalized directly (Option A single-run behaviour).
    */
   ahpChildPackets?: AHPPacket[];
+  /**
+   * What the host recorded the task doing (changes with the pass that wrote
+   * them, test runs with their source state), built from runtime evidence —
+   * for presenters, so an explanation can be checked against facts.
+   */
+  hostRecord?: import("./hostRecord.js").HostRecord;
+  /** Contradictions between the final explanation and the host record, and whether a correction was appended. */
+  provenance?: { contradictions: string[]; corrected: boolean };
 }
 
 export interface OrcaFileChange {
@@ -354,6 +362,10 @@ export interface OrcaRunCtx {
    * with the reproduction evidence gathered before it.
    */
   verificationReceipts?: OrcaToolEvent[];
+  /** Each worker pass of this task with the tool events the host recorded for it, oldest first. */
+  passLog?: import("./hostRecord.js").PassLogEntry[];
+  /** The workspace evidence most recently collected (what the last verdict was judged on). */
+  lastWorkspaceEvidence?: import("@clawde/pappy-core").WorkspaceEvidence;
 }
 
 // ---------------------------------------------------------------------------

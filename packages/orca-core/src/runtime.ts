@@ -1,3 +1,4 @@
+import { buildHostRecord, correctProvenance } from "./hostRecord.js";
 import type {
   OrcaRuntime,
   OrcaRuntimeDeps,
@@ -423,12 +424,16 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
                 ...(attributed.length > 0 ? [`${attributed.length} process(es) started by the task may still be writing: ${attributed.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
                 ...(unattributed.length > 0 ? [`${unattributed.length} process(es) of unknown ownership, created while the task's commands ran, are still running and may be writing: ${unattributed.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
               ];
-              return { ...collected, partial: true, reason: reasons.join("; ") };
+              const partialEvidence = { ...collected, partial: true, reason: reasons.join("; ") };
+              ctx.lastWorkspaceEvidence = partialEvidence;
+              return partialEvidence;
             }
+            ctx.lastWorkspaceEvidence = collected;
             return collected;
           }
         : undefined,
       verificationReceipts: [],
+      passLog: [],
     };
 
     recordTrace("task.received", { taskSpec: normalizedTaskSpec });
@@ -675,6 +680,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       const initialPass = await accountPass(budgetLedger, () => untilAborted(maestro.run(normalizedTaskSpec, ctx), options?.abortSignal), effectiveGate);
       const maestroResult = withPassAccounting(normalizeMaestroResult(initialPass.result), initialPass.accounting);
       persistedMaestroResult = maestroResult;
+      ctx.passLog?.push({ pass: 1, label: "first pass", ...(maestroResult.metadata?.role ? { role: maestroResult.metadata.role } : {}), toolEvents: maestroResult.toolEvents ?? [] });
       const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
 
       // Detect tools the agent tried to call but weren't available.
@@ -978,6 +984,20 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         recordTrace("task.interrupted", lifecycle.snapshot());
       }
     }
+    // The final explanation is checked against what the host recorded: a
+    // statement that the change pre-existed, came from someone else, or was
+    // made in a pass that made no change is corrected from the record.
+    const hostRecord = ctx.lastWorkspaceEvidence ? buildHostRecord(ctx.lastWorkspaceEvidence, ctx.passLog ?? [], effectiveWorkspaceRoot) : undefined;
+    let provenance: OrcaExecutionResult["provenance"];
+    if (hostRecord && !abortError && result.userFacingText) {
+      const corrected = correctProvenance(result.userFacingText, hostRecord);
+      if (corrected.check.contradictions.length > 0) {
+        provenance = { contradictions: corrected.check.contradictions, corrected: corrected.text !== result.userFacingText };
+        recordTrace("provenance.corrected", { contradictions: corrected.check.contradictions, correction: corrected.check.correction ?? null });
+        result = { ...result, userFacingText: corrected.text };
+      }
+    }
+    if (hostRecord) result = { ...result, hostRecord, ...(provenance ? { provenance } : {}) };
     if (!lifecycle.terminal) {
       const succeeded = !abortError && result.status !== "FAIL" && persistedQcResult?.verdict !== "FAIL";
       lifecycle.finish(succeeded ? "COMPLETED" : "FAILED", abortError ? abortError.message : `${result.status}: ${result.summary ?? ""}`);

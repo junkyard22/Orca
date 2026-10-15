@@ -16,6 +16,7 @@ import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnos
 import { accountPass, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
 import type { PassAccounting } from "./budget/passAccounting.js";
 import { classifyRepairIssue, decideRepair } from "./repairClassification.js";
+import { buildHostRecord } from "./hostRecord.js";
 
 type RepairSubagentRun = NonNullable<OrcaMaestroResult["subagentRuns"]>[number];
 
@@ -232,8 +233,32 @@ export async function handleRepairLoop(
         `call the tools and do it. Use <tool_call> blocks to invoke tools.`
       : '';
 
+    // ── What earlier passes actually did, from the host record ──────────────
+    // The repair worker is told which files this task already changed (and in
+    // which pass), which tests ran on which source, and what is outstanding —
+    // from runtime evidence, not from any worker's account — so it neither
+    // rewrites a correct change nor mistakes it for someone else's.
+    const hostRecord = ctx.lastWorkspaceEvidence ? buildHostRecord(ctx.lastWorkspaceEvidence, ctx.passLog ?? [], ctx.workspaceRoot) : undefined;
+    const verificationOnly = decision.blocking.length > 0 && decision.blocking.every((b) => b.class === "missing_evidence");
+    const changedByTask = hostRecord?.changes.filter((c) => c.attribution === "this_task") ?? [];
+    const sourceChangeRequired = !(verificationOnly && changedByTask.length > 0);
+    const blockingCodes = [...new Set(decision.blocking.map((b) => b.code))];
+    const hostSection = hostRecord?.available
+      ? [
+          "",
+          "",
+          hostRecord.text,
+          verificationOnly
+            ? `- Outstanding: verification only. Pappy found missing evidence, not a defect in the code: ${blockingCodes.join(", ")}.`
+            : `- Outstanding: ${decision.blocking.map((b) => `${b.code} (${b.class.replace("_", " ")})`).filter((v, k, a) => a.indexOf(v) === k).join(", ")}.`,
+          sourceChangeRequired
+            ? "Required next action: resolve what the issues describe; keep any change listed above that is already correct."
+            : `Required next action: run the project's full test suite on the current source and report its recorded result. ${changedByTask.map((c) => c.path).join(", ")} was changed by this task. Keep that change, do not rewrite it unless a test fails, and do not describe it as pre-existing or as someone else's work.`,
+        ].join("\n")
+      : "";
+
     const repairSpec: OrcaTaskSpec = {
-      originalUserMessage: `${repairInstruction}${roleHint}${toolNudge}`,
+      originalUserMessage: `${repairInstruction}${hostSection}${roleHint}${toolNudge}`,
       intent: "repair",
       goals: [...originalTask.goals],
       constraints: originalTask.constraints,
@@ -258,9 +283,12 @@ export async function handleRepairLoop(
                 priorChildPackets: currentArtifacts.ahpChildPackets ?? [],
                 synthesisHint: currentArtifacts.metadata?.decomposition?.synthesisHint,
                 doneCriteria: currentArtifacts.doneCriteria ?? originalTask.goals,
-                repairInstruction,
+                repairInstruction: `${repairInstruction}${hostSection}`,
                 originalRequest: originalTask.originalUserMessage,
               }
+            : {}),
+          ...(hostRecord?.available
+            ? { hostRecord: { text: hostRecord.text, changes: hostRecord.changes, testRuns: hostRecord.testRuns, finalSourceTested: hostRecord.finalSourceTested, sourceChangeRequired } }
             : {}),
           issues: currentQC.issues.map((i) => ({
             severity:    i.severity,
@@ -291,6 +319,7 @@ export async function handleRepairLoop(
       maestroResult = normalizeMaestroResult(await untilAborted(maestro.run(repairSpec, ctx), ctx.abortSignal));
     }
     currentArtifacts = maestroResult;
+    ctx.passLog?.push({ pass: pass + 1, label: `repair pass ${pass}`, ...(maestroResult.metadata?.role ? { role: maestroResult.metadata.role } : {}), toolEvents: maestroResult.toolEvents ?? [] });
     lastOutputText = maestroResult.outputText ?? lastOutputText;
     spentUsd += (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
     ctx.recordTrace?.("repair.pass.maestro_result", {

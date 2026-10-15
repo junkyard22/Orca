@@ -128,3 +128,6 @@ export type { ActiveOperation, OperationHandle, OperationKind, PendingResourceSc
 export { createWorkspaceGuard, describeProtections, existenceProbe, WorkspaceProtectedError } from "./workspaceGuard.js";
 export type { ProcessLiveness, ProcessProbe, ProtectRecord, ProtectedOperation, WorkspaceGuard, WorkspaceGuardEvent, WorkspaceOverride, WorkspaceProtection, WorkspaceRelease } from "./workspaceGuard.js";
 export { createAbortError, isAbortError, throwIfAborted, untilAborted } from "./abort.js";
+
+export { buildHostRecord, checkProvenance, correctProvenance, parseTestCounts } from "./hostRecord.js";
+export type { HostRecord, HostRecordChange, HostRecordTestRun, PassLogEntry, ProvenanceCheck } from "./hostRecord.js";
