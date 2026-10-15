@@ -102,6 +102,43 @@ describe("provenance check", () => {
   });
 });
 
+describe("provenance statements are checked against the record, sentence by sentence (A7 false positive)", () => {
+  // A7: the first pass wrote src/parse.js; the repair pass only re-ran the tests.
+  const a7 = buildHostRecord(evidence({ testRuns: [...evidence().testRuns!, { tool: "run_command", command: "npm test", ok: true, exitCode: 0, output: PASSING, fullSuite: true, sourceState: "final" }] }), thenRepair);
+  const clean = (t: string) => checkProvenance(t, a7).contradictions;
+
+  it("accurate references to an earlier pass of this task are not contradictions", () => {
+    expect(clean("I fixed it in the first pass.")).toEqual([]);
+    expect(clean("The fix was already applied earlier in this task.")).toEqual([]);
+    expect(clean("The previous worker pass made this change.")).toEqual([]);
+    // A7's repair worker, verbatim.
+    expect(clean("ROOT CAUSE: The previously fixed src/parse.js already contains the correct implementation. AFFECTED LOCATION: src/parse.js (modified in prior pass). FIX: Already applied in the first pass of this task; no additional code changes were needed.")).toEqual([]);
+  });
+
+  it("claims of an origin outside the task, or of unknown origin, are contradicted by the record", () => {
+    expect(clean("The file was fixed before this session.")[0]).toMatch(/came from outside this task/);
+    expect(clean("Somebody else fixed the file.")[0]).toMatch(/came from outside this task/);
+    expect(clean("The origin of this change is unknown.")[0]).toMatch(/origin is unknown, but the host recorded this task writing src\/parse\.js/);
+    expect(clean("The fix was already in place, so nothing needed changing.")[0]).toMatch(/already present before the task/);
+  });
+
+  it("an in-task claim that names the wrong pass is contradicted", () => {
+    const repairWrote = buildHostRecord(evidence(), [{ pass: 1, label: "first pass", toolEvents: [] }, { pass: 2, label: "repair pass 1", toolEvents: [write("src/parse.js")] }]);
+    expect(checkProvenance("I fixed it in the first pass.", repairWrote).contradictions[0]).toMatch(/credits the first pass with the change, but the host recorded it in the repair pass 1/);
+  });
+
+  it("quoted text is not read as a claim", () => {
+    expect(clean('The request said "the fix was already in place in a prior session"; that is not what happened here.')).toEqual([]);
+    expect(clean("The worker printed `already fixed` in the log.")).toEqual([]);
+  });
+
+  it("with no record of who changed the file, a named author is not accepted and none is invented", () => {
+    const unknown = buildHostRecord(evidence({ changes: [{ path: "src/other.js", status: "modified", kind: "source" }] }), [{ pass: 1, label: "first pass", toolEvents: [] }]);
+    expect(checkProvenance("Somebody else fixed src/other.js.", unknown).contradictions[0]).toMatch(/cannot establish who changed src\/other\.js/);
+    expect(checkProvenance("The origin of the change to src/other.js is unknown.", unknown).contradictions).toEqual([]);
+  });
+});
+
 describe("repair pass gets the host record; the final explanation is checked", () => {
   const makeLLM = () => ({ complete: vi.fn(async () => ({ text: "x" })), stream: vi.fn(async () => ({ text: "x" })) });
 

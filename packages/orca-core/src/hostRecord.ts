@@ -150,17 +150,54 @@ export function buildHostRecord(evidence: WorkspaceEvidence | undefined, passLog
 
 // ── Checking an explanation against the record ──────────────────────────────
 
-/** Says the change was already there, or came from someone or somewhere else. */
-const PRE_EXISTING = [
+/*
+ * Each sentence is read for what it says about where a change came from, and
+ * that is checked against the record. Three kinds of origin are kept apart:
+ *   - this task (a named pass — "in the first pass", "repair pass 1" — or "earlier
+ *     in this task", "the previous pass"): checked against the passes the host
+ *     recorded writing the file;
+ *   - outside the task ("before this session", "a prior session", "someone else
+ *     fixed it"): contradicted when the host recorded this task writing it;
+ *   - unknown ("the origin is unknown"): contradicted when the host knows.
+ * "Already in place / already applied" with no in-task reference means "was
+ * there before the task". Quoted and code text is not read (it quotes, it does
+ * not claim). Live rehearsal A7: "Already applied in the first pass of this
+ * task" — accurate — had been flagged by a whole-text keyword match.
+ */
+const OUTSIDE_ORIGIN = [
+  /\b(?:prior|previous|earlier|another|separate|last)\s+(?:session|conversation|commit)\b/i,
+  /\bbefore\s+(?:this|the)\s+(?:session|task|conversation)\b/i,
+  /\b(?:someone|somebody|another developer|the user|a teammate|another person)\s+(?:else\s+)?(?:had\s+|has\s+|already\s+)*(?:fixed|corrected|changed|modified|updated|patched|edited)\b/i,
+];
+const ALREADY_PRESENT = [
   /\b(?:fix|change|correction|code|implementation|guard|handling)\b[^.\n]{0,60}\b(?:was|were|is|had been)\s+already\s+(?:in place|there|present|applied|made|done|correct|fixed)/i,
   /\balready\s+(?:in place|fixed|corrected|applied|correct|implemented|present)\b/i,
-  /\b(?:prior|previous|earlier|another|separate)\s+(?:session|run|conversation|developer|commit)\b/i,
-  /\b(?:someone|somebody|another developer|the user|a teammate)\s+(?:else\s+)?(?:had\s+|has\s+|already\s+)*(?:fixed|corrected|changed|modified|updated|patched|edited)\b/i,
   /\b(?:nothing|no (?:code )?changes?)\s+(?:was |were )?(?:needed|required|necessary)\s+(?:changing|to be changed|to change)?/i,
   /\bno (?:code )?change(?:s)? (?:was|were) (?:needed|required|made)\b/i,
 ];
-/** The current pass says it made the change itself. */
-const SELF_CLAIM = /\b(?:I|we)\s+(?:just\s+|have\s+|then\s+)?(?:changed|modified|edited|wrote|rewrote|updated|patched|fixed|added)\b|\b(?:in\s+)?this\s+(?:repair\s+)?pass\b[^.\n]{0,40}\b(?:changed|modified|edited|wrote|fixed)\b/i;
+/** A reference to a pass of this task, or to the task itself. */
+const IN_TASK = /\b(?:(?:first|earlier|previous|prior|initial|second|last|worker)\s+(?:worker\s+)?pass|repair pass(?:\s+\d+)?|(?:earlier|already)\s+(?:in|during)\s+this\s+(?:task|run)|(?:in|during|of)\s+this\s+task|previous\s+(?:worker\s+)?attempt)\b/i;
+const UNKNOWN_ORIGIN = /\b(?:origin|author(?:ship)?)\b[^.\n]{0,40}\bunknown\b|\bunknown\s+origin\b|\bnot\s+(?:known|clear)\s+who\b/i;
+/** The speaker says they made a change. */
+const SELF_CLAIM = /\b(?:I|we)\s+(?:just\s+|have\s+|then\s+|already\s+)?(?:changed|modified|edited|wrote|rewrote|updated|patched|fixed|added)\b|\bthis\s+(?:repair\s+)?pass\b[^.\n]{0,40}\b(?:changed|modified|edited|wrote|fixed)\b/i;
+
+/** Text that quotes rather than claims: code blocks, inline code, quotations. */
+function claimsOnly(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]*`/g, " ")
+    .replace(/"[^"\n]{0,400}"/g, " ")
+    .replace(/“[^”\n]{0,400}”/g, " ");
+}
+
+/** The passes a sentence names, as record labels ("first pass", "repair pass 1"); "previous/earlier pass" → any but the last. */
+function namedPasses(sentence: string, labels: readonly string[]): string[] | undefined {
+  const named: string[] = [];
+  if (/\b(?:first|initial)\s+(?:worker\s+)?pass\b/i.test(sentence)) named.push("first pass");
+  for (const m of sentence.matchAll(/\brepair pass\s+(\d+)\b/gi)) named.push(`repair pass ${m[1]}`);
+  if (/\b(?:previous|earlier|prior)\s+(?:worker\s+)?(?:pass|attempt)\b|\bearlier\s+(?:in|during)\s+this\s+(?:task|run)\b/i.test(sentence)) named.push(...labels.slice(0, -1));
+  return named.length > 0 ? [...new Set(named)] : undefined;
+}
 
 export interface ProvenanceCheck {
   contradictions: string[];
@@ -169,28 +206,52 @@ export interface ProvenanceCheck {
 }
 
 /**
- * Compare an explanation with the host record. Only contradictions the record
- * can settle are reported; when it cannot (no record), nothing is claimed.
+ * Compare an explanation with the host record, sentence by sentence. Only
+ * contradictions the record can settle are reported; when it cannot (no
+ * record), nothing is claimed.
  */
 export function checkProvenance(text: string, record: HostRecord | undefined): ProvenanceCheck {
   if (!record || !record.available || !text.trim()) return { contradictions: [] };
-  const contradictions: string[] = [];
   const ours = record.changes.filter((c) => c.attribution === "this_task");
   const unknown = record.changes.filter((c) => c.attribution !== "this_task");
-  if (ours.length > 0 && PRE_EXISTING.some((re) => re.test(text))) {
-    contradictions.push(`the text says the change was already present or made elsewhere, but the host recorded this task writing ${ours.map((c) => c.path).join(", ")}`);
-  }
-  if (ours.length === 0 && unknown.length > 0 && PRE_EXISTING.slice(2, 4).some((re) => re.test(text))) {
-    contradictions.push(`the text names who made the change, but Orca cannot establish who changed ${unknown.map((c) => c.path).join(", ")}`);
-  }
-  if (record.changes.length === 0 && /\b(?:I|we)\s+(?:changed|modified|edited|wrote|updated|patched|fixed)\b/i.test(text)) {
-    contradictions.push("the text says files were changed, but the host recorded no change in the workspace");
-  }
+  const oursPasses = [...new Set(ours.flatMap((c) => c.passes))];
   const last = record.passLabels[record.passLabels.length - 1];
-  if (last && record.passLabels.length > 1 && ours.length > 0 && SELF_CLAIM.test(text)) {
-    const lastWrote = ours.some((c) => c.passes.includes(last));
-    if (!lastWrote) contradictions.push(`the text credits the ${last} with the change, but the host recorded it in the ${[...new Set(ours.flatMap((c) => c.passes))].join(" and the ") || "earlier passes"}`);
+  const found = new Set<string>();
+  const wroteIn = (passes: string[]) => ours.some((c) => c.passes.some((p) => passes.includes(p)));
+  const recorded = () => oursPasses.length > 0 ? `the ${oursPasses.join(" and the ")}` : "this task";
+
+  for (const sentence of claimsOnly(text).split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean)) {
+    const inTask = IN_TASK.test(sentence);
+    const outside = OUTSIDE_ORIGIN.some((re) => re.test(sentence));
+    const already = ALREADY_PRESENT.some((re) => re.test(sentence));
+    if (outside && !inTask) {
+      if (ours.length > 0) found.add(`the text says the change came from outside this task, but the host recorded this task writing ${ours.map((c) => c.path).join(", ")}`);
+      else if (unknown.length > 0) found.add(`the text names who made the change, but Orca cannot establish who changed ${unknown.map((c) => c.path).join(", ")}`);
+      continue;
+    }
+    if (already) {
+      if (inTask) {
+        const named = namedPasses(sentence, record.passLabels);
+        if (ours.length === 0) found.add("the text says this task made the change, but the host recorded no change by this task");
+        else if (named && !wroteIn(named)) found.add(`the text credits the ${named.join(" and the ")} with the change, but the host recorded it in ${recorded()}`);
+      } else if (ours.length > 0) {
+        found.add(`the text says the change was already present before the task, but the host recorded this task writing ${ours.map((c) => c.path).join(", ")}`);
+      }
+      continue;
+    }
+    if (UNKNOWN_ORIGIN.test(sentence) && ours.length > 0) {
+      found.add(`the text says the change's origin is unknown, but the host recorded this task writing ${ours.map((c) => c.path).join(", ")}`);
+      continue;
+    }
+    if (SELF_CLAIM.test(sentence)) {
+      if (record.changes.length === 0) { found.add("the text says files were changed, but the host recorded no change in the workspace"); continue; }
+      if (ours.length === 0) continue; // nothing attributable to compare with
+      const named = namedPasses(sentence, record.passLabels);
+      if (named) { if (!wroteIn(named)) found.add(`the text credits the ${named.join(" and the ")} with the change, but the host recorded it in ${recorded()}`); }
+      else if (last && record.passLabels.length > 1 && !wroteIn([last])) found.add(`the text credits the ${last} with the change, but the host recorded it in ${recorded()}`);
+    }
   }
+  const contradictions = [...found];
   if (contradictions.length === 0) return { contradictions };
   const facts: string[] = [];
   for (const c of ours) facts.push(`${c.path} was changed by this task${c.passes.length ? ` in the ${c.passes.join(" and the ")}` : ""}`);
