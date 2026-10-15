@@ -43,7 +43,7 @@ Branch `fix/release-stabilization-1.7.0` against `origin/main` (`c0b1092`). `pnp
 | **Weakens a guarantee?** | No. Before this change such a criterion could never be proved, which caused A7's first FAIL. The new rule requires *more* than the anchored rule: a reproduction, not just any test run. Without a source change it stays unproved. A stale fingerprint, an unrelated or partial run, or no reproduction keeps it MISSING (negative fixture `parse-insufficient-a7-contract-fileless-no-reproduction`). Documentation criteria are unaffected. Moonshiner eligibility still depends on a PASS that is verified on the first attempt. |
 | **Tests** | `filelessDefectCriterion.test.ts` (7: positive, no source change, stale fingerprint, unrelated test, partial suite, docs unaffected, no reproduction); corpus fixtures, one positive and one negative. |
 | **Limitations** | The defect is recognised by phrasing patterns (`REFERS_TO_DEFECT` / `DEFECT_RESOLVED`). A criterion phrased unusually stays unproved, which errs toward FAIL. |
-| **Disposition** | Authorized by the stabilization brief. **For review:** this is a new Rule 4 change made after Decision 1. It needs the reviewer's explicit approval at merge. |
+| **Disposition** | **Approved by the human (2026-10-15)** as the narrowly defined behaviour described here, contingent on the implementation and regression evidence matching this description. The approval does not authorize weakening Pappy's other requirements or treating unrelated tests as proof. |
 
 ### Rule 4 confirmations
 
@@ -92,9 +92,9 @@ These come from `fix/worker-edit-protocol` and `fix/process-attribution`, both a
 
 ## Summary for the reviewer
 
-No finding weakens Miranda, Pappy or Moonshiner. Two Rule 4 items need the reviewer's explicit merge approval:
+No finding weakens Miranda, Pappy or Moonshiner. Both Rule 4 items are approved by the human:
 
-- **4a**, already approved;
-- **4b**, new.
+- **4a**, approved earlier;
+- **4b**, approved on 2026-10-15, on the conditions stated above.
 
 There is also the Rule 6 wording. The contract, broker and provenance changes are disclosed above. No new contract exception was created during this final review: `bbb4ee8` and `ee1e100` touch no checker-flagged file other than the Rule 6 doc wording.

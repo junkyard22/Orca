@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LLMAdapter, LLMRequest, LLMResponse } from "@clawde/miranda-core";
 import { AHPLifecycle, createChildPacket, createOrcaRuntime, createPappyPort, createWorkspaceGuard, exportTrainingData, registerChildOnRoot } from "@clawde/orca-core";
@@ -703,5 +704,80 @@ describe("release stabilization: one acceptance contract, file-less criterion, a
     ], { maxRepairPasses: 0 });
     expect(subset.result.qcResult?.verdict).toBe("FAIL");
     expect(subset.result.qcResult?.verification?.status).not.toBe("verified");
+  }, 90_000);
+});
+
+describe("packaged-check mock (scripts/desktop-validation/mock-coding.mjs) scripts the model only — the verdict comes from real tools and Pappy", () => {
+  const MESSAGE = "Fix the failing test in src/parse.js and run the tests.";
+  const BRAIN = ["The failing test in src/parse.js is identified and fixed", "Tests are run and all pass after the fix"];
+  type Mock = { replyFor: (body: unknown, mode: string, fixed: string) => string; fixedSource: (original: string) => string };
+  const load = async () => (await import(pathToFileURL(join(__dirname, "..", "..", "..", "..", "scripts", "desktop-validation", "mock-coding.mjs")).href)) as Mock;
+  /** The mock's own reply function behind an LLM adapter: what the app's provider would receive from its HTTP server. */
+  class MockProvider implements LLMAdapter {
+    requests: LLMRequest[] = [];
+    responses: string[] = [];
+    constructor(private mock: Mock, private mode: string, private fixed: string) {}
+    get name() { return "mock-coding"; }
+    async complete(request: LLMRequest): Promise<LLMResponse> {
+      this.requests.push({ ...request, messages: request.messages.map((m) => ({ ...m })) });
+      const content = this.mock.replyFor({ messages: request.messages }, this.mode, this.fixed);
+      this.responses.push(content);
+      return { content, usage: { totalTokens: 100, promptTokens: 60, completionTokens: 40 } };
+    }
+    async stream(request: LLMRequest, onToken: (chunk: string) => void): Promise<LLMResponse> {
+      const r = await this.complete(request);
+      onToken(r.content);
+      return r;
+    }
+  }
+  const tools = (t: OrcaPipelineTrace) => stagesOf(t, "agent.tool.call").map((e) => (e.detail as { tool?: string }).tool);
+  async function run(mode: string, opts: { maxRepairPasses?: number; approve?: (tool: string, args: Record<string, unknown>) => boolean; extraTest?: string } = {}) {
+    const mock = await load();
+    const root = project(true);
+    if (opts.extraTest) writeFileSync(join(root, "test", "parse.test.js"), readFileSync(join(root, "test", "parse.test.js"), "utf8") + opts.extraTest);
+    const fixed = mock.fixedSource(readFileSync(join(root, "src", "parse.js"), "utf8"));
+    const task = spec(root, MESSAGE, [MESSAGE]);
+    const observed: Observed = {};
+    const traces: OrcaPipelineTrace[] = [];
+    const provider = new MockProvider(mock, mode, fixed);
+    const result = await runtimeFor(provider, task, observed, traces, { maxRepairPasses: opts.maxRepairPasses ?? 1, brainCriteria: BRAIN, ...(opts.approve ? { approve: opts.approve } : {}) }).executeTask(task);
+    const answer = provider.responses.filter((r) => r.startsWith("FINAL ANSWER")).at(-1) ?? "";
+    return { root, fixed, observed, result, answer, trace: traces[0]! };
+  }
+
+  it("pass mode: real reproduce → edit → full suite → PASS / verified on the first pass; the answer quotes the real run", async () => {
+    const { root, fixed, result, answer, trace } = await run("pass");
+    expect(tools(trace)).toEqual(["run_command", "write_file", "run_command"]);
+    expect(readFileSync(join(root, "src", "parse.js"), "utf8")).toBe(fixed);
+    expect(fixed).toBe(FIXED);
+    expect(hostTestRun(root)).toEqual({ pass: 13, fail: 0 });
+    expect(result.qcResult?.verdict).toBe("PASS");
+    expect(result.qcResult?.verification?.status).toBe("verified");
+    expect(stagesOf(trace, "repair.start")).toHaveLength(0);
+    expect(answer).toMatch(/13 passed, 0 failed/);
+  }, 90_000);
+
+  it("pass mode is not a hardcoded PASS: when the person denies the commands, the same script is FAIL / not verified", async () => {
+    const { result, trace } = await run("pass", { maxRepairPasses: 0, approve: () => false });
+    expect(tools(trace)).toContain("write_file");
+    expect(result.qcResult?.verdict).toBe("FAIL");
+    expect(result.qcResult?.verification?.status).not.toBe("verified");
+  }, 90_000);
+
+  it("pass mode is not a hardcoded PASS: when the real suite still fails after the edit, the same script is FAIL and reports the failure", async () => {
+    const { root, result, answer } = await run("pass", { maxRepairPasses: 0, extraTest: `test("accepts digit separators", () => { assert.equal(parse("1_000"), 1000); });\n` });
+    expect(hostTestRun(root)).toEqual({ pass: 13, fail: 1 });
+    expect(answer).toMatch(/13 passed, 1 failed/);
+    expect(result.qcResult?.verdict).toBe("FAIL");
+  }, 90_000);
+
+  it("repair mode: first pass lacks a post-change run → FAIL; the repair gets the host record, re-runs, rewrites nothing → PASS / verified", async () => {
+    const { observed, result, trace } = await run("repair");
+    expect((stagesOf(trace, "qc.run.result")[0]!.detail as { verdict: string }).verdict).toBe("FAIL");
+    expect(observed.repairPrompt).toMatch(/Host record of this task so far/);
+    expect(tools(trace)).toEqual(["run_command", "write_file", "run_command"]);
+    expect(result.qcResult?.verdict).toBe("PASS");
+    expect(result.qcResult?.verification?.status).toBe("verified");
+    expect(result.provenance).toBeUndefined();
   }, 90_000);
 });
