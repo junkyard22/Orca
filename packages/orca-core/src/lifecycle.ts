@@ -90,7 +90,18 @@ export interface UnsettledResource {
   /** Identity beyond the pid (creation time) when the host captured it, so a reused pid is not mistaken for the original. */
   identity?: string;
   reason: string;
+  /**
+   * What the host could establish about who started it: "confirmed" (a
+   * recorded descendant), "suspected" (supporting evidence only) or "unknown"
+   * (created while a command ran; nothing else ties it to the task). All three
+   * keep the task unsettled until verified gone. Absent for older records.
+   */
+  ownership?: "confirmed" | "suspected" | "unknown";
 }
+
+/** Whether a recorded process is still running: "gone" only when verified (a reused pid with a different identity counts as gone). */
+export type ResourceLiveness = "alive" | "gone" | "unknown";
+export type ResourceProbe = (resource: UnsettledResource) => Promise<ResourceLiveness> | ResourceLiveness;
 
 /** Errors thrown by an operation may carry the resource it left behind. */
 export function unsettledResourceOf(error: unknown): UnsettledResource | undefined {
@@ -106,6 +117,7 @@ export function unsettledResourceOf(error: unknown): UnsettledResource | undefin
     startedAt: typeof c.startedAt === "string" ? c.startedAt : new Date().toISOString(),
     ...(typeof c.identity === "string" ? { identity: c.identity } : {}),
     reason: typeof c.reason === "string" ? c.reason : "the process had not exited when the operation gave up waiting",
+    ...(c.ownership === "confirmed" || c.ownership === "suspected" || c.ownership === "unknown" ? { ownership: c.ownership } : {}),
   };
 }
 
@@ -305,6 +317,34 @@ export class TaskLifecycle {
       const timer = setTimeout(finish, timeoutMs);
       unsub = this.subscribe(() => { if (!pending()) finish(); });
     });
+  }
+
+  /**
+   * Probe every recorded process and release the ones verified gone; then, for
+   * up to `waitMs`, keep probing the rest every `intervalMs`. A process that
+   * exited can no longer write, so evidence taken afterwards is complete with
+   * respect to it; "alive" and "unknown" are kept — nothing is released on
+   * anything short of verification.
+   */
+  async reverifyResources(
+    probe: ResourceProbe,
+    reason: string,
+    options: { waitMs?: number; intervalMs?: number } = {},
+  ): Promise<{ released: UnsettledResource[]; remaining: UnsettledResource[] }> {
+    const waitMs = Math.max(0, options.waitMs ?? 0);
+    const intervalMs = Math.max(10, options.intervalMs ?? 500);
+    const deadline = Date.now() + waitMs;
+    const released: UnsettledResource[] = [];
+    for (;;) {
+      for (const r of [...this.residues]) {
+        let liveness: ResourceLiveness;
+        try { liveness = await probe(r); } catch { liveness = "unknown"; }
+        if (liveness === "gone" && this.releaseResource(r.pid, reason)) released.push(r);
+      }
+      if (this.residues.length === 0 || Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, Math.max(0, deadline - Date.now()))));
+    }
+    return { released, remaining: [...this.residues] };
   }
 
   /** A resource was verified gone (or the user took responsibility for it). */

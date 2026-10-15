@@ -395,13 +395,33 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             // A scan for processes a command left behind answers within a few
             // seconds; it is waited for so a survivor is known before judging.
             await lifecycle.waitForScans(8000);
+            // A recorded process that has exited can no longer write: wait a
+            // bounded time for recorded processes to exit, release the ones
+            // verified gone, and take the evidence afterwards — so the
+            // inventory includes anything they wrote. Whatever is still
+            // running (or cannot be verified) keeps the evidence partial.
+            if (deps.processProbe && lifecycle.unsettledResources().length > 0) {
+              const { released, remaining } = await lifecycle.reverifyResources(
+                deps.processProbe,
+                "verified gone before the workspace evidence was taken",
+                { waitMs: deps.resourceSettleWaitMs ?? 10_000, intervalMs: 500 },
+              );
+              recordTrace("lifecycle.resources.reverified", {
+                stage: "before_evidence",
+                released: released.map((r) => ({ pid: r.pid, label: r.label, ownership: r.ownership ?? null })),
+                remaining: remaining.map((r) => ({ pid: r.pid, label: r.label, ownership: r.ownership ?? null })),
+              });
+            }
             const collected = await evidence.collect();
             const active = lifecycle.activeOperations().filter((o) => o.kind !== "verification" && o.kind !== "scan");
             const survivors = lifecycle.unsettledResources();
             if (collected.available && (active.length > 0 || survivors.length > 0)) {
+              const attributed = survivors.filter((r) => r.ownership !== "unknown");
+              const unattributed = survivors.filter((r) => r.ownership === "unknown");
               const reasons = [
                 ...(active.length > 0 ? [`${active.length} operation(s) still active while verifying: ${active.map((o) => `${o.kind} ${o.label}`).join(", ")}`] : []),
-                ...(survivors.length > 0 ? [`${survivors.length} process(es) started by the task may still be writing: ${survivors.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
+                ...(attributed.length > 0 ? [`${attributed.length} process(es) started by the task may still be writing: ${attributed.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
+                ...(unattributed.length > 0 ? [`${unattributed.length} process(es) of unknown ownership, created while the task's commands ran, are still running and may be writing: ${unattributed.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
               ];
               return { ...collected, partial: true, reason: reasons.join("; ") };
             }
@@ -968,6 +988,17 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     // interrupted, or that ended (even COMPLETED) with a process it started
     // still running, leaves the workspace protected until the leftovers
     // settle, are verified gone, or the user knowingly overrides.
+    // Probe recorded processes once more: one that has exited since the
+    // evidence was taken does not leave the workspace protected. Anything
+    // still running, or that cannot be verified, still does.
+    if (deps.processProbe && lifecycle.unsettledResources().length > 0) {
+      const { released, remaining } = await lifecycle.reverifyResources(deps.processProbe, "verified gone when the task ended");
+      recordTrace("lifecycle.resources.reverified", {
+        stage: "task_end",
+        released: released.map((r) => ({ pid: r.pid, label: r.label, ownership: r.ownership ?? null })),
+        remaining: remaining.map((r) => ({ pid: r.pid, label: r.label, ownership: r.ownership ?? null })),
+      });
+    }
     const leftover = lifecycle.activeOperations().length > 0 || lifecycle.unsettledResources().length > 0;
     if (finalLifecycle.state === "INTERRUPTED" || leftover) {
       const operations = lifecycle.activeOperations().map((o) => `${o.kind} ${o.label}`);

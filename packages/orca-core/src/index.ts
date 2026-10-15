@@ -124,7 +124,7 @@ export { accountPass, budgetGateContext, budgetStopReason, formatBudgetStop, wit
 export type { PassAccounting } from "./budget/passAccounting.js";
 export { TaskLifecycle, TERMINAL_TASK_STATES } from "./lifecycle.js";
 export { unsettledResourceOf } from "./lifecycle.js";
-export type { ActiveOperation, OperationHandle, OperationKind, PendingResourceScan, TaskLifecycleSnapshot, TaskState, TaskTransition, UnsettledResource } from "./lifecycle.js";
+export type { ActiveOperation, OperationHandle, OperationKind, PendingResourceScan, TaskLifecycleSnapshot, TaskState, TaskTransition, UnsettledResource, ResourceLiveness, ResourceProbe } from "./lifecycle.js";
 export { createWorkspaceGuard, describeProtections, existenceProbe, WorkspaceProtectedError } from "./workspaceGuard.js";
 export type { ProcessLiveness, ProcessProbe, ProtectRecord, ProtectedOperation, WorkspaceGuard, WorkspaceGuardEvent, WorkspaceOverride, WorkspaceProtection, WorkspaceRelease } from "./workspaceGuard.js";
 export { createAbortError, isAbortError, throwIfAborted, untilAborted } from "./abort.js";

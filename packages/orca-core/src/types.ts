@@ -436,6 +436,16 @@ export interface OrcaRuntimeDeps {
   /** Refuses a task whose workspace is still protected by an earlier, unsettled task, and protects it when this task ends unsettled. */
   workspaceGuard?: import("./workspaceGuard.js").WorkspaceGuard;
   /**
+   * Verifies whether a process a command left behind is still running (pid
+   * plus creation time; a reused pid counts as gone). With it, processes that
+   * have exited are released before the workspace evidence is taken and before
+   * the workspace is protected at the end of a task. Without it, every
+   * recorded process counts as still running (the conservative default).
+   */
+  processProbe?: import("./lifecycle.js").ResourceProbe;
+  /** How long to wait for recorded processes to exit before taking the workspace evidence. Default 10 s. */
+  resourceSettleWaitMs?: number;
+  /**
    * Miranda's gate — the compliance and governance layer.
    * Wraps every LLM call, tool execution, and QC run with validation checkpoints.
    * Injected here so it flows through OrcaRunCtx to every adapter.

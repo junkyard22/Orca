@@ -1927,6 +1927,8 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       sessionBudget: getSessionBudget(),
       budgetJournal: budgetJournal(),
       workspaceGuard: workspaceGuard(),
+      // Recorded survivors are re-probed (pid + creation time) before evidence is judged and before the workspace is protected.
+      processProbe: (resource) => probeProcess({ pid: resource.pid, identity: resource.identity }),
       gate,
       model,
     });
