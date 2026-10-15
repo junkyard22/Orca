@@ -918,6 +918,33 @@ export const evidenceFixtures: EvidenceFixture[] = [
     reason: "The user's own goal as the criterion: same host evidence, same outcome.",
   },
   {
+    // Release stabilization (after live rehearsal A7): the acceptance contract
+    // is the user's request plus Brain's criteria, and Brain's "The failing
+    // test is fixed" names no file.
+    id: "parse-genuine-a7-contract-fileless-criterion",
+    category: "debugging", label: "genuine",
+    input: input(PARSE_TASK, [PARSE_TASK, "Root cause of the failing test in src/parse.js is identified", "The failing test is fixed", "Tests are run and pass successfully"], {
+      toolEvents: [cmd("npm test", PARSE_OUT_BASE), read("src/parse.js", PARSE_SRC_BASE), write("src/parse.js", PARSE_SRC_FIXED), cmd("npm test", PARSE_OUT_FIXED)],
+      filesChanged: reported("src/parse.js", PARSE_SRC_FIXED),
+      outputText: "ROOT CAUSE: parse('') threw a RangeError because parseInt('') is NaN. FIX: added an empty-input guard in src/parse.js. npm test: 5 passed, 0 failed (2 failed before the change).",
+      workspace: ws([parseChange(PARSE_SRC_FIXED)], [run("npm test", PARSE_OUT_BASE, "baseline"), run("npm test", PARSE_OUT_FIXED, "final")], { testCommand: "node --test" }),
+    }),
+    expectedVerdict: "PASS", expectedStatus: "verified", expectedEligibility: "eligible",
+    reason: "A7's first pass: the failure reproduced on the task-start source and the full suite passes on the final source after a source change; the file-less defect criterion is decided by that evidence.",
+  },
+  {
+    id: "parse-insufficient-a7-contract-fileless-no-reproduction",
+    category: "debugging", label: "insufficient",
+    input: input(PARSE_TASK, [PARSE_TASK, "The failing test is fixed", "Tests are run and pass successfully"], {
+      toolEvents: [read("src/parse.js", PARSE_SRC_BASE), write("src/parse.js", PARSE_SRC_FIXED), cmd("npm test", PARSE_OUT_FIXED)],
+      filesChanged: reported("src/parse.js", PARSE_SRC_FIXED),
+      outputText: "Fixed the failing test in src/parse.js. npm test: 5 passed.",
+      workspace: ws([parseChange(PARSE_SRC_FIXED)], [run("npm test", PARSE_OUT_FIXED, "final")], { testCommand: "node --test" }),
+    }),
+    expectedVerdict: "FAIL", expectedStatus: "unverified", expectedEligibility: "needs_human_review",
+    reason: "A file-less defect criterion with a passing suite but no reproduction and no regression test: the passing suite does not show the reported failure is the one fixed.",
+  },
+  {
     id: "parse-insufficient-defect-criterion-no-reproduction",
     category: "debugging", label: "insufficient",
     input: input(PARSE_TASK, PARSE_LIVE_CRITERIA, {

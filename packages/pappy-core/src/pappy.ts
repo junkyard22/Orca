@@ -229,6 +229,8 @@ function supportingReceipt(ac: AcceptanceCriterion, receipts: readonly Behaviour
  * written are matched earlier and keep their own verifier.
  */
 /** A criterion that names the reported failure itself. */
+/** States that the defect is resolved: "fixed", "resolved", "no longer fails", "now passes". */
+const DEFECT_RESOLVED = /\b(?:fix(?:ed|es)?|resolv(?:e|ed|es)|correct(?:ed|s)|repair(?:ed|s)|no longer (?:fail|throw|crash)\w*|now pass\w*)\b/i;
 const REFERS_TO_DEFECT = /\b(?:fail\w*|bugs?|broken|defects?|regressions?|errors?|crash\w*|exceptions?)\b/i;
 
 const TEST_RUN_CRITERION = /\b(?:(?:re-?)?run|ran|execut(?:e|es|ed|ing))\b[^.]{0,40}\b(?:tests?|test suite|specs?)\b|\b(?:tests?|test suite|specs?)\b[^.]{0,40}\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?)\b/i;
@@ -712,6 +714,42 @@ function verifyAcceptanceCriterion(
         },
       };
     }
+  }
+
+  // A bug-fix criterion that states the reported defect is resolved but names
+  // no file or symbol ("The failing test is fixed" — live rehearsal A7, where
+  // it fell to fail-closed despite full host evidence). The source change the
+  // host observed is the candidate; requireBehaviouralEvidence then demands
+  // what only the defect's own evidence can give: a run that failed on the
+  // task-start source and passes on the final source, or a regression test the
+  // final suite ran. An unrelated passing suite, a run before the last change,
+  // a partial or failing run, or weakened tests produce no such receipt; with
+  // no source change on disk the criterion is not met at all.
+  if (independent.available && taskKind === "bugfix" && REFERS_TO_DEFECT.test(ac.text) && DEFECT_RESOLVED.test(ac.text)) {
+    const changedSource = [...independent.changedPaths].filter((p) => classifyPath(p) === "source");
+    if (changedSource.length === 0) {
+      return {
+        proved: false,
+        evidence: ["no source file changed on disk"],
+        strength: "none",
+        behavioural: true,
+        requiresReproduction: true,
+        assessment: {
+          requires: ac.text,
+          satisfiedBy: "a source change on disk, and a test run that showed the failure on the task-start source and passes on the final source (or a regression test the final suite ran)",
+          supportedBy: [],
+          sufficient: false,
+          needed: "a change to the source that fixes the defect, verified by the tests on the final source",
+        },
+      };
+    }
+    return {
+      proved: true,
+      evidence: [`source changed on disk: ${changedSource.join(", ")} (the defect's own test evidence, not the criterion's wording, decides the criterion)`],
+      strength: "independent",
+      behavioural: true,
+      requiresReproduction: true,
+    };
   }
 
   // A criterion about running the tests and their passing, in a code-change
