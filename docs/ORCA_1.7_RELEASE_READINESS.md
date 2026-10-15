@@ -352,3 +352,22 @@ A7's auto-approval: the only automatic-approval code path was the renderer's ses
 - **INTEGRATION CANDIDATE VALIDATED — yes.** The combined source passes the full required suite.
 - **PACKAGED CANDIDATE VALIDATED — not yet.** Automated packaged checks pass; the human checks above are pending.
 - **PRODUCTION RELEASE READY — no.** Not merged into `main`; unsigned; human checks and contract review pending; release not approved.
+
+## 21. Final PR review (2026-10-15)
+
+The targeted review covered four areas: the acceptance contract, Pappy's file-less bug-fix criterion, the approval broker and provenance. It found two genuine gaps, both fixed with tests:
+
+| # | Gap | Correction | Commit |
+|---|---|---|---|
+| 1 | A Brain criterion unrelated to the request (for example "Update the README" on a `parse.js` fix) became mandatory and could block a genuine completion | Brain criteria that share no file, distinctive term or verification activity with the request are recorded as advisory and are not judged. User goals are always mandatory. | `bbb4ee8` |
+| 2 | Approvals were not bound to the workspace, and the card showed the renderer's *current* workspace setting. An approval faster than 400 ms was settled as a denial, so a legitimate quick click could deny the call. | The workspace is captured at task start, sent with the request, shown on the card and must be echoed by the answer. An early approval is not counted and the request stays pending. Approve is disabled for 450 ms when the card appears. | `ee1e100` |
+
+The file-less criterion (fingerprint on the final source, reproduction required, documentation keeps E3, Moonshiner unchanged) and provenance (append-only, quotes excluded, unknown origin stays unknown) were confirmed with no change. The contract review is in `docs/ORCA_1.7_CONTRACT_REVIEW.md`.
+
+**Regression** (head after this section's commit):
+- Workspace suite: 2,114 passed · 0 failed · 3 skipped (2,109 before).
+- One run under full parallel load timed out two real-process probes in `workbench-core`. That package was not changed in this review. It passed 133/133 in isolation twice, and the complete rerun was clean.
+- TypeScript: 0 errors (packages and `scripts/`).
+- Pappy suites: 23/23 · 12/23 · 15/23, unchanged.
+- Evidence corpus: 60/60 (0 of 40 false acceptances, 0 of 14 false rejections).
+- Strict contract check: exit 0, REVIEW REQUIRED, with the same 13 findings (Rule 4 for Pappy files, Rule 6 for the system contract).
