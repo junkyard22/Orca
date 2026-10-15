@@ -14,10 +14,13 @@
  *   - it must come while the requesting task is still running;
  *   - it must name the tool, and for run_command the exact command, that the
  *     card showed — approving `npm test` cannot approve `node --test` or
- *     anything else;
- *   - it must come no sooner than a person could have read the card
- *     (MIN_DECISION_MS) — an automatic "yes" is refused even if a renderer
- *     path reappears;
+ *     anything else — and the workspace the task runs in;
+ *   - an approval that arrives sooner than a person could have read the card
+ *     (MIN_DECISION_MS) is not counted: the request stays pending, so a real
+ *     click a moment later still works and nothing is denied by mistake. This
+ *     timing rule is a backstop against an automatic "yes", not the
+ *     authorization itself — the binding to one request is (the card also
+ *     keeps Approve disabled for that moment);
  *   - nothing persists: each call is decided on its own, and a restart starts
  *     with no approvals at all.
  * Deny, timeout and Stop all resolve the request as not approved.
@@ -29,6 +32,8 @@ export interface ApprovalRequest {
   args: Record<string, unknown>;
   /** The task that asked; an answer after it stopped authorizes nothing. */
   taskId?: string;
+  /** The workspace the task runs in; the card shows it and the answer must name it. */
+  workspaceRoot?: string;
 }
 
 export interface ApprovalResponse {
@@ -37,6 +42,7 @@ export interface ApprovalResponse {
   /** The tool and command the card displayed (echoed back by the renderer). */
   tool?: string;
   command?: string;
+  workspace?: string;
 }
 
 export interface ApprovalDecision {
@@ -84,9 +90,9 @@ export function createApprovalBroker(options: ApprovalBrokerOptions) {
 
   return {
     /** Ask for one call. Resolves true only for a valid decision by a person. */
-    request(tool: string, args: Record<string, unknown>, taskId?: string): Promise<boolean> {
+    request(tool: string, args: Record<string, unknown>, taskId?: string, workspaceRoot?: string): Promise<boolean> {
       const id = `tool_${now()}_${++seq}_${Math.random().toString(36).slice(2, 7)}`;
-      const request: ApprovalRequest = { id, tool, args, ...(taskId ? { taskId } : {}) };
+      const request: ApprovalRequest = { id, tool, args, ...(taskId ? { taskId } : {}), ...(workspaceRoot ? { workspaceRoot } : {}) };
       return new Promise<boolean>((resolve) => {
         const timer = setTimeout(() => settle(id, false, "timed out"), timeoutMs);
         pending.set(id, { request, at: now(), resolve, timer });
@@ -104,7 +110,11 @@ export function createApprovalBroker(options: ApprovalBrokerOptions) {
       if (response.tool !== request.tool) { settle(request.id, false, `the answer names ${response.tool ?? "no tool"}, the request was ${request.tool}`); return { accepted: true, approved: false, reason: "tool mismatch" }; }
       const command = commandOf(request.args);
       if (command !== undefined && response.command !== command) { settle(request.id, false, "the answer does not name the command that was shown"); return { accepted: true, approved: false, reason: "command mismatch" }; }
-      if (now() - at < minDecisionMs) { settle(request.id, false, `answered ${now() - at} ms after the card appeared — before a person could read it`); return { accepted: true, approved: false, reason: "too fast" }; }
+      if (request.workspaceRoot !== undefined && response.workspace !== request.workspaceRoot) { settle(request.id, false, "the answer does not name the workspace the task runs in"); return { accepted: true, approved: false, reason: "workspace mismatch" }; }
+      if (now() - at < minDecisionMs) {
+        log(`approval ${request.id}: an approval ${now() - at} ms after the card appeared was not counted (before a person could read it); the request stays pending`);
+        return { accepted: false, approved: false, reason: "too early" };
+      }
       settle(request.id, true, "approved by the user");
       return { accepted: true, approved: true, reason: "approved" };
     },

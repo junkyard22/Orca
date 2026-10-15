@@ -2318,6 +2318,8 @@ const approvalBroker = createApprovalBroker({
 });
 let approvalQueue: Promise<void> = Promise.resolve();
 let approvalEpoch = 0;
+/** The workspace each running task started in: what its approval cards show and must be answered for. */
+const taskWorkspaces = new Map<string, string>();
 
 function resolvePendingApprovals(_approved: false): void {
   approvalEpoch++;
@@ -2343,7 +2345,7 @@ function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: 
   return { ok: true, auth: refreshAuthStatus(false) };
 }
 
-ipcMain.on("tool:approve", (_ev, response: { id: string; approved: boolean; tool?: string; command?: string }) => {
+ipcMain.on("tool:approve", (_ev, response: { id: string; approved: boolean; tool?: string; command?: string; workspace?: string }) => {
   // A response to a dialog from a task that is no longer running authorizes
   // nothing; neither does one that names another command, arrives late, or
   // arrives before a person could have read the card (approvalBroker.ts).
@@ -2353,6 +2355,7 @@ ipcMain.on("tool:approve", (_ev, response: { id: string; approved: boolean; tool
     approved: response.approved === true,
     ...(typeof response.tool === "string" ? { tool: response.tool } : {}),
     ...(typeof response.command === "string" ? { command: response.command } : {}),
+    ...(typeof response.workspace === "string" ? { workspace: response.workspace } : {}),
   });
 });
 
@@ -2393,7 +2396,8 @@ function requestSingleToolApproval(
     return Promise.resolve(false);
   }
   // Not approved after 60 s without an answer (approvalBroker).
-  return approvalBroker.request(tool, args, taskSessions.current?.id);
+  const session = taskSessions.current;
+  return approvalBroker.request(tool, args, session?.id, session ? taskWorkspaces.get(session.id) ?? activeWorkspaceRoot() : activeWorkspaceRoot());
 }
 
 // ── Build identity: what this executable is ────────────────────────────────
@@ -2900,6 +2904,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   // repairs and Cargo summaries reserve against it, and the runtime reuses it
   // as the task ledger. Its final figures travel with the reply.
   const messageBudget = createMessageBudget(_currentSettings ?? { budgetUsd: 0 });
+  const taskWorkspaceRoot = activeWorkspaceRoot();
   type SendResult = { ok: true; reply: { text: string } } | { ok: false; error: string; cancelling?: boolean; workspaceProtected?: boolean };
   const cleanup = () => {
     if (isStreaming) {
@@ -2927,7 +2932,9 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
       }),
     (reason) => ({ ok: false, error: reason, cancelling: true }),
   );
+  taskWorkspaces.set(session.id, taskWorkspaceRoot);
   void session.settled.then((state) => {
+    taskWorkspaces.delete(session.id);
     cleanup();
     console.log(`[Orca] task session ${session.id} settled: ${state}`);
     win?.webContents.send("orca-event", { type: "task:session", sessionId: session.id, state, budget: messageBudget.snapshot() });

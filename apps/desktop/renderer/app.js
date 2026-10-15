@@ -2618,11 +2618,12 @@ function resolveApproval(approved) {
     card.querySelector(".tool-card-status").textContent = "approving\u2026";
   }
   const command = dialog.dataset.approvalCommand;
-  orca.approveToolCall(id, approved, { tool, ...(command !== undefined && dialog.dataset.hasCommand === "1" ? { command } : {}) });
+  const workspace = dialog.dataset.approvalWorkspace;
+  orca.approveToolCall(id, approved, { tool, ...(command !== undefined && dialog.dataset.hasCommand === "1" ? { command } : {}), ...(dialog.dataset.hasWorkspace === "1" ? { workspace } : {}) });
   dialog.style.display = "none";
 }
 
-orca.onToolRequest((id, tool, args) => {
+orca.onToolRequest((id, tool, args, workspaceRoot) => {
   if (!tool || !String(tool).trim()) return;
 
   const card = appendToolCard(id, tool, args);
@@ -2635,9 +2636,17 @@ orca.onToolRequest((id, tool, args) => {
   dialog.dataset.hasCommand = shownCommand !== undefined ? "1" : "0";
   dialog.dataset.approvalCommand = shownCommand ?? "";
   document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
-  document.getElementById("approval-workspace").textContent = currentWorkspaceRoot || "(not set)";
+  // The workspace this task runs in (from the request), not the current setting.
+  dialog.dataset.hasWorkspace = workspaceRoot ? "1" : "0";
+  dialog.dataset.approvalWorkspace = workspaceRoot || "";
+  document.getElementById("approval-workspace").textContent = workspaceRoot || currentWorkspaceRoot || "(not set)";
   dialog.dataset.approvalId = id;
   dialog.style.display      = "flex";
+  // Approve stays disabled for a moment, so it cannot be clicked before the
+  // card could be read (the main process would not count it anyway).
+  const approveBtn = document.getElementById("btn-approve-tool");
+  approveBtn.disabled = true;
+  setTimeout(() => { if (dialog.dataset.approvalId === id) approveBtn.disabled = false; }, 450);
   // The safe answer is the keyboard default: Enter denies, Approve needs a deliberate click.
   document.getElementById("btn-deny-tool").focus();
 

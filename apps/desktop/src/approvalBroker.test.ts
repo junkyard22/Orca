@@ -45,12 +45,49 @@ describe("approval broker", () => {
     expect(await unrelated).toBe(false);
   });
 
-  it("an instant 'yes' (no person could have read the card) is refused — the A7 auto-approval path", async () => {
+  it("an instant 'yes' (no person could have read the card) is not counted — the A7 auto-approval path — and the request stays pending", async () => {
+    const { broker, sent, advance } = setup();
+    let result: boolean | undefined;
+    const call = broker.request("run_command", { command: "npm test" }, "t1").then((r) => (result = r));
+    advance(5);
+    const early = broker.respond({ id: sent[0]!.id, approved: true, tool: "run_command", command: "npm test" });
+    expect(early).toMatchObject({ accepted: false, approved: false, reason: "too early" });
+    await Promise.resolve();
+    expect(result).toBeUndefined(); // neither approved nor denied
+    expect(broker.pendingCount()).toBe(1);
+    void call;
+  });
+
+  it("a legitimate fast click is not denied: an early click is ignored and the person's click a moment later approves", async () => {
     const { broker, sent, advance } = setup();
     const call = broker.request("run_command", { command: "npm test" }, "t1");
+    advance(150);
+    expect(broker.respond({ id: sent[0]!.id, approved: true, tool: "run_command", command: "npm test" }).accepted).toBe(false);
+    advance(300);
+    expect(broker.respond({ id: sent[0]!.id, approved: true, tool: "run_command", command: "npm test" }).approved).toBe(true);
+    expect(await call).toBe(true);
+    // A Deny is never delayed: it settles immediately.
+    const denied = broker.request("run_command", { command: "npm test" }, "t1");
     advance(5);
-    expect(broker.respond({ id: sent[0]!.id, approved: true, tool: "run_command", command: "npm test" }).reason).toBe("too fast");
+    broker.respond({ id: sent[1]!.id, approved: false });
+    expect(await denied).toBe(false);
+  });
+
+  it("an approval is bound to the workspace the task runs in", async () => {
+    const { broker, sent, advance } = setup();
+    const call = broker.request("run_command", { command: "npm test" }, "t1", "C:/work/a");
+    expect(sent[0]!.workspaceRoot).toBe("C:/work/a"); // the card shows the task's workspace
+    advance(human);
+    expect(broker.respond({ id: sent[0]!.id, approved: true, tool: "run_command", command: "npm test", workspace: "C:/work/b" }).reason).toBe("workspace mismatch");
     expect(await call).toBe(false);
+    const missing = broker.request("run_command", { command: "npm test" }, "t1", "C:/work/a");
+    advance(human);
+    expect(broker.respond({ id: sent[1]!.id, approved: true, tool: "run_command", command: "npm test" }).reason).toBe("workspace mismatch");
+    expect(await missing).toBe(false);
+    const ok = broker.request("run_command", { command: "npm test" }, "t1", "C:/work/a");
+    advance(human);
+    expect(broker.respond({ id: sent[2]!.id, approved: true, tool: "run_command", command: "npm test", workspace: "C:/work/a" }).approved).toBe(true);
+    expect(await ok).toBe(true);
   });
 
   it("deny and timeout prevent execution", async () => {
@@ -114,21 +151,23 @@ describe("approval broker", () => {
 });
 
 describe("the card is told how each request was settled", () => {
-  it("approval, denial, a refused late or fast answer, and Stop are all reported with the reason", async () => {
+  it("approval, a refused mismatched answer, and Stop are all reported with the reason; an early click is not a settlement", async () => {
     let clock = 0;
     const settled: Array<[string, boolean, string]> = [];
     const sent: ApprovalRequest[] = [];
     const broker = createApprovalBroker({ send: (r) => sent.push(r), isTaskRunning: () => true, now: () => clock, onSettled: (r, a, why) => settled.push([r.id, a, why]) });
     const a = broker.request("run_command", { command: "npm test" }, "t"); clock += 1000;
     broker.respond({ id: sent[0]!.id, approved: true, tool: "run_command", command: "npm test" });
-    const b = broker.request("run_command", { command: "npm test" }, "t"); clock += 1;
-    broker.respond({ id: sent[1]!.id, approved: true, tool: "run_command", command: "npm test" });
-    const c = broker.request("run_command", { command: "npm test" }, "t");
+    const b = broker.request("run_command", { command: "npm test" }, "t"); clock += 1000;
+    broker.respond({ id: sent[1]!.id, approved: true, tool: "run_command", command: "node --test" });
+    const c = broker.request("run_command", { command: "npm test" }, "t"); clock += 1;
+    broker.respond({ id: sent[2]!.id, approved: true, tool: "run_command", command: "npm test" }); // too early: still pending
+    expect(settled).toHaveLength(2);
     broker.denyAll("the task stopped");
     await Promise.all([a, b, c]);
     expect(settled.map(([, ok, why]) => [ok, why])).toEqual([
       [true, "approved by the user"],
-      [false, expect.stringMatching(/before a person could read it/)],
+      [false, expect.stringMatching(/does not name the command/)],
       [false, "the task stopped"],
     ]);
   });
@@ -142,5 +181,11 @@ describe("renderer: no session-wide approval path remains", () => {
     expect(app).not.toMatch(/sessionApprovedTools|Auto-approved/);
     // Only the Approve / Deny handlers (resolveApproval) answer a request.
     expect(app.match(/orca\.approveToolCall\(/g)).toHaveLength(1);
+  });
+  it("the card shows and echoes the request's own workspace, and Approve starts disabled", () => {
+    const app = renderer("app.js");
+    expect(app).toMatch(/orca\.onToolRequest\(\(id, tool, args, workspaceRoot\)/);
+    expect(app).toMatch(/dialog\.dataset\.approvalWorkspace = workspaceRoot/);
+    expect(app).toMatch(/approveBtn\.disabled = true;/);
   });
 });
