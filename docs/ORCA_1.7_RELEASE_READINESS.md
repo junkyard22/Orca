@@ -385,3 +385,25 @@ The file-less criterion (fingerprint on the final source, reproduction required,
 - The worker is told denial, timeout and cancellation as distinct outcomes.
 
 The packaged checks resume with a fresh H1 on a candidate rebuilt from the corrected commit.
+
+### 21.2 Packaged human checks H1–H4 (2026-10-15) — candidate `71ced381`, unsigned, isolated profiles, offline mocks
+
+| Check | What the human did and saw | Trace | Status |
+|---|---|---|---|
+| **H1** Deny | The card showed the tool, the exact command, the task's workspace, Deny focused, and no "always approve" control. The human pressed Deny. **No second card**, no repair pass. The task was reported as blocked by the user's authorization; verdict FAIL, Repairs 0; nothing ran. The first attempt, on `0fd63222`, failed (§21.1). | `run_1792091406611_dgwvwp` | **PASS** |
+| **H2** Genuine coding PASS | Scripted mock in pass mode on a fresh project (11 passed / 2 failed). The human approved `npm test` (11/2); `src/parse.js` gained a one-line guard; the human approved `npm test` again (**13/0**). Pappy PASS, 0 issues; completed and verified; Repairs 0. | `run_1792091675024_j787a1` | **PASS** |
+| **H3** Repair | Scripted mock in repair mode. The first pass edited and did not re-run the tests, so Pappy returned FAIL (FIX_TESTS_NOT_RERUN and others). The repair received the host record and no write demand; the human approved `npm test 2>&1` (**13/0**); no edits. PASS, verified, Repairs 1. The account was accurate, with no provenance correction. | `run_1792091807321_8hnrdi` | **PASS** |
+| **H4** Override → Cancel | Staged unconfirmed process (a harmless sleeper). The banner and the native warning dialog appeared; the human pressed Cancel ("Override cancelled."). Protection stayed at 1 protection, 0 overrides, and "Hello" was refused. After the sleeper was ended, Orca released the workspace ("every process verified gone") and the next message ran. Final file: 0 protections, 0 overrides. | protection file snapshots | **PASS** |
+
+The evidence is kept outside the repository with the A5–A7 evidence: observation notes, watcher logs, traces and protection snapshots. Two stock-mock side effects in H1 are not Orca defects: the mock's FAIL control word simulated a provider outage on Claire's failure prompt, and that outage left the status reading "stopped by budget".
+
+**Regression at `71ced38`:**
+- workspace suite 2,137 passed, 0 failed, 3 skipped;
+- TypeScript 0 errors;
+- Pappy suites 23/23, 12/23 and 15/23, unchanged; corpus 60/60;
+- contract checks (default and strict) REVIEW REQUIRED, the same 13 findings, exit 0.
+
+### 21.3 Classification
+
+- **PACKAGED CANDIDATE VALIDATED — yes** (H1–H4 PASS, witnessed by the human, on `71ced381`).
+- **PRODUCTION RELEASE READY — no.** Not merged into `main`; unsigned; the contract items need the reviewer's approval at merge; no release has been approved.
