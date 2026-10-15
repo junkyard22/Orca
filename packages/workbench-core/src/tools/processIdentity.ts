@@ -98,9 +98,41 @@ export interface SurvivingProcess extends ProcessIdentity {
   name?: string;
   /** "descendant": reached from the root through live processes; "orphan": created while the command ran, parent dead, ancestry unprovable. */
   relation: "descendant" | "orphan";
+  /**
+   * What the scan can say about who started it:
+   *   confirmed  reached from the command's root through recorded parent links (or, on POSIX, still in its process group);
+   *   suspected  ancestry unprovable, but its command line names the workspace — supporting evidence, not proof;
+   *   unknown    ancestry unprovable and nothing ties it to the command beyond having been created while it ran.
+   * Processes the scan can show are unrelated (created before the command, in
+   * another Windows session, or under a live parent outside the command's
+   * tree) are never reported. Suspected and unknown are still treated as the
+   * command's until verified gone: the scan cannot rule them out.
+   */
+  ownership: "confirmed" | "suspected" | "unknown";
 }
 
-type WindowsRow = { ProcessId: number; ParentProcessId: number; Name?: string; c: string };
+export interface SurvivorScanOptions {
+  /** The workspace the command ran in; a command line naming it is supporting evidence of ownership. */
+  workspaceRoot?: string;
+}
+
+/**
+ * Windows reports creation times to the microsecond on the same clock as
+ * `Date`, so a process created more than this long before the command was
+ * spawned cannot be one of its descendants. (POSIX `lstart` has one-second
+ * granularity and keeps a 2 s allowance.)
+ */
+const WINDOWS_CREATION_SLACK_MS = 250;
+const POSIX_CREATION_SLACK_MS = 2000;
+
+function namesWorkspace(commandLine: string | undefined, workspaceRoot: string | undefined): boolean {
+  if (!commandLine || !workspaceRoot) return false;
+  const norm = (s: string) => s.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const root = norm(workspaceRoot);
+  return root.length > 3 && norm(commandLine).includes(root);
+}
+
+export type WindowsRow = { ProcessId: number; ParentProcessId: number; Name?: string; c: string; s?: number; cl?: string };
 
 /**
  * One enumeration serves every scan requested within a short window. The
@@ -134,12 +166,12 @@ function coalescedEnumeration(start: () => Promise<string | undefined>): Promise
   return promise;
 }
 
-export async function findSurvivingDescendants(rootPid: number, spawnedAtIso: string): Promise<SurvivingProcess[] | null> {
+export async function findSurvivingDescendants(rootPid: number, spawnedAtIso: string, options: SurvivorScanOptions = {}): Promise<SurvivingProcess[] | null> {
   if (process.env["ORCA_PROCESS_SCAN"] === "off") return null;
   if (!Number.isInteger(rootPid) || rootPid <= 0) return null;
   if (process.platform === "win32") {
     const out = await coalescedEnumeration(() => run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-      "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate | ForEach-Object { [pscustomobject]@{ ProcessId=$_.ProcessId; ParentProcessId=$_.ParentProcessId; Name=$_.Name; c=$(if($_.CreationDate){$_.CreationDate.ToString('o')}else{''}) } } | ConvertTo-Json -Compress"], SCAN_TIMEOUT_MS));
+      "Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate,SessionId,CommandLine | ForEach-Object { [pscustomobject]@{ ProcessId=$_.ProcessId; ParentProcessId=$_.ParentProcessId; Name=$_.Name; c=$(if($_.CreationDate){$_.CreationDate.ToString('o')}else{''}); s=$_.SessionId; cl=$_.CommandLine } } | ConvertTo-Json -Compress"], SCAN_TIMEOUT_MS));
     if (!out) return null;
     let rows: WindowsRow[];
     try {
@@ -148,49 +180,83 @@ export async function findSurvivingDescendants(rootPid: number, spawnedAtIso: st
     } catch {
       return null;
     }
-    const spawnedAt = Date.parse(spawnedAtIso);
-    const alive = new Set<number>();
-    const children = new Map<number, Array<{ pid: number; identity?: string; name?: string; parent: number }>>();
-    const recent: Array<{ pid: number; identity?: string; name?: string; parent: number }> = [];
-    for (const r of rows) {
-      if (typeof r?.ProcessId !== "number" || typeof r?.ParentProcessId !== "number") continue;
-      alive.add(r.ProcessId);
-      // A process created before the root was spawned cannot be its descendant
-      // (its parent pid was reused); 2 s of slack for clock granularity.
-      const created = r.c ? Date.parse(r.c) : NaN;
-      if (Number.isFinite(created) && Number.isFinite(spawnedAt) && created < spawnedAt - 2000) continue;
-      const entry = { pid: r.ProcessId, ...(r.c ? { identity: r.c } : {}), ...(typeof r.Name === "string" ? { name: r.Name } : {}), parent: r.ParentProcessId };
-      const list = children.get(r.ParentProcessId) ?? [];
-      list.push(entry);
-      children.set(r.ParentProcessId, list);
-      recent.push(entry);
-    }
-    const found: SurvivingProcess[] = [];
-    const seen = new Set<number>([rootPid]);
-    const queue = [rootPid];
-    while (queue.length > 0) {
-      const parent = queue.shift()!;
-      for (const c of children.get(parent) ?? []) {
-        if (seen.has(c.pid)) continue;
-        seen.add(c.pid);
-        if (processExists(c.pid) === "alive") found.push({ pid: c.pid, ...(c.identity ? { identity: c.identity } : {}), ...(c.name ? { name: c.name } : {}), relation: "descendant" });
-        queue.push(c.pid);
-      }
-    }
-    // A chain through a dead intermediate (shell → node → grandchild, node
-    // gone) cannot be walked. A process created while the command ran whose
-    // parent no longer exists is reported as a suspected descendant: ancestry
-    // cannot be established, and unknown is reported, not dropped.
-    for (const c of recent) {
-      if (seen.has(c.pid) || alive.has(c.parent) || c.pid === process.pid) continue;
-      seen.add(c.pid);
-      if (processExists(c.pid) === "alive") found.push({ pid: c.pid, ...(c.identity ? { identity: c.identity } : {}), ...(c.name ? { name: c.name } : {}), relation: "orphan" });
-    }
-    return found;
+    return parseWindowsSurvivors(rows, rootPid, spawnedAtIso, process.pid, processExists, options);
   }
   const out = await coalescedEnumeration(() => run("ps", ["-eo", "pid=,ppid=,pgid=,comm=,lstart="], SCAN_TIMEOUT_MS));
   if (!out) return null;
   return parsePosixSurvivors(out, rootPid, spawnedAtIso, process.pid, processExists);
+}
+
+/**
+ * Windows counterpart of the POSIX parser, over one `Win32_Process`
+ * enumeration. Exported for tests; the enumeration itself is PowerShell.
+ *
+ * Windows keeps a dead parent's pid in `ParentProcessId`, so the command's
+ * tree is walked from the root even after the root exited: every process
+ * reached that way is a confirmed descendant. A chain through a dead
+ * intermediate (shell → node → grandchild, node gone) cannot be walked; a
+ * process created while the command ran whose parent no longer exists is
+ * reported with its ownership as the scan can state it (suspected or
+ * unknown). Nothing about such a process ties it to the command except
+ * timing — Git Bash, for one, starts every external program under a parent
+ * that has already exited — so the label never claims the command started it.
+ * Processes the scan can show are unrelated are left out: created before the
+ * command was spawned, in a different Windows session from Orca, or under a
+ * live parent outside the command's tree.
+ */
+export function parseWindowsSurvivors(
+  rows: readonly WindowsRow[],
+  rootPid: number,
+  spawnedAtIso: string,
+  selfPid: number,
+  exists: (pid: number) => ProcessLiveness = processExists,
+  options: SurvivorScanOptions = {},
+): SurvivingProcess[] {
+  const spawnedAt = Date.parse(spawnedAtIso);
+  const selfSession = rows.find((r) => r?.ProcessId === selfPid)?.s;
+  const alive = new Set<number>();
+  type Entry = { pid: number; identity?: string; name?: string; parent: number; commandLine?: string };
+  const children = new Map<number, Entry[]>();
+  const recent: Entry[] = [];
+  for (const r of rows) {
+    if (typeof r?.ProcessId !== "number" || typeof r?.ParentProcessId !== "number") continue;
+    alive.add(r.ProcessId);
+    // A process created before the root was spawned cannot be its descendant
+    // (its parent pid was reused, or it is simply someone else's).
+    const created = r.c ? Date.parse(r.c) : NaN;
+    if (Number.isFinite(created) && Number.isFinite(spawnedAt) && created < spawnedAt - WINDOWS_CREATION_SLACK_MS) continue;
+    // A child is created in its creator's session; another session's process is not ours.
+    if (typeof selfSession === "number" && typeof r.s === "number" && r.s !== selfSession) continue;
+    const entry: Entry = { pid: r.ProcessId, ...(r.c ? { identity: r.c } : {}), ...(typeof r.Name === "string" ? { name: r.Name } : {}), parent: r.ParentProcessId, ...(typeof r.cl === "string" ? { commandLine: r.cl } : {}) };
+    const list = children.get(r.ParentProcessId) ?? [];
+    list.push(entry);
+    children.set(r.ParentProcessId, list);
+    recent.push(entry);
+  }
+  const found: SurvivingProcess[] = [];
+  const seen = new Set<number>([rootPid]);
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const parent = queue.shift()!;
+    for (const c of children.get(parent) ?? []) {
+      if (seen.has(c.pid)) continue;
+      seen.add(c.pid);
+      if (exists(c.pid) === "alive") found.push({ pid: c.pid, ...(c.identity ? { identity: c.identity } : {}), ...(c.name ? { name: c.name } : {}), relation: "descendant", ownership: "confirmed" });
+      queue.push(c.pid);
+    }
+  }
+  for (const c of recent) {
+    if (seen.has(c.pid) || alive.has(c.parent) || c.pid === selfPid) continue;
+    seen.add(c.pid);
+    if (exists(c.pid) === "alive") found.push({
+      pid: c.pid,
+      ...(c.identity ? { identity: c.identity } : {}),
+      ...(c.name ? { name: c.name } : {}),
+      relation: "orphan",
+      ownership: namesWorkspace(c.commandLine, options.workspaceRoot) ? "suspected" : "unknown",
+    });
+  }
+  return found;
 }
 
 /**
@@ -222,16 +288,16 @@ export function parsePosixSurvivors(
   for (const r of rows) {
     if (r.pgid !== rootPid || r.pid === rootPid) continue;
     seen.add(r.pid);
-    found.push({ pid: r.pid, identity: r.started, name: r.name, relation: "descendant" });
+    found.push({ pid: r.pid, identity: r.started, name: r.name, relation: "descendant", ownership: "confirmed" });
   }
   for (const r of rows) {
     if (seen.has(r.pid) || r.pid === selfPid || alive.has(r.ppid) && r.ppid !== 1) continue;
     // Created before the command started: cannot be its descendant (2 s slack for `lstart` granularity).
     const created = Date.parse(r.started);
-    if (Number.isFinite(created) && Number.isFinite(spawnedAt) && created < spawnedAt - 2000) continue;
+    if (Number.isFinite(created) && Number.isFinite(spawnedAt) && created < spawnedAt - POSIX_CREATION_SLACK_MS) continue;
     if (r.ppid === 1 && !Number.isFinite(created)) continue; // unparseable start time: say nothing about long-lived init children
     seen.add(r.pid);
-    if (exists(r.pid) === "alive") found.push({ pid: r.pid, identity: r.started, name: r.name, relation: "orphan" });
+    if (exists(r.pid) === "alive") found.push({ pid: r.pid, identity: r.started, name: r.name, relation: "orphan", ownership: "unknown" });
   }
   return found;
 }

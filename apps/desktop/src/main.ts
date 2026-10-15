@@ -2,6 +2,7 @@ import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { mkdirSync, readFileSync } from "node:fs";
 import { sendWhenLoaded } from "./initStatus";
+import { constraintGateFor, workerMustNotWriteFiles, repairSourceChangeFlag } from "./workerConstraints";
 import { listAnthropicModels, type ModelListing } from "./modelListing";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -93,7 +94,10 @@ import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
 import { runWithBudget, withBudgetAttribution } from "@clawde/miranda-core";
 import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
+import { reviewNarration } from "./narrationReview";
+import { createApprovalBroker, type Settlement } from "./approvalBroker";
 import { createAbortError, createBudgetJournal, createWorkspaceGuard, WorkspaceProtectedError } from "@clawde/orca-core";
+import type { HostRecord } from "@clawde/orca-core";
 import type { BudgetJournal, WorkspaceGuard } from "@clawde/orca-core";
 import { probeProcess } from "@yakstacks/workbench-core";
 import { budgetWarnings, createMessageBudget, getCustomPrices, getSessionBudget, setCustomPrices } from "./budgetContext";
@@ -668,14 +672,6 @@ async function brainRoute(
 // Tier 2: ReactAgentAdapter (ReAct loop implementation) 
 // Tier 3: RoleAgentAdapter (role-aware wrapper)
 
-/**
- * Returns true when the objective text describes a command-execution task
- * (running build, test, or lint pipelines — no file authoring expected).
- */
-function isCommandExecutionObjective(objective: string): boolean {
-  const t = objective.toLowerCase();
-  return /\b(run the (tests?|build|lint)|run (tests?|build|lint)|npm run|npm test|pnpm run|pnpm test|yarn run|yarn test|build and test|build\/test(?:\/lint)?|execute these|execute this)\b/.test(t);
-}
 
 function buildMaestroAdapter(
   /** Per-role LLM adapters. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
@@ -748,6 +744,8 @@ function buildMaestroAdapter(
     objective: string,
     sourcePacket?: AHPPacket,
     repairInstruction?: string,
+    /** Per-task-kind evidence guidance (verificationGuidance): the worker must see it. */
+    guidanceGoals: string[] = [],
   ): AHPPacket | undefined => {
     if (!ctx.ahpRootPacket) return undefined;
     const safeRole = role.replace(/[^a-z0-9_-]/gi, "_");
@@ -760,6 +758,11 @@ function buildMaestroAdapter(
             type: "goal",
             value: goal,
           })),
+          // The packet is what the worker reads; guidance added only to the
+          // agent task never reached the model (1.7.0 rehearsal traces).
+          ...guidanceGoals
+            .filter((goal) => !(task.goals ?? []).includes(goal))
+            .map((goal, index) => ({ id: `guidance-${index}`, type: "goal", value: goal })),
           ...deweyBriefLines(task).map((line, index) => ({
             id: `context-${index}`,
             type: "context",
@@ -781,7 +784,7 @@ function buildMaestroAdapter(
     const packetConstraints = sourcePacket
       ? [...sourcePacket.constraints]
       : [
-          ...(isCommandExecutionObjective(objective)
+          ...(workerMustNotWriteFiles(task, objective)
             ? [{ rule: "no_file_writes", enforcer: "miranda" }]
             : []),
           ...Object.entries(task.constraints ?? {}).map(([rule, value]) => ({
@@ -938,6 +941,7 @@ function buildMaestroAdapter(
       options.objective,
       options.sourcePacket,
       options.repairInstruction,
+      guidance,
     );
     if (options.subagent) {
       ctx.emit?.({
@@ -969,26 +973,7 @@ function buildMaestroAdapter(
 
     // Build a per-worker gate that enforces AHP constraints from the child packet.
     // This is scoped per-run so the constraint state never leaks across workers.
-    const constraintGate = childPacket && childPacket.constraints.length > 0
-      ? createMirandaGate({
-          ahpPacket: childPacket,
-          checkConstraint: (constraint, gateCtx) => {
-            if (constraint.rule === "no_file_writes") {
-              return gateCtx.tool !== "write_file";
-            }
-            return true;
-          },
-          onViolation: (packet, violated) => {
-            packet.verdict = AHPVerdict.VIOLATION;
-            appendAHPTrace(packet, {
-              timestamp: new Date().toISOString(),
-              state: packet.lifecycle,
-              actor: "miranda",
-              note: `Constraint violation blocked tool call: ${violated.map((c) => c.rule).join(", ")}`,
-            });
-          },
-        })
-      : undefined;
+    const constraintGate = constraintGateFor(childPacket);
     const workerGate = composeMirandaGates(ctx.gate, constraintGate);
 
     const agentCtx: AgentRunContext = {
@@ -1270,6 +1255,7 @@ function buildMaestroAdapter(
             .filter((value) => value.length > 0),
           doneCriteria: [...targetedRepair.targetPacket.expectedOutput.acceptanceCriteria],
           conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
+          ...repairSourceChangeFlag(task),
         };
         const repairedWorker = await runRoleWorker(task, ctx, targetedRepair.targetRole, agentTask, {
           workerIndex,
@@ -1394,6 +1380,7 @@ function buildMaestroAdapter(
         goals: task.goals ?? [],
         doneCriteria: routing.doneCriteria,
         conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
+        ...repairSourceChangeFlag(task),
       };
       const worker = await runRoleWorker(task, ctx, routing.role, agentTask, {
         workerIndex: 0,
@@ -1938,13 +1925,16 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       workspaceRoot,
       store,
       writeTrace: writePipelineTrace,
-      requestToolApproval,
+      // Settlements name their outcome, so the runtime can record a denial or a timeout.
+      requestToolApproval: requestToolDecision,
       budgetUsd: s.budgetUsd,
       budgetSource: s.budgetSource,
       customPrices: getCustomPrices(),
       sessionBudget: getSessionBudget(),
       budgetJournal: budgetJournal(),
       workspaceGuard: workspaceGuard(),
+      // Recorded survivors are re-probed (pid + creation time) before evidence is judged and before the workspace is protected.
+      processProbe: (resource) => probeProcess({ pid: resource.pid, identity: resource.identity }),
       gate,
       model,
     });
@@ -2033,6 +2023,9 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     }
 
     claire = createClaire({
+      // Claire's reply is checked against what the host recorded the task doing:
+      // a claim that the change pre-existed or was someone else's is corrected.
+      reviewReply: (reply, result) => reviewNarration(reply, result as { hostRecord?: HostRecord }, (m) => console.log(`[Orca] ${m}`)),
       complete: async (messages: ClaireMessage[]) => {
         const resp = await runGatedLLMCall(
           { gate, model: narratorModel },
@@ -2310,16 +2303,28 @@ ipcMain.on("win:close",    () => {
 // ── Tool approval: renderer approves/denies each tool call before it runs ──
 // When the desktop app runs tools (agent-loop mode), each call sends a
 // "tool:request" event to the renderer and blocks until the user responds.
-const pendingApprovals = new Map<string, (approved: boolean) => void>();
+// Each answer is bound to the request it answers (task, tool, exact command)
+// and must come from a person: see approvalBroker.ts. Nothing persists between
+// calls or across a restart — there is no session-wide approval.
+const approvalBroker = createApprovalBroker({
+  send: (request) => win?.webContents.send("tool:request", request),
+  isTaskRunning: (taskId) => {
+    const session = taskSessions.current;
+    return !!session && session.state === "running" && (taskId === undefined || session.id === taskId);
+  },
+  log: (message) => console.log(`[Orca] ${message}`),
+  // The card shows the main process's decision (a background window's timer
+  // can lag; a late click must not look like an approval).
+  onSettled: (request, approved, reason) => win?.webContents.send("tool:request:settled", { id: request.id, approved, reason }),
+});
 let approvalQueue: Promise<void> = Promise.resolve();
 let approvalEpoch = 0;
+/** The workspace each running task started in: what its approval cards show and must be answered for. */
+const taskWorkspaces = new Map<string, string>();
 
-function resolvePendingApprovals(approved: boolean): void {
+function resolvePendingApprovals(_approved: false): void {
   approvalEpoch++;
-  for (const resolve of pendingApprovals.values()) {
-    resolve(approved);
-  }
-  pendingApprovals.clear();
+  approvalBroker.denyAll("the task stopped or the app was locked");
   approvalQueue = Promise.resolve();
 }
 
@@ -2341,13 +2346,18 @@ function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: 
   return { ok: true, auth: refreshAuthStatus(false) };
 }
 
-ipcMain.on("tool:approve", (_ev, { id, approved }: { id: string; approved: boolean }) => {
+ipcMain.on("tool:approve", (_ev, response: { id: string; approved: boolean; tool?: string; command?: string; workspace?: string }) => {
   // A response to a dialog from a task that is no longer running authorizes
-  // nothing: the entry was already resolved as denied when the task stopped.
-  const resolve = pendingApprovals.get(id);
-  pendingApprovals.delete(id);
-  const session = taskSessions.current;
-  resolve?.(approved && !!session && session.state === "running");
+  // nothing; neither does one that names another command, arrives late, or
+  // arrives before a person could have read the card (approvalBroker.ts).
+  if (!response || typeof response.id !== "string") return;
+  approvalBroker.respond({
+    id: response.id,
+    approved: response.approved === true,
+    ...(typeof response.tool === "string" ? { tool: response.tool } : {}),
+    ...(typeof response.command === "string" ? { command: response.command } : {}),
+    ...(typeof response.workspace === "string" ? { workspace: response.workspace } : {}),
+  });
 });
 
 /**
@@ -2358,19 +2368,31 @@ export function requestToolApproval(
   tool: string,
   args: Record<string, unknown>,
 ): Promise<boolean> {
+  return requestToolDecision(tool, args).then((settlement) => settlement.approved === true);
+}
+
+/**
+ * The same request, reporting how it was settled, for the task runtime: it
+ * records denials and timeouts so a refused operation is not asked for again.
+ */
+export function requestToolDecision(
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<Settlement> {
   if (isAppLocked()) {
-    return Promise.resolve(false);
+    return Promise.resolve({ approved: false, outcome: "cancelled", reason: "the app is locked" });
   }
   // Only a running task may ask the user; a task that is stopping gets "no".
   const session = taskSessions.current;
   if (!session || session.state !== "running") {
-    return Promise.resolve(false);
+    return Promise.resolve({ approved: false, outcome: "cancelled", reason: "the task is not running" });
   }
 
   const epoch = approvalEpoch;
+  const superseded: Settlement = { approved: false, outcome: "cancelled", reason: "the task stopped" };
   const queued = approvalQueue.then(
-    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
-    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
+    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : superseded,
+    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : superseded,
   );
   approvalQueue = queued.then(
     () => undefined,
@@ -2382,23 +2404,13 @@ export function requestToolApproval(
 function requestSingleToolApproval(
   tool: string,
   args: Record<string, unknown>,
-): Promise<boolean> {
+): Promise<Settlement> {
   if (!win || win.isDestroyed()) {
-    return Promise.resolve(false);
+    return Promise.resolve({ approved: false, outcome: "cancelled", reason: "the window is closed" });
   }
-
-  return new Promise((resolve) => {
-    const id = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    pendingApprovals.set(id, resolve);
-    win?.webContents.send("tool:request", { id, tool, args });
-    // Auto-deny after 60 s if the user doesn't respond
-    setTimeout(() => {
-      if (pendingApprovals.has(id)) {
-        pendingApprovals.delete(id);
-        resolve(false);
-      }
-    }, 60_000);
-  });
+  // Not approved after 60 s without an answer (approvalBroker).
+  const session = taskSessions.current;
+  return approvalBroker.decide(tool, args, session?.id, session ? taskWorkspaces.get(session.id) ?? activeWorkspaceRoot() : activeWorkspaceRoot());
 }
 
 // ── Build identity: what this executable is ────────────────────────────────
@@ -2905,6 +2917,7 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
   // repairs and Cargo summaries reserve against it, and the runtime reuses it
   // as the task ledger. Its final figures travel with the reply.
   const messageBudget = createMessageBudget(_currentSettings ?? { budgetUsd: 0 });
+  const taskWorkspaceRoot = activeWorkspaceRoot();
   type SendResult = { ok: true; reply: { text: string } } | { ok: false; error: string; cancelling?: boolean; workspaceProtected?: boolean };
   const cleanup = () => {
     if (isStreaming) {
@@ -2932,7 +2945,9 @@ ipcMain.handle("send-message", async (_ev, text: string) => {
       }),
     (reason) => ({ ok: false, error: reason, cancelling: true }),
   );
+  taskWorkspaces.set(session.id, taskWorkspaceRoot);
   void session.settled.then((state) => {
+    taskWorkspaces.delete(session.id);
     cleanup();
     console.log(`[Orca] task session ${session.id} settled: ${state}`);
     win?.webContents.send("orca-event", { type: "task:session", sessionId: session.id, state, budget: messageBudget.snapshot() });

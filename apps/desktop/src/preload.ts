@@ -160,19 +160,28 @@ contextBridge.exposeInMainWorld("orca", {
   // Called by the renderer to subscribe to tool-call approval requests.
   // The callback fires whenever an agent loop wants to execute a tool.
   onToolRequest: (
-    cb: (id: string, tool: string, args: Record<string, unknown>) => void,
+    cb: (id: string, tool: string, args: Record<string, unknown>, workspaceRoot?: string) => void,
   ): (() => void) => {
     const handler = (
       _: Electron.IpcRendererEvent,
-      data: { id: string; tool: string; args: Record<string, unknown> },
-    ) => cb(data.id, data.tool, data.args);
+      data: { id: string; tool: string; args: Record<string, unknown>; workspaceRoot?: string },
+    ) => cb(data.id, data.tool, data.args, data.workspaceRoot);
     ipcRenderer.on("tool:request", handler);
     return () => ipcRenderer.removeListener("tool:request", handler);
   },
 
+  // How the main process settled a request (approved, denied, timed out, stopped, refused).
+  onToolRequestSettled: (cb: (settled: { id: string; approved: boolean; reason: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { id: string; approved: boolean; reason: string }) => cb(data);
+    ipcRenderer.on("tool:request:settled", handler);
+    return () => ipcRenderer.removeListener("tool:request:settled", handler);
+  },
+
   // Send the user's approve/deny decision back to main.
-  approveToolCall: (id: string, approved: boolean): void =>
-    ipcRenderer.send("tool:approve", { id, approved }),
+  // The answer names the tool and command the card showed; the main process
+  // accepts it only for that exact request (approvalBroker.ts).
+  approveToolCall: (id: string, approved: boolean, shown?: { tool?: string; command?: string; workspace?: string }): void =>
+    ipcRenderer.send("tool:approve", { id, approved, ...(shown?.tool ? { tool: shown.tool } : {}), ...(typeof shown?.command === "string" ? { command: shown.command } : {}), ...(typeof shown?.workspace === "string" ? { workspace: shown.workspace } : {}) }),
 
   // ── Workspace selection ──────────────────────────────────────────────────
   // Opens a native folder picker and returns the chosen path (empty string if

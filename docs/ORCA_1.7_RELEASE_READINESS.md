@@ -222,3 +222,188 @@ With an organization-level Anthropic key, Settings → Fetch models showed "11 m
 ### 15.6 Next session
 
 1. Authorize and run Test B (cancellation) on rc4; record evidence and cumulative spend. 2. Decide on a second Test A attempt. 3. Apply the persisted-cost fix with a regression test; run the full regression; rebuild (rc5) and re-run the automated smoke. 4. Update §1–§14 of this report with final figures, classify, and decide on push/sign/install/publish.
+
+## 16. Live rehearsals A4 and A5 on the corrected candidate (2026-10-14 / 2026-10-15) — observed results only
+
+Candidate: test candidate built from `fix/worker-edit-protocol` @ `6a9b7a35` (clean, unsigned), `Orca 1.7.0.exe` SHA-256 `0a32dab0d225cb9ededa196c990e0b7fe9f256249df65582903878c8d9ddba21`. Isolated rehearsal profile; Anthropic `claude-sonnet-4-6` for every role; task budget $0.75 (read from the running app); one repair pass; human approvals. Message: "Fix the failing test in src/parse.js and run the tests." Evidence: `orca-audit/phase6/rc/rehearsal/A4/` and `A5/` (traces, transcripts, screenshots, diffs, fingerprints).
+
+### 16.1 A4 (2026-10-14) — FAIL, approvals expired
+
+- The worker edited `src/parse.js` (no approval needed for workspace writes, by design). All three test commands asked for approval; each settled exactly 60.0 s later by the automatic deny — no human was present. No host-recorded test run after the edit.
+- Pappy: FAIL / unverified (first pass: `FIX_TESTS_NOT_RERUN`, AC1 partial, AC2 missing); training eligibility needs_human_review, then rejected after the repair pass.
+- The edit fixed the defect but changed established behaviour: "007" → 7, "-0" → -0, inexact large integers silently rounded. The original five tests did not cover these.
+- Spend: $0.503676 measured (23 requests; brain $0.005736, debugger $0.497940; 0 unreconciled); status bar $0.5057.
+
+### 16.2 Contract tests added before A5
+
+Eight regression tests recording the original behaviour (negative integers, zero, largest safe integer accepted; leading zeros, negative zero, plus sign, decimals/exponents/hex/trailing characters, inexact integers rejected) were committed in a fresh disposable copy (`project-A5`). The suite is now **13 tests**: original source 11 pass / 2 fail (the two defect tests); the A4 edit 10 / 3; a minimal correct fix 13 / 13.
+
+### 16.3 A5 (2026-10-15) — FAIL, verification blocked by operator-introduced processes
+
+- **Execution.** Brain routed to the debugger. The worker ran `npm test` (approved by the human after 4.0 s; reproduction), read `src/parse.js`, wrote a three-line fix (empty / whitespace-only input returns 0; nothing else changed), and ran `npm test` again (approved after 2.3 s): **host-recorded 13 passed / 0 failed on the final source.** All four approval cards were answered by the human within 7.0 s (trace timings); none timed out or was denied.
+- **Pappy, first pass:** all three acceptance criteria marked proved ("root cause identified", "failing test fixed in src/parse.js", "tests are run and all pass"); `test_evidence=true`. **Verdict FAIL** on one HIGH issue, `EVIDENCE_PARTIAL`: the survivor scan reported `sleep.exe` processes "orphan of: npm test" that might still be writing, so the workspace inventory was marked partial.
+- **Cause of those processes:** the operator's monitoring loop (Git Bash, `sleep 2` every two seconds) started short-lived `sleep.exe` processes during the command windows. The Windows survivor scan reports any process created during a command whose parent has exited as a suspected orphan (documented in `processIdentity.ts` as a known false-positive class). The project's test script is `node --test`, which starts no `sleep`. Pappy's refusal was correct for the evidence it was given; the evidence was contaminated by the rehearsal's own instrumentation.
+- **Repair pass:** given only the `EVIDENCE_PARTIAL` finding, the worker re-ran the tests three times (13 / 13 each, approved), rewrote `src/parse.js` with byte-identical content, and stopped at `max_iterations` with no answer. QC was blocked ("output text is empty"); the first-pass FAIL stands. Training eligibility: needs_human_review. The workspace stays **protected** (three flagged pids, all since exited); the protection was not released.
+- **Final source:** SHA-256 `4ebafafa…1bd3`, equal to both writes and to the state the host tests ran on; independent post-hoc `node --test` 13 / 13 (not host-recorded). Differences from the original are limited to empty, whitespace-only and tab/newline input.
+- **Spend:** task ledger $0.349968 measured (16 requests; brain 1 / $0.005916; debugger 15 / $0.344052 — first pass 5 / $0.084549, repair pass 10 / $0.259503; 59,206 in / 11,490 out; 0 unreconciled, 0 unpriced, 0 refused). Persisted `runs.cost_usd` $0.349968 (matches the ledger). Status bar $0.3518 — $0.0018 charged after the task, most likely the closing explanation (not attributed by the trace). Remaining task budget $0.4000. Aggregate for A5 $0.3518 of the newly approved $1.00.
+
+### 16.4 Where this leaves the classification
+
+- **Live-model coding success — not established.** A5 shows a real model making a correct, contract-preserving edit and the host recording 13 / 13 on the final source, and Pappy proving all three criteria — but the run's verdict is FAIL, and a PASS has not been observed.
+- **Safety and authorization controls held:** every command needed and received a human approval; nothing executed without it; Pappy refused verification on incomplete evidence; the budget held; accounting matched across ledger, UI and persisted row.
+- **Open items before production approval:** (1) one clean rehearsal with no operator processes started during the run; (2) a design decision on the survivor-scan false positive (machine-wide orphan attribution on Windows), which can also be tripped by ordinary user activity; (3) a repair pass that receives only a non-code finding spends its iterations and ends with no answer (QC blocked) — worth a follow-up.
+- **PRODUCTION RELEASE READY — no.**
+
+## 17. Live rehearsal A6 (2026-10-15) — observed results only
+
+Candidate: test candidate from `fix/process-attribution` @ `7023d49c` (clean, unsigned; `Orca 1.7.0.exe` SHA-256 `8bc4bd0adecf929ad6cc2b079d5c0363ab1b13803ed7efbc1988b2c2f28e8b8e`), containing the process-attribution, re-verification and repair-classification corrections (`docs/ORCA_1.7_PROCESS_ATTRIBUTION.md`). Same profile, model (`claude-sonnet-4-6`), budget ($0.75) and repair setting (1) as A5; fresh disposable `project-A6` identical to the A5 baseline (13 tests, 11 / 2). Monitoring by one watcher process that starts no child processes; the operator ran no other command during the task. Evidence: `orca-audit/phase6/rc/rehearsal/A6/`.
+
+- **Execution.** Brain routed to the debugger. Pass 1: `npm test` (approved; 11 / 2 reproduction), read `src/parse.js` and the tests, `npm test` again (approved; still 11 / 2), wrote the fix (a three-line empty-input guard, plus an em-dash changed to a hyphen in the doc comment), then answered **without re-running the tests**. Four approval cards in all, every one answered by the human within 15 s (0.8 s to 14.8 s, trace timings); none timed out or was denied.
+- **Pappy, pass 1: FAIL**, correctly: `FIX_TESTS_NOT_RERUN`, required receipts for "the failing test is fixed" and "tests are run and pass" missing, root-cause criterion partial. All missing-evidence issues, so the repair pass was dispatched (as designed).
+- **Repair pass:** `node --test test/parse.test.js` and `npm test 2>&1` on the final source — **host-recorded 13 passed / 0 failed, both**; no further edit.
+- **Pappy, final: WARN, evidence verified**, test evidence true, training eligibility needs_human_review. Open issues: MEDIUM `COMPLETENESS_EMPTY_DIFF` and LOW `NO_OP_WRITE`, both about a file named `&1` that `run_command`'s file-change detection invented from the stream redirect in `npm test 2>&1` (no such file exists); LOW `COMPLETENESS_FILE_MISMATCH` (keyword heuristic).
+- **Process attribution:** no survivor was recorded; no workspace protection; no override.
+- **User-facing account was wrong.** The repair worker, given Pappy's issues but not told its own first pass had made the edit, reported "the fix was already in place — someone had corrected parse.js in a prior session", and Orca's final message repeated it. Pappy did not flag the misattribution.
+- **Final source:** SHA-256 `f340250f…7025`; independent post-hoc `node --test` 13 / 13 (not host-recorded). Differences from the original are limited to empty, whitespace-only and tab/newline input.
+- **Spend:** task ledger $0.360537 measured (22 requests: brain 1 / $0.005811; debugger pass 1 11 / $0.191778; repair 10 / $0.162948; 85,879 in / 6,860 out; 0 unreconciled, 0 refused). Persisted `runs.cost_usd` $0.360537 (matches). Status bar $0.3674 (+$0.0069 after the task, not attributed by the trace). Remaining task budget $0.389463. Aggregate under the approved $1.00: A5 $0.3518 + A6 $0.3674 = **$0.7192**; $0.2808 remaining.
+
+### 17.1 Classification after A6
+
+- **Live-model coding success — established in substance, not as a PASS.** A real model made a correct, contract-preserving edit; the host recorded 13 / 13 on the final source; Pappy verified the evidence. The verdict is WARN because of an Orca defect (the `2>&1` redirect parsed as a file), not because of the work.
+- **Safety and authorization controls held:** every command was approved by the human; Pappy refused the untested first pass; the repair classifier sent the repair for missing evidence; no unrelated process contaminated the evidence; accounting matched across ledger, UI and persisted row.
+- **Release-blocking defects found:** (1) `run_command`'s file-change detection treats `2>&1` (any `N>&M`) as writing a file; (2) a repair worker is not told what earlier passes changed, so the final account can misstate who made the fix — the user was told something untrue.
+- **PRODUCTION RELEASE READY — no.**
+
+## 18. Evidence and repair integrity corrections after A6 (2026-10-15) — deterministic validation only
+
+Source-level corrections for the two A6 release-blocking defects (record: `docs/ORCA_1.7_EVIDENCE_REPAIR_INTEGRITY.md`). No live run; A6's recorded verdict remains WARN.
+
+- **`2>&1` is no longer a file.** Redirections are parsed per shell (cmd for Windows run_command, POSIX sh elsewhere, PowerShell; nested `bash -c` / `cmd /c` / `powershell -Command` scripts with their own rules). File effects report only real file targets; the approval rule only became stricter. All three A6 issues (MEDIUM `COMPLETENESS_EMPTY_DIFF`, LOW `NO_OP_WRITE`, LOW `COMPLETENESS_FILE_MISMATCH`) traced to the phantom "&1"; the LOW mismatch rule itself is correct and unchanged.
+- **Repair workers know what earlier passes did.** A host record (changes with the pass that wrote them, test runs with their source state, what is outstanding) is built from runtime evidence and given to the repair worker; when only verification is missing it is told to keep the change and run the tests, and is not pushed to write.
+- **The final account follows the record.** A contradicting explanation (pre-existing change, someone else's change, the wrong pass, a change never made, a named author for an unattributed change) is corrected from the record; Claire receives the record and her reply is checked the same way.
+- **Deterministic A6 replay** (production worker loop, real tools, the 13-test suite, runtime, real Pappy, Claire): 11/2 → fix → untested first pass FAIL → repair with the host record → `npm test 2>&1` 13/13 on the final source → no phantom file → **PASS / verified / eligible**, all criteria PROVED; a false "prior session" claim is corrected in the result and in Claire's reply; the untested first pass alone is still refused. Moonshiner's default first-attempt-only export skips the repaired run (unchanged).
+- **Regression:** 2,077 passed · 0 failed · 3 skipped (baseline 2,002); TypeScript 0 errors; Pappy suites unchanged (corpus 58/58, 0/39 FA, 0/13 FR); contract check REVIEW REQUIRED (Rule 4, approved Pappy files and a new Pappy test file), exit 0; desktop bundle builds.
+- **Classification:** the A6 release blockers are resolved at source level and shown deterministically. A live PASS has not yet been observed. **PRODUCTION RELEASE READY — no** (pending one live rehearsal on a candidate containing these corrections).
+
+## 19. Live acceptance rehearsal A7 (2026-10-15) — observed results only
+
+Candidate: A7 test candidate from `fix/process-attribution` @ `892ea715` (clean, packaged, unsigned; `Orca 1.7.0.exe` SHA-256 `86b414ba4a002bef5b868655de9e17a24e12829205ce35902130d55a428786bf`). Packaged mock acceptance (scripted local provider, human approvals) passed first: untested first pass FAIL → repair with the host record → `npm test 2>&1` 13/13 → no phantom file → PASS / verified / eligible → a scripted false provenance claim corrected in the delivered message. Live: Anthropic `claude-sonnet-4-6` for every role, $0.75 task budget, one repair pass, new $1.00 aggregate allowance (owner-approved), fresh `project-A7` (13 tests, 11 / 2), single-process monitoring. Evidence: `orca-audit/phase6/rc/rehearsal/A7/`.
+
+- **Execution.** Brain routed to the debugger. First pass: reproduction `npm test` (11 / 2, approved by the human), a three-line empty-input guard written to `src/parse.js`, `npm test` again (13 / 0 on the changed source, approved by the human).
+- **Pappy, first pass: FAIL** on one HIGH `REQUIRED_RECEIPT_MISSING`: Brain's criterion "The failing test is fixed" names no file and was not linked to the reproduction and final-suite receipts.
+- **Repair pass:** dispatched for missing evidence; received the host record (the first pass's change, both test runs with their source state); no write demand; ran `npm test` (13 / 0) and changed nothing. That command was auto-approved by the renderer because "Always approve run_command this session" had been ticked on an earlier card by the human; no approval was given by automation.
+- **Pappy, final (judged against the user's original request): PASS**, no issues, **evidence verified**, test evidence true, training eligibility **eligible** (not exported; Moonshiner's default first-attempt-only export would skip a repaired run).
+- **Final source** SHA-256 `4ebafafa…1bd3` = the state the host tests ran on; 13 / 13; differs from the original only for empty, whitespace-only and tab/newline input. No phantom file, no process survivors, no workspace protection.
+- **Narration:** the delivered message ("Fixed it. The two failing tests in src/parse.js are now passing — all 13 tests green") is accurate. The runtime appended a correct but unneeded correction to the repair worker's accurate account ("Already applied in the first pass of this task") — a provenance-check false positive.
+- **Spend:** task ledger $0.135972 measured (10 requests; brain $0.005826; debugger first pass $0.114027, repair $0.016119; 0 unreconciled); persisted run $0.135972 (matches); status bar $0.1385 (+$0.0025 narration). Aggregate under the new $1.00: **$0.1385**.
+
+### 19.1 Remaining items
+
+1. **Criteria differ between passes.** The first verdict judges Brain's derived criteria; the repair verdict judges the user's original request. A7's PASS is against the user's request; Brain's "The failing test is fixed" was never shown PROVED by Pappy. Pre-existing behaviour; a design decision.
+2. **Pappy anchoring gap.** A defect criterion that names no file is not linked to reproduction / final-suite receipts. Fail-safe (it cost one repair pass, $0.016); correcting it changes Pappy's acceptance logic and needs an explicit decision.
+3. **"Always approve run_command this session"** approves every later shell command in the session, not one command. Disclosed on the card; broad in scope.
+4. **Provenance-check false positive** on accurate "already applied in the first pass" wording (appended text is correct; the trace records a contradiction that did not exist).
+5. **Release mechanics:** the candidate is unsigned and built from an unmerged feature branch (`fix/worker-edit-protocol` → `fix/process-attribution`); the contract check's REVIEW REQUIRED items (Pappy files; the repair-loop and narration changes, outside Rule 4's patterns) need human review; the installed 1.6.0 carries Demo Mode commits that are not in `main`.
+
+### 19.2 Classification
+
+- **Live-model coding success — established:** a real model made a correct, contract-preserving fix; the host recorded 13 / 13 on the final source; Pappy verified it (PASS / verified) against the user's request; accounting matched.
+- **PRODUCTION RELEASE READY — not yet:** the verified behaviour is on an unsigned candidate from unmerged branches; items 1–5 need decisions. Recommendation in the session report.
+
+## 20. Release stabilization (2026-10-15)
+
+Branch `fix/release-stabilization-1.7.0` (from `fix/process-attribution` @ `64d4df6`; linear on `main` `c0b1092`, 29 commits ahead, 0 behind; local, not pushed). The four A7 items, corrected without changing any acceptance standard beyond the authorized file-less-criterion rule:
+
+| # | Defect (A7) | Root cause | Correction | Commit |
+|---|---|---|---|---|
+| 1 | Criteria changed between passes | `buildPappyInput` used the pass's Brain done criteria **instead of** the task's goals; a repair pass without Brain routing fell back to the user's goals | One acceptance contract per task (user goals, never dropped, plus Brain's added criteria), fixed after the first pass and used by every verdict and given to the repair | `7f7bc4c` |
+| 2 | "The failing test is fixed" not proved | A defect criterion naming no file had no verifier (fail-closed) | In bug-fix tasks it is proved only by a host-observed source change plus a reproduction (failed at task start, passes on the final source) or a regression test | `3d144b5` |
+| 3 | "Always approve run_command this session" | Renderer-only session list approved any later command; the main process could not tell a person's answer from the renderer's | Checkbox and session list removed; the main process accepts an answer only for the exact pending request (task, tool, command) and only after a person could have read it; the card shows the main process's decision | `13bb6df`, `3c06384` |
+| 4 | Provenance false positive | Whole-text keyword match flagged "already applied in the first pass of this task" | Sentence-level check: in-task references verified against the passes the host recorded; outside / unknown origins contradicted only by the record; quoted text ignored | `acedba0` |
+
+A7's auto-approval: the only automatic-approval code path was the renderer's session list, which required the checkbox to be ticked on an approved card; the second `npm test` card was answered after 16 s. The trace cannot show who ticked it.
+
+**Deterministic acceptance** (`desktop/workerEditProtocol.test.ts`, A7's contract, 13-test suite, production worker loop, real tools, runtime, Pappy, Claire): positive — PASS / verified / eligible on the **first** pass, all four criteria PROVED, no repair, accurate narration; repair (no post-change run) — refused, repair works to the same contract with the host record, `npm test 2>&1`, no rewrite, verified, accurate account not "corrected"; negatives — denied command, claim without edit, partial suite refused. Corpus: two A7 fixtures added (the genuine one fails under the previous rule); 60/60, 0/40 FA, 0/14 FR.
+
+**Regression** (head `3c06384`): workspace suite 2,109 passed · 0 failed · 3 skipped (2,077 before); TypeScript 0 errors; Pappy suites 23/23 · 12/23 · 15/23 unchanged; strict contract check exit 0, REVIEW REQUIRED (Rule 4: `pappy.ts` and Pappy fixtures/tests — the file-less rule is new in this round; Rule 6: `docs/ORCA_SYSTEM_CONTRACT.md` gained the approval and acceptance-contract rules); the acceptance-contract, repair, approval and narration changes are outside Rule 4's patterns and are listed here for review.
+
+**Stabilization test candidate** — `apps/desktop/release/Orca 1.7.0.exe`, built from `3c06384` (clean), ref `fix/release-stabilization-1.7.0`, **not from `main`**, **unsigned**; SHA-256 `3d975950f27cf5bde6aff38ca10a2c3b3e06eaff90a891f1b57ee18f674c772b` (installer `d3369c71ccc4af4d0d11386ef11ad44a75023365af4f8807b1f8195f5ba6eeb3`). Package: 19 entries, 11.6 MB; no tests, sources, maps, runner CLI, keys or Summit Demo Mode; version 1.7.0; all corrections present. Previous candidates archived in `C:\Orca\rc-artifacts\` (rc9 unchanged).
+
+**Packaged smoke** (isolated profiles, local mock providers, no network):
+
+| Check | Result |
+|---|---|
+| Startup, build identity (1.7.0 · `3c06384d` · clean · packaged) | PASS |
+| Approval card: tool, exact command, workspace; no "always approve" control (also after restart) | PASS |
+| Unanswered card → main process times out → card reads "Not approved — timed out"; command did not run | PASS (found and fixed the stale-card issue, `3c06384`) |
+| Approve by a person → accepted → command ran → card "Approved" | PASS (witnessed: a person approved the second card after 33.7 s) |
+| Stop during a request → "Stopped — all operations settled", CANCELLED, no verdict | PASS |
+| Restart → run history persisted; no approval carried over | PASS |
+| Kill during a request → restart → interrupted task reported and recorded | PASS |
+| Hard budget, metered unknown-cost model → refused before dispatch, $0 spent | PASS |
+| Profile written by the previous candidate opens with settings and history intact | PASS |
+| Deny click; mock coding PASS + repair + provenance with approvals; override dialog | **PENDING (human)** — covered deterministically and by live A7 |
+
+**Signing:** no code-signing certificate, environment or configuration exists; both binaries `NotSigned`.
+
+### 20.1 Classification
+
+- **SOURCE STABILIZED — yes.** All four corrections implemented and tested.
+- **INTEGRATION CANDIDATE VALIDATED — yes.** The combined source passes the full required suite.
+- **PACKAGED CANDIDATE VALIDATED — not yet.** Automated packaged checks pass; the human checks above are pending.
+- **PRODUCTION RELEASE READY — no.** Not merged into `main`; unsigned; human checks and contract review pending; release not approved.
+
+## 21. Final PR review (2026-10-15)
+
+The targeted review covered four areas: the acceptance contract, Pappy's file-less bug-fix criterion, the approval broker and provenance. It found two genuine gaps, both fixed with tests:
+
+| # | Gap | Correction | Commit |
+|---|---|---|---|
+| 1 | A Brain criterion unrelated to the request (for example "Update the README" on a `parse.js` fix) became mandatory and could block a genuine completion | Brain criteria that share no file, distinctive term or verification activity with the request are recorded as advisory and are not judged. User goals are always mandatory. | `bbb4ee8` |
+| 2 | Approvals were not bound to the workspace, and the card showed the renderer's *current* workspace setting. An approval faster than 400 ms was settled as a denial, so a legitimate quick click could deny the call. | The workspace is captured at task start, sent with the request, shown on the card and must be echoed by the answer. An early approval is not counted and the request stays pending. Approve is disabled for 450 ms when the card appears. | `ee1e100` |
+
+The file-less criterion (fingerprint on the final source, reproduction required, documentation keeps E3, Moonshiner unchanged) and provenance (append-only, quotes excluded, unknown origin stays unknown) were confirmed with no change. The contract review is in `docs/ORCA_1.7_CONTRACT_REVIEW.md`.
+
+**Regression** (head after this section's commit):
+- Workspace suite: 2,114 passed · 0 failed · 3 skipped (2,109 before).
+- One run under full parallel load timed out two real-process probes in `workbench-core`. That package was not changed in this review. It passed 133/133 in isolation twice, and the complete rerun was clean.
+- TypeScript: 0 errors (packages and `scripts/`).
+- Pappy suites: 23/23 · 12/23 · 15/23, unchanged.
+- Evidence corpus: 60/60 (0 of 40 false acceptances, 0 of 14 false rejections).
+- Strict contract check: exit 0, REVIEW REQUIRED, with the same 13 findings (Rule 4 for Pappy files, Rule 6 for the system contract).
+
+### 21.1 Packaged check H1 — defect found and corrected (2026-10-15)
+
+**Candidate `0fd63222`, isolated profile, offline stock mock.** The human witnessed the check. The card was correct: the tool, the exact command, the task's workspace, Deny focused, no "always approve" control. Deny prevented execution, and so did a timeout ("Not approved — timed out" after exactly 60.0 s).
+
+**Defect:** after the Deny, the repair loop dispatched a repair pass that asked for the same command again. This happened in both runs (`run_1792083309671_9s6szj`, `run_1792083673758_fb21vo`). The cause: Pappy's issues that follow from the refusal (goal not covered, receipt missing) were classed as repairable. **H1 status: FAIL** (evidence in `rehearsal/H/H1-observations.md`).
+
+**Correction:** approved by the human; recorded in `docs/ORCA_1.7_CONTRACT_REVIEW.md`, "A refusal is respected".
+- Settlements name their outcome.
+- A refused operation is not asked for again in the task.
+- A FAIL that depends on a refusal gets no repair, and the task is reported as blocked by the user's authorization.
+- The worker is told denial, timeout and cancellation as distinct outcomes.
+
+The packaged checks resume with a fresh H1 on a candidate rebuilt from the corrected commit.
+
+### 21.2 Packaged human checks H1–H4 (2026-10-15) — candidate `71ced381`, unsigned, isolated profiles, offline mocks
+
+| Check | What the human did and saw | Trace | Status |
+|---|---|---|---|
+| **H1** Deny | The card showed the tool, the exact command, the task's workspace, Deny focused, and no "always approve" control. The human pressed Deny. **No second card**, no repair pass. The task was reported as blocked by the user's authorization; verdict FAIL, Repairs 0; nothing ran. The first attempt, on `0fd63222`, failed (§21.1). | `run_1792091406611_dgwvwp` | **PASS** |
+| **H2** Genuine coding PASS | Scripted mock in pass mode on a fresh project (11 passed / 2 failed). The human approved `npm test` (11/2); `src/parse.js` gained a one-line guard; the human approved `npm test` again (**13/0**). Pappy PASS, 0 issues; completed and verified; Repairs 0. | `run_1792091675024_j787a1` | **PASS** |
+| **H3** Repair | Scripted mock in repair mode. The first pass edited and did not re-run the tests, so Pappy returned FAIL (FIX_TESTS_NOT_RERUN and others). The repair received the host record and no write demand; the human approved `npm test 2>&1` (**13/0**); no edits. PASS, verified, Repairs 1. The account was accurate, with no provenance correction. | `run_1792091807321_8hnrdi` | **PASS** |
+| **H4** Override → Cancel | Staged unconfirmed process (a harmless sleeper). The banner and the native warning dialog appeared; the human pressed Cancel ("Override cancelled."). Protection stayed at 1 protection, 0 overrides, and "Hello" was refused. After the sleeper was ended, Orca released the workspace ("every process verified gone") and the next message ran. Final file: 0 protections, 0 overrides. | protection file snapshots | **PASS** |
+
+The evidence is kept outside the repository with the A5–A7 evidence: observation notes, watcher logs, traces and protection snapshots. Two stock-mock side effects in H1 are not Orca defects: the mock's FAIL control word simulated a provider outage on Claire's failure prompt, and that outage left the status reading "stopped by budget".
+
+**Regression at `71ced38`:**
+- workspace suite 2,137 passed, 0 failed, 3 skipped;
+- TypeScript 0 errors;
+- Pappy suites 23/23, 12/23 and 15/23, unchanged; corpus 60/60;
+- contract checks (default and strict) REVIEW REQUIRED, the same 13 findings, exit 0.
+
+### 21.3 Classification
+
+- **PACKAGED CANDIDATE VALIDATED — yes** (H1–H4 PASS, witnessed by the human, on `71ced381`).
+- **PRODUCTION RELEASE READY — no.** Not merged into `main`; unsigned; the contract items need the reviewer's approval at merge; no release has been approved.

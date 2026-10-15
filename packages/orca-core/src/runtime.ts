@@ -1,3 +1,6 @@
+import { buildHostRecord, correctProvenance } from "./hostRecord.js";
+import { buildAcceptanceContract } from "./acceptanceContract.js";
+import { createAuthorizationRecord, normalizeApproval } from "./authorization.js";
 import type {
   OrcaRuntime,
   OrcaRuntimeDeps,
@@ -333,16 +336,35 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
     // Approval waits are a lifecycle state of their own, and a cancelled task
     // never gets to ask: a stale request resolves to "not approved".
+    // Every refusal is recorded for the task (authorization.ts): an operation
+    // the user denied, or whose approval timed out, is not asked for again in
+    // this task — by the same worker or by a repair pass. Below this wrapper
+    // every consumer receives a plain boolean; only an explicit approval is true.
+    const authorization = createAuthorizationRecord();
     const requestToolApproval = deps.requestToolApproval
       ? async (tool: string, args: Record<string, unknown>): Promise<boolean> => {
-          if (!lifecycle.mayDispatch) return false;
+          const earlier = authorization.refusalFor(tool, args);
+          if (earlier) {
+            authorization.noteRepeat(earlier);
+            recordTrace("approval.not_reasked", { tool, operation: earlier.operation, outcome: earlier.outcome, repeats: earlier.repeats });
+            return false;
+          }
+          if (!lifecycle.mayDispatch) {
+            authorization.record(tool, args, { approved: false, outcome: "cancelled", reason: `the task is ${lifecycle.current.toLowerCase()}` });
+            return false;
+          }
           const previous = lifecycle.current;
           const op = lifecycle.begin("approval", tool, true);
           lifecycle.transition("WAITING_FOR_APPROVAL", `approval requested for ${tool}`);
           try {
-            const approved = await deps.requestToolApproval!(tool, args);
+            const decision = normalizeApproval(await deps.requestToolApproval!(tool, args));
             // An approval that arrives after cancellation authorizes nothing.
-            return approved && lifecycle.mayDispatch;
+            if (decision.approved && lifecycle.mayDispatch) return true;
+            const refusal = authorization.record(tool, args, decision.approved
+              ? { approved: false, outcome: "cancelled", reason: "the task stopped while the approval was pending" }
+              : decision);
+            recordTrace("approval.refused", { tool, operation: refusal.operation, outcome: refusal.outcome, ...(refusal.reason ? { reason: refusal.reason } : {}) });
+            return false;
           } finally {
             op.end();
             if (lifecycle.current === "WAITING_FOR_APPROVAL") lifecycle.transition(previous === "WAITING_FOR_APPROVAL" ? "RUNNING" : previous, `approval for ${tool} settled`);
@@ -386,6 +408,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       gate: effectiveGate,
       model: deps.model,
       requestToolApproval,
+      authorization,
       collectWorkspaceEvidence: evidence
         ? async () => {
             // Evidence is judged only when nothing can still act for the task:
@@ -395,20 +418,44 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             // A scan for processes a command left behind answers within a few
             // seconds; it is waited for so a survivor is known before judging.
             await lifecycle.waitForScans(8000);
+            // A recorded process that has exited can no longer write: wait a
+            // bounded time for recorded processes to exit, release the ones
+            // verified gone, and take the evidence afterwards — so the
+            // inventory includes anything they wrote. Whatever is still
+            // running (or cannot be verified) keeps the evidence partial.
+            if (deps.processProbe && lifecycle.unsettledResources().length > 0) {
+              const { released, remaining } = await lifecycle.reverifyResources(
+                deps.processProbe,
+                "verified gone before the workspace evidence was taken",
+                { waitMs: deps.resourceSettleWaitMs ?? 10_000, intervalMs: 500 },
+              );
+              recordTrace("lifecycle.resources.reverified", {
+                stage: "before_evidence",
+                released: released.map((r) => ({ pid: r.pid, label: r.label, ownership: r.ownership ?? null })),
+                remaining: remaining.map((r) => ({ pid: r.pid, label: r.label, ownership: r.ownership ?? null })),
+              });
+            }
             const collected = await evidence.collect();
             const active = lifecycle.activeOperations().filter((o) => o.kind !== "verification" && o.kind !== "scan");
             const survivors = lifecycle.unsettledResources();
             if (collected.available && (active.length > 0 || survivors.length > 0)) {
+              const attributed = survivors.filter((r) => r.ownership !== "unknown");
+              const unattributed = survivors.filter((r) => r.ownership === "unknown");
               const reasons = [
                 ...(active.length > 0 ? [`${active.length} operation(s) still active while verifying: ${active.map((o) => `${o.kind} ${o.label}`).join(", ")}`] : []),
-                ...(survivors.length > 0 ? [`${survivors.length} process(es) started by the task may still be writing: ${survivors.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
+                ...(attributed.length > 0 ? [`${attributed.length} process(es) started by the task may still be writing: ${attributed.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
+                ...(unattributed.length > 0 ? [`${unattributed.length} process(es) of unknown ownership, created while the task's commands ran, are still running and may be writing: ${unattributed.map((r) => `pid ${r.pid} (${r.label})`).join(", ")}`] : []),
               ];
-              return { ...collected, partial: true, reason: reasons.join("; ") };
+              const partialEvidence = { ...collected, partial: true, reason: reasons.join("; ") };
+              ctx.lastWorkspaceEvidence = partialEvidence;
+              return partialEvidence;
             }
+            ctx.lastWorkspaceEvidence = collected;
             return collected;
           }
         : undefined,
       verificationReceipts: [],
+      passLog: [],
     };
 
     recordTrace("task.received", { taskSpec: normalizedTaskSpec });
@@ -555,7 +602,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         });
 
         if (qcEnabled) {
-          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+          ctx.acceptanceContract ??= buildAcceptanceContract(normalizedTaskSpec, auditMaestroResult.doneCriteria);
+          recordTrace("acceptance.contract", ctx.acceptanceContract);
+          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])], ctx.acceptanceContract.goals);
           ctx.verificationReceipts?.push(...(auditMaestroResult.toolEvents ?? []));
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
           const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText });
@@ -655,6 +704,12 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       const initialPass = await accountPass(budgetLedger, () => untilAborted(maestro.run(normalizedTaskSpec, ctx), options?.abortSignal), effectiveGate);
       const maestroResult = withPassAccounting(normalizeMaestroResult(initialPass.result), initialPass.accounting);
       persistedMaestroResult = maestroResult;
+      // One acceptance contract for the whole task: the user's goals plus the
+      // criteria Brain derived for this pass, fixed now and used for every
+      // verdict (first pass, repairs) — a repair cannot change the standard.
+      ctx.acceptanceContract ??= buildAcceptanceContract(normalizedTaskSpec, maestroResult.doneCriteria);
+      recordTrace("acceptance.contract", ctx.acceptanceContract);
+      ctx.passLog?.push({ pass: 1, label: "first pass", ...(maestroResult.metadata?.role ? { role: maestroResult.metadata.role } : {}), toolEvents: maestroResult.toolEvents ?? [] });
       const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
 
       // Detect tools the agent tried to call but weren't available.
@@ -737,7 +792,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         }
 
         lifecycle.transition("VERIFYING", "initial pass complete; Pappy evaluates");
-        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])], ctx.acceptanceContract?.goals);
         ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
 
@@ -958,6 +1013,20 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         recordTrace("task.interrupted", lifecycle.snapshot());
       }
     }
+    // The final explanation is checked against what the host recorded: a
+    // statement that the change pre-existed, came from someone else, or was
+    // made in a pass that made no change is corrected from the record.
+    const hostRecord = ctx.lastWorkspaceEvidence ? buildHostRecord(ctx.lastWorkspaceEvidence, ctx.passLog ?? [], effectiveWorkspaceRoot) : undefined;
+    let provenance: OrcaExecutionResult["provenance"];
+    if (hostRecord && !abortError && result.userFacingText) {
+      const corrected = correctProvenance(result.userFacingText, hostRecord);
+      if (corrected.check.contradictions.length > 0) {
+        provenance = { contradictions: corrected.check.contradictions, corrected: corrected.text !== result.userFacingText };
+        recordTrace("provenance.corrected", { contradictions: corrected.check.contradictions, correction: corrected.check.correction ?? null });
+        result = { ...result, userFacingText: corrected.text };
+      }
+    }
+    if (hostRecord) result = { ...result, hostRecord, ...(provenance ? { provenance } : {}) };
     if (!lifecycle.terminal) {
       const succeeded = !abortError && result.status !== "FAIL" && persistedQcResult?.verdict !== "FAIL";
       lifecycle.finish(succeeded ? "COMPLETED" : "FAILED", abortError ? abortError.message : `${result.status}: ${result.summary ?? ""}`);
@@ -968,6 +1037,17 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     // interrupted, or that ended (even COMPLETED) with a process it started
     // still running, leaves the workspace protected until the leftovers
     // settle, are verified gone, or the user knowingly overrides.
+    // Probe recorded processes once more: one that has exited since the
+    // evidence was taken does not leave the workspace protected. Anything
+    // still running, or that cannot be verified, still does.
+    if (deps.processProbe && lifecycle.unsettledResources().length > 0) {
+      const { released, remaining } = await lifecycle.reverifyResources(deps.processProbe, "verified gone when the task ended");
+      recordTrace("lifecycle.resources.reverified", {
+        stage: "task_end",
+        released: released.map((r) => ({ pid: r.pid, label: r.label, ownership: r.ownership ?? null })),
+        remaining: remaining.map((r) => ({ pid: r.pid, label: r.label, ownership: r.ownership ?? null })),
+      });
+    }
     const leftover = lifecycle.activeOperations().length > 0 || lifecycle.unsettledResources().length > 0;
     if (finalLifecycle.state === "INTERRUPTED" || leftover) {
       const operations = lifecycle.activeOperations().map((o) => `${o.kind} ${o.label}`);

@@ -215,6 +215,7 @@ declare module '@clawde/orca-core' {
     ahpRootPacket?: AHPPacket;
     ahpPacket?: AHPPacket;
     requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+    authorization?: { last(): { refusal: { outcome: string; reason?: string }; repeated: boolean; seq: number } | undefined; refusals(): unknown[] };
     workspaceRoot?: string;
   }
 
@@ -249,7 +250,7 @@ declare module '@clawde/orca-core' {
     getWorkspaceContext?: () => unknown;
     maxRepairPasses?: number;
     gate?: MirandaGate;
-    requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+    requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean | { approved: boolean; outcome: string; reason?: string }>;
   }
 
   export interface OrcaRuntime {

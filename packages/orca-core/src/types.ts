@@ -62,6 +62,14 @@ export interface OrcaExecutionResult {
    * was finalized directly (Option A single-run behaviour).
    */
   ahpChildPackets?: AHPPacket[];
+  /**
+   * What the host recorded the task doing (changes with the pass that wrote
+   * them, test runs with their source state), built from runtime evidence —
+   * for presenters, so an explanation can be checked against facts.
+   */
+  hostRecord?: import("./hostRecord.js").HostRecord;
+  /** Contradictions between the final explanation and the host record, and whether a correction was appended. */
+  provenance?: { contradictions: string[]; corrected: boolean };
 }
 
 export interface OrcaFileChange {
@@ -337,6 +345,11 @@ export interface OrcaRunCtx {
    */
   requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
   /**
+   * The user's refusals in this task (denied, timed out, cancelled). A refused
+   * operation is not asked for again; a FAIL that needs it gets no repair pass.
+   */
+  authorization?: import("./authorization.js").AuthorizationRecord;
+  /**
    * Absolute path to the user's configured workspace folder.
    * Passed through to tool execution so write_file resolves relative paths
    * against the workspace root rather than process.cwd().
@@ -354,6 +367,12 @@ export interface OrcaRunCtx {
    * with the reproduction evidence gathered before it.
    */
   verificationReceipts?: OrcaToolEvent[];
+  /** Each worker pass of this task with the tool events the host recorded for it, oldest first. */
+  passLog?: import("./hostRecord.js").PassLogEntry[];
+  /** The task's acceptance contract, fixed after the first pass and used by every verdict. */
+  acceptanceContract?: import("./acceptanceContract.js").AcceptanceContract;
+  /** The workspace evidence most recently collected (what the last verdict was judged on). */
+  lastWorkspaceEvidence?: import("@clawde/pappy-core").WorkspaceEvidence;
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +455,16 @@ export interface OrcaRuntimeDeps {
   /** Refuses a task whose workspace is still protected by an earlier, unsettled task, and protects it when this task ends unsettled. */
   workspaceGuard?: import("./workspaceGuard.js").WorkspaceGuard;
   /**
+   * Verifies whether a process a command left behind is still running (pid
+   * plus creation time; a reused pid counts as gone). With it, processes that
+   * have exited are released before the workspace evidence is taken and before
+   * the workspace is protected at the end of a task. Without it, every
+   * recorded process counts as still running (the conservative default).
+   */
+  processProbe?: import("./lifecycle.js").ResourceProbe;
+  /** How long to wait for recorded processes to exit before taking the workspace evidence. Default 10 s. */
+  resourceSettleWaitMs?: number;
+  /**
    * Miranda's gate — the compliance and governance layer.
    * Wraps every LLM call, tool execution, and QC run with validation checkpoints.
    * Injected here so it flows through OrcaRunCtx to every adapter.
@@ -445,8 +474,10 @@ export interface OrcaRuntimeDeps {
    * Per-tool approval hook. When supplied, every agent tool call is gated
    * behind this function before execution. Return false to deny.
    * Inject requestToolApproval from apps/desktop/src/main.ts for the UI dialog.
+   * It may answer with a decision naming the outcome (denied, timed out,
+   * cancelled); only `true` or `{ approved: true }` authorizes the call.
    */
-  requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+  requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean | import("./authorization.js").ToolApprovalDecision>;
   /**
    * Model ID the LLM service is targeting (e.g. "deepseek/deepseek-chat").
    * Flowed through OrcaRunCtx so the agent loop can populate

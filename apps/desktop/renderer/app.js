@@ -26,6 +26,7 @@ if (!window.orca) {
     maximize:          () => {},
     close:             () => {},
     approveToolCall:   () => {},
+    onToolRequestSettled: () => () => {},
     selectWorkspace:   async () => "",
     fetchModels:       async () => ({ ok: false, models: [] }),
     listSessions:      async () => [],
@@ -2555,8 +2556,10 @@ orca.onMaximizeChange((maximized) => {
 
 // ── Tool approval dialog ────────────────────────────────────────────
 
-// Tools the user has permanently approved for this session
-const sessionApprovedTools = new Set();
+// There is no session-wide approval: every tool call is decided on its own,
+// and the main process accepts an answer only for the exact request it was
+// shown (approvalBroker.ts). Live rehearsal A7: "Always approve run_command
+// this session" had approved later, different commands with no card.
 
 let approvalTimerInterval = null;
 const APPROVAL_TIMEOUT_S  = 60;
@@ -2597,7 +2600,6 @@ function dismissApprovalForStop() {
   }
   toolCallCards.delete(id);
   dialog.style.display = "none";
-  document.getElementById("chk-always-approve").checked = false;
 }
 
 function resolveApproval(approved) {
@@ -2607,46 +2609,67 @@ function resolveApproval(approved) {
   const tool = document.getElementById("approval-tool-name").textContent;
   const card = toolCallCards.get(id);
 
-  if (approved && document.getElementById("chk-always-approve").checked) {
-    sessionApprovedTools.add(tool);
+  // Denial is final here; an approval is shown once the main process has
+  // accepted it (onToolRequestSettled below).
+  if (card && !approved) {
+    card.classList.replace("pending", "denied");
+    card.querySelector(".tool-card-status").textContent = "\u2717 Denied";
+  } else if (card) {
+    card.querySelector(".tool-card-status").textContent = "approving\u2026";
   }
-
-  if (card) {
-    card.classList.replace("pending", approved ? "approved" : "denied");
-    card.querySelector(".tool-card-status").textContent = approved ? "\u2713 Approved" : "\u2717 Denied";
-  }
-  toolCallCards.delete(id);
-  orca.approveToolCall(id, approved);
+  const command = dialog.dataset.approvalCommand;
+  const workspace = dialog.dataset.approvalWorkspace;
+  orca.approveToolCall(id, approved, { tool, ...(command !== undefined && dialog.dataset.hasCommand === "1" ? { command } : {}), ...(dialog.dataset.hasWorkspace === "1" ? { workspace } : {}) });
   dialog.style.display = "none";
-  document.getElementById("chk-always-approve").checked = false;
 }
 
-orca.onToolRequest((id, tool, args) => {
+orca.onToolRequest((id, tool, args, workspaceRoot) => {
   if (!tool || !String(tool).trim()) return;
 
   const card = appendToolCard(id, tool, args);
   toolCallCards.set(id, card);
 
-  // Auto-approve if the user approved this tool for the session
-  if (sessionApprovedTools.has(tool)) {
-    card.classList.replace("pending", "approved");
-    card.querySelector(".tool-card-status").textContent = "\u2713 Auto-approved";
-    toolCallCards.delete(id);
-    orca.approveToolCall(id, true);
-    return;
-  }
-
   const dialog = document.getElementById("tool-approval-dialog");
   document.getElementById("approval-tool-name").textContent  = tool;
-  document.getElementById("approval-tool-name-2").textContent = tool;
+  // The exact command shown is what an approval answers for.
+  const shownCommand = args && typeof args.command === "string" ? args.command : undefined;
+  dialog.dataset.hasCommand = shownCommand !== undefined ? "1" : "0";
+  dialog.dataset.approvalCommand = shownCommand ?? "";
   document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
-  document.getElementById("approval-workspace").textContent = currentWorkspaceRoot || "(not set)";
+  // The workspace this task runs in (from the request), not the current setting.
+  dialog.dataset.hasWorkspace = workspaceRoot ? "1" : "0";
+  dialog.dataset.approvalWorkspace = workspaceRoot || "";
+  document.getElementById("approval-workspace").textContent = workspaceRoot || currentWorkspaceRoot || "(not set)";
   dialog.dataset.approvalId = id;
   dialog.style.display      = "flex";
+  // Approve stays disabled for a moment, so it cannot be clicked before the
+  // card could be read (the main process would not count it anyway).
+  const approveBtn = document.getElementById("btn-approve-tool");
+  approveBtn.disabled = true;
+  setTimeout(() => { if (dialog.dataset.approvalId === id) approveBtn.disabled = false; }, 450);
   // The safe answer is the keyboard default: Enter denies, Approve needs a deliberate click.
   document.getElementById("btn-deny-tool").focus();
 
   startApprovalTimer(() => resolveApproval(false));
+});
+
+// The main process's decision is what the card shows: approved, denied, timed
+// out, stopped, or refused (for example an answer that came too late).
+(orca.onToolRequestSettled ?? (() => () => {}))(({ id, approved, reason }) => {
+  const card = toolCallCards.get(id);
+  if (card) {
+    card.classList.remove("pending", "approved", "denied");
+    card.classList.add(approved ? "approved" : "denied");
+    card.querySelector(".tool-card-status").textContent = approved
+      ? "\u2713 Approved"
+      : /denied by the user/.test(reason) ? "\u2717 Denied" : `\u2717 Not approved \u2014 ${reason}`;
+  }
+  toolCallCards.delete(id);
+  const dialog = document.getElementById("tool-approval-dialog");
+  if (dialog.dataset.approvalId === id && dialog.style.display !== "none") {
+    clearApprovalTimer();
+    dialog.style.display = "none";
+  }
 });
 
 document.getElementById("btn-approve-tool").addEventListener("click", () => resolveApproval(true));

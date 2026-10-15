@@ -310,6 +310,8 @@ export function buildPappyInput(
   maestroResult: OrcaMaestroResult,
   workspace?: PappyInput["workspace"],
   priorToolEvents?: PappyInput["priorToolEvents"],
+  /** The task's acceptance contract (user goals + Brain-derived criteria), fixed after the first pass; takes precedence over a pass's own done criteria. */
+  acceptanceGoals?: readonly string[],
 ): PappyInput {
   const raw = taskSpec.constraints ?? {};
   const normalizedResult = normalizeMaestroResult(maestroResult);
@@ -327,8 +329,9 @@ export function buildPappyInput(
     }));
   return {
     task: taskSpec.originalUserMessage,
-    // Brain-defined done criteria take precedence; fall back to task goals.
-    goals: normalizedResult.doneCriteria ?? taskSpec.goals,
+    // The task's acceptance contract when the runtime has fixed one; legacy
+    // callers: the pass's Brain-defined done criteria, else the task goals.
+    goals: acceptanceGoals && acceptanceGoals.length > 0 ? [...acceptanceGoals] : normalizedResult.doneCriteria ?? taskSpec.goals,
     outputText: normalizedResult.outputText,
     filesChanged: normalizedResult.filesChanged,
     toolEvents: normalizedResult.toolEvents,

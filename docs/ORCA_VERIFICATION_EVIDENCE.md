@@ -163,3 +163,41 @@ Outcomes (all through the real Pappy and, for the opposite claim, the real expor
 | bug fix proved by a full suite on the final source | PROVED | PASS | verified | eligible | unchanged |
 
 Residual ambiguity, stated: Pappy cannot tell a correct substantive documentation statement from an incorrect one; it now says so instead of guessing. Tests: `workspaceVerification.test.ts` "identifier presence is not a claim" (4), `trainingPath.test.ts` (adversarial export), corpus `docs-anchored-genuine` (relabelled), `docs-anchored-opposite-claim`, `docs-mention-only-genuine`.
+
+## Behavioural criteria for code changes (1.7.0, 2026-10-14)
+
+**The false rejection.** A genuine bug fix with complete host evidence was FAIL / unverified. The evidence was a reproduction (3 passed / 2 failed on the task-start source), an edit to `src/parse.js`, and a full suite on the final source (5 passed / 0 failed). Two ledger rules caused it:
+
+- The named-file content rule, meant for documents ("docs/guide.md must document the back-to-back rule"), was applied to a bug-fix criterion that names a source file. It demanded the criterion's words ("failing", "identified") inside `parse.js`.
+- A criterion such as "Tests are run and all pass after the fix" names no file or symbol, so the ledger could not anchor it and returned MISSING. The host's passing full-suite receipt was never consulted.
+
+**The rule now** (`verifyAcceptanceCriterion`, `requireBehaviouralEvidence`, `requirePassingSuite` in `pappy.ts`):
+
+| Criterion | In a bugfix / feature / refactor task | Decided by |
+|---|---|---|
+| names a changed **source** file | the file changing is the candidate; its wording is not checked against the code | a relevant behavioural receipt on the final source, exactly as for a symbol |
+| names a changed source file **and** refers to a defect (fail, bug, broken, error, regression, crash…) in a **bugfix** | as above, plus the defect must be shown resolved | a `reproduction` (failed at task start, passes on the final source) or a `regression_test` receipt; a passing suite alone is PARTIAL ("no reproduction resolved on the final source and no regression test ran") |
+| asks that tests be run and pass | no anchor needed | a host-recorded `reproduction`, `full_suite` or `regression_test` receipt on the final source |
+| names a changed **document** | unchanged: E3 | the document's content, never the code's test receipts |
+
+The receipts themselves are unchanged. They exist only when the host recorded the run, the counts were readable, the exit status was 0, nothing failed, no tests were lost, and the run happened on the final source. A fabricated success, a partial suite, a run before a later edit, a weakened or deleted test, or a successful non-test command therefore still produce no receipt. The workspace checks that raise `FIX_SOURCE_CHANGE_MISSING`, `FIX_TESTS_FAILING`, `FIX_TESTS_NOT_RERUN`, `FIX_TEST_SUBSET_ONLY` and the test-integrity issues are untouched, as are the training-eligibility rules.
+
+**Found while testing the scope.** A documentation criterion inside a code task ("README.md documents that parse returns 0 for empty input") was PROVED by the code's passing suite, because the symbol extractor read "README" as an identifier. The symbol path is now skipped when the criterion names a changed document, so the E3 rules apply. This was a false acceptance that predates 1.7.0.
+
+Outcomes through the real Pappy (`behaviouralCriteria.test.ts`, the corpus and the desktop end-to-end tests):
+
+| Case | Result |
+|---|---|
+| genuine fix, user-goal criterion or Brain's live criteria | PASS / verified / eligible; exported as a positive example |
+| defect criterion, suite passes but no reproduction and no regression test | criterion PARTIAL; unverified |
+| tests passed, then a later untested edit | `FIX_TESTS_NOT_RERUN`; unverified |
+| only a subset of tests ran | `FIX_TEST_SUBSET_ONLY`; unverified |
+| partial fix (still failing), reported honestly or claimed as fixed | `FIX_TESTS_FAILING`; contradicted when claimed |
+| success claimed with no edit | `FIX_SOURCE_CHANGE_MISSING`; contradicted; not exported by PASS, WARN or FAIL exports |
+| failing tests deleted or weakened | FAIL; contradicted |
+| source edited, no test run | unverified |
+| a successful non-test command | unverified |
+| writes the runtime cannot attribute | not eligible |
+| feature criterion with only an unrelated passing suite | not PROVED |
+| test-run criterion in a non-code task | unchanged (not decided by this rule) |
+| documentation criterion in a bug-fix task | E3: WARN or FAIL, never verified from code tests |

@@ -28,23 +28,36 @@ Be concise. Real conversations don't have paragraphs of explanation. Say what ma
 
 // Used when a pipeline task completes and Claire needs to present the result.
 // Claire gets the cleaned output and delivers it in her voice.
-export const buildPresentPrompt = (originalMessage: string, pipelineOutput: string): string =>
+export const buildPresentPrompt = (originalMessage: string, pipelineOutput: string, recordedFacts?: string): string =>
   `The user asked: "${originalMessage}"
 
 The work is done. Here is the result:
 
 ${pipelineOutput}
-
+${factsBlock(recordedFacts)}
 Deliver this to the user in your voice. Be brief and natural — don't recap the task, just tell them what happened or hand over the result. If it's code or a file change, a one-sentence intro is enough before the content.`;
 
+/**
+ * What was recorded while the task ran. Who changed which file, and which
+ * tests ran on which version, must follow these facts — never a guess in the
+ * result text (A6: "someone had corrected parse.js in a prior session", when
+ * the task itself had made the change).
+ */
+const factsBlock = (recordedFacts?: string): string => recordedFacts?.trim()
+  ? `
+Recorded facts (what actually happened; when the result text disagrees about who changed what or which tests ran, these facts are right — never say a change was already there or made by someone else unless they say so; if they say the origin is unknown, say that):
+${recordedFacts.trim()}
+`
+  : "";
+
 // Used when a task fails and Claire needs to deliver the bad news.
-export const buildFailurePrompt = (originalMessage: string, summary: string): string =>
+export const buildFailurePrompt = (originalMessage: string, summary: string, recordedFacts?: string): string =>
   `The user asked: "${originalMessage}"
 
 Something went wrong. Here is the error or issue:
 
 ${summary}
-
+${factsBlock(recordedFacts)}
 Tell the user what happened in plain language — honest, no drama, no jargon. Then ask one short question about how they'd like to proceed.`;
 
 /**

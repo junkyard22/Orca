@@ -8,8 +8,26 @@ import { createAbortError, throwIfAborted } from "./abort.js";
 import { captureProcessIdentity, findSurvivingDescendants } from "./processIdentity.js";
 
 /** A process the command left behind, in the shape the task lifecycle records. */
-interface UnsettledProcess { kind: "process"; pid: number; label: string; startedAt: string; identity?: string; reason: string }
+interface UnsettledProcess { kind: "process"; pid: number; label: string; startedAt: string; identity?: string; reason: string; ownership?: "confirmed" | "suspected" | "unknown" }
 import { resolveWorkspacePath } from "./workspacePath.js";
+import { parseRedirections, runCommandShellDialect, type ShellDialect } from "./shellRedirection.js";
+
+/** How a survivor is named and why it is kept, by what the scan could establish about who started it. */
+export function describeSurvivor(name: string | undefined, ownership: "confirmed" | "suspected" | "unknown", command: string): { label: string; reason: string } {
+  const exe = name ? `${name} ` : "";
+  if (ownership === "confirmed") return {
+    label: `${exe}(descendant of: ${command})`,
+    reason: "started by the command and still running after the command's shell exited",
+  };
+  if (ownership === "suspected") return {
+    label: `${exe}(suspected: names the workspace; created while ${command} ran)`,
+    reason: "created while the command ran and its command line names the workspace, but its parent has exited so its ancestry cannot be established; treated as the command's until verified gone",
+  };
+  return {
+    label: `${exe}(ownership unknown: created while ${command} ran)`,
+    reason: "created while the command ran under a parent that has exited; nothing ties it to the command beyond timing, but that cannot be ruled out, so it is kept until verified gone",
+  };
+}
 
 const COMMAND_ENV_ALLOWLIST = new Set([
   "appdata", "ci", "colorterm", "commonprogramfiles", "comspec", "force_color",
@@ -28,45 +46,28 @@ function commandEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /**
- * Parse a shell command to detect file redirections (e.g., > file.py, >> file.py).
- * Returns an array of { path, changeType } for files that are created or modified.
+ * Files the command's redirections will write, as the shell that runs it reads
+ * them (cmd.exe on Windows, /bin/sh elsewhere; inline scripts of nested shells
+ * with their own rules). Stream duplication (`2>&1`), null devices and targets
+ * the shell only resolves at run time are not files and are never reported as
+ * one — the host's own before/after inventory of the workspace is what decides
+ * which files actually changed. Returns { path, changeType } per file.
  */
-function detectFileChanges(command: string, cwd: string): Array<{ path: string; changeType: "A" | "M" }> {
+export function detectFileChanges(
+  command: string,
+  cwd: string,
+  dialect: ShellDialect = runCommandShellDialect(),
+): Array<{ path: string; changeType: "A" | "M" }> {
   const changes: Array<{ path: string; changeType: "A" | "M" }> = [];
-  
-  // Match redirections like: > file.txt, >> file.txt, 2> file.txt, etc.
-  // Also handles heredocs and other shell redirections
-  const redirectionPattern = /(?:^|\s|;)\s*(\d*>)\s*(['"`])?(.+?)\2\s*(?=$|;|\s)/g;
-  let match: RegExpExecArray | null;
-  
-  while ((match = redirectionPattern.exec(command)) !== null) {
-    const filePath = match[3];
-    if (filePath) {
-      const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
-      // Check if file exists before command execution
-      const existsBefore = fs.existsSync(resolved);
-      changes.push({
-        path: path.relative(cwd, resolved),
-        changeType: existsBefore ? "M" : "A",
-      });
-    }
+  const seen = new Set<string>();
+  for (const effect of parseRedirections(command, dialect)) {
+    if (effect.kind !== "file") continue;
+    const resolved = path.isAbsolute(effect.target) ? effect.target : path.resolve(cwd, effect.target);
+    const relativePath = path.relative(cwd, resolved);
+    if (seen.has(relativePath)) continue;
+    seen.add(relativePath);
+    changes.push({ path: relativePath, changeType: fs.existsSync(resolved) ? "M" : "A" });
   }
-  
-  // Also check for echo/cat with redirection: echo "..." > file.py
-  const echoPattern = /echo\s+['"`]?(.*?)['"`]?\s*>\s*['"`]?(.+?)['"`]?\s*(?=$|;)/;
-  const echoMatch = command.match(echoPattern);
-  if (echoMatch) {
-    const filePath = echoMatch[2];
-    if (filePath) {
-      const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
-      const existsBefore = fs.existsSync(resolved);
-      changes.push({
-        path: path.relative(cwd, resolved),
-        changeType: existsBefore ? "M" : "A",
-      });
-    }
-  }
-  
   return changes;
 }
 
@@ -161,7 +162,7 @@ export const runCommandTool: Tool = {
         return {
           ok: false,
           output: "",
-          error: "Command execution denied by user",
+          error: "Command not run: not approved (denied, timed out, or the task stopped).",
         };
       }
     }
@@ -221,7 +222,7 @@ export const runCommandTool: Tool = {
         if (pid == null) return target;
         let scan: Promise<{ status: "done" | "unknown"; resources: UnsettledProcess[] }>;
         try {
-          scan = findSurvivingDescendants(pid, spawnedAt).then(
+          scan = findSurvivingDescendants(pid, spawnedAt, { workspaceRoot: ctx.workspaceRoot }).then(
             (found) => found === null
               ? { status: "unknown" as const, resources: [] as UnsettledProcess[] }
               : {
@@ -229,12 +230,10 @@ export const runCommandTool: Tool = {
                   resources: found.map((f): UnsettledProcess => ({
                     kind: "process",
                     pid: f.pid,
-                    label: `${f.name ? f.name + " " : ""}(${f.relation} of: ${label})`,
+                    ...describeSurvivor(f.name, f.ownership, label),
                     startedAt: spawnedAt,
                     ...(f.identity ? { identity: f.identity } : {}),
-                    reason: f.relation === "descendant"
-                      ? "started by the command and still running after the command's shell exited"
-                      : "created while the command ran, its parent has exited and its ancestry cannot be established; treated as the command's until verified gone",
+                    ownership: f.ownership,
                   })),
                 },
             () => ({ status: "unknown" as const, resources: [] as UnsettledProcess[] }),

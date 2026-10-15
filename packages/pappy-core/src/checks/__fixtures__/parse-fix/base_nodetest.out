@@ -1,0 +1,40 @@
+[Exit code 1]
+✔ parses a plain integer (0.1ms)
+✔ trims surrounding whitespace (0.1ms)
+✖ returns 0 for an empty string (0.1ms)
+✖ returns 0 for a whitespace-only string (0.1ms)
+✔ rejects a non-integer (0.1ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 3
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 50
+
+✖ failing tests:
+
+test at test\parse.test.js:14:1
+✖ returns 0 for an empty string (0.1ms)
+  RangeError: not an integer: ""
+      at parse (C:\Users\JAMESY~1\AppData\Local\Temp\tmp.mLNpVJyJmS\src\parse.js:12:11)
+      at TestContext.<anonymous> (C:\Users\JAMESY~1\AppData\Local\Temp\tmp.mLNpVJyJmS\test\parse.test.js:15:16)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+
+test at test\parse.test.js:18:1
+✖ returns 0 for a whitespace-only string (0.1ms)
+  RangeError: not an integer: "   "
+      at parse (C:\Users\JAMESY~1\AppData\Local\Temp\tmp.mLNpVJyJmS\src\parse.js:12:11)
+      at TestContext.<anonymous> (C:\Users\JAMESY~1\AppData\Local\Temp\tmp.mLNpVJyJmS\test\parse.test.js:19:16)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)

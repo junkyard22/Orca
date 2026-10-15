@@ -75,13 +75,16 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
 
     const chat = historyToMessages(history);
 
+    const facts = result.hostRecord?.available ? result.hostRecord.text : undefined;
+    const review = (reply: string) => (deps.reviewReply ? deps.reviewReply(reply, result) : reply);
+
     if (result.status === "FAIL") {
       const summary = result.summary ?? result.userFacingText ?? "Something went wrong.";
-      return deps.complete(buildClaireMessages(buildFailurePrompt(originalMessage, summary), chat));
+      return review(await deps.complete(buildClaireMessages(buildFailurePrompt(originalMessage, summary, facts), chat)));
     }
 
     const rawOutput = buildRawOutput(result, spec);
-    return deps.complete(buildClaireMessages(buildPresentPrompt(originalMessage, rawOutput), chat));
+    return review(await deps.complete(buildClaireMessages(buildPresentPrompt(originalMessage, rawOutput, facts), chat)));
   }
 
   function buildRawOutput(result: ExecutionResult, _spec: TaskSpec): string {

@@ -1,6 +1,7 @@
 import type { LLMAdapter } from "@clawde/miranda-core";
 import {
   createDirectLLMService,
+  describeRefusal,
   extractFilesChangedFromCommandOutput,
   type AHPPacket,
   type OrcaLLMService,
@@ -274,14 +275,63 @@ function parseCodeBlockToolCalls(
   while ((match = codeBlockRe.exec(text)) !== null) {
     const body = match[1]!.trim();
     if (!body || body.length < 3) continue;
-    // Try JSON-format first: {"tool": "name", ...}
-    const jsonCall = parseToolCallBody(body);
-    if (jsonCall) { calls.push(jsonCall); continue; }
+    // Only a JSON object with a "tool" key counts here. The lenient
+    // "name {...}" reading used inside <tool_call> tags must not run on
+    // ordinary code: in the 1.7.0 rehearsal a proposed fix
+    // ("function parse(text) { ... }") was dispatched as a tool named
+    // "function".
+    const json = parseJsonObject(body);
+    if (json && typeof json["tool"] === "string" && json["tool"]) {
+      const { tool, ...input } = json;
+      calls.push({ tool: tool as string, input });
+      continue;
+    }
     // Try function-call-format: toolName("arg1", "arg2")
     const fnCall = parseFunctionCallSyntax(body);
     if (fnCall) calls.push(fnCall);
   }
   return calls;
+}
+
+/**
+ * The calls of a response that may run. A leading run of <tool_call> blocks
+ * separated only by whitespace is a batch: nothing was written between them,
+ * so nothing in them depends on an invented result. The first non-whitespace
+ * text after a call ends the batch — that is where invented "Result:" blocks,
+ * later calls built on them, and premature FINAL ANSWERs appear — and the
+ * output is cut after the last batched call so none of it enters the
+ * conversation. Calls recovered from code fences (no tags) keep the first only.
+ */
+export function enforceToolCallBatch(
+  output: string,
+  calls: Array<{ tool: string; input: Record<string, unknown> }>,
+): { calls: Array<{ tool: string; input: Record<string, unknown> }>; output: string; dropped: number } {
+  if (calls.length <= 1) return { calls, output, dropped: 0 };
+  const blocks = [...output.matchAll(/<tool_call>[\s\S]*?<\/tool_call>/g)];
+  if (blocks.length === 0) return { calls: calls.slice(0, 1), output, dropped: calls.length - 1 };
+  let batch = 1;
+  while (batch < blocks.length) {
+    const prevEnd = blocks[batch - 1]!.index! + blocks[batch - 1]![0].length;
+    if (output.slice(prevEnd, blocks[batch]!.index!).trim() !== "") break;
+    batch++;
+  }
+  // Every block must have parsed for the batch to map onto `calls`; otherwise run the first only.
+  if (blocks.length !== calls.length) batch = 1;
+  const end = blocks[batch - 1]!.index! + blocks[batch - 1]![0].length;
+  return { calls: calls.slice(0, batch), output: output.slice(0, end), dropped: calls.length - batch };
+}
+
+/** A failed command's error, with the command and the directory it ran in. */
+export function withCommandContext(
+  toolName: string,
+  input: Record<string, unknown>,
+  workspaceRoot: string | undefined,
+  error: string | undefined,
+): string | undefined {
+  if (toolName !== "run_command" || typeof input["command"] !== "string") return error;
+  const cwd = typeof input["cwd"] === "string" && input["cwd"].trim() ? input["cwd"] : "(workspace root)";
+  const root = workspaceRoot ? ` — workspace root: ${workspaceRoot}` : "";
+  return [error ?? "Command failed", `command: ${input["command"]}`, `cwd: ${cwd}${root}`].join("\n");
 }
 
 function parseToolCalls(text: string): {
@@ -559,11 +609,30 @@ function buildTaskPromptContract(task: AgentTask, packet?: AHPPacket): TaskPromp
   };
 }
 
+/**
+ * Where tools run. The rehearsal workers were only shown "Workspace: project
+ * (C:\\...\\project)" and read it as a folder to enter: they prefixed paths
+ * with "project/", ran "cd project && npm test" and passed the parent folder
+ * as cwd (refused by the workspace boundary).
+ */
+function renderWorkspaceSection(workspaceRoot: string | undefined): string[] {
+  if (!workspaceRoot) return [];
+  return [
+    "",
+    "### Workspace",
+    `Every tool already runs inside the workspace root: ${workspaceRoot}`,
+    "- Use paths relative to it (for example `src/index.ts`); do not prefix them with the workspace folder's name.",
+    "- run_command starts in this directory: do not `cd` into the workspace folder, and leave `cwd` unset unless you need a subfolder of it.",
+    "- Tools cannot reach anything outside this directory.",
+  ];
+}
+
 function renderTaskPrompt(
   role: RoleName,
   contract: TaskPromptContract,
   toolPrompt: string,
   fileWriteDirective: string,
+  workspaceRoot?: string,
 ): string {
   if (contract.promptSource === "ahp_packet") {
     const lines: string[] = [
@@ -576,6 +645,7 @@ function renderTaskPrompt(
     }
 
     lines.push("", "### Objective", contract.intent);
+    lines.push(...renderWorkspaceSection(workspaceRoot));
 
     if (contract.goals.length > 0) {
       lines.push("", "### Inputs", ...contract.goals.map((goal) => `- ${goal}`));
@@ -603,6 +673,7 @@ function renderTaskPrompt(
     "",
     "## Goals",
     ...contract.goals.map((goal) => `- ${goal}`),
+    ...renderWorkspaceSection(workspaceRoot),
   ];
 
   if (contract.doneCriteria.length > 0) {
@@ -611,6 +682,22 @@ function renderTaskPrompt(
 
   lines.push("", toolPrompt);
   return lines.join("\n");
+}
+
+/** Where the task's refusal record stood before a tool call. */
+function refusalMark(ctx: AgentRunContext): number {
+  return ctx.authorization?.last()?.seq ?? 0;
+}
+
+/**
+ * A call that was not approved during this tool run is reported to the worker
+ * as what actually happened — denied, timed out or cancelled — not as the
+ * tool's generic wording.
+ */
+function withRefusalOutcome<T extends { ok: boolean; error?: string }>(result: T, ctx: AgentRunContext, before: number): T {
+  const latest = ctx.authorization?.last();
+  if (result.ok || !latest || latest.seq <= before) return result;
+  return { ...result, error: describeRefusal(latest.refusal, latest.repeated) };
 }
 
 function toSharedToolService(tools: Tool[], ctx: AgentRunContext): OrcaToolService {
@@ -626,6 +713,7 @@ function toSharedToolService(tools: Tool[], ctx: AgentRunContext): OrcaToolServi
           error: `Unknown tool: ${name}`,
         });
       }
+      const before = refusalMark(ctx);
       return tool.execute(input, {
         workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
         runId: ctx.runId,
@@ -634,7 +722,7 @@ function toSharedToolService(tools: Tool[], ctx: AgentRunContext): OrcaToolServi
           ? (toolName: string, args: Record<string, unknown>, _reason: string) =>
               ctx.requestToolApproval!(toolName, args)
           : undefined,
-      });
+      }).then((result) => withRefusalOutcome(result, ctx, before));
     },
 
     formatForPrompt() {
@@ -710,7 +798,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     });
     const sharedCtx = toSharedRunCtx(ctx, llmService, toolService);
     const contract = buildTaskPromptContract(task, ctx.ahpPacket);
-    const needsFileWrite = taskExplicitlyRequestsFileSave(
+    const needsFileWrite = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(
       `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`,
     );
     const taskPrompt = renderTaskPrompt(
@@ -720,6 +808,7 @@ export class ReactAgentAdapter implements AgentAdapter {
       needsFileWrite
         ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline - use the tool.**\n\n"
         : "",
+      ctx.workspaceRoot,
     );
     const result = await runAgentLoop(this.systemPrompt, taskPrompt, toolService, sharedCtx, contract.doneCriteria);
     return {
@@ -787,11 +876,11 @@ export class ReactAgentAdapter implements AgentAdapter {
     const conversationHistory = task.conversationHistory || [];
     const contract = buildTaskPromptContract(task, ctx.ahpPacket);
     const intentAndGoals = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
-    const needsFileWrite = taskExplicitlyRequestsFileSave(intentAndGoals);
+    const needsFileWrite = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(intentAndGoals);
     const fileWriteDirective = needsFileWrite
       ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline - use the tool.**\n\n"
       : "";
-    const taskContext = renderTaskPrompt(this.role, contract, toolPrompt, fileWriteDirective);
+    const taskContext = renderTaskPrompt(this.role, contract, toolPrompt, fileWriteDirective, ctx.workspaceRoot);
 
     const fullSystemPrompt = `${this.systemPrompt}${REACT_PROMPT_BLOCK}`;
 
@@ -874,7 +963,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         const modelOutput = response.content;
         throwIfAborted(ctx.abortSignal);
         lastModelOutput = modelOutput;
-        messages.push({ role: "assistant", content: modelOutput });
+        const assistantIndex = messages.push({ role: "assistant", content: modelOutput }) - 1;
         ctx.recordTrace?.("agent.iteration.response", {
           role: this.role,
           iteration: iterationCount,
@@ -917,13 +1006,32 @@ export class ReactAgentAdapter implements AgentAdapter {
           console.log(`[ReactAgent] No Thought block found in iteration ${iterationCount} - model may have skipped format`);
         }
 
-        const { calls: toolCalls, malformedCount } = parseToolCalls(modelOutput);
+        const parsedToolCalls = parseToolCalls(modelOutput);
+        const malformedCount = parsedToolCalls.malformedCount;
         ctx.recordTrace?.("agent.iteration.tool_parse", {
           role: this.role,
           iteration: iterationCount,
           malformedCount,
-          toolCalls,
+          toolCalls: parsedToolCalls.calls,
         });
+        // In the 1.7.0 rehearsal the model wrote calls with invented "Result:"
+        // blocks between them (file contents that did not exist); Orca executed
+        // every call, kept the invented results in the conversation, and once
+        // accepted a FINAL ANSWER written before any result. Calls written back
+        // to back (only whitespace between) carry no invented text and still run
+        // together; text after a call ends the batch, and everything from there
+        // on is cut from the conversation and not executed.
+        const callBatch = enforceToolCallBatch(modelOutput, parsedToolCalls.calls);
+        const toolCalls = callBatch.calls;
+        if (callBatch.dropped > 0) {
+          messages[assistantIndex] = { role: "assistant", content: callBatch.output };
+          ctx.recordTrace?.("agent.tool.extra_calls_dropped", {
+            role: this.role,
+            iteration: iterationCount,
+            executed: toolCalls.map((c) => c.tool),
+            dropped: callBatch.dropped,
+          });
+        }
 
         const hasRawToolCallTag = modelOutput.includes("<tool_call>");
         if (hasRawToolCallTag && malformedCount > 0 && toolCalls.length === 0) {
@@ -972,7 +1080,8 @@ export class ReactAgentAdapter implements AgentAdapter {
           consecutiveParseFailures = 0;
         }
 
-        const cleanedOutput = stripToolCalls(modelOutput);
+        const effectiveOutput = callBatch.output;
+        const cleanedOutput = stripToolCalls(effectiveOutput);
         const finalAnswer = extractFinalAnswer(cleanedOutput);
         if (finalAnswer) {
           finalAnswerFound = true;
@@ -982,7 +1091,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         if (iterationsRemaining === 2 && iteration >= 1 && !toolLimitWarningInjected && !finalAnswerFound) {
           toolLimitWarningInjected = true;
           const allTaskTextForWarn = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
-          const taskImpliesFileSaveForWarn = taskExplicitlyRequestsFileSave(allTaskTextForWarn);
+          const taskImpliesFileSaveForWarn = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskTextForWarn);
           const writeFileCalledForWarn = toolsUsed.some((e) => isWriteToolName(e.tool));
           const writeFileReminder = taskImpliesFileSaveForWarn && !writeFileCalledForWarn
             ? "\n\nCRITICAL: Your task requires saving a file. You MUST call write_file with the complete file content in your NEXT response - before writing your final answer."
@@ -1013,7 +1122,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               });
               continue;
             }
-            const taskImpliesFileSave = taskExplicitlyRequestsFileSave(allTaskText);
+            const taskImpliesFileSave = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskText);
             const writeFileCalled = toolsUsed.some((e) => isWriteToolName(e.tool));
             if (taskImpliesFileSave && !writeFileCalled) {
               lastRejectedFinalAnswer = finalAnswer;
@@ -1088,7 +1197,10 @@ export class ReactAgentAdapter implements AgentAdapter {
           };
           const beforeToolGate = ctx.gate?.beforeToolRun(gateCtx);
           if (beforeToolGate && !beforeToolGate.allowed) {
-            const gateError = beforeToolGate.reason || `Tool "${toolName}" blocked by Miranda`;
+            const gateReason = beforeToolGate.reason || `Tool "${toolName}" blocked by Miranda`;
+            const gateError = /workspace boundary/i.test(gateReason)
+              ? `${gateReason}: the request reaches outside the workspace root (${gateCtx.workspaceRoot}). Use paths and a cwd inside it.`
+              : gateReason;
             const gateResult = sharedFormatToolResult(toolName, false, "", gateError);
             messages.push({ role: "user", content: gateResult });
             ctx.recordTrace?.("agent.tool.blocked", {
@@ -1147,9 +1259,10 @@ export class ReactAgentAdapter implements AgentAdapter {
           // Tracked by the task lifecycle: the task cannot settle while it runs,
           // and nothing starts once cancellation was requested.
           if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) throwIfAborted(ctx.abortSignal);
-          const result = ctx.lifecycle
+          const refusalsBefore = refusalMark(ctx);
+          const result = withRefusalOutcome(ctx.lifecycle
             ? await ctx.lifecycle.track("tool", toolName, () => tool.execute(toolInput, toolContext))
-            : await tool.execute(toolInput, toolContext);
+            : await tool.execute(toolInput, toolContext), ctx, refusalsBefore);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
           const commandFileChanges = result.ok
@@ -1169,7 +1282,12 @@ export class ReactAgentAdapter implements AgentAdapter {
 
           cumulativeToolCallCount++;
 
-          const toolResult = sharedFormatToolResult(toolName, result.ok, result.output, result.error);
+          const toolResult = sharedFormatToolResult(
+            toolName,
+            result.ok,
+            result.output,
+            result.ok ? result.error : withCommandContext(toolName, toolInput, ctx.workspaceRoot, result.error),
+          );
           messages.push({ role: "user", content: toolResult });
 
           const enrichedRaw = { ...toolInput } as Record<string, unknown>;
@@ -1283,6 +1401,16 @@ export class ReactAgentAdapter implements AgentAdapter {
           }
         }
 
+        // Once per response, after its executed calls' results: what was cut and why.
+        if (callBatch.dropped > 0) {
+          messages.push({
+            role: "user",
+            content:
+              `Only ${toolCalls.length === 1 ? "your first tool call" : `your first ${toolCalls.length} tool calls`} (${toolCalls.map((c) => c.tool).join(", ")}) ${toolCalls.length === 1 ? "was" : "were"} executed; the other ${callBatch.dropped} call(s) in that response were discarded, together with everything you wrote after the last executed call. ` +
+              "Tool results come only from the host, in <tool_result> blocks: never write a result yourself. Wait for the results before writing anything that depends on them.",
+          });
+        }
+
         if (stoppedBecause === "loop_detected") {
           break;
         }
@@ -1291,10 +1419,10 @@ export class ReactAgentAdapter implements AgentAdapter {
           const lastEvent = toolsUsed[toolsUsed.length - toolCalls.indexOf(call) - 1];
           return lastEvent?.ok === true;
         });
-        const hasTextResponse = stripToolCalls(modelOutput).trim().length > 0;
-        const noDanglingToolCall = !modelOutput.includes("<tool_call>") ||
+        const hasTextResponse = stripToolCalls(effectiveOutput).trim().length > 0;
+        const noDanglingToolCall = !effectiveOutput.includes("<tool_call>") ||
           (toolCalls.length > 0 &&
-           !modelOutput.slice(modelOutput.lastIndexOf("</tool_call>") + 12).includes("<tool_call>"));
+           !effectiveOutput.slice(effectiveOutput.lastIndexOf("</tool_call>") + 12).includes("<tool_call>"));
 
         if (
           stoppedBecause === "max_iterations" &&

@@ -7,6 +7,13 @@ export interface AgentTask {
   goals: string[];
   doneCriteria: string[];
   conversationHistory?: Message[];
+  /**
+   * False for a repair pass whose host record shows this task already made
+   * the change and only verification is outstanding: the worker is then not
+   * told it must write a file (A6: a repair worker pushed to rewrite correct
+   * code). Absent means the usual rule.
+   */
+  sourceChangeRequired?: boolean;
 }
 
 export interface ThoughtRecord {

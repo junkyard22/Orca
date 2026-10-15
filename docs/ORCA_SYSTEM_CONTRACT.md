@@ -136,6 +136,8 @@ Core file tools and command working directories are confined to the configured w
 
 `run_command` is fail-closed. A command that requires approval must not execute when no approval handler is configured. A timeout or non-zero exit code is a failed tool result (`ok=false`), with captured output retained only as diagnostic evidence. Child processes receive an allowlisted operational environment rather than the host's full credential-bearing environment.
 
+A user approval answers exactly one request. The host accepts it only for a pending request from a still-running task, for the same tool and (for `run_command`) the exact command shown, and for the workspace that task runs in. An approval that arrives sooner than a person could have read the card is not counted and the request stays pending (a backstop against an automatic answer, not the authorization itself). There is no session-wide or persisted approval; deny, timeout, Stop and lock resolve as not approved, each reported as its own outcome. An operation the user denied, or whose approval timed out, is not asked for again in the same task — by the worker or by a repair pass — and a FAIL that depends on it gets no automatic repair; a late or repeated answer authorizes nothing (1.7.0, `apps/desktop/src/approvalBroker.ts`).
+
 Credentials must not be embedded in command arguments, clone URLs, or persisted Git remotes. Authenticated Git operations use ephemeral child-process configuration, redact credentials from diagnostics, and remove unused credential variables from the child environment. Clone destinations are subject to the same lexical and resolved-link workspace containment rules as other filesystem tools.
 
 ---
@@ -151,6 +153,8 @@ Pappy owns quality verdicts. The three valid outcomes are:
 | `FAIL` | Output does not meet criteria. Maestro should trigger repair. |
 
 The receipt ledger is authoritative. Every required receipt with status `MISSING` must produce a `HIGH` issue and a Pappy `FAIL`, even when other acceptance criteria are proved. A semantic acceptance criterion without a deterministic verifier fails closed; non-empty output alone is not proof.
+
+A task has one acceptance contract, fixed after the first worker pass: the user's goals (never dropped) followed by the criteria Brain adds that relate to the request; a Brain criterion unrelated to the request is recorded as advisory and is not judged, so it can neither block a genuine completion nor replace a user goal. Every Pappy evaluation of the task — first pass, repair passes, audit — is judged against that same contract; a pass's own done criteria cannot replace it, and a repair cannot change the standard (1.7.0, `packages/orca-core/src/acceptanceContract.ts`).
 
 Budget exhaustion is a stop condition, not a quality verdict. If the current Pappy verdict is `FAIL`, exhausting the repair budget must retain `FAIL`; it must never downgrade unresolved quality failure to `WARN`.
 

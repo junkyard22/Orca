@@ -1,3 +1,4 @@
+import { redirectionsRequireApproval, runCommandShellDialect, type ShellDialect } from "./shellRedirection.js";
 /**
  * Tool Sandbox - security policy for tool execution.
  *
@@ -219,8 +220,13 @@ function combineSegmentResults(results: CommandPolicyResult[]): CommandPolicyRes
 function evaluateSingleCommandPolicy(
   command: string,
   policy: SandboxPolicy,
+  dialect: ShellDialect,
 ): CommandPolicyResult {
-  if (hasWriteRedirection(command)) {
+  // The earlier pattern stays, and the dialect-aware parse is added to it: a
+  // redirection either one recognises as a write needs approval, so the rule
+  // can only become stricter (it now also catches `&>file`, `>& file`,
+  // run-time targets and writes inside inline scripts of nested shells).
+  if (hasWriteRedirection(command) || redirectionsRequireApproval(command, dialect)) {
     return {
       category: "moderate",
       reason: "Command writes through shell redirection",
@@ -305,6 +311,7 @@ function evaluateSingleCommandPolicy(
 export function evaluateCommandPolicy(
   command: string,
   policy: SandboxPolicy,
+  dialect: ShellDialect = runCommandShellDialect(),
 ): CommandPolicyResult {
   if (command.length > policy.maxCommandLength) {
     return {
@@ -328,10 +335,10 @@ export function evaluateCommandPolicy(
 
   const segments = splitShellSegments(command);
   if (segments.length > 1) {
-    return combineSegmentResults(segments.map((segment) => evaluateCommandPolicy(segment, policy)));
+    return combineSegmentResults(segments.map((segment) => evaluateCommandPolicy(segment, policy, dialect)));
   }
 
-  return evaluateSingleCommandPolicy(command, policy);
+  return evaluateSingleCommandPolicy(command, policy, dialect);
 }
 
 /**

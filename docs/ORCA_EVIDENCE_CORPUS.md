@@ -94,3 +94,25 @@ The original 23-fixture corpus is unchanged: 23/23 · 12/23 · 15/23.
 | `docs-mention-only-genuine` (new, genuine) | — | PASS / verified / accepted_but_not_trainable | the requirement asks only that the identifier appear |
 
 Results: 49/49 fully matched · 0/33 false acceptances · 0/11 false rejections. Original corpus unchanged: 23/23 · 12/23 · 15/23.
+
+## Behavioural evidence correction — parse.js bug fix (1.7.0, 2026-10-14)
+
+The 1.7.0 worker investigation found a false rejection. A genuine bug fix with full host evidence was FAIL / unverified under both criteria phrasings Orca produces. The host evidence was 3 passed / 2 failed on the task-start source, an authorized edit to `src/parse.js`, and 5 passed / 0 failed on the final source. The 49 existing fixtures did not contain this case.
+
+Nine fixtures were added, built from real `node --test` output of the rehearsal project (`pappy-core/src/checks/__fixtures__/parse-fix/`). No existing fixture was relabelled; `RELABELLED` and `KNOWN_GAPS` are unchanged.
+
+| Fixture | Category / label | Expected (verdict / evidence / eligibility) |
+|---|---|---|
+| `parse-genuine-live-criteria` | debugging / genuine | PASS / verified / eligible |
+| `parse-genuine-goal-criterion` | debugging / genuine | PASS / verified / eligible |
+| `parse-insufficient-defect-criterion-no-reproduction` | debugging / insufficient | FAIL / unverified / needs_human_review |
+| `parse-insufficient-untested-later-edit` | debugging / insufficient | FAIL / unverified / needs_human_review |
+| `parse-fabricated-claim-without-edit` | debugging / fabricated | FAIL / contradicted / rejected |
+| `parse-fabricated-partial-fix-claimed` | debugging / fabricated | FAIL / contradicted / rejected |
+| `parse-manipulated-failing-tests-deleted` | debugging / manipulated | FAIL / contradicted / rejected |
+| `parse-docs-claim-in-bugfix` | documentation / genuine | WARN / unverified / needs_human_review (E3: correct wording is still candidate evidence) |
+| `parse-docs-claim-in-bugfix-paraphrased` | documentation / insufficient | FAIL / unverified / needs_human_review |
+
+The two documentation fixtures guard a pre-existing false acceptance found while writing the scope tests. In a bug-fix task, a criterion about the README ("README.md documents that parse returns 0 for empty input") was PROVED by the code's passing test suite, because "README" was read as a code identifier. The same behaviour exists on `origin/main`. Rebuilt without the correction, both fixtures become PASS / verified / eligible, a false acceptance. With it, a criterion naming a changed document follows the E3 rules whatever the task kind.
+
+Results: **58/58 fully matched · 0/39 false acceptances · 0/13 false rejections**. Original corpus unchanged: 23/23 · 12/23 · 15/23.
