@@ -15,6 +15,7 @@ import { throwIfAborted, untilAborted } from "./abort.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
 import { accountPass, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
 import type { PassAccounting } from "./budget/passAccounting.js";
+import { classifyRepairIssue, decideRepair } from "./repairClassification.js";
 
 type RepairSubagentRun = NonNullable<OrcaMaestroResult["subagentRuns"]>[number];
 
@@ -159,6 +160,29 @@ export async function handleRepairLoop(
         qcResult: currentQC,
       };
     }
+    // ── Is there anything a worker can fix? ────────────────────────────────
+    // A FAIL whose blocking issues are all about evidence integrity (the
+    // evidence could not be taken completely) or a call the user did not
+    // approve cannot be resolved by editing code: a worker sent to "fix" it
+    // rewrites correct source until its iterations run out. No pass is
+    // dispatched; Pappy's FAIL stands and is reported for a person to act on.
+    const decision = decideRepair(currentQC.issues);
+    if (!decision.dispatch) {
+      ctx.recordTrace?.("repair.skipped", {
+        pass,
+        maxPasses,
+        reason: decision.reason,
+        blocking: decision.blocking,
+      });
+      return {
+        status: "FAIL",
+        userFacingText: lastOutputText,
+        summary: `${decision.reason} ${currentQC.internalSummary ?? ""}`.trim(),
+        ...(currentArtifacts ? { artifacts: currentArtifacts } : {}),
+        qcResult: currentQC,
+      };
+    }
+
     emitter.emit({ type: "repair:start", taskId: ctx.runId, pass, maxPasses });
 
     // Build a first-class repair task so Maestro understands it as work,
@@ -243,6 +267,7 @@ export async function handleRepairLoop(
             code:        i.code,
             message:     i.message,
             suggestedFix: i.suggestedFix,
+            class:       classifyRepairIssue(i),
           })),
         },
       },
