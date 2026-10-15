@@ -780,7 +780,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     });
     const sharedCtx = toSharedRunCtx(ctx, llmService, toolService);
     const contract = buildTaskPromptContract(task, ctx.ahpPacket);
-    const needsFileWrite = taskExplicitlyRequestsFileSave(
+    const needsFileWrite = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(
       `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`,
     );
     const taskPrompt = renderTaskPrompt(
@@ -858,7 +858,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     const conversationHistory = task.conversationHistory || [];
     const contract = buildTaskPromptContract(task, ctx.ahpPacket);
     const intentAndGoals = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
-    const needsFileWrite = taskExplicitlyRequestsFileSave(intentAndGoals);
+    const needsFileWrite = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(intentAndGoals);
     const fileWriteDirective = needsFileWrite
       ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline - use the tool.**\n\n"
       : "";
@@ -1073,7 +1073,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         if (iterationsRemaining === 2 && iteration >= 1 && !toolLimitWarningInjected && !finalAnswerFound) {
           toolLimitWarningInjected = true;
           const allTaskTextForWarn = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
-          const taskImpliesFileSaveForWarn = taskExplicitlyRequestsFileSave(allTaskTextForWarn);
+          const taskImpliesFileSaveForWarn = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskTextForWarn);
           const writeFileCalledForWarn = toolsUsed.some((e) => isWriteToolName(e.tool));
           const writeFileReminder = taskImpliesFileSaveForWarn && !writeFileCalledForWarn
             ? "\n\nCRITICAL: Your task requires saving a file. You MUST call write_file with the complete file content in your NEXT response - before writing your final answer."
@@ -1104,7 +1104,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               });
               continue;
             }
-            const taskImpliesFileSave = taskExplicitlyRequestsFileSave(allTaskText);
+            const taskImpliesFileSave = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskText);
             const writeFileCalled = toolsUsed.some((e) => isWriteToolName(e.tool));
             if (taskImpliesFileSave && !writeFileCalled) {
               lastRejectedFinalAnswer = finalAnswer;

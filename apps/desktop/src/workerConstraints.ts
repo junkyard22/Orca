@@ -77,3 +77,14 @@ export function constraintGateFor(childPacket: AHPPacket | undefined): MirandaGa
     },
   });
 }
+
+/**
+ * A repair pass whose host record shows this task already made the change and
+ * only verification is outstanding: the worker is not told it must write a
+ * file. Any other task keeps the usual rule.
+ */
+export function repairSourceChangeFlag(task: OrcaTaskSpec): { sourceChangeRequired?: false } {
+  if (task.intent !== "repair") return {};
+  const repair = (task.context as { repair?: { hostRecord?: { sourceChangeRequired?: unknown } } } | undefined)?.repair;
+  return repair?.hostRecord?.sourceChangeRequired === false ? { sourceChangeRequired: false } : {};
+}

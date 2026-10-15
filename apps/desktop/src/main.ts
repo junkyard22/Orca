@@ -2,7 +2,7 @@ import "dotenv/config";
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from "electron";
 import { mkdirSync, readFileSync } from "node:fs";
 import { sendWhenLoaded } from "./initStatus";
-import { constraintGateFor, workerMustNotWriteFiles } from "./workerConstraints";
+import { constraintGateFor, workerMustNotWriteFiles, repairSourceChangeFlag } from "./workerConstraints";
 import { listAnthropicModels, type ModelListing } from "./modelListing";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -94,7 +94,9 @@ import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
 import { runWithBudget, withBudgetAttribution } from "@clawde/miranda-core";
 import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
+import { reviewNarration } from "./narrationReview";
 import { createAbortError, createBudgetJournal, createWorkspaceGuard, WorkspaceProtectedError } from "@clawde/orca-core";
+import type { HostRecord } from "@clawde/orca-core";
 import type { BudgetJournal, WorkspaceGuard } from "@clawde/orca-core";
 import { probeProcess } from "@yakstacks/workbench-core";
 import { budgetWarnings, createMessageBudget, getCustomPrices, getSessionBudget, setCustomPrices } from "./budgetContext";
@@ -1252,6 +1254,7 @@ function buildMaestroAdapter(
             .filter((value) => value.length > 0),
           doneCriteria: [...targetedRepair.targetPacket.expectedOutput.acceptanceCriteria],
           conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
+          ...repairSourceChangeFlag(task),
         };
         const repairedWorker = await runRoleWorker(task, ctx, targetedRepair.targetRole, agentTask, {
           workerIndex,
@@ -1376,6 +1379,7 @@ function buildMaestroAdapter(
         goals: task.goals ?? [],
         doneCriteria: routing.doneCriteria,
         conversationHistory: normalizeConversationHistory(task.context?.conversationHistory),
+        ...repairSourceChangeFlag(task),
       };
       const worker = await runRoleWorker(task, ctx, routing.role, agentTask, {
         workerIndex: 0,
@@ -2017,6 +2021,9 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
     }
 
     claire = createClaire({
+      // Claire's reply is checked against what the host recorded the task doing:
+      // a claim that the change pre-existed or was someone else's is corrected.
+      reviewReply: (reply, result) => reviewNarration(reply, result as { hostRecord?: HostRecord }, (m) => console.log(`[Orca] ${m}`)),
       complete: async (messages: ClaireMessage[]) => {
         const resp = await runGatedLLMCall(
           { gate, model: narratorModel },

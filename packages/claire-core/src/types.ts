@@ -28,6 +28,8 @@ export interface ExecutionResult {
   summary?: string;
   artifacts?: unknown;
   followUpQuestion?: string;
+  /** What the host recorded the task doing (changes, who made them, tests on which source). */
+  hostRecord?: { available?: boolean; text?: string };
 }
 
 export interface TaskSpec {
@@ -56,6 +58,11 @@ export interface ClaireDeps {
   executeTask: (spec: TaskSpec, options?: ExecuteTaskOptions) => Promise<ExecutionResult>;
   /** How many past exchanges to carry forward. Defaults to 8. */
   maxHistoryTurns?: number;
+  /**
+   * Checks Claire's reply against the task's host record before it is shown,
+   * returning the reply to deliver (unchanged, or with a factual correction).
+   */
+  reviewReply?: (reply: string, result: ExecutionResult) => string;
 }
 
 export interface ClaireHandleOptions {
