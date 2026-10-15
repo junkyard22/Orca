@@ -40,8 +40,14 @@ describe("evaluateCommandPolicy", () => {
   it("requires approval for write redirection but allows stderr-to-null redirection", () => {
     const policy = createSandboxPolicy();
 
-    expect(evaluateCommandPolicy("echo ok > out.txt", policy).requiresApproval).toBe(true);
-    expect(evaluateCommandPolicy("dir missing 2>nul", policy).requiresApproval).toBe(false);
+    // The null device depends on the shell the command runs in, so each case
+    // names its dialect instead of inheriting the host platform's default.
+    expect(evaluateCommandPolicy("echo ok > out.txt", policy, "cmd").requiresApproval).toBe(true);
+    expect(evaluateCommandPolicy("echo ok > out.txt", policy, "posix").requiresApproval).toBe(true);
+    expect(evaluateCommandPolicy("dir missing 2>nul", policy, "cmd").requiresApproval).toBe(false);
+    expect(evaluateCommandPolicy("ls missing 2>/dev/null", policy, "posix").requiresApproval).toBe(false);
+    // In a POSIX shell `nul` is an ordinary file in the working directory: writing it needs approval.
+    expect(evaluateCommandPolicy("ls missing 2>nul", policy, "posix").requiresApproval).toBe(true);
   });
 
   it("classifies moderate commands correctly", () => {

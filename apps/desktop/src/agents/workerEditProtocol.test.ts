@@ -98,7 +98,8 @@ test("rejects integers that cannot be represented exactly", () => { for (const t
 function hostTestRun(root: string): { pass: number; fail: number } {
   const r = spawnSync(process.execPath, ["--test"], { cwd: root, encoding: "utf8" });
   const out = `${r.stdout}\n${r.stderr}`;
-  return { pass: Number(/ℹ pass (\d+)/.exec(out)?.[1] ?? -1), fail: Number(/ℹ fail (\d+)/.exec(out)?.[1] ?? -1) };
+  // node:test's summary: "ℹ pass N" (spec reporter) or "# pass N" (TAP, Node 22 when not on a terminal).
+  return { pass: Number(/(?:ℹ|#) pass (\d+)/.exec(out)?.[1] ?? -1), fail: Number(/(?:ℹ|#) fail (\d+)/.exec(out)?.[1] ?? -1) };
 }
 
 /** Goals as Pappy receives them in the desktop flow: Brain's done criteria (live A1–A3 traces). */
@@ -556,7 +557,7 @@ describe("A6 replay: shell redirection, repair memory and the final account", ()
     // `npm test 2>&1` ran on the final source; no phantom "&1" anywhere.
     const repairRun = JSON.stringify(stagesOf(trace, "agent.tool.result").map((e) => e.detail as { tool?: string }).filter((d) => d.tool === "run_command").at(-1));
     expect(repairRun).toMatch(/npm test 2>&1/);
-    expect(repairRun).toMatch(/ℹ pass 13[\s\S]*ℹ fail 0/);
+    expect(repairRun).toMatch(/(?:ℹ|#) pass 13[\s\S]*(?:ℹ|#) fail 0/);
     expect(repairRun).not.toMatch(/Files changed/);
     expect(existsSync(join(root, "&1"))).toBe(false);
     expect(JSON.stringify(trace.entries)).not.toMatch(/"path":"&1"/);
