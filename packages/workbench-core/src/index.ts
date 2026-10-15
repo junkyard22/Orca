@@ -94,5 +94,5 @@ export {
   eventBus,
   createTimestamp,
 } from './events.js';
-export { captureProcessIdentity, findSurvivingDescendants, probeProcess, processExists, survivorScanStatistics } from "./tools/processIdentity.js";
-export type { ProcessIdentity, ProcessLiveness, SurvivingProcess } from "./tools/processIdentity.js";
+export { captureProcessIdentity, findSurvivingDescendants, parsePosixSurvivors, parseWindowsSurvivors, probeProcess, processExists, survivorScanStatistics } from "./tools/processIdentity.js";
+export type { ProcessIdentity, ProcessLiveness, SurvivingProcess, SurvivorScanOptions, WindowsRow } from "./tools/processIdentity.js";

@@ -42,9 +42,10 @@ describe("surviving descendants", () => {
       expect(scan.resources.map((r) => r.pid)).toContain(gpid);
       const survivor = scan.resources.find((r) => r.pid === gpid)!;
       // Through a shell the chain is shell → node → grandchild; node is gone, so on
-      // Windows the grandchild is a suspected descendant (orphan), on POSIX a group member.
-      expect(survivor.label).toMatch(/\((descendant|orphan) of: node spawn\.js\)/);
-      expect(survivor.reason).toMatch(/still running after the command's shell exited|ancestry cannot be established/);
+      // Windows the grandchild's ancestry cannot be proved (reported, ownership
+      // unknown), on POSIX it is a group member (a confirmed descendant).
+      expect(survivor.label).toMatch(/\(descendant of: node spawn\.js\)|\((?:ownership unknown:|suspected: names the workspace;) created while node spawn\.js ran\)/);
+      expect(survivor.reason).toMatch(/still running after the command's shell exited|cannot be ruled out|ancestry cannot be established/);
       expect(await probeProcess({ pid: gpid, identity: survivor.identity })).toBe("alive");
       process.kill(gpid);
       await sleep(300);

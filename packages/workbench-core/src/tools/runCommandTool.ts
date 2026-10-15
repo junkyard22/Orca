@@ -8,8 +8,25 @@ import { createAbortError, throwIfAborted } from "./abort.js";
 import { captureProcessIdentity, findSurvivingDescendants } from "./processIdentity.js";
 
 /** A process the command left behind, in the shape the task lifecycle records. */
-interface UnsettledProcess { kind: "process"; pid: number; label: string; startedAt: string; identity?: string; reason: string }
+interface UnsettledProcess { kind: "process"; pid: number; label: string; startedAt: string; identity?: string; reason: string; ownership?: "confirmed" | "suspected" | "unknown" }
 import { resolveWorkspacePath } from "./workspacePath.js";
+
+/** How a survivor is named and why it is kept, by what the scan could establish about who started it. */
+export function describeSurvivor(name: string | undefined, ownership: "confirmed" | "suspected" | "unknown", command: string): { label: string; reason: string } {
+  const exe = name ? `${name} ` : "";
+  if (ownership === "confirmed") return {
+    label: `${exe}(descendant of: ${command})`,
+    reason: "started by the command and still running after the command's shell exited",
+  };
+  if (ownership === "suspected") return {
+    label: `${exe}(suspected: names the workspace; created while ${command} ran)`,
+    reason: "created while the command ran and its command line names the workspace, but its parent has exited so its ancestry cannot be established; treated as the command's until verified gone",
+  };
+  return {
+    label: `${exe}(ownership unknown: created while ${command} ran)`,
+    reason: "created while the command ran under a parent that has exited; nothing ties it to the command beyond timing, but that cannot be ruled out, so it is kept until verified gone",
+  };
+}
 
 const COMMAND_ENV_ALLOWLIST = new Set([
   "appdata", "ci", "colorterm", "commonprogramfiles", "comspec", "force_color",
@@ -221,7 +238,7 @@ export const runCommandTool: Tool = {
         if (pid == null) return target;
         let scan: Promise<{ status: "done" | "unknown"; resources: UnsettledProcess[] }>;
         try {
-          scan = findSurvivingDescendants(pid, spawnedAt).then(
+          scan = findSurvivingDescendants(pid, spawnedAt, { workspaceRoot: ctx.workspaceRoot }).then(
             (found) => found === null
               ? { status: "unknown" as const, resources: [] as UnsettledProcess[] }
               : {
@@ -229,12 +246,10 @@ export const runCommandTool: Tool = {
                   resources: found.map((f): UnsettledProcess => ({
                     kind: "process",
                     pid: f.pid,
-                    label: `${f.name ? f.name + " " : ""}(${f.relation} of: ${label})`,
+                    ...describeSurvivor(f.name, f.ownership, label),
                     startedAt: spawnedAt,
                     ...(f.identity ? { identity: f.identity } : {}),
-                    reason: f.relation === "descendant"
-                      ? "started by the command and still running after the command's shell exited"
-                      : "created while the command ran, its parent has exited and its ancestry cannot be established; treated as the command's until verified gone",
+                    ownership: f.ownership,
                   })),
                 },
             () => ({ status: "unknown" as const, resources: [] as UnsettledProcess[] }),
