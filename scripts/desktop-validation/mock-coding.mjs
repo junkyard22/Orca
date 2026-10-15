@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Scripted, network-free OpenAI-compatible provider for the packaged-app
  * coding checks (1.7.0 H2/H3). Same server mechanics as mock-provider.mjs;
@@ -43,8 +42,9 @@ export function fixedSource(original) {
 export function reportLastRun(messages) {
   const lastUser = [...messages].reverse().find((m) => m?.role === "user");
   const out = lastUser ? text(lastUser) : "";
-  const pass = /ℹ pass (\d+)/.exec(out)?.[1];
-  const fail = /ℹ fail (\d+)/.exec(out)?.[1];
+  // node:test's summary: "ℹ pass N" (spec reporter) or "# pass N" (TAP, Node 22 when not on a terminal).
+  const pass = /(?:ℹ|#) pass (\d+)/.exec(out)?.[1];
+  const fail = /(?:ℹ|#) fail (\d+)/.exec(out)?.[1];
   if (pass === undefined || fail === undefined) return "I could not read a test summary in the command output.";
   return `npm test on the current source: ${pass} passed, ${fail} failed.`;
 }

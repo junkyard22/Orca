@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, unlinkSync, utimesSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync, unlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -44,6 +44,10 @@ describe("workspace inventory", () => {
 
   it("reuses hashes for files whose size and mtime did not change", async () => {
     const root = workspace();
+    // A settled file (last written an hour ago). A file written within the
+    // racy window of a capture is re-hashed instead — see the coarse-clock test below.
+    const anHourAgo = Date.now() / 1000 - 3600;
+    utimesSync(join(root, "src", "a.js"), anHourAgo, anHourAgo);
     const first = await captureWorkspaceInventory(root);
     const second = await captureWorkspaceInventory(root, DEFAULT_EVIDENCE_LIMITS, first);
     expect(second.files.get("src/a.js")).toBe(first.files.get("src/a.js"));
@@ -88,6 +92,22 @@ describe("workspace diff", () => {
     const after = await captureWorkspaceInventory(root, DEFAULT_EVIDENCE_LIMITS, before);
     const changes = await diffWorkspaceInventories(root, before, after);
     expect(changes.map((c) => c.path)).toContain("src/a.js");
+  });
+
+  it("detects a same-size edit that keeps the exact mtime, as a coarse filesystem clock leaves it (racily clean files are re-hashed)", async () => {
+    const root = workspace();
+    const file = join(root, "src", "a.js");
+    // A whole-second mtime, so restoring it below is exact on every filesystem.
+    const tick = Math.floor(Date.now() / 1000);
+    utimesSync(file, tick, tick);
+    const before = await captureWorkspaceInventory(root);
+    writeFileSync(file, "export const a = 9;\n"); // same length
+    // Linux stamps mtimes from a coarse clock: an edit within the same tick keeps size and mtime.
+    utimesSync(file, tick, tick);
+    expect(statSync(file).mtimeMs).toBe(before.files.get("src/a.js")?.mtimeMs);
+    const after = await captureWorkspaceInventory(root, DEFAULT_EVIDENCE_LIMITS, before);
+    expect(after.files.get("src/a.js")?.hash).not.toBe(before.files.get("src/a.js")?.hash);
+    expect((await diffWorkspaceInventories(root, before, after)).map((c) => c.path)).toContain("src/a.js");
   });
 });
 

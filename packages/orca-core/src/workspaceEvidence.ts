@@ -74,7 +74,18 @@ export interface WorkspaceInventory {
   testCommand?: string;
   source: "git" | "walk";
   ms: number;
+  /** When the files were stat'ed (ms since epoch): decides which stat results a later capture may trust. */
+  capturedAtMs?: number;
 }
+
+/**
+ * A file whose mtime is this close to (or after) the previous capture is
+ * "racily clean": an edit of the same size made within one filesystem clock
+ * tick of that capture keeps the same size and mtime. Linux stamps mtimes from
+ * a coarse clock (one jiffy, often 4 ms), FAT/exFAT to 2 s. Such files are
+ * re-hashed instead of trusted on stat (the same rule git applies to its index).
+ */
+const RACY_WINDOW_MS = 2_000;
 
 function isProbablyText(buffer: Buffer): boolean {
   return !buffer.subarray(0, 8000).includes(0);
@@ -164,7 +175,7 @@ export function captureWorkspaceInventorySync(
     paths = walked.paths;
     if (walked.problem) {
       if (/cannot read workspace/.test(walked.problem)) {
-        return { files, partial: true, reason: walked.problem, source, ms: Date.now() - started };
+        return { files, partial: true, reason: walked.problem, source, ms: Date.now() - started, capturedAtMs: started };
       }
       partial = true;
       reason = walked.problem;
@@ -182,7 +193,8 @@ export function captureWorkspaceInventorySync(
     }
     if (!info.isFile()) continue;
     const before = previous?.files.get(path);
-    if (before && before.size === info.size && before.mtimeMs === info.mtimeMs) {
+    const statTrusted = previous?.capturedAtMs !== undefined && before !== undefined && before.mtimeMs < previous.capturedAtMs - RACY_WINDOW_MS;
+    if (before && statTrusted && before.size === info.size && before.mtimeMs === info.mtimeMs) {
       files.set(path, before);
       continue;
     }
@@ -217,6 +229,7 @@ export function captureWorkspaceInventorySync(
     testCommand: readTestCommand(files.get("package.json")?.content),
     source,
     ms: Date.now() - started,
+    capturedAtMs: started,
   };
 }
 
