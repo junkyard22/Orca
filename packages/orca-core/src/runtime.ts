@@ -1,4 +1,5 @@
 import { buildHostRecord, correctProvenance } from "./hostRecord.js";
+import { buildAcceptanceContract } from "./acceptanceContract.js";
 import type {
   OrcaRuntime,
   OrcaRuntimeDeps,
@@ -580,7 +581,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         });
 
         if (qcEnabled) {
-          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+          ctx.acceptanceContract ??= buildAcceptanceContract(normalizedTaskSpec, auditMaestroResult.doneCriteria);
+          recordTrace("acceptance.contract", ctx.acceptanceContract);
+          const qcInput = buildPappyInput(normalizedTaskSpec, auditMaestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])], ctx.acceptanceContract.goals);
           ctx.verificationReceipts?.push(...(auditMaestroResult.toolEvents ?? []));
           recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
           const beforeQcGate = ctx.gate?.beforeQC({ taskId, outputText });
@@ -680,6 +683,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       const initialPass = await accountPass(budgetLedger, () => untilAborted(maestro.run(normalizedTaskSpec, ctx), options?.abortSignal), effectiveGate);
       const maestroResult = withPassAccounting(normalizeMaestroResult(initialPass.result), initialPass.accounting);
       persistedMaestroResult = maestroResult;
+      // One acceptance contract for the whole task: the user's goals plus the
+      // criteria Brain derived for this pass, fixed now and used for every
+      // verdict (first pass, repairs) — a repair cannot change the standard.
+      ctx.acceptanceContract ??= buildAcceptanceContract(normalizedTaskSpec, maestroResult.doneCriteria);
+      recordTrace("acceptance.contract", ctx.acceptanceContract);
       ctx.passLog?.push({ pass: 1, label: "first pass", ...(maestroResult.metadata?.role ? { role: maestroResult.metadata.role } : {}), toolEvents: maestroResult.toolEvents ?? [] });
       const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
 
@@ -763,7 +771,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
         }
 
         lifecycle.transition("VERIFYING", "initial pass complete; Pappy evaluates");
-        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]);
+        const qcInput = buildPappyInput(normalizedTaskSpec, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])], ctx.acceptanceContract?.goals);
         ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
         recordTrace("qc.run.start", { attempt: 0, isRepair: false, input: qcInput });
 

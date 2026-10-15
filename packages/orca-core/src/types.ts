@@ -364,6 +364,8 @@ export interface OrcaRunCtx {
   verificationReceipts?: OrcaToolEvent[];
   /** Each worker pass of this task with the tool events the host recorded for it, oldest first. */
   passLog?: import("./hostRecord.js").PassLogEntry[];
+  /** The task's acceptance contract, fixed after the first pass and used by every verdict. */
+  acceptanceContract?: import("./acceptanceContract.js").AcceptanceContract;
   /** The workspace evidence most recently collected (what the last verdict was judged on). */
   lastWorkspaceEvidence?: import("@clawde/pappy-core").WorkspaceEvidence;
 }

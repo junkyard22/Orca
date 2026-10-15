@@ -260,7 +260,8 @@ export async function handleRepairLoop(
     const repairSpec: OrcaTaskSpec = {
       originalUserMessage: `${repairInstruction}${hostSection}${roleHint}${toolNudge}`,
       intent: "repair",
-      goals: [...originalTask.goals],
+      // The repair works to, and is judged against, the same acceptance contract.
+      goals: [...(ctx.acceptanceContract?.goals ?? originalTask.goals)],
       constraints: originalTask.constraints,
       permissions: originalTask.permissions,
       outputFormat: originalTask.outputFormat,
@@ -385,7 +386,7 @@ export async function handleRepairLoop(
     // Judge this pass with the runtime's workspace evidence and the receipts of
     // every earlier pass, so a reproduction run before the first fix still counts.
     ctx.lifecycle?.transition("VERIFYING", `repair pass ${pass} complete; Pappy evaluates`);
-    const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])]));
+    const nextQC = pappy.evaluate(buildPappyInput(originalTask, maestroResult, await ctx.collectWorkspaceEvidence?.(), [...(ctx.verificationReceipts ?? [])], ctx.acceptanceContract?.goals));
     ctx.verificationReceipts?.push(...(maestroResult.toolEvents ?? []));
     ctx.recordTrace?.("repair.pass.qc_result", {
       pass,

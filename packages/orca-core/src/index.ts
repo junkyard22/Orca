@@ -131,3 +131,6 @@ export { createAbortError, isAbortError, throwIfAborted, untilAborted } from "./
 
 export { buildHostRecord, checkProvenance, correctProvenance, parseTestCounts } from "./hostRecord.js";
 export type { HostRecord, HostRecordChange, HostRecordTestRun, PassLogEntry, ProvenanceCheck } from "./hostRecord.js";
+
+export { buildAcceptanceContract } from "./acceptanceContract.js";
+export type { AcceptanceContract } from "./acceptanceContract.js";
