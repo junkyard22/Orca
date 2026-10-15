@@ -1,6 +1,7 @@
 import type { LLMAdapter } from "@clawde/miranda-core";
 import {
   createDirectLLMService,
+  describeRefusal,
   extractFilesChangedFromCommandOutput,
   type AHPPacket,
   type OrcaLLMService,
@@ -683,6 +684,22 @@ function renderTaskPrompt(
   return lines.join("\n");
 }
 
+/** Where the task's refusal record stood before a tool call. */
+function refusalMark(ctx: AgentRunContext): number {
+  return ctx.authorization?.last()?.seq ?? 0;
+}
+
+/**
+ * A call that was not approved during this tool run is reported to the worker
+ * as what actually happened — denied, timed out or cancelled — not as the
+ * tool's generic wording.
+ */
+function withRefusalOutcome<T extends { ok: boolean; error?: string }>(result: T, ctx: AgentRunContext, before: number): T {
+  const latest = ctx.authorization?.last();
+  if (result.ok || !latest || latest.seq <= before) return result;
+  return { ...result, error: describeRefusal(latest.refusal, latest.repeated) };
+}
+
 function toSharedToolService(tools: Tool[], ctx: AgentRunContext): OrcaToolService {
   const service: OrcaToolService & {
     getSchema(name: string): Tool["schema"] | undefined;
@@ -696,6 +713,7 @@ function toSharedToolService(tools: Tool[], ctx: AgentRunContext): OrcaToolServi
           error: `Unknown tool: ${name}`,
         });
       }
+      const before = refusalMark(ctx);
       return tool.execute(input, {
         workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
         runId: ctx.runId,
@@ -704,7 +722,7 @@ function toSharedToolService(tools: Tool[], ctx: AgentRunContext): OrcaToolServi
           ? (toolName: string, args: Record<string, unknown>, _reason: string) =>
               ctx.requestToolApproval!(toolName, args)
           : undefined,
-      });
+      }).then((result) => withRefusalOutcome(result, ctx, before));
     },
 
     formatForPrompt() {
@@ -1241,9 +1259,10 @@ export class ReactAgentAdapter implements AgentAdapter {
           // Tracked by the task lifecycle: the task cannot settle while it runs,
           // and nothing starts once cancellation was requested.
           if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) throwIfAborted(ctx.abortSignal);
-          const result = ctx.lifecycle
+          const refusalsBefore = refusalMark(ctx);
+          const result = withRefusalOutcome(ctx.lifecycle
             ? await ctx.lifecycle.track("tool", toolName, () => tool.execute(toolInput, toolContext))
-            : await tool.execute(toolInput, toolContext);
+            : await tool.execute(toolInput, toolContext), ctx, refusalsBefore);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
           const commandFileChanges = result.ok

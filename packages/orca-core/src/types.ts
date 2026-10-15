@@ -345,6 +345,11 @@ export interface OrcaRunCtx {
    */
   requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
   /**
+   * The user's refusals in this task (denied, timed out, cancelled). A refused
+   * operation is not asked for again; a FAIL that needs it gets no repair pass.
+   */
+  authorization?: import("./authorization.js").AuthorizationRecord;
+  /**
    * Absolute path to the user's configured workspace folder.
    * Passed through to tool execution so write_file resolves relative paths
    * against the workspace root rather than process.cwd().
@@ -469,8 +474,10 @@ export interface OrcaRuntimeDeps {
    * Per-tool approval hook. When supplied, every agent tool call is gated
    * behind this function before execution. Return false to deny.
    * Inject requestToolApproval from apps/desktop/src/main.ts for the UI dialog.
+   * It may answer with a decision naming the outcome (denied, timed out,
+   * cancelled); only `true` or `{ approved: true }` authorizes the call.
    */
-  requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+  requestToolApproval?: (tool: string, args: Record<string, unknown>) => Promise<boolean | import("./authorization.js").ToolApprovalDecision>;
   /**
    * Model ID the LLM service is targeting (e.g. "deepseek/deepseek-chat").
    * Flowed through OrcaRunCtx so the agent loop can populate

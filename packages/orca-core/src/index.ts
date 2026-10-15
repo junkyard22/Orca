@@ -133,4 +133,6 @@ export { buildHostRecord, checkProvenance, correctProvenance, parseTestCounts } 
 export type { HostRecord, HostRecordChange, HostRecordTestRun, PassLogEntry, ProvenanceCheck } from "./hostRecord.js";
 
 export { buildAcceptanceContract } from "./acceptanceContract.js";
+export { createAuthorizationRecord, describeRefusal, normalizeApproval, operationOf, summarizeRefusals } from "./authorization.js";
+export type { ApprovalOutcome, AuthorizationRecord, ToolApprovalDecision, ToolRefusal } from "./authorization.js";
 export type { AcceptanceContract } from "./acceptanceContract.js";

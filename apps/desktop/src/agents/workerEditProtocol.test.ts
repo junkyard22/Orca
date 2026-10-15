@@ -207,6 +207,8 @@ type RuntimeOpts = {
   brainCriteria?: string[];
   /** Stands in for the human's answer on each approval card (default: approve). */
   approve?: (tool: string, args: Record<string, unknown>) => boolean;
+  /** Stands in for the desktop's settlement of each card (outcome included), as main.ts answers the runtime. */
+  decide?: (tool: string, args: Record<string, unknown>) => unknown;
 };
 
 function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, traces: OrcaPipelineTrace[], opts: RuntimeOpts = {}) {
@@ -219,7 +221,7 @@ function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, t
     llm: { complete: async () => ({ text: "" }), stream: async () => ({ text: "" }) } as never,
     maxRepairPasses: opts.maxRepairPasses ?? 0,
     ...(opts.store ? { store: opts.store as unknown as OrcaStore } : {}),
-    requestToolApproval: async (tool: string, args: Record<string, unknown>) => (opts.approve ? opts.approve(tool, args) : true),
+    requestToolApproval: async (tool: string, args: Record<string, unknown>) => (opts.decide ? opts.decide(tool, args) : opts.approve ? opts.approve(tool, args) : true) as never,
     writeTrace: (t) => { traces.push(t); },
   });
 }
@@ -779,5 +781,95 @@ describe("packaged-check mock (scripts/desktop-validation/mock-coding.mjs) scrip
     expect(result.qcResult?.verdict).toBe("PASS");
     expect(result.qcResult?.verification?.status).toBe("verified");
     expect(result.provenance).toBeUndefined();
+  }, 90_000);
+});
+
+describe("H1: no means no — a refused command is not asked for again, by the worker or by a repair pass", () => {
+  const H1 = "Run node -e \"console.log('h1')\" and report";
+  const NODE = "node -e \"console.log('h1')\"";
+  const denied = { approved: false, outcome: "denied", reason: "denied by the user" };
+  const timedOut = { approved: false, outcome: "timed_out", reason: "timed out" };
+
+  async function h1(settlement: unknown) {
+    const root = project();
+    const task = spec(root, H1, [H1]);
+    // The stock mock's worker: ask once; if refused, say so; a repair pass would ask again.
+    const model = new ScriptedModel([
+      call({ tool: "run_command", command: NODE }),
+      "FINAL ANSWER: The command was not approved, so it did not run. I could not complete the request.",
+      call({ tool: "run_command", command: NODE }),
+      "FINAL ANSWER: The command was not approved, so it did not run. I could not complete the request.",
+    ]);
+    const cards: string[] = [];
+    const traces: OrcaPipelineTrace[] = [];
+    const result = await runtimeFor(model, task, {}, traces, {
+      maxRepairPasses: 1,
+      decide: (_tool, args) => { cards.push(String(args["command"])); return settlement; },
+    }).executeTask(task);
+    return { result, trace: traces[0]!, cards, model };
+  }
+
+  it("the exact H1 sequence: Deny → one card only, no repair pass, FAIL reported as blocked by the user's authorization", async () => {
+    const { result, trace, cards, model } = await h1(denied);
+    expect(cards).toEqual([NODE]);
+    expect(stagesOf(trace, "repair.start")).toHaveLength(0);
+    const skipped = stagesOf(trace, "repair.skipped")[0]?.detail as { reason: string; blockedByAuthorization: boolean };
+    expect(skipped.blockedByAuthorization).toBe(true);
+    expect(skipped.reason).toMatch(/blocked by your authorization/);
+    expect(skipped.reason).toMatch(/you denied it/);
+    expect(result.qcResult?.verdict).toBe("FAIL");
+    expect(result.summary).toMatch(/blocked by your authorization/);
+    // The worker was told it was denied — and nothing ran.
+    const told = String(model.requests[1]!.messages.map((m) => m.content).join("\n"));
+    expect(told).toMatch(/the user denied this call/);
+    expect(stagesOf(trace, "agent.tool.result").every((e) => (e.detail as { result?: { ok?: boolean } }).result?.ok === false)).toBe(true);
+  }, 90_000);
+
+  it("timeout: one card, reported to the worker and the user as a timeout (not a denial), no automatic retry", async () => {
+    const { result, trace, cards, model } = await h1(timedOut);
+    expect(cards).toEqual([NODE]);
+    expect(stagesOf(trace, "repair.start")).toHaveLength(0);
+    const told = String(model.requests[1]!.messages.map((m) => m.content).join("\n"));
+    expect(told).toMatch(/approval timed out/);
+    expect(told).not.toMatch(/denied this call|denied by user/);
+    expect(result.summary).toMatch(/timed out without an answer/);
+    expect(result.qcResult?.verdict).toBe("FAIL");
+  }, 90_000);
+
+  it("the worker asking again in the same pass gets no second card", async () => {
+    const root = project();
+    const task = spec(root, H1, [H1]);
+    const model = new ScriptedModel([call({ tool: "run_command", command: NODE }), call({ tool: "run_command", command: NODE }), "FINAL ANSWER: not approved."]);
+    const cards: string[] = [];
+    const traces: OrcaPipelineTrace[] = [];
+    await runtimeFor(model, task, {}, traces, { maxRepairPasses: 0, decide: (_t, args) => { cards.push(String(args["command"])); return denied; } }).executeTask(task);
+    expect(cards).toEqual([NODE]);
+    expect(stagesOf(traces[0]!, "approval.not_reasked")).toHaveLength(1);
+    expect(String(model.requests[2]!.messages.map((m) => m.content).join("\n"))).toMatch(/not asked for again/);
+  }, 90_000);
+
+  it("a refusal and a genuine code defect: the refused test run is never asked for again, and no PASS is manufactured", async () => {
+    const root = project(true);
+    const task = spec(root, "Fix the failing test in src/parse.js and run the tests.");
+    const WRONG = BUGGY.replace("  const value = parseInt(trimmed, 10);", "  if (trimmed === \"\") return 1;\n  const value = parseInt(trimmed, 10);");
+    const model = new ScriptedModel([
+      call({ tool: "run_command", command: "npm test" }),
+      call({ tool: "write_file", path: "src/parse.js", content: WRONG }),
+      call({ tool: "run_command", command: "npm test" }),
+      "FINAL ANSWER: Added an empty-input guard in src/parse.js.",
+      call({ tool: "run_command", command: "npm test" }),
+      "FINAL ANSWER: The test run was not approved.",
+    ]);
+    const cards: string[] = [];
+    const traces: OrcaPipelineTrace[] = [];
+    const result = await runtimeFor(model, task, {}, traces, {
+      maxRepairPasses: 1,
+      // The person approves the first run, then denies the run after the change.
+      decide: (_t, args) => { cards.push(String(args["command"])); return cards.length === 1 ? true : denied; },
+    }).executeTask(task);
+    expect(cards).toEqual(["npm test", "npm test"]);
+    expect(hostTestRun(root).fail).toBeGreaterThan(0); // the defect is real
+    expect(result.qcResult?.verdict).toBe("FAIL");
+    expect(stagesOf(traces[0]!, "repair.start")).toHaveLength(0);
   }, 90_000);
 });

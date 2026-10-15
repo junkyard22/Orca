@@ -371,3 +371,17 @@ The file-less criterion (fingerprint on the final source, reproduction required,
 - Pappy suites: 23/23 · 12/23 · 15/23, unchanged.
 - Evidence corpus: 60/60 (0 of 40 false acceptances, 0 of 14 false rejections).
 - Strict contract check: exit 0, REVIEW REQUIRED, with the same 13 findings (Rule 4 for Pappy files, Rule 6 for the system contract).
+
+### 21.1 Packaged check H1 — defect found and corrected (2026-10-15)
+
+**Candidate `0fd63222`, isolated profile, offline stock mock.** The human witnessed the check. The card was correct: the tool, the exact command, the task's workspace, Deny focused, no "always approve" control. Deny prevented execution, and so did a timeout ("Not approved — timed out" after exactly 60.0 s).
+
+**Defect:** after the Deny, the repair loop dispatched a repair pass that asked for the same command again. This happened in both runs (`run_1792083309671_9s6szj`, `run_1792083673758_fb21vo`). The cause: Pappy's issues that follow from the refusal (goal not covered, receipt missing) were classed as repairable. **H1 status: FAIL** (evidence in `rehearsal/H/H1-observations.md`).
+
+**Correction:** approved by the human; recorded in `docs/ORCA_1.7_CONTRACT_REVIEW.md`, "A refusal is respected".
+- Settlements name their outcome.
+- A refused operation is not asked for again in the task.
+- A FAIL that depends on a refusal gets no repair, and the task is reported as blocked by the user's authorization.
+- The worker is told denial, timeout and cancellation as distinct outcomes.
+
+The packaged checks resume with a fresh H1 on a candidate rebuilt from the corrected commit.

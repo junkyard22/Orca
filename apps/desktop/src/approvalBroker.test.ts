@@ -150,6 +150,34 @@ describe("approval broker", () => {
   });
 });
 
+describe("each settlement names its outcome, so the runtime can tell a denial from a timeout or Stop", () => {
+  it("deny → denied; no answer → timed_out; Stop → cancelled; a mismatched answer → refused; approval → approved", async () => {
+    vi.useFakeTimers();
+    try {
+      let clock = 0;
+      const sent: ApprovalRequest[] = [];
+      const broker = createApprovalBroker({ send: (r) => sent.push(r), isTaskRunning: () => true, now: () => clock, timeoutMs: 60_000 });
+      const denied = broker.decide("run_command", { command: "npm test" }, "t"); clock += 1500;
+      broker.respond({ id: sent[0]!.id, approved: false });
+      expect(await denied).toMatchObject({ approved: false, outcome: "denied" });
+      const timedOut = broker.decide("run_command", { command: "npm test" }, "t");
+      vi.advanceTimersByTime(60_000);
+      expect(await timedOut).toMatchObject({ approved: false, outcome: "timed_out" });
+      const stopped = broker.decide("run_command", { command: "npm test" }, "t");
+      broker.denyAll("the task stopped");
+      expect(await stopped).toMatchObject({ approved: false, outcome: "cancelled", reason: "the task stopped" });
+      const mismatched = broker.decide("run_command", { command: "npm test" }, "t"); clock += 1500;
+      broker.respond({ id: sent[3]!.id, approved: true, tool: "run_command", command: "node --test" });
+      expect(await mismatched).toMatchObject({ approved: false, outcome: "refused" });
+      const approved = broker.decide("run_command", { command: "npm test" }, "t"); clock += 1500;
+      broker.respond({ id: sent[4]!.id, approved: true, tool: "run_command", command: "npm test" });
+      expect(await approved).toMatchObject({ approved: true, outcome: "approved" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("the card is told how each request was settled", () => {
   it("approval, a refused mismatched answer, and Stop are all reported with the reason; an early click is not a settlement", async () => {
     let clock = 0;

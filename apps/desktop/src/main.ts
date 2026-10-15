@@ -95,7 +95,7 @@ import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
 import { runWithBudget, withBudgetAttribution } from "@clawde/miranda-core";
 import type { MirandaGate as DesktopMirandaGate } from "@clawde/miranda-core";
 import { reviewNarration } from "./narrationReview";
-import { createApprovalBroker } from "./approvalBroker";
+import { createApprovalBroker, type Settlement } from "./approvalBroker";
 import { createAbortError, createBudgetJournal, createWorkspaceGuard, WorkspaceProtectedError } from "@clawde/orca-core";
 import type { HostRecord } from "@clawde/orca-core";
 import type { BudgetJournal, WorkspaceGuard } from "@clawde/orca-core";
@@ -1925,7 +1925,8 @@ async function _initOrcaImpl(s: OrcaSettings): Promise<string | null> {
       workspaceRoot,
       store,
       writeTrace: writePipelineTrace,
-      requestToolApproval,
+      // Settlements name their outcome, so the runtime can record a denial or a timeout.
+      requestToolApproval: requestToolDecision,
       budgetUsd: s.budgetUsd,
       budgetSource: s.budgetSource,
       customPrices: getCustomPrices(),
@@ -2367,19 +2368,31 @@ export function requestToolApproval(
   tool: string,
   args: Record<string, unknown>,
 ): Promise<boolean> {
+  return requestToolDecision(tool, args).then((settlement) => settlement.approved === true);
+}
+
+/**
+ * The same request, reporting how it was settled, for the task runtime: it
+ * records denials and timeouts so a refused operation is not asked for again.
+ */
+export function requestToolDecision(
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<Settlement> {
   if (isAppLocked()) {
-    return Promise.resolve(false);
+    return Promise.resolve({ approved: false, outcome: "cancelled", reason: "the app is locked" });
   }
   // Only a running task may ask the user; a task that is stopping gets "no".
   const session = taskSessions.current;
   if (!session || session.state !== "running") {
-    return Promise.resolve(false);
+    return Promise.resolve({ approved: false, outcome: "cancelled", reason: "the task is not running" });
   }
 
   const epoch = approvalEpoch;
+  const superseded: Settlement = { approved: false, outcome: "cancelled", reason: "the task stopped" };
   const queued = approvalQueue.then(
-    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
-    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : false,
+    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : superseded,
+    () => epoch === approvalEpoch ? requestSingleToolApproval(tool, args) : superseded,
   );
   approvalQueue = queued.then(
     () => undefined,
@@ -2391,13 +2404,13 @@ export function requestToolApproval(
 function requestSingleToolApproval(
   tool: string,
   args: Record<string, unknown>,
-): Promise<boolean> {
+): Promise<Settlement> {
   if (!win || win.isDestroyed()) {
-    return Promise.resolve(false);
+    return Promise.resolve({ approved: false, outcome: "cancelled", reason: "the window is closed" });
   }
   // Not approved after 60 s without an answer (approvalBroker).
   const session = taskSessions.current;
-  return approvalBroker.request(tool, args, session?.id, session ? taskWorkspaces.get(session.id) ?? activeWorkspaceRoot() : activeWorkspaceRoot());
+  return approvalBroker.decide(tool, args, session?.id, session ? taskWorkspaces.get(session.id) ?? activeWorkspaceRoot() : activeWorkspaceRoot());
 }
 
 // ── Build identity: what this executable is ────────────────────────────────

@@ -15,6 +15,7 @@
  * a code defect, so an unknown issue keeps today's behaviour (a repair pass).
  */
 import type { Issue as PappyIssue } from "@clawde/pappy-core";
+import { summarizeRefusals, type ToolRefusal } from "./authorization.js";
 
 export type RepairIssueClass = "code_defect" | "missing_evidence" | "authorization" | "evidence_integrity";
 
@@ -48,7 +49,12 @@ export interface RepairDecision {
   blocking: Array<{ code: string; severity: string; class: RepairIssueClass }>;
   /** Why no worker was dispatched (only when `dispatch` is false). */
   reason?: string;
+  /** Set when the task is blocked by the user's authorization (a refused operation it needs). */
+  blockedByAuthorization?: boolean;
 }
+
+/** Issues that say the goal or its proof is missing — what a refused operation leaves behind. */
+const GOAL_UNMET = new Set(["CORE_GOAL_MISSING", "COMPLETENESS_GOAL_COVERAGE"]);
 
 /**
  * Decide whether a worker repair pass is worth dispatching for a FAIL. Only
@@ -58,10 +64,30 @@ export interface RepairDecision {
  * pass is dispatched and the FAIL is reported for a person to act on. Any
  * code defect or missing evidence keeps the repair pass (unchanged bounds).
  */
-export function decideRepair(issues: readonly PappyIssue[]): RepairDecision {
+export function decideRepair(issues: readonly PappyIssue[], refusals: readonly ToolRefusal[] = []): RepairDecision {
   const blocking = issues
     .filter((i) => i.severity === "CRITICAL" || i.severity === "HIGH")
     .map((i) => ({ code: i.code, severity: i.severity, class: classifyRepairIssue(i) }));
+  // The user refused (or did not answer) an operation in this task. When the
+  // FAIL depends on it — the refusal itself, or the evidence or goal it left
+  // missing — a repair pass could only ask for the same operation again, or a
+  // substitute for it: no pass is dispatched and the task is reported as
+  // blocked by the user's authorization. Pappy's verdict is unchanged. When
+  // every blocking issue is a genuine defect unrelated to the refusal (the
+  // refused operation was optional), the repair proceeds; the refused
+  // operation is still never asked for again (runtime, authorization.ts).
+  const unanswered = refusals.filter((r) => r.outcome !== "cancelled");
+  if (unanswered.length > 0) {
+    const dependent = blocking.filter((b) => b.class === "authorization" || b.class === "missing_evidence" || GOAL_UNMET.has(b.code));
+    if (dependent.length > 0) {
+      const genuine = blocking.filter((b) => !dependent.includes(b) && b.class === "code_defect").map((b) => b.code);
+      const reason = `No repair pass: the task is blocked by your authorization — ${summarizeRefusals(unanswered)}. `
+        + "Completing it needs that operation, and Orca does not ask again for something you refused or did not answer; start a new request if you want it to run."
+        + (genuine.length > 0 ? ` Pappy also found ${[...new Set(genuine)].join(", ")}; it is reported, not repaired, because verifying a fix needs the same operation.` : "");
+      return { dispatch: false, blocking, reason, blockedByAuthorization: true };
+    }
+    return { dispatch: true, blocking };
+  }
   if (blocking.length === 0 || blocking.some((b) => b.class === "code_defect" || b.class === "missing_evidence")) {
     return { dispatch: true, blocking };
   }

@@ -167,13 +167,14 @@ export async function handleRepairLoop(
     // approve cannot be resolved by editing code: a worker sent to "fix" it
     // rewrites correct source until its iterations run out. No pass is
     // dispatched; Pappy's FAIL stands and is reported for a person to act on.
-    const decision = decideRepair(currentQC.issues);
+    const decision = decideRepair(currentQC.issues, ctx.authorization?.refusals() ?? []);
     if (!decision.dispatch) {
       ctx.recordTrace?.("repair.skipped", {
         pass,
         maxPasses,
         reason: decision.reason,
         blocking: decision.blocking,
+        ...(decision.blockedByAuthorization ? { blockedByAuthorization: true, refusals: ctx.authorization?.refusals() ?? [] } : {}),
       });
       return {
         status: "FAIL",

@@ -86,13 +86,26 @@ Branch `fix/release-stabilization-1.7.0` against `origin/main` (`c0b1092`). `pnp
 | **Limitations** | It recognises common phrasings only. |
 | **Disposition** | Authorized by brief. |
 
+### A refusal is respected — `packages/orca-core/src/authorization.ts`, `runtime.ts`, `repairClassification.ts`, `repairLoop.ts`, `types.ts`; `apps/desktop/src/approvalBroker.ts`, `main.ts`, `agents/ReactAgentAdapter.ts`; tool wording in `workbench-core/runCommandTool.ts`, `agent-loop-core/loop.ts`
+
+**New item, found in packaged check H1.** The human approved the correction on 2026-10-15. It needs review at merge.
+
+| | |
+|---|---|
+| **Behaviour** | **Before:** in packaged check H1 the user denied `node -e "console.log('h1')"`, Pappy returned FAIL, and the repair loop dispatched a repair pass that asked for the same command again. The H1 evidence is preserved in `rehearsal/H/H1-observations.md`. **Now:** (1) every approval settles with an outcome: approved, denied, timed out, cancelled, or refused (an answer that did not match the request). (2) The runtime records each refusal for the task. A refused operation is **not asked for again** in that task, whether by the same worker or by a repair pass; the worker is told it was not approved and no card is shown. (3) When a FAIL depends on a refused operation (the authorization failure itself, or the evidence or goal it left missing), no repair pass is dispatched, and the task is reported as blocked by the user's authorization. Any genuine defect Pappy also found is reported separately. (4) When every blocking issue is a genuine defect unrelated to the refusal (the refused operation was optional), the repair proceeds, but the refused operation is still never asked for again. (5) The worker is told denial, timeout and cancellation as distinct outcomes. A timeout is no longer described as "denied by user". |
+| **Why reviewed** | It changes repair dispatch and approval plumbing. Neither path matches the checker's patterns: `repairClassification.ts` is outside Rule 4's `repair.ts` pattern. |
+| **Weakens a guarantee?** | No. **Approval stays fail-safe.** Below the runtime every consumer still receives a plain boolean. Only `true` or `{ approved: true }` authorizes a call, so a malformed or unknown answer is not an approval (tested). **Pappy's verdict is never changed.** The decision only controls whether a worker is dispatched, so no PASS is manufactured. **Unchanged:** Miranda, workspace protection and the broker's binding. Repair dispatch for FAILs that involve no refusal is also unchanged (tested). |
+| **Tests** | `orca-core/authorization.test.ts` (14): fail-safe normalization; distinct worker wording; the H1 issues with and without the refusal record; timeout; refusal plus a genuine defect; an optional refusal; ordinary repairable failures; verdict untouched; the runtime does not ask again (Deny, timeout, bare `false`, re-spaced command); approvals still approve; cancellation. `desktop/approvalBroker.test.ts`: settlement outcomes. `desktop/workerEditProtocol.test.ts` (4, production worker loop and real tools): the exact H1 sequence; timeout; a same-pass re-request; a refusal plus a genuine code defect (no second card, FAIL). |
+| **Limitations** | "The same operation" means the same tool and the same exact command after trimming, or the same arguments. A *different* command that serves the same purpose (`node --test` instead of `npm test`) is a new request with its own card, so the person decides it fresh. No repair pass is dispatched to ask for it, and the worker is told not to substitute. A refusal lasts for the task; to run the operation the user starts a new request. |
+| **Disposition** | **Approved by the human (2026-10-15)** as a correction. **For review** at merge. |
+
 ### Worker protocol, survivor attribution, redirection parsing
 
 These come from `fix/worker-edit-protocol` and `fix/process-attribution`, both already reviewed. Pushing and opening a PR were approved earlier (Decision 2), and they are carried here unchanged. **Disposition:** approved earlier.
 
 ## Summary for the reviewer
 
-No finding weakens Miranda, Pappy or Moonshiner. Both Rule 4 items are approved by the human:
+The refusal correction (above) is a new, disclosed item from packaged check H1. No finding weakens Miranda, Pappy or Moonshiner. Both Rule 4 items are approved by the human:
 
 - **4a**, approved earlier;
 - **4b**, approved on 2026-10-15, on the conditions stated above.

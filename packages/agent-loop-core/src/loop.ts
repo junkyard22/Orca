@@ -265,10 +265,10 @@ export async function runAgentLoop(
           toolEvents.push({
             tool: call.tool,
             ok: false,
-            summary: `${call.tool}: denied by user`,
+            summary: `${call.tool}: not approved`,
             raw: call.input,
           });
-          conversation += formatToolResult(call.tool, false, "Tool call denied by user.");
+          conversation += formatToolResult(call.tool, false, "Tool call not run: not approved.");
           continue;
         }
       }

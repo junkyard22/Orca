@@ -162,7 +162,7 @@ export const runCommandTool: Tool = {
         return {
           ok: false,
           output: "",
-          error: "Command execution denied by user",
+          error: "Command not run: not approved (denied, timed out, or the task stopped).",
         };
       }
     }

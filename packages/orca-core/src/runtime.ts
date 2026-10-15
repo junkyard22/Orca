@@ -1,5 +1,6 @@
 import { buildHostRecord, correctProvenance } from "./hostRecord.js";
 import { buildAcceptanceContract } from "./acceptanceContract.js";
+import { createAuthorizationRecord, normalizeApproval } from "./authorization.js";
 import type {
   OrcaRuntime,
   OrcaRuntimeDeps,
@@ -335,16 +336,35 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
     // Approval waits are a lifecycle state of their own, and a cancelled task
     // never gets to ask: a stale request resolves to "not approved".
+    // Every refusal is recorded for the task (authorization.ts): an operation
+    // the user denied, or whose approval timed out, is not asked for again in
+    // this task — by the same worker or by a repair pass. Below this wrapper
+    // every consumer receives a plain boolean; only an explicit approval is true.
+    const authorization = createAuthorizationRecord();
     const requestToolApproval = deps.requestToolApproval
       ? async (tool: string, args: Record<string, unknown>): Promise<boolean> => {
-          if (!lifecycle.mayDispatch) return false;
+          const earlier = authorization.refusalFor(tool, args);
+          if (earlier) {
+            authorization.noteRepeat(earlier);
+            recordTrace("approval.not_reasked", { tool, operation: earlier.operation, outcome: earlier.outcome, repeats: earlier.repeats });
+            return false;
+          }
+          if (!lifecycle.mayDispatch) {
+            authorization.record(tool, args, { approved: false, outcome: "cancelled", reason: `the task is ${lifecycle.current.toLowerCase()}` });
+            return false;
+          }
           const previous = lifecycle.current;
           const op = lifecycle.begin("approval", tool, true);
           lifecycle.transition("WAITING_FOR_APPROVAL", `approval requested for ${tool}`);
           try {
-            const approved = await deps.requestToolApproval!(tool, args);
+            const decision = normalizeApproval(await deps.requestToolApproval!(tool, args));
             // An approval that arrives after cancellation authorizes nothing.
-            return approved && lifecycle.mayDispatch;
+            if (decision.approved && lifecycle.mayDispatch) return true;
+            const refusal = authorization.record(tool, args, decision.approved
+              ? { approved: false, outcome: "cancelled", reason: "the task stopped while the approval was pending" }
+              : decision);
+            recordTrace("approval.refused", { tool, operation: refusal.operation, outcome: refusal.outcome, ...(refusal.reason ? { reason: refusal.reason } : {}) });
+            return false;
           } finally {
             op.end();
             if (lifecycle.current === "WAITING_FOR_APPROVAL") lifecycle.transition(previous === "WAITING_FOR_APPROVAL" ? "RUNNING" : previous, `approval for ${tool} settled`);
@@ -388,6 +408,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       gate: effectiveGate,
       model: deps.model,
       requestToolApproval,
+      authorization,
       collectWorkspaceEvidence: evidence
         ? async () => {
             // Evidence is judged only when nothing can still act for the task:
