@@ -96,3 +96,7 @@ export {
 } from './events.js';
 export { captureProcessIdentity, findSurvivingDescendants, parsePosixSurvivors, parseWindowsSurvivors, probeProcess, processExists, survivorScanStatistics } from "./tools/processIdentity.js";
 export type { ProcessIdentity, ProcessLiveness, SurvivingProcess, SurvivorScanOptions, WindowsRow } from "./tools/processIdentity.js";
+
+export { parseRedirections, redirectionsRequireApproval, runCommandShellDialect } from "./tools/shellRedirection.js";
+export type { RedirectEffect, ShellDialect } from "./tools/shellRedirection.js";
+export { detectFileChanges } from "./tools/runCommandTool.js";
