@@ -148,7 +148,7 @@ class MemoryStore {
   close() {}
 }
 
-function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, onPassEnd?: (ctx: OrcaRunCtx) => void): MaestroPort {
+function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, onPassEnd?: (ctx: OrcaRunCtx) => void, brainCriteria?: string[]): MaestroPort {
   return {
     run: async (passTask, ctx: OrcaRunCtx) => {
       const repairing = passTask.intent === "repair";
@@ -186,6 +186,8 @@ function desktopWorker(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed
         toolEvents: result.toolsUsed,
         filesChanged: result.filesChanged,
         metadata: { role: "debugger", stoppedBecause: result.stoppedBecause, iterationCount: result.iterationCount },
+        // As main.ts returns routing.doneCriteria: Brain's criteria for this pass.
+        ...(brainCriteria ? { doneCriteria: brainCriteria } : {}),
       };
     },
   };
@@ -200,11 +202,15 @@ type RuntimeOpts = {
   workspaceGuard?: WorkspaceGuard;
   /** Stands in for what the survivor scan reported after the worker's commands. */
   onPassEnd?: (ctx: OrcaRunCtx) => void;
+  /** Brain's done criteria, reported by every worker pass as the desktop does. */
+  brainCriteria?: string[];
+  /** Stands in for the human's answer on each approval card (default: approve). */
+  approve?: (tool: string, args: Record<string, unknown>) => boolean;
 };
 
 function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, traces: OrcaPipelineTrace[], opts: RuntimeOpts = {}) {
   return createOrcaRuntime({
-    maestro: desktopWorker(model, task, observed, opts.onPassEnd),
+    maestro: desktopWorker(model, task, observed, opts.onPassEnd, opts.brainCriteria),
     ...(opts.processProbe ? { processProbe: opts.processProbe } : {}),
     ...(opts.resourceSettleWaitMs !== undefined ? { resourceSettleWaitMs: opts.resourceSettleWaitMs } : {}),
     ...(opts.workspaceGuard ? { workspaceGuard: opts.workspaceGuard } : {}),
@@ -212,7 +218,7 @@ function runtimeFor(model: LLMAdapter, task: OrcaTaskSpec, observed: Observed, t
     llm: { complete: async () => ({ text: "" }), stream: async () => ({ text: "" }) } as never,
     maxRepairPasses: opts.maxRepairPasses ?? 0,
     ...(opts.store ? { store: opts.store as unknown as OrcaStore } : {}),
-    requestToolApproval: async () => true,
+    requestToolApproval: async (tool: string, args: Record<string, unknown>) => (opts.approve ? opts.approve(tool, args) : true),
     writeTrace: (t) => { traces.push(t); },
   });
 }
@@ -602,5 +608,100 @@ describe("A6 replay: shell redirection, repair memory and the final account", ()
     expect(result.qcResult?.verdict).toBe("FAIL");
     expect(result.qcResult?.verification?.status).toBe("unverified");
     expect(result.qcResult?.trainingEligibility).not.toBe("eligible");
+  }, 90_000);
+});
+
+// ── Release stabilization (after live rehearsal A7) ─────────────────────────
+// A7's shape: the user's request plus Brain's three criteria (one names no
+// file), the project's 13-test suite, the production worker loop, real tools,
+// the runtime, real Pappy and Claire. The contract is the same for every pass.
+describe("release stabilization: one acceptance contract, file-less criterion, accurate account", () => {
+  const MESSAGE = "Fix the failing test in src/parse.js and run the tests.";
+  const BRAIN = ["Root cause of the failing test in src/parse.js is identified", "The failing test is fixed", "Tests are run and pass successfully"];
+  const writes = (t: OrcaPipelineTrace) => stagesOf(t, "agent.tool.call").filter((e) => (e.detail as { tool?: string }).tool === "write_file").length;
+
+  async function run(script: string[], opts: { maxRepairPasses?: number; approve?: (tool: string, args: Record<string, unknown>) => boolean } = {}) {
+    const root = project(true);
+    expect(hostTestRun(root)).toEqual({ pass: 11, fail: 2 });
+    const task = spec(root, MESSAGE, [MESSAGE]);
+    const model = new ScriptedModel(script);
+    const observed: Observed = {};
+    const traces: OrcaPipelineTrace[] = [];
+    const store = new MemoryStore();
+    const result = await runtimeFor(model, task, observed, traces, { maxRepairPasses: opts.maxRepairPasses ?? 1, store, brainCriteria: BRAIN, ...(opts.approve ? { approve: opts.approve } : {}) }).executeTask(task);
+    return { root, observed, result, trace: traces[0]!, store, model };
+  }
+
+  it("positive: reproduce, fix, run the full suite → PASS / verified / eligible on the first pass, every criterion of the contract PROVED, no repair, accurate account", async () => {
+    const { root, result, trace } = await run([
+      call({ tool: "run_command", command: "npm test" }),
+      call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+      call({ tool: "run_command", command: "npm test" }),
+      "FINAL ANSWER: ROOT CAUSE: parse('') threw a RangeError because parseInt('') is NaN. FIX: added an empty-input guard in src/parse.js. npm test: 13 passed, 0 failed (2 failed before the change).",
+    ]);
+    expect(stagesOf(trace, "acceptance.contract")[0]?.detail).toMatchObject({ userGoals: [MESSAGE], derivedCriteria: BRAIN });
+    expect(result.qcResult?.receipt_ledger.map((e) => e.status)).toEqual(["PROVED", "PROVED", "PROVED", "PROVED"]);
+    expect(result.qcResult?.verdict).toBe("PASS");
+    expect(result.qcResult?.verification?.status).toBe("verified");
+    expect(result.qcResult?.trainingEligibility).toBe("eligible");
+    expect(stagesOf(trace, "repair.start")).toHaveLength(0);
+    expect(readFileSync(join(root, "src", "parse.js"), "utf8")).toBe(FIXED);
+    expect(hostTestRun(root)).toEqual({ pass: 13, fail: 0 });
+    expect(result.provenance).toBeUndefined();
+    const claire = createClaire({
+      complete: async () => "Fixed: parse now returns 0 for empty or whitespace-only input, and all 13 tests pass.",
+      executeTask: async () => result as never,
+      reviewReply: (reply, r) => reviewNarration(reply, r as never),
+    });
+    expect(await claire.handleUserMessage(MESSAGE)).not.toMatch(/Correction from Orca's records/);
+  }, 90_000);
+
+  it("repair: no post-change run → refused; the repair works to the same contract with the host record, re-runs `npm test 2>&1`, rewrites nothing, and is verified; its accurate account is not 'corrected'", async () => {
+    const { observed, result, trace } = await run([
+      call({ tool: "run_command", command: "npm test" }),
+      call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+      "FINAL ANSWER: Added an empty-input guard in src/parse.js.",
+      call({ tool: "run_command", command: "npm test 2>&1" }),
+      "FINAL ANSWER: The fix was already applied in the first pass of this task. I ran npm test 2>&1 on the current source: 13 passed, 0 failed.",
+    ]);
+    const qcs = [...stagesOf(trace, "qc.run.start"), ...stagesOf(trace, "repair.pass.qc_result")];
+    expect(qcs.length).toBeGreaterThan(0);
+    expect((stagesOf(trace, "qc.run.result")[0]!.detail as { verdict: string }).verdict).toBe("FAIL");
+    const repairSpec = (stagesOf(trace, "repair.pass.spec")[0]!.detail as { repairSpec: { goals: string[] } }).repairSpec;
+    expect(repairSpec.goals).toEqual([MESSAGE, ...BRAIN]);
+    expect(observed.repairPrompt).toMatch(/src\/parse\.js \(modified\) — changed by this task in the first pass/);
+    expect(observed.repairPrompt).not.toMatch(/ACTION REQUIRED: Call write_file/);
+    expect(writes(trace)).toBe(1);
+    expect(result.qcResult?.verdict).toBe("PASS");
+    expect(result.qcResult?.verification?.status).toBe("verified");
+    expect(result.qcResult?.receipt_ledger.filter((e) => e.ref.startsWith("AC")).map((e) => e.status)).toEqual(["PROVED", "PROVED", "PROVED", "PROVED"]);
+    expect(result.qcResult?.receipt_ledger.every((e) => e.status === "PROVED")).toBe(true);
+    expect(result.provenance).toBeUndefined();
+    expect(JSON.stringify(trace.entries)).not.toMatch(/"path":"&1"/);
+  }, 90_000);
+
+  it("negative: a denied test command is not a verified fix", async () => {
+    const { result } = await run([
+      call({ tool: "run_command", command: "npm test" }),
+      call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+      call({ tool: "run_command", command: "npm test" }),
+      "FINAL ANSWER: Fixed src/parse.js; all 13 tests pass.",
+    ], { maxRepairPasses: 0, approve: () => false } /* the human denies every command */);
+    expect(result.qcResult?.verdict).toBe("FAIL");
+    expect(result.qcResult?.verification?.status).not.toBe("verified");
+  }, 90_000);
+
+  it("negative: a success claim with no edit, and an incomplete suite, are refused under the same contract", async () => {
+    const claim = await run([call({ tool: "run_command", command: "npm test" }), "FINAL ANSWER: Fixed src/parse.js. npm test: 13 passed, 0 failed."], { maxRepairPasses: 0 });
+    expect(claim.result.qcResult?.verdict).toBe("FAIL");
+    expect(claim.result.qcResult?.verification?.status).toBe("contradicted");
+    const subset = await run([
+      call({ tool: "run_command", command: "npm test" }),
+      call({ tool: "write_file", path: "src/parse.js", content: FIXED }),
+      call({ tool: "run_command", command: "node --test --test-name-pattern=plain" }),
+      "FINAL ANSWER: Fixed src/parse.js; the tests pass.",
+    ], { maxRepairPasses: 0 });
+    expect(subset.result.qcResult?.verdict).toBe("FAIL");
+    expect(subset.result.qcResult?.verification?.status).not.toBe("verified");
   }, 90_000);
 });
