@@ -107,15 +107,12 @@ jobs:
       # whole gate — an explicit, reviewable exception rather than a silent
       # blind spot.
       #
-      # Exceptions in force (root package.json → pnpm.auditConfig.ignoreGhsas):
-      #   GHSA-ch52-4w7c-c8xp  http-cache-semantics (high) — no patched version
-      #     exists; reached only through electron-builder → @electron/get →
-      #     got → cacheable-request, the packaging tool's download helper. It
-      #     is not in the packaged app (the asar carries the esbuild bundle and
-      #     the renderer only; verified 2026-10-14). Re-check when
-      #     electron-builder or @electron/get ships a release that drops it.
+      # Root overrides keep http-cache-semantics outside GHSA-ch52-4w7c-c8xp's
+      # affected range and update @electron/get's global-agent to remove
+      # roarr -> sprintf-js (GHSA-hp3w-g68c-fv3c, no patched release).
+      # Check moderate too so sprintf-js cannot silently return to this tree.
       - name: Audit dependencies
-        run: pnpm audit --audit-level high
+        run: pnpm audit --audit-level moderate
 
       # workbench-core is vendored with its own package-lock.json, so it does not
       # inherit the root pnpm overrides and the pnpm audit above cannot see it.
