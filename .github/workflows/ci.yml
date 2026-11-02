@@ -107,15 +107,16 @@ jobs:
       # whole gate — an explicit, reviewable exception rather than a silent
       # blind spot.
       #
-      # Exceptions in force (root package.json → pnpm.auditConfig.ignoreGhsas):
-      #   GHSA-ch52-4w7c-c8xp  http-cache-semantics (high) — no patched version
-      #     exists; reached only through electron-builder → @electron/get →
-      #     got → cacheable-request, the packaging tool's download helper. It
-      #     is not in the packaged app (the asar carries the esbuild bundle and
-      #     the renderer only; verified 2026-10-14). Re-check when
-      #     electron-builder or @electron/get ships a release that drops it.
+      # Root overrides keep http-cache-semantics outside GHSA-ch52-4w7c-c8xp's
+      # affected range and update @electron/get's global-agent to remove
+      # roarr -> sprintf-js (GHSA-hp3w-g68c-fv3c, no patched release).
+      # Check all severities. The audit policy reports the exact legacy
+      # minimatch range mismatch documented in docs/SECURITY_DEPENDENCIES.md;
+      # vulnerable modern copies and all other advisories still fail.
       - name: Audit dependencies
-        run: pnpm audit --audit-level high
+        run: |
+          pnpm test:audit-policy
+          pnpm audit:dependencies
 
       # workbench-core is vendored with its own package-lock.json, so it does not
       # inherit the root pnpm overrides and the pnpm audit above cannot see it.
@@ -125,4 +126,4 @@ jobs:
       # parse.
       - name: Audit workbench-core lockfile
         working-directory: packages/workbench-core
-        run: npm audit --no-workspaces --audit-level high
+        run: npm audit --no-workspaces --audit-level low
