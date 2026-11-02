@@ -5,20 +5,20 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-10-20 (Dependabot alerts #186 and #189: targeted packaging dependency updates and audit exception removal) · **Machine:** dev desktop (Windows, Node 24.11.1) · **By:** Codex
+**Last updated:** 2026-11-02 (November security dependency updates and audited legacy minimatch range classification, extending draft PR #101) · **Machine:** dev desktop (Windows, Node 24.11.1) · **By:** Codex
 
 ---
 
 ## Where the work lives
 
-Verified from git on 2026-10-20; this inventory supersedes the previous handoff's branch table. Release and acceptance notes below are historical unless explicitly reverified in this session.
+Verified from git on 2026-11-02; this inventory supersedes the previous handoff's branch table. Release and acceptance notes below are historical unless explicitly reverified in this session.
 
 | Branch | Where | Head | Pushed? | Status |
 |---|---|---|---|---|
 | `main` / `origin/main` | primary checkout / GitHub | `713b0dd` | yes | Includes merged PRs #99 and #100. |
-| `fix/dependabot-cache-sprintf` | primary checkout | `713b0dd` + this security change | PR branch; see git for push status | Removes both reported vulnerable versions from the lockfile, removes the cache audit exception, and audits moderate severity in CI. |
+| `fix/dependabot-cache-sprintf` | primary checkout | `b217503` + November security update | `b217503` pushed; security update in this commit for PR #101 | Extends the open draft with current fixes in both lockfiles, supported Electron, Zod 4 and a version-specific audit policy. |
 
-One additional managed worktree was observed at detached `713b0dd`; it was not changed. No other local or remote branches were present before creating the security branch.
+Git currently lists only the primary worktree. Local branches are `main` and `fix/dependabot-cache-sprintf`, with matching origin tracking refs. GitHub confirms main remains `713b0dd` and draft PR #101 is open and unmerged.
 
 ---
 
@@ -222,6 +222,14 @@ The presenter ran the desktop checks on the source build (isolated profile, mock
 - Local integration checks passed for proxied Electron artifact download with SHA256 verification, `NO_PROXY` direct download, corrupt artifact rejection, and the cache library's private/no-store storage restrictions and must-revalidate behavior. An unpacked Windows app built successfully in an isolated scratch output directory.
 - Default desktop test discovery included an intentionally broken demo in an old ignored release folder. Source tests were run explicitly. Desktop source runs each had 357 passed / 1 failed / 1 skipped, with different worker rehearsal assertions failing; all 24 tests in that file passed in isolation. A serial source run also had 357 passed / 1 failed / 1 skipped: the survivor-attribution assertion observed two additional host sleep.exe processes as ownership unknown. No clean full desktop run is claimed.
 
+### November dependency security update (2026-11-02)
+
+- Updated Electron from 41.10.7 to 43.8.6 (nearest supported major), Vitest to 4.1.12 throughout the workspace, and Vite's minimum to 8.1.6 (resolved 8.3.5). Updated both the pnpm lockfile and workbench's separate npm lockfile.
+- Raised security floors for Undici 8.12.2, Hono 4.13.11, @hono/node-server 2.1.3, body-parser 2.4.0, fast-uri 3.1.9, qs 6.16.1 and Zod 4.6.6 (resolved 4.6.7). Miranda declares Zod 4 directly; MCP schema conversion and validation passed an in-memory client/server integration check. Root Node minimum is now 22.19.0 to match Undici 8.
+- Updated modern minimatch consumers to 11.0.1 and modern glob consumers to 14.0.2. Preserved legacy callback/callable APIs for packaging. npm workbench audit is clean. Raw pnpm audit now reports only GHSA-g3hv-75wg-m249 for minimatch 3.1.5 and 5.1.9; source inspection confirms neither contains the preprocessing phase described by the upstream report. The audit policy classifies only these two exact versions for this exact advisory as not affected, and still fails on vulnerable modern copies, other advisories, unknown versions, incomplete reports and registry errors. See `docs/SECURITY_DEPENDENCIES.md`; no global advisory suppression.
+- All builds, workspace/scripts typechecks, strict contract check, five audit policy tests, MCP/Zod and proxy/checksum integration checks passed. A fresh Windows x64 unpacked app built successfully with Electron 43.8.6. This does not establish human acceptance of the new runtime.
+- Workspace source run: 2,135 passed / 3 failed / 3 skipped. The three failures were 5-second process-test timeouts in workbench; its isolated rerun passed 133 / 0 / 1. Desktop passed 358 / 0 / 1. No test assertions or timeouts were changed; no single clean full-suite run is claimed.
+
 ## Unverified
 
 - Inside the **packaged** release candidate: the approval card, Approve, Deny, the timeout "Denied" card and the override dialog have not been seen by a human (automation observed the card's DOM and the timeout outcome; it never answers dialogs). Behaviour with real MCP servers in the packaged app is unobserved.
@@ -231,6 +239,10 @@ The presenter ran the desktop checks on the source build (isolated profile, mock
 ---
 
 ## Outstanding problems
+
+- November dependency alerts are remediated in the PR branch, pending merge and GitHub rescan. Raw pnpm audit retains two documented legacy minimatch range mismatches, handled by the version-specific policy rather than a global suppression.
+- Workbench process tests timed out under the broad concurrent run but passed in isolation; packaged acceptance with Electron 43 remains unverified.
+
 
 - Dependabot #186/#189 are resolved in this branch's dependency graph. GitHub alerts remain open until the change reaches the default branch and GitHub rescans it.
 - Local default desktop test discovery sees old release demo fixtures; worker rehearsal assertions varied between runs, including extra host sleep.exe processes during survivor attribution. Isolated worker file passed; broader source runs remained red (see current validation below).
@@ -273,6 +285,10 @@ The presenter ran the desktop checks on the source build (isolated profile, mock
 
 | Date | Commit | Machine | Command | Result |
 |---|---|---|---|---|
+| 2026-11-02 | `b217503` + November security changes | dev desktop (Windows, Node 24.11.1 / pnpm 10.30.2) | `pnpm audit:dependencies`; workbench `npm audit --no-workspaces --audit-level low`; `pnpm test:audit-policy` | 0 actionable / 2 documented legacy range mismatches; npm 0 vulnerabilities; 5 policy tests passed |
+| 2026-11-02 | same | same | frozen install; package/runner/desktop builds; all workspace/scripts typechecks; strict contract check | passed; 0 build/type errors; CLEAR |
+| 2026-11-02 | same | same | `pnpm -r --no-bail --if-present test -- src`; isolated workbench suite | broad run: 2,135 passed, 3 process-test timeouts, 3 skipped; isolated workbench: 133 passed, 1 skipped; desktop: 358 passed, 1 skipped |
+| 2026-11-02 | same | same | MCP/Zod 4 in-memory integration, local proxy/checksum checks, Windows x64 unpacked packaging | all passed; electron-builder used Electron 43.8.6 |
 | 2026-10-20 | `713b0dd` + security dependency changes | dev desktop (Windows, Node 24.11.1) | Frozen lockfile install; full pnpm audit at moderate; workbench npm audit at high | install passed; no known vulnerabilities / 0 vulnerabilities, with no pnpm audit exceptions |
 | 2026-10-20 | same | same | strict contract check; package, runner and desktop builds; all workspace and scripts typechecks | CLEAR; all builds and typechecks exited 0 |
 | 2026-10-20 | same | same | recursive tests, then explicit desktop source suite and isolated worker rehearsal | package/runner: 1,780 passed, 2 skipped; desktop source, source rerun and serial source run: each 357 passed, 1 failed, 1 skipped (different worker assertions); isolated worker file: 24 passed, 1 skipped |
@@ -345,6 +361,8 @@ The presenter ran the desktop checks on the source build (isolated profile, mock
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-11-02 (November dependency security)** (dev desktop, Codex) — Extended unmerged draft PR #101 with supported Electron 43, Vite/Vitest, Zod 4 and HTTP dependency fixes; updated both lockfiles. Audit policy reports two exact legacy minimatch range mismatches and fails all other findings/errors. All builds/types, MCP/proxy integration and unpacked packaging passed; desktop 358 passed. Broad suite had three workbench process timeouts, all passed in its isolated rerun. No runtime source, test assertions or timeout values changed; no merge or release.
+
 - **2026-10-20 (Dependabot #186/#189)** (dev desktop, Codex) — Locked http-cache-semantics 4.3.0, upgraded Electron's proxy helper to global-agent 4.1.3 to remove sprintf-js, removed the audit suppression, and raised CI to moderate. Audit, builds, typechecks, proxy/checksum integration and Windows packaging passed. Test discovery found an old local demo; desktop source runs stayed red on differing worker assertions, including host process-attribution interference; isolated worker file passed 24/24 with 1 skipped. Refreshed the stale branch inventory from git. Security branch prepared for a draft PR; no merge or release.
 
 - **2026-10-15, evening (Orca 1.7.0 packaged acceptance H1–H4)** (dev desktop, with the human) — Added the scripted coding mock (`scripts/desktop-validation/mock-coding.mjs`, with pass, repair and repair-a6 modes; tests show it scripts the model only). H1 on `0fd63222` **FAILED**: after a Deny, an automatic repair asked for the same command again. The fix, approved by the human, landed in `71ced38`: "no means no" (`orca-core/authorization.ts`; refusals are never re-asked; no repair around a refusal; denial, timeout and cancellation reported distinctly). Regression 2,137 / 0 / 3. Rebuilt the candidate as `71ced381` (unsigned). The human witnessed **H1, H2, H3 and H4 all PASS**. Status: PACKAGED CANDIDATE VALIDATED; not merged; the PR is not yet opened (the branch on origin is at `5f5c503`).
@@ -355,4 +373,3 @@ The presenter ran the desktop checks on the source build (isolated profile, mock
 - **2026-10-13 (production integration & release candidate)** (dev desktop) — Recorded the human's contract decisions (E1–E5 approved, E6 for Rule 5 only; CLI guard gap accepted on three verified conditions); pre-merge inspection clean; pre-merge regressions on the integration HEAD equal to baseline; **fast-forward of local `main` to `9018cb3`** (no push; integration branch kept); post-merge validation from a fresh `main` worktree identical to pre-merge (1,903 passed); synthetic SQLite and settings migrations pass without silent changes to model assignments or budgets; built an **unsigned local release candidate** (Orca 1.6.0 @ `9018cb30`, `dirty: false`; no credentials/CLI bundled; installed Orca and real profiles untouched); packaged smoke test in an isolated profile against the mock: pipeline, Stop/settlement, restart recovery with a protected workspace, Pappy honesty and accounting PASS by automation, approval card rendered and timeout → Denied observed, human-visual checks PENDING, no dialog answered, no override; found that the candidate lacks the installed app's Demo Mode and that the asar bundles workspace sources/tests; wrote the packaged-app rehearsal plan (not executed). Classification **SOURCE INTEGRATED**. No push, install, publish, paid call, dialog automation, override, or destructive Git operation.
 - **2026-10-13 (final acceptance closure)** (dev desktop, with the presenter) — Reproduced the reviewer's E3 case (`budgetedAdapter` documented as permitting what it refuses → PROVED/verified via symbol presence) and fixed it: identifier presence proves mention-only requirements only; substantive claims are candidate evidence with an explanation; seven variations plus the host-receipt and bug-fix paths tested; corpus 49/49. Presenter witnessed the approval timeout (PASS), the global red Stop with a card open (PASS), and confirmed six individual Approve clicks; fixed the cancelled task's "FAIL / unknown" panel. Ledger timing test investigated (stable alone). Full suite 1,903 passed. Assessment CONDITIONAL GO for source merge, pending the human's E1 confirmation and E3 approval. No merge, push, package, paid call, dialog automation, override, or self-approval.
 - **2026-10-13 (core phase 6.6 closure)** (dev desktop, with the presenter) — Human-witnessed: override dialog PASS; approval card PARTIAL (workspace/binding missing, Approve primary → fixed); Approve/Deny PASS; Stop during a pending approval found **unreachable** (modal covered Stop) → fixed with a "Stop task" action, then witnessed PASS. Corrected the phase 6.5 misreport (no approval card had ever appeared; `echo` is auto-approved). Contract decisions: E2/E4/E5 approved, E6 approved for Rule 5 only with the runner-guard gap documented, E1/E3 required changes → made (FAIL exports labelled negative with score 0; lexical matching demoted to candidate evidence with adversarial fixtures, corpus 47/47) and awaiting reconsideration. Recovered protections announced for re-verification. Full suite 1,896 passed. No push, merge, package, paid call, dialog automation, override, or self-approval.
-- **2026-10-12 (core phase 6.6, human acceptance)** (dev desktop) — Measured the survivor scan on eight command workloads (≈0.6 s per enumeration, not 3.4 s) and coalesced bursts into one enumeration without changing the guarantee; tested override accounting end to end; closed the one model path that relied on the abort signal alone (worker adapter now honours the lifecycle); corrected the checklist accounting (8/2/3 + 13b); presented the six contract exceptions individually (recommendation Approve, decisions pending) and recorded the ten false positives; wrote the live-rehearsal plan and the merge sequence; full suite 1,891 passed; staged the presenter's isolated environment and stopped at the human gates. No push, merge, package, paid call, dialog automation, override, or self-approval.

@@ -110,9 +110,13 @@ jobs:
       # Root overrides keep http-cache-semantics outside GHSA-ch52-4w7c-c8xp's
       # affected range and update @electron/get's global-agent to remove
       # roarr -> sprintf-js (GHSA-hp3w-g68c-fv3c, no patched release).
-      # Check moderate too so sprintf-js cannot silently return to this tree.
+      # Check all severities. The audit policy reports the exact legacy
+      # minimatch range mismatch documented in docs/SECURITY_DEPENDENCIES.md;
+      # vulnerable modern copies and all other advisories still fail.
       - name: Audit dependencies
-        run: pnpm audit --audit-level moderate
+        run: |
+          pnpm test:audit-policy
+          pnpm audit:dependencies
 
       # workbench-core is vendored with its own package-lock.json, so it does not
       # inherit the root pnpm overrides and the pnpm audit above cannot see it.
@@ -122,4 +126,4 @@ jobs:
       # parse.
       - name: Audit workbench-core lockfile
         working-directory: packages/workbench-core
-        run: npm audit --no-workspaces --audit-level high
+        run: npm audit --no-workspaces --audit-level low
