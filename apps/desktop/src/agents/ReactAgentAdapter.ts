@@ -1273,10 +1273,15 @@ export class ReactAgentAdapter implements AgentAdapter {
             : await tool.execute(toolInput, toolContext), ctx, refusalsBefore);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
-          const commandFileChanges = result.ok
+          // The "Files changed" marker is the host command runner's record. In
+          // any other tool's output it is just text (a file's contents, an MCP
+          // shell's stdout), and even from the runner a change counts only
+          // when the filesystem confirms it inside the workspace.
+          const commandFileChanges = result.ok && toolName === "run_command"
             ? extractFilesChangedFromCommandOutput(result.output, {
                 workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
                 cwd: typeof toolInput.cwd === "string" ? toolInput.cwd : undefined,
+                requireOnDisk: true,
               })
             : [];
           ctx.recordTrace?.("agent.tool.result", {
@@ -1458,88 +1463,14 @@ export class ReactAgentAdapter implements AgentAdapter {
         }
       }
 
-      const allTaskTextForRescue = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
-      const taskImpliesFileSaveRescue = taskExplicitlyRequestsFileSave(allTaskTextForRescue);
-      const writeFileCalledRescue = toolsUsed.some((e) => isWriteToolName(e.tool));
-
-      if (
-        taskImpliesFileSaveRescue &&
-        !writeFileCalledRescue &&
-        lastRejectedFinalAnswer.trim().length > 100 &&
-        iterationCount < 4
-      ) {
-        const pathMatch =
-          allTaskTextForRescue.match(/\b([\w.\-/]+\.(?:md|txt|ts|js|json|yaml|yml|py|sh|csv))\b/i);
-        const targetPath = pathMatch?.[1] ?? "";
-        const writeTool = availableTools.find((t) => isWriteToolName(t.name));
-        if (targetPath && writeTool) {
-          try {
-            ctx.recordTrace?.("agent.postloop_write_rescue", { targetPath, contentLength: lastRejectedFinalAnswer.length });
-            // The rescue is a tool execution like any other: Miranda decides
-            // first and is told the outcome, the task lifecycle tracks it, and
-            // it carries the task's own approval handler. It used to call the
-            // tool directly, past task permissions and protected paths.
-            throwIfAborted(ctx.abortSignal);
-            if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) throwIfAborted(ctx.abortSignal);
-            const rescueInput = { path: targetPath, content: lastRejectedFinalAnswer };
-            const rescueGateCtx = {
-              tool: writeTool.name,
-              args: rescueInput,
-              workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
-              schema: writeTool.schema,
-            };
-            const rescueGate = ctx.gate?.beforeToolRun(rescueGateCtx);
-            if (rescueGate && !rescueGate.allowed) {
-              const reason = rescueGate.reason || `Tool "${writeTool.name}" blocked by Miranda`;
-              ctx.recordTrace?.("agent.postloop_write_rescue.blocked", { targetPath, reason });
-              toolsUsed.push({
-                tool: writeTool.name,
-                ok: false,
-                summary: `${writeTool.name}: blocked - ${reason}`,
-                raw: { path: targetPath },
-              });
-            } else if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) {
-              ctx.recordTrace?.("agent.postloop_write_rescue.skipped", { targetPath, reason: `the task is ${ctx.lifecycle.current.toLowerCase()}` });
-            } else {
-              const rescueToolContext = {
-                workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
-                runId: ctx.runId,
-                abortSignal: ctx.abortSignal,
-                requestApproval: ctx.requestToolApproval
-                  ? (requestedTool: string, args: Record<string, unknown>, _reason: string) =>
-                      ctx.requestToolApproval!(requestedTool, args)
-                  : undefined,
-              };
-              const writeResult = ctx.lifecycle
-                ? await ctx.lifecycle.track("tool", writeTool.name, () => writeTool.execute(rescueInput, rescueToolContext))
-                : await writeTool.execute(rescueInput, rescueToolContext);
-              ctx.gate?.afterToolRun(rescueGateCtx, { ok: writeResult.ok, output: writeResult.output });
-              toolsUsed.push({
-                tool: writeTool.name,
-                ok: writeResult.ok,
-                summary: writeResult.ok ? `Rescued: wrote ${targetPath}` : writeResult.error ?? "write failed",
-                raw: { path: targetPath, _contentForDiff: lastRejectedFinalAnswer },
-              });
-              if (writeResult.ok) {
-                recordFileChange(filesChanged, {
-                  path: targetPath,
-                  changeType: "A",
-                  diff: lastRejectedFinalAnswer.slice(0, 2000),
-                });
-                currentOutputText = lastRejectedFinalAnswer;
-              }
-            }
-          } catch (rescueErr) {
-            if (isAbortError(rescueErr)) throw rescueErr;
-            ctx.recordTrace?.("agent.postloop_write_rescue.error", { error: String(rescueErr) });
-          }
-        }
-      } else if (taskImpliesFileSaveRescue && !writeFileCalledRescue && iterationCount >= 4) {
-        ctx.recordTrace?.("agent.loop.rescue.skipped", {
-          reason: "loop_exhausted",
-          iterations: iterationCount,
-        });
-      }
+      // No write is ever made on the worker's behalf. (A "post-loop write
+      // rescue" used to save the rejected answer to a filename picked from the
+      // task text.) A worker that did not write what the task requires has
+      // not finished: it is reported as such below, Pappy judges the recorded
+      // events, and the repair loop — under Miranda — is where it is put right.
+      const taskRequiresFileSave = taskExplicitlyRequestsFileSave(
+        `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`,
+      );
 
       if (!finalAnswerFound && toolsUsed.length > 0 && stoppedBecause === "max_iterations") {
         try {
@@ -1634,7 +1565,7 @@ export class ReactAgentAdapter implements AgentAdapter {
       // for the verifier; the worker is just not reported as finished.
       const requiredWriteOutstanding =
         task.sourceChangeRequired !== false &&
-        taskImpliesFileSaveRescue &&
+        taskRequiresFileSave &&
         !toolsUsed.some((e) => e.ok && isWriteToolName(e.tool)) &&
         filesChanged.length === 0;
       if (stoppedBecause === "done" && requiredWriteOutstanding) {

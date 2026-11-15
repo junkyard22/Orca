@@ -277,10 +277,14 @@ export async function runAgentLoop(
       const result = await tools.execute(call.tool, call.input);
       const outputText = normalizeToolText(result.output);
       const errorText = result.error === undefined ? undefined : normalizeToolText(result.error);
-      const commandFileChanges = result.ok
+      // The marker is the host command runner's record. In any other tool's
+      // output it is just text (a file's contents, an MCP shell's stdout), and
+      // even from the runner a change counts only when it is on disk.
+      const commandFileChanges = result.ok && call.tool === "run_command"
         ? extractFilesChangedFromCommandOutput(outputText, {
             workspaceRoot: ctx.workspaceRoot,
             cwd: typeof call.input["cwd"] === "string" ? call.input["cwd"] : undefined,
+            requireOnDisk: true,
           })
         : [];
       ctx.recordTrace?.("tool.result", { tool: call.tool, ok: result.ok, output: outputText, error: errorText });

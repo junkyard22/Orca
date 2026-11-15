@@ -79,54 +79,18 @@ function isFilesystemRoot(candidate: string): boolean {
   return parsePath(absolute).root === absolute;
 }
 
-function isExistingDirectory(candidate: string | undefined): boolean {
-  if (!candidate) return false;
-  try {
-    return statSync(candidate).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /**
- * The workspace root a task names for itself, if any.
+ * The workspace root a task selects for itself, if any.
  *
- * A structured `context.workspaceRoot` (set by the host from Settings) is
- * explicit and wins. A path that merely appears in the message is a guess: it
- * is only used when the host has no usable configured root, and never
- * replaces one that exists — the root is the boundary Miranda enforces, so
- * wording alone must not move it. No candidate may be a filesystem root.
+ * Only a structured `context.workspaceRoot` counts (the desktop sets it from
+ * Settings; a host may set it from an explicit choice). The root is the
+ * boundary Miranda enforces, so a path that merely appears in the
+ * conversation never establishes or replaces one — not when a root is
+ * configured, and not when none is. No selection may be a filesystem root.
  */
-export function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec, configuredRoot?: string): string | undefined {
+export function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec): string | undefined {
   const contextRoot = taskSpec.context?.["workspaceRoot"];
-  if (typeof contextRoot === "string") {
-    const resolved = resolveWorkspaceRootCandidate(contextRoot);
-    if (resolved) return resolved;
-  }
-
-  if (isExistingDirectory(configuredRoot)) return undefined;
-
-  const text = [
-    taskSpec.originalUserMessage,
-    taskSpec.intent,
-    ...(taskSpec.goals ?? []),
-  ].join("\n");
-
-  for (const line of text.split(/\r?\n/)) {
-    const windowsMatch = line.match(/\b[A-Za-z]:[\\/][^\r\n]+/);
-    if (windowsMatch) {
-      const resolved = resolveWorkspaceRootCandidate(windowsMatch[0]);
-      if (resolved) return resolved;
-    }
-
-    const posixMatch = line.match(/(?:^|\s)(\/[^\r\n]+)/);
-    if (posixMatch?.[1]) {
-      const resolved = resolveWorkspaceRootCandidate(posixMatch[1]);
-      if (resolved) return resolved;
-    }
-  }
-
-  return undefined;
+  return typeof contextRoot === "string" ? resolveWorkspaceRootCandidate(contextRoot) : undefined;
 }
 
 function projectAuditVerdict(result: ProjectAuditResult): "PASS" | "WARN" | "FAIL" {
@@ -288,7 +252,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       : undefined;
     const effectiveGate = composeMirandaGates(deps.gate, taskPermissionGate);
     const workspaceContext = deps.getWorkspaceContext?.();
-    const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec, deps.workspaceRoot ?? workspaceContext?.cwd);
+    const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec);
     const effectiveWorkspaceRoot = explicitWorkspaceRoot ?? deps.workspaceRoot ?? workspaceContext?.cwd;
     const effectiveWorkspaceContext = effectiveWorkspaceRoot
       ? { ...(workspaceContext ?? {}), cwd: effectiveWorkspaceRoot }

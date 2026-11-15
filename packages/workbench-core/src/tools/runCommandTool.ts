@@ -101,6 +101,16 @@ function terminateChildProcess(child: ChildProcess): void {
   child.kill("SIGKILL");
 }
 
+/**
+ * The "Files changed" marker run_command appends is the host's record of what
+ * a command changed. It shares the output text with the command's own stdout
+ * and stderr, so anything the command printed in that shape is defused before
+ * the host adds its own: a command cannot write the host's record for it.
+ */
+function defuseFileChangeMarkers(output: string): string {
+  return output.replace(/<!--(\s*Files changed:)/gi, "<!-- (printed by the command, not a host record)$1");
+}
+
 export const runCommandTool: Tool = {
   name: "run_command",
   description: "Execute a shell command and capture its stdout and stderr.",
@@ -313,7 +323,7 @@ export const runCommandTool: Tool = {
         terminateChildProcess(child);
         const stdout = Buffer.concat(stdoutChunks).toString("utf8");
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
-        const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
+        const combined = defuseFileChangeMarkers([stdout, stderr].filter(Boolean).join("\n").trim());
         const timeoutText = `Timed out after ${timeout}ms`;
         const outputWithTimeout = combined
           ? `[${timeoutText}]\n${combined}`
@@ -336,7 +346,7 @@ export const runCommandTool: Tool = {
         }
         const stdout = Buffer.concat(stdoutChunks).toString("utf8");
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
-        const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
+        const combined = defuseFileChangeMarkers([stdout, stderr].filter(Boolean).join("\n").trim());
 
         if (timedOut) {
           // Preserve partial output as diagnostic evidence, but never describe

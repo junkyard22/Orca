@@ -329,7 +329,7 @@ declare module '@clawde/orca-core' {
   ): OrcaFileChange[];
   export function extractFilesChangedFromCommandOutput(
     output: string,
-    options?: { workspaceRoot?: string; cwd?: string }
+    options?: { workspaceRoot?: string; cwd?: string; requireOnDisk?: boolean }
   ): OrcaFileChange[];
 
   export class SqliteStore {
