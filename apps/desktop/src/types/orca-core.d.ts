@@ -142,7 +142,7 @@ declare module '@clawde/orca-core' {
       };
       thoughts?: unknown[];
       iterationCount?: number;
-      stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "error";
+      stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "required_action_incomplete" | "error";
       loopEvidence?: { repeatedCall: string; occurrences: number };
       errorMessage?: string;
       inputTokens?: number;
@@ -282,7 +282,7 @@ declare module '@clawde/orca-core' {
     | { type: "subagent:failed"; taskId: string; subagentId: string; role: string; error: string }
     | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
     | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
-    | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }
+    | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'required_action_incomplete' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }
     | {
         type: 'pipeline:summary';
         taskId: string;

@@ -18,7 +18,7 @@ import type { AHPPacket } from "./ahp/types.js";
 import type { PappyResult } from "@clawde/pappy-core";
 import { verifyAHPPacket } from "@clawde/pappy-core";
 import { existsSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, parse as parsePath, resolve as resolvePath } from "node:path";
 import type { RunRecord } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
@@ -65,19 +65,46 @@ function resolveWorkspaceRootCandidate(raw: string): string | undefined {
   for (const candidate of [...new Set(attempts)]) {
     if (!existsSync(candidate)) continue;
     const stat = statSync(candidate);
-    if (stat.isDirectory()) return candidate;
-    if (stat.isFile()) return dirname(candidate);
+    // A filesystem root is never a workspace: a bare "/" in a sentence
+    // ("yes / no") would otherwise make the whole machine the workspace.
+    const resolved = stat.isDirectory() ? candidate : stat.isFile() ? dirname(candidate) : undefined;
+    if (resolved && !isFilesystemRoot(resolved)) return resolved;
   }
 
   return undefined;
 }
 
-function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec): string | undefined {
+function isFilesystemRoot(candidate: string): boolean {
+  const absolute = resolvePath(candidate);
+  return parsePath(absolute).root === absolute;
+}
+
+function isExistingDirectory(candidate: string | undefined): boolean {
+  if (!candidate) return false;
+  try {
+    return statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The workspace root a task names for itself, if any.
+ *
+ * A structured `context.workspaceRoot` (set by the host from Settings) is
+ * explicit and wins. A path that merely appears in the message is a guess: it
+ * is only used when the host has no usable configured root, and never
+ * replaces one that exists — the root is the boundary Miranda enforces, so
+ * wording alone must not move it. No candidate may be a filesystem root.
+ */
+export function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec, configuredRoot?: string): string | undefined {
   const contextRoot = taskSpec.context?.["workspaceRoot"];
   if (typeof contextRoot === "string") {
     const resolved = resolveWorkspaceRootCandidate(contextRoot);
     if (resolved) return resolved;
   }
+
+  if (isExistingDirectory(configuredRoot)) return undefined;
 
   const text = [
     taskSpec.originalUserMessage,
@@ -261,7 +288,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       : undefined;
     const effectiveGate = composeMirandaGates(deps.gate, taskPermissionGate);
     const workspaceContext = deps.getWorkspaceContext?.();
-    const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec);
+    const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec, deps.workspaceRoot ?? workspaceContext?.cwd);
     const effectiveWorkspaceRoot = explicitWorkspaceRoot ?? deps.workspaceRoot ?? workspaceContext?.cwd;
     const effectiveWorkspaceContext = effectiveWorkspaceRoot
       ? { ...(workspaceContext ?? {}), cwd: effectiveWorkspaceRoot }

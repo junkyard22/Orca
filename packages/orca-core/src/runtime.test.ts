@@ -5,11 +5,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createOrcaRuntime } from "./runtime.js";
+import { createOrcaRuntime, extractExplicitWorkspaceRoot } from "./runtime.js";
 import { AHPLifecycle, AHPVerdict, appendAHPTrace, createChildPacket } from "./ahp/types.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse as parsePath } from "node:path";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaRuntime, OrcaRuntimeDeps, OrcaTaskSpec, OrcaExecutionResult, MaestroPort, PappyPort, OrcaEvent } from "./types.js";
 
@@ -469,6 +469,61 @@ describe("createOrcaRuntime", () => {
         expect(seenWorkspaceRoot).toBe(explicitRoot);
       } finally {
         rmSync(explicitRoot, { recursive: true, force: true });
+      }
+    });
+
+    // Audit F-08. Every path here is a temporary fixture: nothing in these
+    // tests resolves to, scans or writes outside directories they create.
+    it("does not let a path mentioned in prose replace a configured workspace root that exists", async () => {
+      const configuredRoot = mkdtempSync(join(tmpdir(), "orca-configured-root-"));
+      const outside = mkdtempSync(join(tmpdir(), "orca-outside-"));
+      writeFileSync(join(outside, "hosts.txt"), "fixture");
+      const seen: Array<string | undefined> = [];
+      const maestro: MaestroPort = {
+        run: async (_task, ctx) => {
+          seen.push(ctx.workspaceRoot);
+          return { outputText: "Compared.", summary: "mock summary" };
+        },
+      };
+      try {
+        const runtime = createOrcaRuntime({
+          maestro,
+          pappy: { evaluate: vi.fn(() => createMockPappyResult("PASS")) } satisfies PappyPort,
+          llm: createMockLLM(),
+          workspaceRoot: configuredRoot,
+        });
+        for (const message of [
+          `Compare our config with ${join(outside, "hosts.txt")} and report`,
+          `Read package.json in this workspace.\n${outside}\nOnly check it.`,
+        ]) {
+          await runtime.executeTask(createTaskSpec({ originalUserMessage: message }));
+        }
+        expect(seen).toEqual([configuredRoot, configuredRoot]);
+      } finally {
+        rmSync(configuredRoot, { recursive: true, force: true });
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("never resolves a workspace root to a filesystem root, from prose or from task context", () => {
+      const fsRoot = parsePath(tmpdir()).root;
+      const spec = (originalUserMessage: string, context?: Record<string, unknown>) =>
+        createTaskSpec({ originalUserMessage, intent: "update cli", goals: ["update cli"], ...(context ? { context } : {}) });
+      // Pure resolution only (existsSync/statSync): no runtime is started, so nothing is scanned.
+      expect(extractExplicitWorkspaceRoot(spec("Should the CLI accept yes / no answers? Update cli.ts"))).toBeUndefined();
+      expect(extractExplicitWorkspaceRoot(spec("Rename the and / or helper in util.ts"))).toBeUndefined();
+      expect(extractExplicitWorkspaceRoot(spec(`Look at ${fsRoot}`))).toBeUndefined();
+      expect(extractExplicitWorkspaceRoot(spec("Tidy up.", { workspaceRoot: fsRoot }))).toBeUndefined();
+    });
+
+    it("still honours an explicit structured workspace root over the configured one", () => {
+      const configuredRoot = mkdtempSync(join(tmpdir(), "orca-configured-root-"));
+      const contextRoot = mkdtempSync(join(tmpdir(), "orca-context-root-"));
+      try {
+        expect(extractExplicitWorkspaceRoot(createTaskSpec({ originalUserMessage: "Tidy up.", context: { workspaceRoot: contextRoot } }), configuredRoot)).toBe(contextRoot);
+      } finally {
+        rmSync(configuredRoot, { recursive: true, force: true });
+        rmSync(contextRoot, { recursive: true, force: true });
       }
     });
 
