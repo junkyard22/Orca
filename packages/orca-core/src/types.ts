@@ -133,7 +133,7 @@ export interface OrcaMaestroResult {
     };
     thoughts?: ThoughtRecord[];
     iterationCount?: number;
-    stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "gate_blocked" | "error";
+    stoppedBecause?: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "required_action_incomplete" | "gate_blocked" | "error";
     loopEvidence?: { repeatedCall: string; occurrences: number };
     /** Exception message captured when stoppedBecause === 'error'. */
     errorMessage?: string;
@@ -543,7 +543,7 @@ export type OrcaEvent =
   | { type: "subagent:failed";    taskId: string; subagentId: string; role: string; error: string }
   | { type: 'maestro:thought'; taskId: string; iteration: number; thought: string; observation: string; next: string }
   | { type: 'maestro:agent_start'; taskId: string; role: RoleName; doneCriteria: string[] }
-  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'gate_blocked' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }
+  | { type: 'maestro:agent_done'; taskId: string; role: RoleName; stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'required_action_incomplete' | 'gate_blocked' | 'error'; iterations: number; loopEvidence?: { repeatedCall: string; occurrences: number } }
   /**
    * Emitted once per task after task:done, summarising the final pipeline outcome.
    * Carries everything the UI needs to render the collapsed pipeline-summary badge

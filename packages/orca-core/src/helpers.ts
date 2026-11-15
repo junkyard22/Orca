@@ -205,7 +205,16 @@ function extractEmbeddedFileChanges(raw: unknown): OrcaFileChange[] {
 
 export function extractFilesChangedFromCommandOutput(
   output: string,
-  options: { workspaceRoot?: string; cwd?: string } = {},
+  options: {
+    workspaceRoot?: string;
+    cwd?: string;
+    /**
+     * Keep a claimed change only when the filesystem confirms it: the path is
+     * inside the workspace and exists (added/modified) or is absent (deleted).
+     * Without a workspace root nothing can be confirmed and nothing is kept.
+     */
+    requireOnDisk?: boolean;
+  } = {},
 ): OrcaFileChange[] {
   const match = output.match(FILE_CHANGE_COMMENT_RE);
   if (!match?.[1]) return [];
@@ -239,6 +248,12 @@ export function extractFilesChangedFromCommandOutput(
           ? resolve(baseDir, rawPath)
           : undefined
     );
+    if (options.requireOnDisk) {
+      if (!options.workspaceRoot || !absolutePath) continue;
+      const fromRoot = relative(resolve(options.workspaceRoot), resolve(absolutePath));
+      if (!fromRoot || fromRoot.startsWith("..") || isAbsolute(fromRoot)) continue;
+      if (existsSync(absolutePath) === (changeType === "D")) continue;
+    }
     const path = normalizeFileChangePath(rawPath, options.workspaceRoot, absolutePath);
     const diff = changeType === "D" ? undefined : readDiffFromDisk(absolutePath);
     mergeFileChange(byPath, { path, changeType, diff });

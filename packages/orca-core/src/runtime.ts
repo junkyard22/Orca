@@ -18,7 +18,7 @@ import type { AHPPacket } from "./ahp/types.js";
 import type { PappyResult } from "@clawde/pappy-core";
 import { verifyAHPPacket } from "@clawde/pappy-core";
 import { existsSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, parse as parsePath, resolve as resolvePath } from "node:path";
 import type { RunRecord } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
 import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
@@ -65,41 +65,32 @@ function resolveWorkspaceRootCandidate(raw: string): string | undefined {
   for (const candidate of [...new Set(attempts)]) {
     if (!existsSync(candidate)) continue;
     const stat = statSync(candidate);
-    if (stat.isDirectory()) return candidate;
-    if (stat.isFile()) return dirname(candidate);
+    // A filesystem root is never a workspace: a bare "/" in a sentence
+    // ("yes / no") would otherwise make the whole machine the workspace.
+    const resolved = stat.isDirectory() ? candidate : stat.isFile() ? dirname(candidate) : undefined;
+    if (resolved && !isFilesystemRoot(resolved)) return resolved;
   }
 
   return undefined;
 }
 
-function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec): string | undefined {
+function isFilesystemRoot(candidate: string): boolean {
+  const absolute = resolvePath(candidate);
+  return parsePath(absolute).root === absolute;
+}
+
+/**
+ * The workspace root a task selects for itself, if any.
+ *
+ * Only a structured `context.workspaceRoot` counts (the desktop sets it from
+ * Settings; a host may set it from an explicit choice). The root is the
+ * boundary Miranda enforces, so a path that merely appears in the
+ * conversation never establishes or replaces one — not when a root is
+ * configured, and not when none is. No selection may be a filesystem root.
+ */
+export function extractExplicitWorkspaceRoot(taskSpec: OrcaTaskSpec): string | undefined {
   const contextRoot = taskSpec.context?.["workspaceRoot"];
-  if (typeof contextRoot === "string") {
-    const resolved = resolveWorkspaceRootCandidate(contextRoot);
-    if (resolved) return resolved;
-  }
-
-  const text = [
-    taskSpec.originalUserMessage,
-    taskSpec.intent,
-    ...(taskSpec.goals ?? []),
-  ].join("\n");
-
-  for (const line of text.split(/\r?\n/)) {
-    const windowsMatch = line.match(/\b[A-Za-z]:[\\/][^\r\n]+/);
-    if (windowsMatch) {
-      const resolved = resolveWorkspaceRootCandidate(windowsMatch[0]);
-      if (resolved) return resolved;
-    }
-
-    const posixMatch = line.match(/(?:^|\s)(\/[^\r\n]+)/);
-    if (posixMatch?.[1]) {
-      const resolved = resolveWorkspaceRootCandidate(posixMatch[1]);
-      if (resolved) return resolved;
-    }
-  }
-
-  return undefined;
+  return typeof contextRoot === "string" ? resolveWorkspaceRootCandidate(contextRoot) : undefined;
 }
 
 function projectAuditVerdict(result: ProjectAuditResult): "PASS" | "WARN" | "FAIL" {

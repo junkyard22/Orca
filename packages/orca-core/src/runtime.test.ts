@@ -4,12 +4,13 @@
  * Tests createOrcaRuntime() and the execution flow with mocked dependencies.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createOrcaRuntime } from "./runtime.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createOrcaRuntime, extractExplicitWorkspaceRoot } from "./runtime.js";
 import { AHPLifecycle, AHPVerdict, appendAHPTrace, createChildPacket } from "./ahp/types.js";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createPappyPort } from "./adapters/pappyPort.js";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse as parsePath } from "node:path";
 import type { PappyResult } from "@clawde/pappy-core";
 import type { OrcaRuntime, OrcaRuntimeDeps, OrcaTaskSpec, OrcaExecutionResult, MaestroPort, PappyPort, OrcaEvent } from "./types.js";
 
@@ -436,39 +437,123 @@ describe("createOrcaRuntime", () => {
       expect((repair?.["repairInstruction"] as string | undefined)).toContain("Output mentions audit");
     });
 
-    it("binds tool workspace root to an explicit existing path in the task", async () => {
-      const explicitRoot = mkdtempSync(join(tmpdir(), "orca-explicit-root-"));
-      let seenWorkspaceRoot: string | undefined;
+    // Workspace selection (audit F-08, stages 1 and 1.5). The workspace root is
+    // the boundary Miranda enforces, so only a structured choice sets it: the
+    // host's configured root or an explicit `context.workspaceRoot`. A path
+    // that merely appears in the conversation never does. Every path below is
+    // a temporary fixture; nothing resolves to, scans or writes outside them.
+    describe("workspace selection", () => {
+      const fixtures: string[] = [];
+      const fixture = (name: string) => { const d = mkdtempSync(join(tmpdir(), `orca-${name}-`)); fixtures.push(d); return d; };
+      afterEach(() => { for (const d of fixtures.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
-      const maestro: MaestroPort = {
-        run: async (_task, ctx) => {
-          seenWorkspaceRoot = ctx.workspaceRoot;
-          return { outputText: "Inspected requested workspace.", summary: "mock summary" };
-        },
-      };
-      const pappy = {
-        evaluate: vi.fn(() => createMockPappyResult("PASS")),
-      } satisfies PappyPort;
-
-      try {
+      async function rootsSeen(deps: Partial<OrcaRuntimeDeps>, specs: Array<Partial<OrcaTaskSpec>>): Promise<Array<string | undefined>> {
+        const seen: Array<string | undefined> = [];
+        const maestro: MaestroPort = {
+          run: async (_task, ctx) => { seen.push(ctx.workspaceRoot); return { outputText: "Looked.", summary: "mock summary" }; },
+        };
         const runtime = createOrcaRuntime({
           maestro,
-          pappy,
+          pappy: { evaluate: vi.fn(() => createMockPappyResult("PASS")) } satisfies PappyPort,
           llm: createMockLLM(),
-          workspaceRoot: join(tmpdir(), "stale-orca-root"),
+          ...deps,
         });
+        for (const spec of specs) await runtime.executeTask(createTaskSpec(spec));
+        return seen;
+      }
+      const proseMessages = (outside: string): Array<Partial<OrcaTaskSpec>> => [
+        { originalUserMessage: `Compare our config with ${join(outside, "hosts.txt")} and report` },
+        { originalUserMessage: ["Read package.json in this workspace.", outside, "Only check apps/desktop/package.json."].join("\n") },
+        { originalUserMessage: "Tidy up.", intent: `clean ${outside}`, goals: [`Remove temp files under ${outside}`] },
+      ];
 
-        await runtime.executeTask(createTaskSpec({
-          originalUserMessage: [
-            "Read package.json in this workspace.",
-            explicitRoot,
-            "Only check apps/desktop/package.json.",
-          ].join("\n"),
+      it("binds the workspace root to an explicit structured selection, over a configured root", async () => {
+        const configuredRoot = fixture("configured-root");
+        const selected = fixture("selected-root");
+        expect(await rootsSeen({ workspaceRoot: configuredRoot }, [{ originalUserMessage: "Tidy up.", context: { workspaceRoot: selected } }]))
+          .toEqual([selected]);
+        expect(await rootsSeen({}, [{ originalUserMessage: "Tidy up.", context: { workspaceRoot: selected } }])).toEqual([selected]);
+      });
+
+      it("does not let a path mentioned in prose replace a configured workspace root that exists", async () => {
+        const configuredRoot = fixture("configured-root");
+        const outside = fixture("outside");
+        writeFileSync(join(outside, "hosts.txt"), "fixture");
+        expect(await rootsSeen({ workspaceRoot: configuredRoot }, proseMessages(outside))).toEqual([configuredRoot, configuredRoot, configuredRoot]);
+      });
+
+      it("does not establish a workspace from prose when no workspace is configured", async () => {
+        const outside = fixture("outside");
+        writeFileSync(join(outside, "hosts.txt"), "fixture");
+        expect(await rootsSeen({}, proseMessages(outside))).toEqual([undefined, undefined, undefined]);
+      });
+
+      it("does not swap a configured workspace that does not exist for a path found in prose", async () => {
+        const outside = fixture("outside");
+        writeFileSync(join(outside, "hosts.txt"), "fixture");
+        const missing = join(fixture("parent"), "not-created");
+        expect(await rootsSeen({ workspaceRoot: missing }, proseMessages(outside))).toEqual([missing, missing, missing]);
+        expect(existsSync(missing)).toBe(false);
+      });
+
+      it("ignores a structured selection that does not exist or is a filesystem root", async () => {
+        const configuredRoot = fixture("configured-root");
+        const fsRoot = parsePath(tmpdir()).root;
+        const missing = join(fixture("parent"), "not-created");
+        // Pure resolution for the filesystem root: no runtime is started on it, so nothing is scanned.
+        expect(extractExplicitWorkspaceRoot(createTaskSpec({ context: { workspaceRoot: fsRoot } }))).toBeUndefined();
+        expect(extractExplicitWorkspaceRoot(createTaskSpec({ originalUserMessage: "Should the CLI accept yes / no answers? Update cli.ts" }))).toBeUndefined();
+        expect(extractExplicitWorkspaceRoot(createTaskSpec({ originalUserMessage: `Look at ${fsRoot}` }))).toBeUndefined();
+        expect(await rootsSeen({ workspaceRoot: configuredRoot }, [{ context: { workspaceRoot: missing } }])).toEqual([configuredRoot]);
+      });
+    });
+
+    // Stage 1.5: a pass whose required write never succeeded is judged on what
+    // the host recorded, repaired through the normal loop, and — when the
+    // repairs fail too — reported as failed. Nothing is written on its behalf.
+    it("gives Pappy the recorded failures of a blocked write, repairs through the normal loop, and ends FAIL when repairs fail too", async () => {
+      const root = mkdtempSync(join(tmpdir(), "orca-blocked-write-"));
+      mkdirSync(join(root, "src"));
+      const original = "export const last = (xs) => xs[xs.length];\n";
+      writeFileSync(join(root, "src", "parse.js"), original);
+      const blocked = { tool: "write_file", ok: false, summary: "write_file: blocked - File writes are not permitted for this request", raw: { path: "src/parse.js" } };
+      const maestro = {
+        run: vi.fn(async () => ({
+          outputText: "I wrote the fix to src/parse.js and it now returns the last element.",
+          toolEvents: [{ tool: "read_file", ok: true, summary: "read_file: ok (44 chars)", raw: { path: "src/parse.js" } }, blocked],
+          filesChanged: [],
+          metadata: { role: "strong_model", stoppedBecause: "required_action_incomplete" as const },
+        })),
+      } satisfies MaestroPort;
+      const real = createPappyPort();
+      const pappy = { evaluate: vi.fn((input: Parameters<PappyPort["evaluate"]>[0]) => real.evaluate(input)) } satisfies PappyPort;
+      try {
+        const runtime = createOrcaRuntime({ maestro, pappy, llm: createMockLLM(), workspaceRoot: root, maxRepairPasses: 2 });
+        const result = await runtime.executeTask(createTaskSpec({
+          originalUserMessage: "Fix the off-by-one bug in src/parse.js",
+          intent: "fix bug",
+          goals: ["Fix the off-by-one bug in src/parse.js"],
         }));
 
-        expect(seenWorkspaceRoot).toBe(explicitRoot);
+        // What Pappy was told, on every pass: the write failed, nothing changed, the worker did not finish.
+        expect(pappy.evaluate.mock.calls.length).toBeGreaterThanOrEqual(1);
+        for (const [input] of pappy.evaluate.mock.calls) {
+          expect(input.toolEvents).toEqual(expect.arrayContaining([expect.objectContaining({ tool: "write_file", ok: false })]));
+          expect((input.toolEvents ?? []).some((e) => e.tool === "write_file" && e.ok)).toBe(false);
+          expect(input.filesChanged ?? []).toEqual([]);
+          expect(input.metadata?.stoppedBecause).toBe("required_action_incomplete");
+          expect(input.workspace?.available).toBe(true);
+        }
+        for (const outcome of pappy.evaluate.mock.results) expect((outcome.value as PappyResult).verdict).toBe("FAIL");
+        // Repaired through the normal loop (one Pappy verdict per Maestro pass), never around it.
+        expect(maestro.run.mock.calls.length).toBe(pappy.evaluate.mock.calls.length);
+        expect(maestro.run.mock.calls.length).toBe(3);
+        expect(result.status).toBe("FAIL");
+        // Nothing was written for the worker.
+        expect(readFileSync(join(root, "src", "parse.js"), "utf8")).toBe(original);
+        expect(readdirSync(join(root, "src"))).toEqual(["parse.js"]);
       } finally {
-        rmSync(explicitRoot, { recursive: true, force: true });
+        rmSync(root, { recursive: true, force: true });
       }
     });
 

@@ -29,7 +29,8 @@ export interface AgentResult {
   toolsUsed: ToolEvent[];
   filesChanged: FileChange[];
   iterationCount: number;
-  stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'error';
+  /** `required_action_incomplete`: the worker answered, but an action the task requires (a file write) has no successful host-recorded execution. */
+  stoppedBecause: 'done' | 'max_iterations' | 'loop_detected' | 'parse_failure_loop' | 'no_final_output' | 'required_action_incomplete' | 'error';
   error?: string;
   loopEvidence?: {
     iteration: number;

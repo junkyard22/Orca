@@ -828,7 +828,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     let iterationCount = 0;
     let currentOutputText = "";
     let lastModelOutput = "";
-    let stoppedBecause: "done" | "max_iterations" | "loop_detected" | "parse_failure_loop" | "no_final_output" | "error" = "max_iterations";
+    let stoppedBecause: AgentResult["stoppedBecause"] = "max_iterations";
     let error: string | undefined;
 
     const callHistory: string[] = [];
@@ -1088,19 +1088,27 @@ export class ReactAgentAdapter implements AgentAdapter {
         }
 
         const iterationsRemaining = this.maxIterations - iteration - 1;
-        if (iterationsRemaining === 2 && iteration >= 1 && !toolLimitWarningInjected && !finalAnswerFound) {
-          toolLimitWarningInjected = true;
+        // The warning never replaces a turn's work. This response's tool calls
+        // run first and the warning follows their results: issuing it instead
+        // (as before) discarded the calls without telling the model, which
+        // then reported actions that had never run.
+        const buildTurnLimitWarning = (): string => {
           const allTaskTextForWarn = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
           const taskImpliesFileSaveForWarn = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskTextForWarn);
-          const writeFileCalledForWarn = toolsUsed.some((e) => isWriteToolName(e.tool));
-          const writeFileReminder = taskImpliesFileSaveForWarn && !writeFileCalledForWarn
+          const writeSucceededForWarn = toolsUsed.some((e) => e.ok && isWriteToolName(e.tool));
+          const writeFileReminder = taskImpliesFileSaveForWarn && !writeSucceededForWarn
             ? "\n\nCRITICAL: Your task requires saving a file. You MUST call write_file with the complete file content in your NEXT response - before writing your final answer."
             : "";
-          messages.push({
-            role: "user",
-            content: `You have 2 turns remaining.${writeFileReminder}\nAfter any required tool call (e.g. write_file), your next response MUST be your FINAL ANSWER using the FINAL ANSWER: marker.`,
-          });
-          continue;
+          return `You have 2 turns remaining.${writeFileReminder}\nAfter any required tool call (e.g. write_file), your next response MUST be your FINAL ANSWER using the FINAL ANSWER: marker.`;
+        };
+        let turnLimitWarningDue = false;
+        if (iterationsRemaining === 2 && iteration >= 1 && !toolLimitWarningInjected && !finalAnswerFound) {
+          toolLimitWarningInjected = true;
+          if (toolCalls.length === 0) {
+            messages.push({ role: "user", content: buildTurnLimitWarning() });
+            continue;
+          }
+          turnLimitWarningDue = true;
         }
 
         if (toolCalls.length === 0) {
@@ -1265,10 +1273,15 @@ export class ReactAgentAdapter implements AgentAdapter {
             : await tool.execute(toolInput, toolContext), ctx, refusalsBefore);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
-          const commandFileChanges = result.ok
+          // The "Files changed" marker is the host command runner's record. In
+          // any other tool's output it is just text (a file's contents, an MCP
+          // shell's stdout), and even from the runner a change counts only
+          // when the filesystem confirms it inside the workspace.
+          const commandFileChanges = result.ok && toolName === "run_command"
             ? extractFilesChangedFromCommandOutput(result.output, {
                 workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
                 cwd: typeof toolInput.cwd === "string" ? toolInput.cwd : undefined,
+                requireOnDisk: true,
               })
             : [];
           ctx.recordTrace?.("agent.tool.result", {
@@ -1415,6 +1428,11 @@ export class ReactAgentAdapter implements AgentAdapter {
           break;
         }
 
+        // After the host's results for this turn's calls, so the model reads both.
+        if (turnLimitWarningDue) {
+          messages.push({ role: "user", content: buildTurnLimitWarning() });
+        }
+
         const allToolsSucceeded = toolCalls.every((call) => {
           const lastEvent = toolsUsed[toolsUsed.length - toolCalls.indexOf(call) - 1];
           return lastEvent?.ok === true;
@@ -1445,51 +1463,14 @@ export class ReactAgentAdapter implements AgentAdapter {
         }
       }
 
-      const allTaskTextForRescue = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
-      const taskImpliesFileSaveRescue = taskExplicitlyRequestsFileSave(allTaskTextForRescue);
-      const writeFileCalledRescue = toolsUsed.some((e) => isWriteToolName(e.tool));
-
-      if (
-        taskImpliesFileSaveRescue &&
-        !writeFileCalledRescue &&
-        lastRejectedFinalAnswer.trim().length > 100 &&
-        iterationCount < 4
-      ) {
-        const pathMatch =
-          allTaskTextForRescue.match(/\b([\w.\-/]+\.(?:md|txt|ts|js|json|yaml|yml|py|sh|csv))\b/i);
-        const targetPath = pathMatch?.[1] ?? "";
-        const writeTool = availableTools.find((t) => isWriteToolName(t.name));
-        if (targetPath && writeTool) {
-          try {
-            ctx.recordTrace?.("agent.postloop_write_rescue", { targetPath, contentLength: lastRejectedFinalAnswer.length });
-            const writeResult = await writeTool.execute(
-              { path: targetPath, content: lastRejectedFinalAnswer },
-              { workspaceRoot: ctx.workspaceRoot },
-            );
-            toolsUsed.push({
-              tool: writeTool.name,
-              ok: writeResult.ok,
-              summary: writeResult.ok ? `Rescued: wrote ${targetPath}` : writeResult.error ?? "write failed",
-              raw: { path: targetPath, _contentForDiff: lastRejectedFinalAnswer },
-            });
-            if (writeResult.ok) {
-              recordFileChange(filesChanged, {
-                path: targetPath,
-                changeType: "A",
-                diff: lastRejectedFinalAnswer.slice(0, 2000),
-              });
-              currentOutputText = lastRejectedFinalAnswer;
-            }
-          } catch (rescueErr) {
-            ctx.recordTrace?.("agent.postloop_write_rescue.error", { error: String(rescueErr) });
-          }
-        }
-      } else if (taskImpliesFileSaveRescue && !writeFileCalledRescue && iterationCount >= 4) {
-        ctx.recordTrace?.("agent.loop.rescue.skipped", {
-          reason: "loop_exhausted",
-          iterations: iterationCount,
-        });
-      }
+      // No write is ever made on the worker's behalf. (A "post-loop write
+      // rescue" used to save the rejected answer to a filename picked from the
+      // task text.) A worker that did not write what the task requires has
+      // not finished: it is reported as such below, Pappy judges the recorded
+      // events, and the repair loop — under Miranda — is where it is put right.
+      const taskRequiresFileSave = taskExplicitlyRequestsFileSave(
+        `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`,
+      );
 
       if (!finalAnswerFound && toolsUsed.length > 0 && stoppedBecause === "max_iterations") {
         try {
@@ -1575,6 +1556,26 @@ export class ReactAgentAdapter implements AgentAdapter {
           `[ReactAgent] no_final_output: run completed ${iterationCount} iteration(s) ` +
           `with ${toolsUsed.length} tool event(s) but produced no FINAL ANSWER.`,
         );
+      }
+      // A task that asks for a saved file is "done" only when the host recorded
+      // a write that succeeded: a successful write-tool event, or a file change
+      // recorded from a successful tool run. A call that was blocked, failed,
+      // never made, or only described in the model's text is not one — nothing
+      // the model writes can establish that a tool ran. The account is kept
+      // for the verifier; the worker is just not reported as finished.
+      const requiredWriteOutstanding =
+        task.sourceChangeRequired !== false &&
+        taskRequiresFileSave &&
+        !toolsUsed.some((e) => e.ok && isWriteToolName(e.tool)) &&
+        filesChanged.length === 0;
+      if (stoppedBecause === "done" && requiredWriteOutstanding) {
+        stoppedBecause = "required_action_incomplete";
+        ctx.recordTrace?.("agent.required_action_incomplete", {
+          role: this.role,
+          iteration: iterationCount,
+          action: "file write",
+          writeAttempts: toolsUsed.filter((e) => isWriteToolName(e.tool)).map((e) => ({ ok: e.ok, summary: e.summary })),
+        });
       }
       ctx.recordTrace?.("agent.run.completed", {
         role: this.role,

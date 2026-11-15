@@ -212,6 +212,34 @@ describe("buildPappyInput", () => {
     }
   });
 
+  it("with requireOnDisk, keeps only changes the filesystem confirms", () => {
+    const root = mkdtempSync(join(tmpdir(), "orca-core-helper-"));
+    const outside = mkdtempSync(join(tmpdir(), "orca-core-outside-"));
+    try {
+      writeFileSync(join(root, "present.js"), "x\n", "utf8");
+      writeFileSync(join(outside, "elsewhere.js"), "x\n", "utf8");
+      const claims = [
+        { path: "present.js", changeType: "M" },      // exists: confirmed
+        { path: "never-written.js", changeType: "A" }, // claimed, not on disk
+        { path: "present.js", changeType: "D" },       // claimed deleted, still there
+        { path: "gone.js", changeType: "D" },          // absent: confirmed
+        { path: join(outside, "elsewhere.js"), changeType: "M" }, // exists, but outside the workspace
+      ];
+      const output = `ok\n\n<!-- Files changed: ${JSON.stringify(claims.filter((c) => c.path !== "present.js" || c.changeType !== "D"))} -->`;
+      expect(extractFilesChangedFromCommandOutput(output, { workspaceRoot: root, requireOnDisk: true }).map((c) => `${c.changeType} ${c.path}`))
+        .toEqual(["M present.js", "D gone.js"]);
+      const deleteClaim = `ok\n\n<!-- Files changed: ${JSON.stringify([claims[2]])} -->`;
+      expect(extractFilesChangedFromCommandOutput(deleteClaim, { workspaceRoot: root, requireOnDisk: true })).toEqual([]);
+      // Without a workspace root nothing can be confirmed.
+      expect(extractFilesChangedFromCommandOutput(output, { requireOnDisk: true })).toEqual([]);
+      // Legacy callers (no requireOnDisk) are unchanged.
+      expect(extractFilesChangedFromCommandOutput(output, { workspaceRoot: root })).toHaveLength(4);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("maps leading-slash workspace paths on Windows back into the workspace", () => {
     if (process.platform !== "win32") return;
 
