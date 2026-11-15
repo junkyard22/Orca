@@ -362,6 +362,19 @@ export interface OrcaRunCtx {
    */
   collectWorkspaceEvidence?: () => Promise<import("@clawde/pappy-core").WorkspaceEvidence>;
   /**
+   * Runs one tool execution between two host snapshots of the workspace and
+   * says what changed on disk while it ran (confirmed / no change /
+   * unverified). Set by the runtime when a usable workspace is established.
+   * Agent loops wrap every execution that may modify files with it — after
+   * Miranda has allowed the call — and record the evidence on the tool event,
+   * so a change is credited to the execution that made it and to nothing a
+   * tool or a model merely said.
+   */
+  observeToolFilesystemEffects?: <T>(
+    info: { tool: string; writer?: string },
+    run: () => Promise<T>,
+  ) => Promise<{ result: T; evidence: import("./workspaceEvidence.js").ToolFilesystemEvidence }>;
+  /**
    * Tool receipts from earlier passes of this task, oldest first. The runtime
    * appends each pass's receipts after verifying it, so a repair pass is judged
    * with the reproduction evidence gathered before it.

@@ -2,11 +2,13 @@ import {
   budgetGateContext,
   extractFilesChangedFromCommandOutput,
   extractToolNamesFromPrompt,
+  toolInputForRecord,
   type OrcaFileChange,
   type OrcaMaestroResult,
   type OrcaRunCtx,
   type OrcaToolService,
 } from "@clawde/orca-core";
+import { toolMayModifyFilesystem } from "@clawde/miranda-core";
 import type { GateResult, ToolGateContext } from "@clawde/miranda-core";
 import type { AgentLoopResult, ParsedCall } from "./types.js";
 
@@ -246,7 +248,7 @@ export async function runAgentLoop(
           tool: call.tool,
           ok: false,
           summary: `${call.tool}: blocked by Miranda gate — ${beforeGate.reason}`,
-          raw: call.input,
+          raw: toolInputForRecord(call.input),
         });
         conversation += formatToolResult(
           call.tool,
@@ -266,7 +268,7 @@ export async function runAgentLoop(
             tool: call.tool,
             ok: false,
             summary: `${call.tool}: not approved`,
-            raw: call.input,
+            raw: toolInputForRecord(call.input),
           });
           conversation += formatToolResult(call.tool, false, "Tool call not run: not approved.");
           continue;
@@ -274,13 +276,22 @@ export async function runAgentLoop(
       }
 
       ctx.recordTrace?.("tool.call", { tool: call.tool, input: call.input });
-      const result = await tools.execute(call.tool, call.input);
+      // Miranda has allowed the call. A tool that can modify files runs between
+      // two host snapshots of the workspace: what it changed is read from disk
+      // and recorded on this execution's event, not taken from its output.
+      const observeFs = ctx.observeToolFilesystemEffects && toolMayModifyFilesystem(call.tool) ? ctx.observeToolFilesystemEffects : undefined;
+      const observed = observeFs
+        ? await observeFs({ tool: call.tool }, () => tools.execute(call.tool, call.input))
+        : { result: await tools.execute(call.tool, call.input), evidence: undefined };
+      const result = observed.result;
+      const fsEvidence = observed.evidence;
+      const hostObserved = fsEvidence !== undefined && fsEvidence.status !== "unverified";
       const outputText = normalizeToolText(result.output);
       const errorText = result.error === undefined ? undefined : normalizeToolText(result.error);
       // The marker is the host command runner's record. In any other tool's
       // output it is just text (a file's contents, an MCP shell's stdout), and
       // even from the runner a change counts only when it is on disk.
-      const commandFileChanges = result.ok && call.tool === "run_command"
+      const commandFileChanges = result.ok && call.tool === "run_command" && !hostObserved
         ? extractFilesChangedFromCommandOutput(outputText, {
             workspaceRoot: ctx.workspaceRoot,
             cwd: typeof call.input["cwd"] === "string" ? call.input["cwd"] : undefined,
@@ -298,11 +309,16 @@ export async function runAgentLoop(
         { ok: result.ok, output: outputText },
       );
 
-      const enrichedRaw = { ...call.input } as Record<string, unknown>;
+      // Underscore keys on the record are the host's observations; any the
+      // model put in its own arguments are left out of the record.
+      const enrichedRaw = toolInputForRecord(call.input);
+      if (fsEvidence) {
+        enrichedRaw["_fsEvidence"] = fsEvidence;
+      }
       if (commandFileChanges.length > 0) {
         enrichedRaw["_filesChangedForDiff"] = commandFileChanges;
       }
-      if (call.tool === "write_file" && result.ok && typeof call.input["content"] === "string") {
+      if (call.tool === "write_file" && result.ok && typeof call.input["content"] === "string" && (!hostObserved || fsEvidence!.changes.length > 0)) {
         enrichedRaw["_contentForDiff"] = call.input["content"];
       }
       // Failed runs keep their real output too (a failing test suite is
@@ -325,8 +341,15 @@ export async function runAgentLoop(
         raw: enrichedRaw,
       });
 
+      if (hostObserved && result.ok) {
+        // Credit exactly what the host saw change while this tool ran.
+        const content = call.tool === "write_file" && typeof call.input["content"] === "string" ? (call.input["content"] as string) : undefined;
+        for (const change of fsEvidence!.changes) {
+          recordFileChange(filesChanged, { path: change.path, changeType: change.changeType, diff: fsEvidence!.changes.length === 1 && change.changeType !== "D" ? content : undefined });
+        }
+      }
       // Capture written content so Pappy can verify the diff.
-      if (call.tool === "write_file" && result.ok) {
+      if (call.tool === "write_file" && result.ok && !hostObserved) {
         const filePath = typeof call.input["path"] === "string" ? call.input["path"] : "";
         const content = typeof call.input["content"] === "string" ? call.input["content"] : undefined;
         if (filePath) {
@@ -435,7 +458,7 @@ export async function runAgentLoop(
           tool: call.tool,
           ok: false,
           summary: `${call.tool}: blocked by Miranda gate - ${beforeGate.reason}`,
-          raw: call.input,
+          raw: toolInputForRecord(call.input),
         });
         break;
       }
@@ -452,8 +475,8 @@ export async function runAgentLoop(
           ? `${call.tool}: ok (${outputText.length} chars)`
           : `${call.tool}: failed — ${result.error ?? "unknown"}`,
         raw: typeof call.input["content"] === "string"
-          ? { ...call.input, _contentForDiff: call.input["content"] }
-          : call.input,
+          ? { ...toolInputForRecord(call.input), _contentForDiff: call.input["content"] }
+          : toolInputForRecord(call.input),
       });
       if (result.ok) {
         const filePath = typeof call.input["path"] === "string" ? call.input["path"] : "";

@@ -20,6 +20,7 @@
 
 import type { AHPPacket, AHPConstraint } from "../ahp/types.js";
 import { AHPLifecycle, AHPVerdict } from "../ahp/types.js";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { BudgetDecision } from "../budget/ledger.js";
 
@@ -95,6 +96,12 @@ export interface GateResult {
    * `verdict` is informational until the runtime is updated.
    */
   verdict?: GateVerdict;
+  /**
+   * Machine-readable cause of a block, when the caller can act on it apart
+   * from the wording (e.g. `workspace_required`: ask the user to choose a
+   * workspace instead of retrying or repairing).
+   */
+  code?: string;
 }
 
 /**
@@ -533,20 +540,184 @@ function collectExplicitPathArguments(args: Record<string, unknown>): string[] {
   return [...new Set(paths)];
 }
 
+function isOutside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+}
+
+/** `realpath`, or undefined when the path cannot be resolved (missing, unreadable, a link loop). */
+function realPathOf(target: string): string | undefined {
+  try {
+    return fs.realpathSync.native(target);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Where a path really leads: its nearest existing ancestor with every link
+ * followed, plus the part that does not exist yet. A link inside the
+ * workspace that points out of it is thereby seen for what it is, including a
+ * dangling link (which `lstat` finds although its target is missing).
+ */
+function resolveThroughLinks(candidate: string): string | undefined {
+  let existing = candidate;
+  for (;;) {
+    let present = false;
+    try {
+      fs.lstatSync(existing);
+      present = true;
+    } catch { /* not there: try the parent */ }
+    if (present) break;
+    const parent = path.dirname(existing);
+    if (parent === existing) return undefined;
+    existing = parent;
+  }
+  const real = realPathOf(existing);
+  if (real === undefined) return undefined;
+  const tail = path.relative(existing, candidate);
+  return tail ? path.join(real, tail) : real;
+}
+
 function evaluateWorkspaceBoundary(ctx: ToolGateContext): ProtectedPathViolation[] {
   if (!ctx.workspaceRoot) return [];
 
   const workspaceRoot = path.resolve(ctx.workspaceRoot);
+  // The workspace's own real location; when it cannot be resolved (it does not
+  // exist yet) only the spelling can be judged.
+  const realRoot = realPathOf(workspaceRoot);
   return collectExplicitPathArguments(ctx.args).flatMap((requestedPath) => {
     const candidate = path.isAbsolute(requestedPath)
       ? path.resolve(requestedPath)
       : path.resolve(workspaceRoot, requestedPath);
-    const relative = path.relative(workspaceRoot, candidate);
-    const outside = relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
-    return outside
-      ? [{ path: requestedPath, reason: "path is outside the configured workspace" }]
-      : [];
+    if (isOutside(workspaceRoot, candidate)) {
+      return [{ path: requestedPath, reason: "path is outside the configured workspace" }];
+    }
+    if (realRoot !== undefined) {
+      const real = resolveThroughLinks(candidate);
+      if (real === undefined || isOutside(realRoot, real)) {
+        return [{ path: requestedPath, reason: "path leads outside the configured workspace through a link" }];
+      }
+    }
+    return [];
   });
+}
+
+// ---------------------------------------------------------------------------
+// Workspace authority
+// ---------------------------------------------------------------------------
+
+export type WorkspaceAuthorityStatus = "ok" | "not_configured" | "missing" | "not_a_directory" | "filesystem_root";
+
+export interface WorkspaceAuthority {
+  status: WorkspaceAuthorityStatus;
+  /** The workspace as given, when one was. */
+  root?: string;
+  /** Plain statement of what is wrong and what establishes a workspace; empty when ok. */
+  message: string;
+}
+
+/** `GateResult.code` of a tool call refused because no usable workspace is established. */
+export const WORKSPACE_REQUIRED_CODE = "workspace_required";
+/** Every such refusal's reason starts with this, so a recorded tool event can be recognised. */
+export const WORKSPACE_REQUIRED_PREFIX = "Workspace required:";
+
+const HOW_TO_ESTABLISH_WORKSPACE =
+  "Choose a workspace folder in Settings (desktop), or start the CLI in the project folder or with WORKSPACE_ROOT set. A workspace cannot be chosen by a tool call or named in a message";
+
+/**
+ * Whether a workspace root can carry filesystem authority: it must be given,
+ * exist, be a directory, and not be a filesystem root. Nothing is substituted
+ * for a root that fails — not the process's working directory, not a parent.
+ */
+export function assessWorkspaceRoot(root: string | undefined | null): WorkspaceAuthority {
+  if (typeof root !== "string" || root.trim().length === 0) {
+    return { status: "not_configured", message: `no workspace is configured. ${HOW_TO_ESTABLISH_WORKSPACE}.` };
+  }
+  const absolute = path.resolve(root);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(absolute);
+  } catch {
+    return { status: "missing", root, message: `the configured workspace does not exist: ${root}. Create it or choose another. ${HOW_TO_ESTABLISH_WORKSPACE}.` };
+  }
+  if (!stat.isDirectory()) {
+    return { status: "not_a_directory", root, message: `the configured workspace is not a folder: ${root}. ${HOW_TO_ESTABLISH_WORKSPACE}.` };
+  }
+  const real = realPathOf(absolute) ?? absolute;
+  if (path.parse(absolute).root === absolute || path.parse(real).root === real) {
+    return { status: "filesystem_root", root, message: `a filesystem root (${root}) cannot be a workspace. Choose a project folder. ${HOW_TO_ESTABLISH_WORKSPACE}.` };
+  }
+  return { status: "ok", root, message: "" };
+}
+
+/**
+ * Whether running a tool can change files on this machine, as far as its name
+ * tells: file-write and shell tools can; file reads and tools whose leading
+ * verb is a read cannot; anything else is not known to be harmless.
+ */
+export function toolMayModifyFilesystem(tool: string): boolean {
+  const requirement = classifyToolPermissionRequirement(tool);
+  if (requirement === "file_write" || requirement === "shell_exec") return true;
+  if (requirement === "file_read") return false;
+  return classifyToolVerb(tool) !== "read";
+}
+
+/**
+ * Miranda's workspace-authority rule as a gate of its own, for composing in
+ * front of a host's gates: a tool that reads files, writes files or runs
+ * commands — or any call that names an absolute local path — is refused
+ * unless a usable workspace is established. Every other checkpoint passes;
+ * this gate adds one refusal and no permission.
+ */
+export function createWorkspaceAuthorityGate(): MirandaGate {
+  const pass = (reason: string): GateResult => ({ allowed: true, reason, verdict: "PASS" });
+  return {
+    beforeLLMCall: () => pass("workspace authority does not apply to model calls"),
+    afterLLMCall: () => pass("workspace authority does not apply to model calls"),
+    beforeToolRun(ctx): GateResult {
+      const requirement = classifyToolPermissionRequirement(ctx.tool);
+      const usesFilesystem = requirement === "file_read" || requirement === "file_write" || requirement === "shell_exec";
+      const namesLocalPath = collectExplicitPathArguments(ctx.args).some((p) => path.isAbsolute(p));
+      if (!usesFilesystem && !namesLocalPath) return pass(`tool="${ctx.tool}" needs no workspace`);
+      const authority = assessWorkspaceRoot(ctx.workspaceRoot);
+      if (authority.status === "ok") return pass(`tool="${ctx.tool}" runs in an established workspace`);
+      const reason = `${WORKSPACE_REQUIRED_PREFIX} ${authority.message}`;
+      return { allowed: false, reason, violations: [reason], verdict: "BLOCK", code: WORKSPACE_REQUIRED_CODE };
+    },
+    afterToolRun: () => pass("workspace authority does not judge tool results"),
+    beforeQC: () => pass("workspace authority does not apply to QC"),
+    afterQC: () => pass("workspace authority does not apply to QC"),
+  };
+}
+
+/**
+ * What a value is, when it is not what the schema declares; undefined when it
+ * conforms. `typeof` cannot do this: an array is an "object" to it, and no
+ * value is an "integer". Arrays and objects must be native — a JSON string in
+ * their place is a string, so nothing inside it escapes the path checks.
+ * Element and member shapes are not part of the tool schema contract
+ * (`properties: { type }`) and are not judged here; path-bearing members are
+ * still checked against the workspace wherever they are nested.
+ */
+function describeTypeMismatch(value: unknown, declared: string): string | undefined {
+  const actual = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
+  switch (String(declared).toLowerCase()) {
+    case "array":
+      return actual === "array" ? undefined : actual;
+    case "object":
+      return actual === "object" ? undefined : actual;
+    case "integer":
+      return actual === "number" && Number.isInteger(value) ? undefined : actual === "number" ? "a non-integer number" : actual;
+    case "number":
+      return actual === "number" && Number.isFinite(value) ? undefined : actual === "number" ? "a non-finite number" : actual;
+    case "string":
+    case "boolean":
+      return actual === declared.toLowerCase() ? undefined : actual;
+    default:
+      // A type this contract does not define cannot be checked either way.
+      return undefined;
+  }
 }
 
 const MUTATING_TOOL_RE = /(^|[_-])(write|edit|modify|delete|remove|move|rename|create|patch|apply|replace)([_-]|$)/i;
@@ -933,10 +1104,10 @@ export function createMirandaGate(config: MirandaGateConfig = {}): MirandaGate {
             ctx.args[field] !== null &&
             ctx.args[field] !== undefined
           ) {
-            const actualType = typeof ctx.args[field];
-            if (actualType !== def.type) {
+            const mismatch = describeTypeMismatch(ctx.args[field], def.type);
+            if (mismatch) {
               violations.push(
-                `Tool "${ctx.tool}" field "${field}" must be ${def.type}, got ${actualType}`
+                `Tool "${ctx.tool}" field "${field}" must be ${def.type}, got ${mismatch}`
               );
             }
           }

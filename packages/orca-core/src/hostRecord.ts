@@ -20,6 +20,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { WorkspaceEvidence } from "@clawde/pappy-core";
 import type { OrcaToolEvent } from "./types.js";
+import { recordedFilesystemEvidence } from "./helpers.js";
 
 /** One worker pass of the task and the tool events the host recorded for it. */
 export interface PassLogEntry {
@@ -80,6 +81,8 @@ function normalize(path: string, root: string | undefined): string {
 function writtenPaths(event: OrcaToolEvent): string[] {
   const raw = (event.raw ?? {}) as Record<string, unknown>;
   if (!event.ok) return [];
+  const observed = recordedFilesystemEvidence(raw);
+  if (observed && observed.status !== "unverified") return observed.changes.map((c) => c.path);
   if (WRITE_TOOLS.test(event.tool)) {
     return ["path", "file", "target", "destination"].map((k) => raw[k]).filter((v): v is string => typeof v === "string" && v.length > 0);
   }

@@ -317,6 +317,33 @@ export interface WorkspaceEvidenceCollector {
   observeTrace(stage: string, detail: unknown): void;
   /** Compare the workspace with the baseline. */
   collect(): Promise<WorkspaceEvidence>;
+  /**
+   * Run one tool execution between two snapshots of the workspace and report
+   * what changed on disk while it ran. The answer comes from the filesystem,
+   * never from what the tool returned or printed.
+   */
+  observeExecution<T>(info: { tool: string; writer?: string }, run: () => Promise<T>): Promise<{ result: T; evidence: ToolFilesystemEvidence }>;
+}
+
+/**
+ * What the host saw a tool execution do to the workspace.
+ *
+ * - `confirmed`  — the listed files differ on disk between the snapshot taken
+ *                  before the execution and the one taken after it.
+ * - `no_change`  — both snapshots are complete and identical: whatever the
+ *                  tool reported, nothing in the workspace changed.
+ * - `unverified` — the host cannot say: the workspace could not be read
+ *                  completely, or another observed execution overlapped (the
+ *                  change cannot be tied to one execution).
+ *
+ * Only the workspace is watched: a change a tool makes elsewhere is invisible
+ * here and is never credited.
+ */
+export interface ToolFilesystemEvidence {
+  status: "confirmed" | "no_change" | "unverified";
+  changes: Array<{ path: string; changeType: "A" | "M" | "D" }>;
+  reason?: string;
+  provenance: "runtime-snapshot";
 }
 
 const TOOL_CALL_STAGES = new Set(["tool.call", "agent.tool.call"]);
@@ -466,5 +493,63 @@ export function createWorkspaceEvidenceCollector(
     };
   };
 
-  return { ready, observeTrace, collect };
+  // The last complete look at the workspace: lets the next snapshot trust
+  // unchanged stat results instead of re-hashing every file.
+  let lastInventory: WorkspaceInventory = baseline;
+  const observing = new Set<{ overlapped: boolean }>();
+  const unreadable = (inventory: WorkspaceInventory) => inventory.partial && /cannot read workspace/.test(inventory.reason ?? "");
+  const snapshot = (previous: WorkspaceInventory): WorkspaceInventory | undefined => {
+    try {
+      const current = captureWorkspaceInventorySync(absoluteRoot, limits, previous);
+      evidenceMs += current.ms;
+      return current;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const observeExecution = async <T>(info: { tool: string; writer?: string }, run: () => Promise<T>): Promise<{ result: T; evidence: ToolFilesystemEvidence }> => {
+    const self = { overlapped: observing.size > 0 };
+    for (const other of observing) other.overlapped = true;
+    observing.add(self);
+    const before = snapshot(lastInventory);
+    let result: T;
+    try {
+      result = await run();
+    } finally {
+      observing.delete(self);
+    }
+    const after = before ? snapshot(before) : undefined;
+    const unverified = (reason: string): { result: T; evidence: ToolFilesystemEvidence } =>
+      ({ result, evidence: { status: "unverified", changes: [], reason, provenance: "runtime-snapshot" } });
+    if (!before || !after || unreadable(before) || unreadable(after)) return unverified("the workspace could not be read before and after the execution");
+    lastInventory = after;
+    if (self.overlapped) return unverified("another tool execution ran at the same time; a change cannot be tied to one of them");
+
+    const changes: ToolFilesystemEvidence["changes"] = [];
+    for (const [path, record] of before.files) {
+      const now = after.files.get(path);
+      if (!now) changes.push({ path, changeType: "D" });
+      else if (now.hash !== record.hash) changes.push({ path, changeType: "M" });
+    }
+    for (const path of after.files.keys()) if (!before.files.has(path)) changes.push({ path, changeType: "A" });
+    changes.sort((x, y) => x.path.localeCompare(y.path));
+
+    if (changes.length === 0) {
+      // An incomplete inventory cannot prove that nothing changed.
+      return before.partial || after.partial
+        ? unverified(`the workspace inventory is incomplete (${before.reason ?? after.reason ?? "limits reached"})`)
+        : { result, evidence: { status: "no_change", changes, provenance: "runtime-snapshot" } };
+    }
+    // The same record collect() uses to say who changed a path.
+    const writer = info.writer ?? info.tool;
+    for (const change of changes) {
+      const list = writes.get(change.path) ?? [];
+      list.push({ writer, pass: Math.max(pass, 1) });
+      writes.set(change.path, list);
+    }
+    return { result, evidence: { status: "confirmed", changes, provenance: "runtime-snapshot" } };
+  };
+
+  return { ready, observeTrace, collect, observeExecution };
 }

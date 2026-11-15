@@ -90,4 +90,13 @@ declare module '@clawde/miranda-core' {
   export type ToolVerbClass = "read" | "write" | "unknown";
   /** Verb-based read/write classification of an MCP tool name (shared with Miranda's gate). */
   export function classifyToolVerb(tool: string): ToolVerbClass;
+  /** Whether running a tool can change local files, as far as its name tells. */
+  export function toolMayModifyFilesystem(tool: string): boolean;
+  export const WORKSPACE_REQUIRED_CODE: "workspace_required";
+  export const WORKSPACE_REQUIRED_PREFIX: string;
+  export function assessWorkspaceRoot(root: string | undefined | null): {
+    status: "ok" | "not_configured" | "missing" | "not_a_directory" | "filesystem_root";
+    root?: string;
+    message: string;
+  };
 }

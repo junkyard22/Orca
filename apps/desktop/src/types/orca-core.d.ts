@@ -207,6 +207,11 @@ declare module '@clawde/orca-core' {
     abortSignal?: AbortSignal;
     recordTrace?: (stage: string, detail?: unknown) => void;
     tools?: OrcaToolService;
+    /** Set by the runtime when a usable workspace is established: runs one tool execution between two host snapshots. */
+    observeToolFilesystemEffects?: <T>(
+      info: { tool: string; writer?: string },
+      run: () => Promise<T>,
+    ) => Promise<{ result: T; evidence: ToolFilesystemEvidence }>;
     toolNamesAllowed?: string[];
     emit?: (event: OrcaEvent) => void;
     subagentDepth?: number;
@@ -327,6 +332,16 @@ declare module '@clawde/orca-core' {
     toolEvents: OrcaToolEvent[],
     filesChanged?: OrcaFileChange[]
   ): OrcaFileChange[];
+  /** What the host saw a tool execution do to the workspace (two snapshots around it). */
+  export interface ToolFilesystemEvidence {
+    status: "confirmed" | "no_change" | "unverified";
+    changes: Array<{ path: string; changeType: "A" | "M" | "D" }>;
+    reason?: string;
+    provenance: "runtime-snapshot";
+  }
+  /** A tool call's arguments as kept on its recorded event: host-reserved `_` keys removed. */
+  export function toolInputForRecord(input: Record<string, unknown>): Record<string, unknown>;
+  export function recordedFilesystemEvidence(raw: unknown): Pick<ToolFilesystemEvidence, "status" | "changes"> | undefined;
   export function extractFilesChangedFromCommandOutput(
     output: string,
     options?: { workspaceRoot?: string; cwd?: string; requireOnDisk?: boolean }
