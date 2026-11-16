@@ -5,7 +5,7 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-11-16 (stage 2.2 of the audit follow-up: host-scoped approvals carry a not-sandboxed notice and are bound to their exact arguments; integration-readiness review; on `fix/stage2.2-session-approval`; not merged) · **Machine:** cloud container (Linux, Node 22.23.4) · **By:** Claude
+**Last updated:** 2026-11-16 (integration PR #107 opened for stages 2, 2.1 and 2.2; CI green; not merged) · **Machine:** cloud container (Linux, Node 22.23.4) · **By:** Claude
 
 ---
 
@@ -18,12 +18,12 @@ Verified from git on 2026-11-15 (after `git fetch origin main`). **Git disagrees
 | `main` / `origin/main` | GitHub | `e0f845b` | yes | Includes PRs #99–#101, #105 (audit report) and #106 (stages 1 and 1.5). |
 | `fix/stage2-workspace-authority` | GitHub | `696e431` | yes | Stage 2. Not in `main` (checked 2026-11-16: `origin/main` is still `e0f845b`). No PR opened. |
 | `fix/stage2.1-shell-security` | GitHub | `ad2ebd5` | yes | Stage 2.1, on top of stage 2. Not in `main`. No PR opened. |
-| `fix/stage2.2-session-approval` | cloud session clone / GitHub | `ad2ebd5` + the stage 2.2 commit | yes | Contains stages 2, 2.1 and 2.2 in order (history preserved). Merges into `origin/main` (`e0f845b`) without conflicts. Not merged, no PR opened. |
+| `fix/stage2.2-session-approval` | cloud session clone / GitHub | `9da0cde` + this state update | yes | Contains stages 2, 2.1 and 2.2 in order. **PR #107** into `main` is open (opened 2026-11-16), not merged. |
 | `fix/stage1-execution-integrity`, `fix/stage1.5-execution-hardening`, `ccr-f945f64e-wo02hg` | GitHub | `f374030`, `a5d7662`, `bef7c9b` | yes | All contained in `main`. |
 
-The clone has one worktree. GitHub (checked 2026-11-16): no open pull requests; #105 and #106 merged; no PR exists for stages 2, 2.1 or 2.2; Dependabot PRs #102–#104 are closed unmerged.
+The clone has one worktree. GitHub (checked 2026-11-16): PR #107 (`fix/stage2.2-session-approval` → `main`) is the only open pull request; #105 and #106 merged; Dependabot PRs #102–#104 are closed unmerged.
 
-**Recommended integration order** (nothing below has been done): the three stages are a linear chain `e0f845b`(main's tree) → `696e431` → `ad2ebd5` → stage 2.2, and each later stage's tests assume the earlier ones. Either (a) one PR from `fix/stage2.2-session-approval` into `main` (3 commits, simplest, same end state), or (b) three PRs merged strictly in order — `fix/stage2-workspace-authority`, then `fix/stage2.1-shell-security`, then `fix/stage2.2-session-approval` — each retargeted to `main` after the previous one merges. Do not merge 2.1 or 2.2 without 2. Use merge commits or rebase-merge, not squash, if the stage history is to be kept.
+**Integration:** the single-PR route was taken — PR #107 carries `696e431`, `ad2ebd5`, `9da0cde` in order. Use a merge commit or rebase-merge, not squash, if the stage history is to be kept. The separate stage branches need no PRs of their own. Stage 3A (intent-aware routing) starts from `main` after #107 merges.
 
 ---
 
@@ -361,6 +361,8 @@ Same in all three: Git-ignored-only change → `no_change/0`; new untracked file
 
 | Date | Commit | Machine | Command | Result |
 |---|---|---|---|---|
+| 2026-11-16 | `9da0cde` (PR #107 head) | GitHub Actions, ubuntu-latest | CI on the pull request: Build & Test (strict contract check, builds, `pnpm -r exec tsc --noEmit`, `pnpm -r --if-present test`), Dependency Audit, Scan for secrets | all three checks concluded success (read from the check runs; job logs were not inspected, so whether the three `survivingProcesses.test.ts` cases ran and passed there is inferred from the job's success) |
+| 2026-11-16 | `9da0cde` | cloud container (Linux, Node 22.23.4) | `pnpm -r exec tsc --noEmit` | passed (exit 0) |
 | 2026-11-16 | stage 2.2 commit on `fix/stage2.2-session-approval` | cloud container (Linux, Node 22.23.4 / pnpm 10.30.2) | `pnpm -r build`; `pnpm typecheck:scripts`; `pnpm contract:check:strict` | build and typecheck passed; contract check Status: CLEAR (35 changed files scanned), exit 0 |
 | 2026-11-16 | same | same | `npx vitest run` in `apps/desktop`, `packages/miranda-core`, `packages/orca-core`, `packages/agent-loop-core`, `packages/workbench-core`, `apps/runner` | desktop 390 passed, 1 skipped; miranda-core 271 passed, 1 skipped; orca-core 402 passed; agent-loop-core 20 passed; workbench-core 145 passed, 3 failed, 1 skipped (the same pre-existing `survivingProcesses.test.ts` failures, F-12); runner 107 passed. Before the fix: 6 of the new/changed `approvalBroker.test.ts` tests failed |
 | 2026-11-16 | same | same (xvfb, Electron 43.8.6, source build, mock provider) | real desktop approval flow, automated clicks through the DevTools port | first `npm test` card: notice + full args + workspace, approved → ran; identical second `npm test`: new card, denied → not run. Not Windows, not packaged, not human-witnessed |
@@ -458,6 +460,8 @@ Same in all three: Git-ignored-only change → `no_change/0`; new untracked file
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-11-16 (integration PR)** (cloud container, Claude) — Stage 3A was not started: `main` lacked stages 2–2.2. Opened PR #107 from `fix/stage2.2-session-approval` into `main` after verifying ancestry, the 35-file diff, the absence of an equivalent PR and doc consistency. CI: all checks green on `9da0cde`. Windows, packaged-build, human-witnessed, real-MCP and live-provider validation remain release-blocking. Not merged.
+
 - **2026-11-16 (audit follow-up, stage 2.2)** (cloud container, Claude) — Found that session-wide approval was already removed in 1.7.0 (corrected the stage 2.1 note). Fixed what was actually open: the approval card now shows the not-sandboxed notice and the full arguments for shell and process tools, and an approval is bound to a digest of those arguments. Ran the real Electron app under xvfb with the mock provider and observed the card, an approval and a denial of a repeated identical command. Stages 2 → 2.1 → 2.2 merge cleanly into `main`; no open PRs; merge order recorded above. Not merged.
 
 - **2026-11-16 (audit follow-up, stage 2.1)** (cloud container, Claude) — Traced every shell path: no OS sandbox exists; the command "sandbox" was a name allowlist that ran out-of-workspace reads and injected commands unattended (reproduced on a real shell with temp fixtures). On `fix/stage2.1-shell-security` (from `696e431`): unattended execution limited to confined reads, approvals worded as host-level access, MCP shell tools fail closed without an approval handler, execution authority and evidence scope recorded on tool events and in the host record, named-path verification, observer benchmarked (10 / 44 / 312 ms per execution at 300 / 5k / 40k files; no optimisation needed), `ARCHITECTURE.md` and `CLAUDE.md` updated. Build, typecheck, strict contract check pass; only the 3 known `survivingProcesses` failures remain. Not merged.
@@ -475,4 +479,3 @@ Same in all three: Git-ignored-only change → `no_change/0`; new untracked file
 - **2026-10-20 (Dependabot #186/#189)** (dev desktop, Codex) — Locked http-cache-semantics 4.3.0, upgraded Electron's proxy helper to global-agent 4.1.3 to remove sprintf-js, removed the audit suppression, and raised CI to moderate. Audit, builds, typechecks, proxy/checksum integration and Windows packaging passed. Test discovery found an old local demo; desktop source runs stayed red on differing worker assertions, including host process-attribution interference; isolated worker file passed 24/24 with 1 skipped. Refreshed the stale branch inventory from git. Security branch prepared for a draft PR; no merge or release.
 
 - **2026-10-15, evening (Orca 1.7.0 packaged acceptance H1–H4)** (dev desktop, with the human) — Added the scripted coding mock (`scripts/desktop-validation/mock-coding.mjs`, with pass, repair and repair-a6 modes; tests show it scripts the model only). H1 on `0fd63222` **FAILED**: after a Deny, an automatic repair asked for the same command again. The fix, approved by the human, landed in `71ced38`: "no means no" (`orca-core/authorization.ts`; refusals are never re-asked; no repair around a refusal; denial, timeout and cancellation reported distinctly). Regression 2,137 / 0 / 3. Rebuilt the candidate as `71ced381` (unsigned). The human witnessed **H1, H2, H3 and H4 all PASS**. Status: PACKAGED CANDIDATE VALIDATED; not merged; the PR is not yet opened (the branch on origin is at `5f5c503`).
-- **2026-10-15 (Orca 1.7.0 final PR review)** (dev desktop) — The targeted review of the acceptance contract, the file-less Pappy criterion, the approval broker and provenance found two gaps. Both were fixed with tests: unrelated Brain criteria are now advisory (`bbb4ee8`); approvals are bound to the workspace the task started in, and an early click stays pending instead of denying (`ee1e100`). Wrote the contract review (Rule 4: 4a approved earlier, 4b for review; Rule 6 wording). Regression: 2,114 / 0 / 3, corpus 60/60, Pappy suites unchanged, strict check REVIEW REQUIRED (13 findings). The PR into `main` is prepared; no merge.
