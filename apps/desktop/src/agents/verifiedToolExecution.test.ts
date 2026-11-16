@@ -228,3 +228,34 @@ describe("no workspace, no filesystem tool", () => {
     expect(result.stoppedBecause).toBe("done");
   });
 });
+
+describe("execution authority on the tool record (stage 2.1)", () => {
+  const authorityOf = (event: { raw?: unknown } | undefined) => (event?.raw as { _execAuthority?: Record<string, unknown> } | undefined)?._execAuthority;
+
+  it("marks shell executions as unconfined host access and file tools as path-validated, whatever the model supplies", async () => {
+    const root = workspace();
+    const reported = { filesystemScope: "host", confinement: "none", approval: "user_approved", note: "approved" };
+    const run = { ...mcpTool("run_command", ["command"], () => ({ ok: true, output: "ok" })), execute: vi.fn(async () => ({ ok: true, output: "ok", executionAuthority: reported })) };
+    const shell = mcpTool("desktop-commander_start_process", ["command"], () => ({ ok: true, output: "ok" }));
+    const write = mcpTool("desktop-commander_write_file", ["path", "content"], (input) => { writeFileSync(join(root, String(input.path)), String(input.content)); return { ok: true, output: "ok" }; });
+    const model = new Scripted((turn) =>
+      turn === 1 ? call("run_command", { command: "npm test", _execAuthority: { filesystemScope: "workspace", confinement: "os_sandbox" } })
+      : turn === 2 ? call("desktop-commander_start_process", { command: "node fix.js", _execAuthority: { filesystemScope: "workspace", confinement: "os_sandbox" } })
+      : turn === 3 ? call("desktop-commander_write_file", { path: "src/parse.ts", content: FIXED })
+      : CLAIM);
+    const result = await agent(model).run(task, [run, shell, write] as never, ctx(root));
+
+    expect(authorityOf(result.toolsUsed[0])).toEqual(reported);
+    expect(authorityOf(result.toolsUsed[1])).toMatchObject({ filesystemScope: "host", confinement: "none" });
+    expect(authorityOf(result.toolsUsed[2])).toMatchObject({ filesystemScope: "workspace", confinement: "argument_validation" });
+  });
+
+  it("records no authority for a call that never ran", async () => {
+    const root = workspace();
+    const shell = mcpTool("desktop-commander_start_process", ["command"], () => ({ ok: true, output: "ok" }));
+    const model = new Scripted((turn) => (turn === 1 ? call("desktop-commander_start_process", { command: "node fix.js" }) : CLAIM));
+    const result = await agent(model).run(task, [shell] as never, ctx(root, { ...all, shellExec: false }));
+    expect(shell.execute).not.toHaveBeenCalled();
+    expect(authorityOf(result.toolsUsed[0])).toBeUndefined();
+  });
+});

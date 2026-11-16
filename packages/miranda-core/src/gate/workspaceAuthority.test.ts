@@ -13,6 +13,7 @@ import {
   composeMirandaGates,
   createMirandaGate,
   createWorkspaceAuthorityGate,
+  toolExecutionAuthority,
   toolMayModifyFilesystem,
   WORKSPACE_REQUIRED_CODE,
   WORKSPACE_REQUIRED_PREFIX,
@@ -114,5 +115,22 @@ describe("toolMayModifyFilesystem", () => {
   it("separates tools that can change files from those that cannot", () => {
     for (const tool of ["write_file", "run_command", "desktop-commander_edit_block", "desktop-commander_start_process", "srv_apply_patch", "sequentialthinking"]) expect(toolMayModifyFilesystem(tool), tool).toBe(true);
     for (const tool of ["read_file", "list_directory", "web_fetch", "github-mcp_get_file_contents", "desktop-commander_read_multiple_files"]) expect(toolMayModifyFilesystem(tool), tool).toBe(false);
+  });
+});
+
+describe("toolExecutionAuthority (stage 2.1)", () => {
+  it("never describes a shell tool as confined", () => {
+    for (const tool of ["run_command", "desktop-commander_start_process", "desktop-commander_execute_command", "desktop-commander_interact_with_process", "srv_execute_command"]) {
+      expect(toolExecutionAuthority(tool), tool).toMatchObject({ filesystemScope: "host", confinement: "none" });
+    }
+  });
+
+  it("separates host-enforced paths, argument validation, and tools it cannot vouch for", () => {
+    expect(toolExecutionAuthority("write_file")).toMatchObject({ filesystemScope: "workspace", confinement: "host_enforced_paths" });
+    expect(toolExecutionAuthority("read_file")).toMatchObject({ filesystemScope: "workspace", confinement: "host_enforced_paths" });
+    // An MCP server is a host process: Miranda validated the path it was given, nothing more.
+    expect(toolExecutionAuthority("desktop-commander_write_file")).toMatchObject({ filesystemScope: "workspace", confinement: "argument_validation" });
+    expect(toolExecutionAuthority("srv_apply_patch")).toMatchObject({ filesystemScope: "unknown", confinement: "none" });
+    expect(toolExecutionAuthority("web_fetch")).toMatchObject({ filesystemScope: "none", confinement: "not_applicable" });
   });
 });

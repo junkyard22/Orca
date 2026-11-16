@@ -196,13 +196,16 @@ export function authorizeToolCall(
       if (cwd !== undefined && !isInsideWorkspace(options.workspaceRoot, cwd)) {
         return { capability, decision: "deny", reason: `working directory outside the workspace: ${cwd}` };
       }
+      // run_command is not sandboxed either. It runs unattended only what its
+      // policy can vouch for (a plain read with operands inside the
+      // workspace) and asks, saying so, for everything else.
       return { capability, decision: "allow", reason: "run_command enforces its own command policy and approval" };
     }
     case "process_read":
     case "external_read":
       return { capability, decision: "allow", reason: "read-only operation" };
     case "process_exec":
-      return { capability, decision: "approve", reason: `"${tool}" starts or controls a process outside run_command's command policy` };
+      return { capability, decision: "approve", reason: `Not sandboxed: "${tool}" starts or controls a process with your account's access to the whole computer, not only the workspace, and outside run_command's command policy` };
     case "external_write":
       return { capability, decision: "approve", reason: `"${tool}" modifies an external system` };
     case "sandbox_config":

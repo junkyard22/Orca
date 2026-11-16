@@ -1,5 +1,5 @@
 import type { LLMAdapter } from "@clawde/miranda-core";
-import { toolMayModifyFilesystem } from "@clawde/miranda-core";
+import { collectExplicitPathArguments, toolExecutionAuthority, toolMayModifyFilesystem } from "@clawde/miranda-core";
 import {
   createDirectLLMService,
   describeRefusal,
@@ -1282,7 +1282,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             ? ctx.observeToolFilesystemEffects
             : undefined;
           const observed = observeFs
-            ? await observeFs({ tool: toolName, writer: this.role }, executeTool)
+            ? await observeFs({ tool: toolName, writer: this.role, paths: collectExplicitPathArguments(toolInput) }, executeTool)
             : { result: await executeTool(), evidence: undefined };
           const fsEvidence = observed.evidence;
           // "confirmed" or "no_change": the host's snapshots are the account.
@@ -1327,6 +1327,11 @@ export class ReactAgentAdapter implements AgentAdapter {
           if (fsEvidence) {
             enrichedRaw["_fsEvidence"] = fsEvidence;
           }
+          // With what authority it ran: what the tool itself reports
+          // (run_command says how it was authorized), else what Miranda says
+          // of its kind. A shell execution is recorded as host-level and
+          // unconfined — it is never presented as sandboxed.
+          enrichedRaw["_execAuthority"] = (result as { executionAuthority?: unknown }).executionAuthority ?? toolExecutionAuthority(toolName);
           if (commandFileChanges.length > 0) {
             enrichedRaw["_filesChangedForDiff"] = commandFileChanges;
           }

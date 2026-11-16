@@ -209,7 +209,7 @@ declare module '@clawde/orca-core' {
     tools?: OrcaToolService;
     /** Set by the runtime when a usable workspace is established: runs one tool execution between two host snapshots. */
     observeToolFilesystemEffects?: <T>(
-      info: { tool: string; writer?: string },
+      info: { tool: string; writer?: string; paths?: readonly string[] },
       run: () => Promise<T>,
     ) => Promise<{ result: T; evidence: ToolFilesystemEvidence }>;
     toolNamesAllowed?: string[];
@@ -337,6 +337,8 @@ declare module '@clawde/orca-core' {
     status: "confirmed" | "no_change" | "unverified";
     changes: Array<{ path: string; changeType: "A" | "M" | "D" }>;
     reason?: string;
+    /** What was watched for this result, and what was not. */
+    observedScope: string;
     provenance: "runtime-snapshot";
   }
   /** A tool call's arguments as kept on its recorded event: host-reserved `_` keys removed. */

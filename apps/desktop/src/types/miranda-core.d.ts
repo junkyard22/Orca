@@ -92,6 +92,14 @@ declare module '@clawde/miranda-core' {
   export function classifyToolVerb(tool: string): ToolVerbClass;
   /** Whether running a tool can change local files, as far as its name tells. */
   export function toolMayModifyFilesystem(tool: string): boolean;
+  /** Values of a tool call's arguments whose keys name a local location, at any depth. */
+  export function collectExplicitPathArguments(args: Record<string, unknown>): string[];
+  /** What an execution of a tool can reach on this machine and what, if anything, holds it there. */
+  export function toolExecutionAuthority(tool: string): {
+    filesystemScope: "workspace" | "host" | "unknown" | "none";
+    confinement: "host_enforced_paths" | "argument_validation" | "none" | "not_applicable";
+    note: string;
+  };
   export const WORKSPACE_REQUIRED_CODE: "workspace_required";
   export const WORKSPACE_REQUIRED_PREFIX: string;
   export function assessWorkspaceRoot(root: string | undefined | null): {

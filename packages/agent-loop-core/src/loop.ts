@@ -8,7 +8,7 @@ import {
   type OrcaRunCtx,
   type OrcaToolService,
 } from "@clawde/orca-core";
-import { toolMayModifyFilesystem } from "@clawde/miranda-core";
+import { classifyToolPermissionRequirement, collectExplicitPathArguments, toolExecutionAuthority, toolMayModifyFilesystem } from "@clawde/miranda-core";
 import type { GateResult, ToolGateContext } from "@clawde/miranda-core";
 import type { AgentLoopResult, ParsedCall } from "./types.js";
 
@@ -273,6 +273,16 @@ export async function runAgentLoop(
           conversation += formatToolResult(call.tool, false, "Tool call not run: not approved.");
           continue;
         }
+      } else if (call.tool !== "run_command" && classifyToolPermissionRequirement(call.tool) === "shell_exec") {
+        // A shell tool that is not Orca's own (an MCP server's) starts a host
+        // process nothing confines, and here nobody can be asked. Orca's
+        // run_command decides for itself what may run unattended; any other
+        // shell tool does not run without the user's explicit approval.
+        const reason = `${call.tool} starts a host process that is not sandboxed (it has the user's access to the whole computer), and no approval handler is available to authorize it. The call did not execute.`;
+        turnAllToolsOk = false;
+        toolEvents.push({ tool: call.tool, ok: false, summary: `${call.tool}: not run — ${reason}`, raw: toolInputForRecord(call.input) });
+        conversation += formatToolResult(call.tool, false, `Tool call not run: ${reason}`);
+        continue;
       }
 
       ctx.recordTrace?.("tool.call", { tool: call.tool, input: call.input });
@@ -281,7 +291,7 @@ export async function runAgentLoop(
       // and recorded on this execution's event, not taken from its output.
       const observeFs = ctx.observeToolFilesystemEffects && toolMayModifyFilesystem(call.tool) ? ctx.observeToolFilesystemEffects : undefined;
       const observed = observeFs
-        ? await observeFs({ tool: call.tool }, () => tools.execute(call.tool, call.input))
+        ? await observeFs({ tool: call.tool, paths: collectExplicitPathArguments(call.input) }, () => tools.execute(call.tool, call.input))
         : { result: await tools.execute(call.tool, call.input), evidence: undefined };
       const result = observed.result;
       const fsEvidence = observed.evidence;
@@ -315,6 +325,9 @@ export async function runAgentLoop(
       if (fsEvidence) {
         enrichedRaw["_fsEvidence"] = fsEvidence;
       }
+      // With what authority it ran: what the tool itself reports (run_command
+      // says how it was authorized), else what Miranda says of its kind.
+      enrichedRaw["_execAuthority"] = (result as { executionAuthority?: unknown }).executionAuthority ?? toolExecutionAuthority(call.tool);
       if (commandFileChanges.length > 0) {
         enrichedRaw["_filesChangedForDiff"] = commandFileChanges;
       }

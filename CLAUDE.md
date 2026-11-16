@@ -71,6 +71,18 @@ Gate verdict meanings:
 | `BLOCK` | Stop safely |
 | `CONFIRM_REQUIRED` | Pause until user approval; reserved until wired |
 
+## Workspace Authority, Shell Execution and Evidence
+
+Details: [ARCHITECTURE.md](ARCHITECTURE.md#workspace-authority-shell-execution-and-execution-evidence). Rules for anyone changing this code:
+
+- **Workspace authority is Miranda's and is structured.** The workspace root comes from the host's configuration or an explicit `context.workspaceRoot`, never from message text or tool arguments. Filesystem tools are refused (`workspace_required`) without a usable root. Do not add a fallback to `process.cwd()` or any other directory.
+- **Path arguments are validated through links.** Keep every path-bearing argument inside the check; do not accept a JSON string in place of an array or object.
+- **Shell execution is not sandboxed. Do not say or imply that it is.** `run_command` and MCP process tools are host processes with the user's access; the working directory is not a boundary. `tools/sandbox.ts` is a command policy that decides what may run without asking, not a confinement.
+- **Unattended shell execution is limited to confined reads** (no shell syntax, a listed single-purpose reader, every operand inside the workspace) and host-configured allowances. Do not widen this by pattern-matching command strings; anything that cannot be vouched for goes to the user with the host-access warning, or does not run.
+- **Record authority and evidence on the tool event.** `_execAuthority` and `_fsEvidence` are written by the agent loop only. Underscore-prefixed keys in a model's tool arguments are dropped from the record; never copy model arguments into the record unfiltered.
+- **Evidence has a scope.** `no_change` means no change among the watched workspace files (Git-ignored files, dependency/build directories and everything outside the workspace are not watched). Never present it as proof that nothing changed, and never credit a file change from a tool's `ok`, its output, or a model's claim.
+- **Pappy judges; evidence informs.** Recorded evidence is input to Pappy. It does not replace, soften or override a Pappy verdict.
+
 ## Where Miranda Is Wired Today
 
 Live LLM call stages:

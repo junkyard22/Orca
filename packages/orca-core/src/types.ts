@@ -371,7 +371,7 @@ export interface OrcaRunCtx {
    * tool or a model merely said.
    */
   observeToolFilesystemEffects?: <T>(
-    info: { tool: string; writer?: string },
+    info: { tool: string; writer?: string; paths?: readonly string[] },
     run: () => Promise<T>,
   ) => Promise<{ result: T; evidence: import("./workspaceEvidence.js").ToolFilesystemEvidence }>;
   /**

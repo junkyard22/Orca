@@ -27,8 +27,8 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceEvidence, WorkspaceFileChange, WorkspaceFileKind, WorkspaceTestRun } from "@clawde/pappy-core";
 import { classifyPath, isFullSuiteCommand, testSegment } from "@clawde/pappy-core";
 
@@ -322,7 +322,7 @@ export interface WorkspaceEvidenceCollector {
    * what changed on disk while it ran. The answer comes from the filesystem,
    * never from what the tool returned or printed.
    */
-  observeExecution<T>(info: { tool: string; writer?: string }, run: () => Promise<T>): Promise<{ result: T; evidence: ToolFilesystemEvidence }>;
+  observeExecution<T>(info: { tool: string; writer?: string; paths?: readonly string[] }, run: () => Promise<T>): Promise<{ result: T; evidence: ToolFilesystemEvidence }>;
 }
 
 /**
@@ -336,13 +336,19 @@ export interface WorkspaceEvidenceCollector {
  *                  completely, or another observed execution overlapped (the
  *                  change cannot be tied to one execution).
  *
- * Only the workspace is watched: a change a tool makes elsewhere is invisible
- * here and is never credited.
+ * Every status is a statement about `observedScope` and nothing wider.
+ * `no_change` means no change among the files that were watched: a tool can
+ * still have written a Git-ignored file, a dependency or build directory, or
+ * anything outside the workspace, and this evidence cannot see that. It is
+ * therefore never "the tool changed nothing on this computer". A change made
+ * outside the scope is never credited — and never ruled out.
  */
 export interface ToolFilesystemEvidence {
   status: "confirmed" | "no_change" | "unverified";
   changes: Array<{ path: string; changeType: "A" | "M" | "D" }>;
   reason?: string;
+  /** What was watched for this result, and what was not. */
+  observedScope: string;
   provenance: "runtime-snapshot";
 }
 
@@ -508,11 +514,57 @@ export function createWorkspaceEvidenceCollector(
     }
   };
 
-  const observeExecution = async <T>(info: { tool: string; writer?: string }, run: () => Promise<T>): Promise<{ result: T; evidence: ToolFilesystemEvidence }> => {
+  // Paths a tool was given are checked one by one as well, so a write to a
+  // file the inventory leaves out (a Git-ignored one, say) is still seen. Only
+  // paths that lead inside the workspace, links followed, are looked at.
+  let realRoot: string | undefined;
+  try { realRoot = realpathSync.native(absoluteRoot); } catch { realRoot = undefined; }
+  const namedFiles = (paths: readonly string[] | undefined): Map<string, string> => {
+    const named = new Map<string, string>();
+    for (const given of paths ?? []) {
+      if (typeof given !== "string" || !given.trim() || realRoot === undefined) continue;
+      const absolute = isAbsolute(given) ? resolve(given) : resolve(absoluteRoot, given);
+      const lexical = relative(absoluteRoot, absolute);
+      if (!lexical || lexical.startsWith("..") || isAbsolute(lexical)) continue;
+      let existing = absolute;
+      while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
+      let real: string;
+      try { real = realpathSync.native(existing); } catch { continue; }
+      const fromRoot = relative(realRoot, real);
+      if (fromRoot.startsWith("..") || isAbsolute(fromRoot)) continue;
+      named.set(lexical.split(sep).join("/"), absolute);
+    }
+    return named;
+  };
+  const fingerprint = (absolute: string): string => {
+    try {
+      const info = statSync(absolute);
+      if (!info.isFile()) return "not-a-file";
+      return info.size > limits.maxFileBytes ? `size:${info.size}:${info.mtimeMs}` : createHash("sha256").update(readFileSync(absolute)).digest("hex");
+    } catch {
+      return "absent";
+    }
+  };
+  const describeScope = (inventory: WorkspaceInventory | undefined, named: number): string => {
+    const watched = inventory?.source === "git"
+      ? "the files in the workspace that Git tracks or would track"
+      : "the files in the workspace outside dependency, build and version-control directories";
+    const unwatched = inventory?.source === "git"
+      ? "Git-ignored files, dependency and build directories"
+      : "dependency, build and version-control directories";
+    const bySize = inventory ? [...inventory.files.values()].filter((f) => f.hash.startsWith("size:")).length : 0;
+    return `Watched: ${watched}${named > 0 ? `, and the ${named} path(s) named in the tool's arguments` : ""}. `
+      + `Not watched: ${unwatched}, anything outside the workspace, and everything else on this computer.`
+      + (bySize > 0 ? ` ${bySize} file(s) over the size limit were compared by size only.` : "");
+  };
+
+  const observeExecution = async <T>(info: { tool: string; writer?: string; paths?: readonly string[] }, run: () => Promise<T>): Promise<{ result: T; evidence: ToolFilesystemEvidence }> => {
     const self = { overlapped: observing.size > 0 };
     for (const other of observing) other.overlapped = true;
     observing.add(self);
     const before = snapshot(lastInventory);
+    const named = namedFiles(info.paths);
+    const namedBefore = new Map([...named].map(([path, absolute]) => [path, fingerprint(absolute)] as const));
     let result: T;
     try {
       result = await run();
@@ -520,8 +572,9 @@ export function createWorkspaceEvidenceCollector(
       observing.delete(self);
     }
     const after = before ? snapshot(before) : undefined;
+    const observedScope = describeScope(after ?? before, named.size);
     const unverified = (reason: string): { result: T; evidence: ToolFilesystemEvidence } =>
-      ({ result, evidence: { status: "unverified", changes: [], reason, provenance: "runtime-snapshot" } });
+      ({ result, evidence: { status: "unverified", changes: [], reason, observedScope, provenance: "runtime-snapshot" } });
     if (!before || !after || unreadable(before) || unreadable(after)) return unverified("the workspace could not be read before and after the execution");
     lastInventory = after;
     if (self.overlapped) return unverified("another tool execution ran at the same time; a change cannot be tied to one of them");
@@ -533,13 +586,20 @@ export function createWorkspaceEvidenceCollector(
       else if (now.hash !== record.hash) changes.push({ path, changeType: "M" });
     }
     for (const path of after.files.keys()) if (!before.files.has(path)) changes.push({ path, changeType: "A" });
+    for (const [path, absolute] of named) {
+      if (changes.some((c) => c.path === path)) continue;
+      const was = namedBefore.get(path)!;
+      const now = fingerprint(absolute);
+      if (was === now || was === "not-a-file" || now === "not-a-file") continue;
+      changes.push({ path, changeType: was === "absent" ? "A" : now === "absent" ? "D" : "M" });
+    }
     changes.sort((x, y) => x.path.localeCompare(y.path));
 
     if (changes.length === 0) {
       // An incomplete inventory cannot prove that nothing changed.
       return before.partial || after.partial
         ? unverified(`the workspace inventory is incomplete (${before.reason ?? after.reason ?? "limits reached"})`)
-        : { result, evidence: { status: "no_change", changes, provenance: "runtime-snapshot" } };
+        : { result, evidence: { status: "no_change", changes, observedScope, provenance: "runtime-snapshot" } };
     }
     // The same record collect() uses to say who changed a path.
     const writer = info.writer ?? info.tool;
@@ -548,7 +608,7 @@ export function createWorkspaceEvidenceCollector(
       list.push({ writer, pass: Math.max(pass, 1) });
       writes.set(change.path, list);
     }
-    return { result, evidence: { status: "confirmed", changes, provenance: "runtime-snapshot" } };
+    return { result, evidence: { status: "confirmed", changes, observedScope, provenance: "runtime-snapshot" } };
   };
 
   return { ready, observeTrace, collect, observeExecution };

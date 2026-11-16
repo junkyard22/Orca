@@ -30,6 +30,28 @@ export interface ToolResult {
   error?: string;
   /** Process exit status, only when a process actually completed. */
   exitCode?: number;
+  /**
+   * With what authority the tool ran, set by tools that start processes and
+   * only on results of something that actually ran. run_command is never
+   * confined by the operating system: its scope is the host, whichever way it
+   * was authorized.
+   */
+  executionAuthority?: ExecutionAuthority;
+}
+
+export interface ExecutionAuthority {
+  /** What the execution could reach on this machine. */
+  filesystemScope: "host" | "workspace";
+  /** What held it there. `none`: nothing but the process's own behaviour. */
+  confinement: "none";
+  /**
+   * How it came to run: `confined_read` — unattended, because its structure
+   * and operands were validated against the workspace; `host_policy` —
+   * unattended, by an allowance the host configured; `user_approved` — the
+   * user approved this call after being told it is not sandboxed.
+   */
+  approval: "confined_read" | "host_policy" | "user_approved";
+  note: string;
 }
 
 export interface ToolParameterSchema {

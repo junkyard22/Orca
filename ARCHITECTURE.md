@@ -299,13 +299,73 @@ MCP server `env` values (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN`) are encrypted at r
 - **Fallback**: base64 encoding (`b64:` prefix) when OS keychain is unavailable
 - **Legacy**: plain text values are auto-upgraded on the next save
 
+## Workspace authority, shell execution and execution evidence
+
+These rules were added by the November 2026 audit follow-up (stages 1–2.1). They do not move any responsibility between components: Miranda authorizes, tools execute, the runtime records, Pappy judges.
+
+### Workspace authority (Miranda)
+
+- A task's workspace root is set only by a **structured** choice: the host's configured root (Settings on the desktop; `WORKSPACE_ROOT` or the working directory for the CLI) or an explicit `context.workspaceRoot`. A path that appears in a message, an intent, a goal or a tool call's arguments never establishes or replaces it.
+- `createWorkspaceAuthorityGate()` (`packages/miranda-core/src/gate/mirandaGate.ts`) is composed by the runtime in front of the host and task gates. A file-read, file-write or shell tool — and any call that names an absolute local path — is refused with `code: "workspace_required"` unless the root is given, exists, is a folder and is not a filesystem root (`assessWorkspaceRoot`). Nothing is substituted for an unusable root: not `process.cwd()`, not a parent directory.
+- When a worker was refused this way the runtime skips the repair loop (only the user can establish a workspace) and returns a fixed explanation as `followUpQuestion`.
+- Tasks that touch no local files need no workspace.
+
+### Structured path validation (Miranda)
+
+- `before_tool_run` checks every argument whose key names a local location (`path`, `paths[]`, `files[].path`, `cwd`, `source`, `destination`…, at any depth) against the workspace. The check follows the filesystem: the nearest existing ancestor is resolved with links followed, so a symlinked directory or file that leads out of the workspace is refused.
+- Argument types are checked against the tool schema with a JSON-schema-aware test (`array` → native array, `object` → plain object, `integer`, finite `number`). A JSON string standing in for an array or object is rejected. The schema contract carries top-level types only; element and member shapes are not validated, but path members are still boundary-checked wherever they are nested.
+- This is validation of **arguments**. For Orca's own file tools the tool re-resolves the path itself (`host_enforced_paths`). For an MCP file tool it is all there is (`argument_validation`): the MCP server is a separate host process and is trusted to use only the paths it was given.
+
+### Shell execution is not sandboxed
+
+Orca has no operating-system sandbox. `run_command` starts a host shell as the current user (`spawn(command, { shell: true, cwd })`); MCP process tools run inside MCP servers that are themselves unconfined host processes. The workspace is the directory a command starts in. It is **not** a boundary for the process. Four different things must not be confused:
+
+| Mechanism | What it is | What it is not |
+|---|---|---|
+| Working directory | Where the command starts (always inside the workspace) | A limit on what the command can reach |
+| Miranda's checks | Task permission (`shellExec`), workspace authority, validation of a `cwd` argument | An inspection of what a command string will do |
+| Command policy / user approval | Decides whether a command may run **without asking** | Confinement of the process once it runs |
+| OS sandbox | — (none exists in Orca) | — |
+
+`packages/workbench-core/src/tools/sandbox.ts` is the command policy (the file name is historical):
+
+- Blocked patterns never run.
+- A command runs unattended only as a **confined read**: it contains nothing a shell interprets (letters, digits, `_ . / -` and single spaces only — any quote, expansion, substitution, glob, redirection, chain or line break disqualifies it), its first word is a listed single-purpose reader (`cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file`, `echo`, `pwd`, …) with only the options listed for it, and every path operand resolves inside the workspace with links followed. Tools that can execute, write, or load configuration from the repository (`git`, `find`, `grep`, `npm`, `less`, …) are not on that list.
+- A host may configure `extraAllowedCommands`; that is the host's explicit standing authorization and is recorded as `host_policy`.
+- Everything else needs the user's approval, and the request says what approval grants: *not sandboxed — the command has the user's access to the whole computer*. With no approval handler the command does not run.
+- MCP shell/process tools: the desktop asks for approval on every call with the same warning (`apps/desktop/src/toolAuthorization.ts`); the shared loop used by the CLI refuses them when no approval handler exists.
+
+Every executed tool event carries `raw._execAuthority` (`filesystemScope`, `confinement`, and for `run_command` how it was authorized: `confined_read`, `host_policy` or `user_approved`). A shell execution is always `filesystemScope: "host"`, `confinement: "none"`. The host record counts such executions and says that what they did outside the watched workspace files is not recorded. **A confined read is an argument validation, not a sandbox, and must not be described as one.**
+
+### Filesystem evidence
+
+- The runtime's workspace evidence collector (`packages/orca-core/src/workspaceEvidence.ts`) baselines the workspace at task start and gives Pappy the task-level diff and the test runs it observed.
+- `observeExecution` wraps one tool execution between two snapshots (content hashes; unchanged files are trusted on size and mtime outside a 2 s window). Both agent loops wrap every execution that may modify files — after Miranda allowed it — and record the result on that execution's event as `raw._fsEvidence`:
+  - `confirmed` — the listed paths differ on disk before and after;
+  - `no_change` — nothing changed **within the observed scope**;
+  - `unverified` — the workspace could not be read completely, or two observed executions overlapped.
+- `observedScope` on every result states what was watched: the files Git tracks or would track (or, without Git, everything outside dependency, build and version-control directories), plus any path named in the tool's arguments, which is fingerprinted directly. Git-ignored files, dependency and build directories, and everything outside the workspace are **not** watched. `no_change` is therefore never "the tool changed nothing on this computer".
+- File changes are credited to a worker only from this evidence where it exists. A tool's `ok`, its name, its output, a printed `<!-- Files changed -->` marker and the model's account are not evidence. A failed tool's confirmed changes are recorded but not credited.
+- Keys beginning with `_` on a tool event's `raw` are the host's observations (`_fsEvidence`, `_execAuthority`, `_outputForProof`, `_exitCodeForProof`, `_contentForDiff`, `_filesChangedForDiff`). They are removed from the model's own arguments before the record is built (`toolInputForRecord`), so a model cannot write them.
+- Cost, measured on temporary Git repositories on the audit host (`scripts/bench/fs-evidence-bench.mjs`): about 10 ms per observed execution at 300 files, 44 ms at 5,000 files, 312 ms at 40,000 files (160 MB).
+
+### Limits of MCP verification
+
+- An MCP tool's effects are verified only inside the observed scope above. A change it makes outside the workspace, or to an ignored path it was not given as an argument, is neither credited nor detected.
+- A change another process makes in the workspace while a tool runs is attributed to that tool; overlapping observed executions are `unverified`.
+- An MCP server runs with whatever access its own process has. Orca validates the arguments it sends; it does not confine the server.
+
+### Pappy and recorded evidence
+
+Pappy remains the quality verifier and is deterministic. It judges against the runtime's task-level workspace evidence and receives each tool event with the host's `_fsEvidence` and `_execAuthority`. `filesChanged` in its input is derived from confirmed evidence where the host observed the execution. Recorded evidence informs Pappy; it never overrides a Pappy verdict, and nothing recorded on an event can turn a FAIL into a PASS.
+
 ## Miranda Gate — 6 checkpoints
 
 | Gate | When | Checks |
 |------|------|--------|
 | `before_llm_call` | Before each live LLM invocation | Model allowlist; budget fields are neutral unless live cost accounting is wired |
 | `after_llm_call` | After each LLM response | Output shape validation |
-| `before_tool_run` | Before each tool execution | **Tool allowlist**, task file/shell/connector permissions, workspace boundary, protected paths, null args, required fields, types |
+| `before_tool_run` | Before each tool execution | **Workspace authority** (filesystem tools need a usable, explicitly established workspace), **tool allowlist**, task file/shell/connector permissions, link-aware workspace boundary for path arguments, protected paths, null args, required fields, schema types (arrays and objects must be native) |
 | `after_tool_run` | After each tool execution | Non-empty receipt |
 | `before_qc` | Before Pappy evaluation | Non-empty output |
 | `after_qc` | After Pappy verdict | Diagnostic checkpointing only; Pappy remains the quality verifier |

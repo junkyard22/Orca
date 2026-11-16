@@ -514,7 +514,8 @@ function evaluateTaskToolPermissions(
   }
 }
 
-function collectExplicitPathArguments(args: Record<string, unknown>): string[] {
+/** The values of a tool call's arguments whose keys name a local location (`path`, `paths[]`, `files[].path`, `cwd`, `source`…), at any depth. */
+export function collectExplicitPathArguments(args: Record<string, unknown>): string[] {
   const paths: string[] = [];
   const visit = (value: unknown, key: string): void => {
     if (typeof value === "string") {
@@ -661,6 +662,46 @@ export function toolMayModifyFilesystem(tool: string): boolean {
   if (requirement === "file_write" || requirement === "shell_exec") return true;
   if (requirement === "file_read") return false;
   return classifyToolVerb(tool) !== "read";
+}
+
+/**
+ * What an execution of a tool can reach on this machine, and what — if
+ * anything — holds it there. Recorded on the tool's event so that a verifier
+ * can tell a path-validated file operation from a process that had the run of
+ * the host. Nothing here is a claim about an operating-system sandbox: Orca
+ * has none.
+ */
+export interface ToolExecutionAuthority {
+  /** `host`: anything the user's account can reach. `unknown`: not known to be limited. */
+  filesystemScope: "workspace" | "host" | "unknown" | "none";
+  /**
+   * `host_enforced_paths` — Orca's own tool resolves every path inside the workspace, links followed.
+   * `argument_validation` — Miranda validated the path arguments; the tool (an MCP server, a host process) is trusted to use only them.
+   * `none` — nothing confines the process.
+   */
+  confinement: "host_enforced_paths" | "argument_validation" | "none" | "not_applicable";
+  note: string;
+}
+
+const HOST_FILE_TOOLS = new Set(["read_file", "write_file", "list_directory", "search_files"]);
+
+export function toolExecutionAuthority(tool: string): ToolExecutionAuthority {
+  const requirement = classifyToolPermissionRequirement(tool);
+  if (requirement === "shell_exec") {
+    return {
+      filesystemScope: "host",
+      confinement: "none",
+      note: "Starts or controls a host process with the user's account. The workspace is its starting directory, not a boundary; no sandbox confines it.",
+    };
+  }
+  if (requirement === "file_read" || requirement === "file_write") {
+    return HOST_FILE_TOOLS.has(tool)
+      ? { filesystemScope: "workspace", confinement: "host_enforced_paths", note: "Orca's own file tool: every path is resolved inside the workspace with links followed." }
+      : { filesystemScope: "workspace", confinement: "argument_validation", note: "Miranda validated the path arguments against the workspace. The tool runs in its own unconfined process and is trusted to use only those paths." };
+  }
+  return toolMayModifyFilesystem(tool)
+    ? { filesystemScope: "unknown", confinement: "none", note: "Not a recognised file or shell tool; it runs outside Orca's control and its reach on this machine is not known." }
+    : { filesystemScope: "none", confinement: "not_applicable", note: "A read or remote operation by name; not expected to touch local files." };
 }
 
 /**
