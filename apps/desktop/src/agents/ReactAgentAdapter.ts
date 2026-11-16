@@ -1,8 +1,11 @@
 import type { LLMAdapter } from "@clawde/miranda-core";
+import { collectExplicitPathArguments, toolExecutionAuthority, toolMayModifyFilesystem } from "@clawde/miranda-core";
 import {
   createDirectLLMService,
   describeRefusal,
   extractFilesChangedFromCommandOutput,
+  recordedFilesystemEvidence,
+  toolInputForRecord,
   type AHPPacket,
   type OrcaLLMService,
   type OrcaRunCtx,
@@ -715,7 +718,7 @@ function toSharedToolService(tools: Tool[], ctx: AgentRunContext): OrcaToolServi
       }
       const before = refusalMark(ctx);
       return tool.execute(input, {
-        workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
+        workspaceRoot: ctx.workspaceRoot,
         runId: ctx.runId,
         abortSignal: ctx.abortSignal,
         requestApproval: ctx.requestToolApproval
@@ -1095,7 +1098,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         const buildTurnLimitWarning = (): string => {
           const allTaskTextForWarn = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
           const taskImpliesFileSaveForWarn = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskTextForWarn);
-          const writeSucceededForWarn = toolsUsed.some((e) => e.ok && isWriteToolName(e.tool));
+          const writeSucceededForWarn = toolsUsed.some((e) => e.ok && isWriteToolName(e.tool)) || filesChanged.length > 0;
           const writeFileReminder = taskImpliesFileSaveForWarn && !writeSucceededForWarn
             ? "\n\nCRITICAL: Your task requires saving a file. You MUST call write_file with the complete file content in your NEXT response - before writing your final answer."
             : "";
@@ -1131,7 +1134,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               continue;
             }
             const taskImpliesFileSave = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskText);
-            const writeFileCalled = toolsUsed.some((e) => isWriteToolName(e.tool));
+            const writeFileCalled = toolsUsed.some((e) => isWriteToolName(e.tool)) || filesChanged.length > 0;
             if (taskImpliesFileSave && !writeFileCalled) {
               lastRejectedFinalAnswer = finalAnswer;
               messages.push({
@@ -1176,7 +1179,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               tool: call.tool,
               ok: false,
               summary: `Unknown tool: ${call.tool}`,
-              raw: call.input,
+              raw: toolInputForRecord(call.input),
             });
             ctx.recordTrace?.("agent.tool.unknown", {
               role: this.role,
@@ -1200,7 +1203,7 @@ export class ReactAgentAdapter implements AgentAdapter {
           const gateCtx = {
             tool: toolName,
             args: toolInput,
-            workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
+            workspaceRoot: ctx.workspaceRoot,
             schema: tool.schema,
           };
           const beforeToolGate = ctx.gate?.beforeToolRun(gateCtx);
@@ -1223,7 +1226,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               tool: toolName,
               ok: false,
               summary: `${toolName}: blocked - ${gateError}`,
-              raw: toolInput,
+              raw: toolInputForRecord(toolInput),
             });
             continue;
           }
@@ -1243,13 +1246,13 @@ export class ReactAgentAdapter implements AgentAdapter {
               tool: toolName,
               ok: false,
               summary: 'write_file: failed - requires "content" string parameter',
-              raw: toolInput,
+              raw: toolInputForRecord(toolInput),
             });
             continue;
           }
 
           const toolContext = {
-            workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
+            workspaceRoot: ctx.workspaceRoot,
             runId: ctx.runId,
             abortSignal: ctx.abortSignal,
             requestApproval: ctx.requestToolApproval
@@ -1268,18 +1271,32 @@ export class ReactAgentAdapter implements AgentAdapter {
           // and nothing starts once cancellation was requested.
           if (ctx.lifecycle && !ctx.lifecycle.mayDispatch) throwIfAborted(ctx.abortSignal);
           const refusalsBefore = refusalMark(ctx);
-          const result = withRefusalOutcome(ctx.lifecycle
-            ? await ctx.lifecycle.track("tool", toolName, () => tool.execute(toolInput, toolContext))
-            : await tool.execute(toolInput, toolContext), ctx, refusalsBefore);
+          const executeTool = () => (ctx.lifecycle
+            ? ctx.lifecycle.track("tool", toolName, () => tool.execute(toolInput, toolContext))
+            : tool.execute(toolInput, toolContext));
+          // Miranda has allowed the call. If it can modify files, it runs
+          // between two host snapshots of the workspace, so what it changed is
+          // read from disk and recorded on this execution's own event — not
+          // taken from the tool's result, its output, or the model's account.
+          const observeFs = ctx.observeToolFilesystemEffects && toolMayModifyFilesystem(toolName)
+            ? ctx.observeToolFilesystemEffects
+            : undefined;
+          const observed = observeFs
+            ? await observeFs({ tool: toolName, writer: this.role, paths: collectExplicitPathArguments(toolInput) }, executeTool)
+            : { result: await executeTool(), evidence: undefined };
+          const fsEvidence = observed.evidence;
+          // "confirmed" or "no_change": the host's snapshots are the account.
+          const hostObserved = fsEvidence !== undefined && fsEvidence.status !== "unverified";
+          const result = withRefusalOutcome(observed.result, ctx, refusalsBefore);
           throwIfAborted(ctx.abortSignal);
           ctx.gate?.afterToolRun(gateCtx, { ok: result.ok, output: result.output });
           // The "Files changed" marker is the host command runner's record. In
           // any other tool's output it is just text (a file's contents, an MCP
           // shell's stdout), and even from the runner a change counts only
           // when the filesystem confirms it inside the workspace.
-          const commandFileChanges = result.ok && toolName === "run_command"
+          const commandFileChanges = result.ok && toolName === "run_command" && !hostObserved
             ? extractFilesChangedFromCommandOutput(result.output, {
-                workspaceRoot: ctx.workspaceRoot ?? process.cwd(),
+                workspaceRoot: ctx.workspaceRoot,
                 cwd: typeof toolInput.cwd === "string" ? toolInput.cwd : undefined,
                 requireOnDisk: true,
               })
@@ -1291,6 +1308,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             requestedTool: resolvedCall.requestedTool,
             input: toolInput,
             result,
+            ...(fsEvidence ? { filesystemEvidence: fsEvidence } : {}),
           });
 
           cumulativeToolCallCount++;
@@ -1303,11 +1321,21 @@ export class ReactAgentAdapter implements AgentAdapter {
           );
           messages.push({ role: "user", content: toolResult });
 
-          const enrichedRaw = { ...toolInput } as Record<string, unknown>;
+          // Underscore keys on the record are the host's observations; any the
+          // model put in its own arguments are left out of the record.
+          const enrichedRaw = toolInputForRecord(toolInput);
+          if (fsEvidence) {
+            enrichedRaw["_fsEvidence"] = fsEvidence;
+          }
+          // With what authority it ran: what the tool itself reports
+          // (run_command says how it was authorized), else what Miranda says
+          // of its kind. A shell execution is recorded as host-level and
+          // unconfined — it is never presented as sandboxed.
+          enrichedRaw["_execAuthority"] = (result as { executionAuthority?: unknown }).executionAuthority ?? toolExecutionAuthority(toolName);
           if (commandFileChanges.length > 0) {
             enrichedRaw["_filesChangedForDiff"] = commandFileChanges;
           }
-          if (result.ok && isWriteToolName(toolName) && typeof toolInput.content === "string") {
+          if (result.ok && isWriteToolName(toolName) && typeof toolInput.content === "string" && (!hostObserved || fsEvidence!.changes.length > 0)) {
             enrichedRaw["_contentForDiff"] = toolInput.content;
           }
           // Failed runs keep their real output too (e.g. "# fail 1"), so the
@@ -1330,7 +1358,23 @@ export class ReactAgentAdapter implements AgentAdapter {
             raw: enrichedRaw,
           });
 
-          const fileChangeType = result.ok ? fileChangeTypeForTool(toolName) : undefined;
+          if (hostObserved) {
+            // Credit exactly what the host saw change while this tool ran, and
+            // only for a tool that succeeded.
+            if (result.ok) {
+              const argumentPath = typeof toolInput.path === "string" ? toolInput.path.replace(/\\/g, "/") : "";
+              const content = typeof toolInput.content === "string" ? toolInput.content : undefined;
+              for (const change of fsEvidence!.changes) {
+                const isArgumentPath = argumentPath !== "" && (argumentPath === change.path || argumentPath.endsWith(`/${change.path}`) || change.path.endsWith(`/${argumentPath}`));
+                recordFileChange(filesChanged, {
+                  path: change.path,
+                  changeType: change.changeType,
+                  diff: content && isArgumentPath && change.changeType !== "D" ? content.slice(0, 2000) : undefined,
+                });
+              }
+            }
+          }
+          const fileChangeType = result.ok && !hostObserved ? fileChangeTypeForTool(toolName) : undefined;
           if (fileChangeType) {
             const filePath = typeof toolInput.path === "string" ? toolInput.path : "";
             if (filePath) {
@@ -1563,11 +1607,21 @@ export class ReactAgentAdapter implements AgentAdapter {
       // never made, or only described in the model's text is not one — nothing
       // the model writes can establish that a tool ran. The account is kept
       // for the verifier; the worker is just not reported as finished.
+      // Where the host watched the workspace (stage 2), only a confirmed
+      // change counts: a write tool that returned ok while nothing changed
+      // does not. A successful modifying call the host could not verify is
+      // left for the verifier — it is neither credited nor called incomplete.
+      // Without host evidence on the event (no observer), a successful
+      // write-tool event counts as before.
+      const fsStatusOf = (e: ToolEvent) => recordedFilesystemEvidence(e.raw)?.status;
       const requiredWriteOutstanding =
         task.sourceChangeRequired !== false &&
         taskRequiresFileSave &&
-        !toolsUsed.some((e) => e.ok && isWriteToolName(e.tool)) &&
-        filesChanged.length === 0;
+        filesChanged.length === 0 &&
+        !toolsUsed.some((e) => e.ok && (
+          (fsStatusOf(e) === undefined && isWriteToolName(e.tool)) ||
+          (fsStatusOf(e) === "unverified" && toolMayModifyFilesystem(e.tool))
+        ));
       if (stoppedBecause === "done" && requiredWriteOutstanding) {
         stoppedBecause = "required_action_incomplete";
         ctx.recordTrace?.("agent.required_action_incomplete", {

@@ -22,9 +22,17 @@
  *     authorization itself — the binding to one request is (the card also
  *     keeps Approve disabled for that moment);
  *   - nothing persists: each call is decided on its own, and a restart starts
- *     with no approvals at all.
+ *     with no approvals at all;
+ *   - for a tool that runs as a host process (run_command, MCP shell and
+ *     process tools) the request carries a notice — not sandboxed, one
+ *     execution — and a digest of its arguments, and the answer must echo that
+ *     digest (stage 2.2). Such tools have no confinement, so an approval is
+ *     an authorization of one exact execution and never of a tool or a kind
+ *     of command.
  * Deny, timeout and Stop all resolve the request as not approved.
  */
+
+import { createHash } from "node:crypto";
 
 export interface ApprovalRequest {
   id: string;
@@ -34,6 +42,13 @@ export interface ApprovalRequest {
   taskId?: string;
   /** The workspace the task runs in; the card shows it and the answer must name it. */
   workspaceRoot?: string;
+  /**
+   * Present when the tool runs as a host process (run_command, MCP shell and
+   * process tools). The card must show `notice` — the tool is not sandboxed and
+   * this approval covers one execution — and the full arguments; the answer
+   * must echo `argsDigest`, so it is an answer about exactly these arguments.
+   */
+  hostAccess?: { notice: string; argsDigest: string };
 }
 
 export interface ApprovalResponse {
@@ -43,6 +58,8 @@ export interface ApprovalResponse {
   tool?: string;
   command?: string;
   workspace?: string;
+  /** For a host-scoped request: the digest of the arguments the card showed. */
+  argsDigest?: string;
 }
 
 export interface ApprovalDecision {
@@ -62,6 +79,8 @@ export interface Settlement {
 export interface ApprovalBrokerOptions {
   send: (request: ApprovalRequest) => void;
   isTaskRunning: (taskId: string | undefined) => boolean;
+  /** The notice for a tool that runs as a host process; undefined for any other tool. */
+  hostAccessNotice?: (tool: string) => string | undefined;
   /** Told how every request was settled, so the card can show what actually happened. */
   onSettled?: (request: ApprovalRequest, approved: boolean, reason: string) => void;
   now?: () => number;
@@ -73,6 +92,20 @@ export interface ApprovalBrokerOptions {
 /** Faster than this, nobody read the card: the "yes" was not a person's. */
 export const MIN_DECISION_MS = 400;
 export const APPROVAL_TIMEOUT_MS = 60_000;
+
+/** Canonical JSON: object keys sorted at every depth, so equal arguments give equal text. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>).sort().map((k) => `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/** What identifies one host-scoped execution: the tool and every argument. */
+export function digestArguments(tool: string, args: Record<string, unknown>): string {
+  return createHash("sha256").update(`${tool}\n${canonical(args)}`).digest("hex");
+}
 
 export function commandOf(args: Record<string, unknown>): string | undefined {
   return typeof args["command"] === "string" ? (args["command"] as string) : undefined;
@@ -99,7 +132,13 @@ export function createApprovalBroker(options: ApprovalBrokerOptions) {
   /** Ask for one call and report how it was settled (approved, denied, timed out, cancelled, refused). */
   function decide(tool: string, args: Record<string, unknown>, taskId?: string, workspaceRoot?: string): Promise<Settlement> {
     const id = `tool_${now()}_${++seq}_${Math.random().toString(36).slice(2, 7)}`;
-    const request: ApprovalRequest = { id, tool, args, ...(taskId ? { taskId } : {}), ...(workspaceRoot ? { workspaceRoot } : {}) };
+    const notice = options.hostAccessNotice?.(tool);
+    const request: ApprovalRequest = {
+      id, tool, args,
+      ...(taskId ? { taskId } : {}),
+      ...(workspaceRoot ? { workspaceRoot } : {}),
+      ...(notice ? { hostAccess: { notice, argsDigest: digestArguments(tool, args) } } : {}),
+    };
     return new Promise<Settlement>((resolve) => {
       const timer = setTimeout(() => settle(id, false, "timed out", "timed_out"), timeoutMs);
       pending.set(id, { request, at: now(), resolve, timer });
@@ -126,6 +165,8 @@ export function createApprovalBroker(options: ApprovalBrokerOptions) {
       const command = commandOf(request.args);
       if (command !== undefined && response.command !== command) { settle(request.id, false, "the answer does not name the command that was shown", "refused"); return { accepted: true, approved: false, reason: "command mismatch" }; }
       if (request.workspaceRoot !== undefined && response.workspace !== request.workspaceRoot) { settle(request.id, false, "the answer does not name the workspace the task runs in", "refused"); return { accepted: true, approved: false, reason: "workspace mismatch" }; }
+      // A host-scoped execution is authorized for exactly the arguments shown.
+      if (request.hostAccess && response.argsDigest !== request.hostAccess.argsDigest) { settle(request.id, false, "the answer is not for the arguments that were shown", "refused"); return { accepted: true, approved: false, reason: "arguments mismatch" }; }
       if (now() - at < minDecisionMs) {
         log(`approval ${request.id}: an approval ${now() - at} ms after the card appeared was not counted (before a person could read it); the request stays pending`);
         return { accepted: false, approved: false, reason: "too early" };

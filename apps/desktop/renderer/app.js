@@ -1393,6 +1393,16 @@ function formatToolRequestSummary(tool, args) {
     : "Parameters hidden";
 }
 
+// A tool that runs as a host process is not sandboxed: what is being
+// authorized is exactly these arguments, so all of them are shown — never just
+// their names — with credential-looking values redacted.
+function formatHostScopedArguments(args) {
+  if (!args || typeof args !== "object") return redactToolText(args).trim() || "(no arguments)";
+  const shown = JSON.stringify(args, (key, value) =>
+    /(api[_-]?key|token|secret|password|authorization)/i.test(key) && typeof value === "string" ? "[redacted]" : value, 2);
+  return redactToolText(shown);
+}
+
 function appendToolCard(id, tool, args) {
   showMessages();
   const div = document.createElement("div");
@@ -2619,11 +2629,11 @@ function resolveApproval(approved) {
   }
   const command = dialog.dataset.approvalCommand;
   const workspace = dialog.dataset.approvalWorkspace;
-  orca.approveToolCall(id, approved, { tool, ...(command !== undefined && dialog.dataset.hasCommand === "1" ? { command } : {}), ...(dialog.dataset.hasWorkspace === "1" ? { workspace } : {}) });
+  orca.approveToolCall(id, approved, { tool, ...(command !== undefined && dialog.dataset.hasCommand === "1" ? { command } : {}), ...(dialog.dataset.hasWorkspace === "1" ? { workspace } : {}), ...(dialog.dataset.argsDigest ? { argsDigest: dialog.dataset.argsDigest } : {}) });
   dialog.style.display = "none";
 }
 
-orca.onToolRequest((id, tool, args, workspaceRoot) => {
+orca.onToolRequest((id, tool, args, workspaceRoot, hostAccess) => {
   if (!tool || !String(tool).trim()) return;
 
   const card = appendToolCard(id, tool, args);
@@ -2635,7 +2645,15 @@ orca.onToolRequest((id, tool, args, workspaceRoot) => {
   const shownCommand = args && typeof args.command === "string" ? args.command : undefined;
   dialog.dataset.hasCommand = shownCommand !== undefined ? "1" : "0";
   dialog.dataset.approvalCommand = shownCommand ?? "";
-  document.getElementById("approval-args").textContent = formatToolRequestSummary(tool, args);
+  // A host-scoped tool (shell, process): the main process says so. The card
+  // states that it is not sandboxed and that this approval covers this one
+  // execution, shows every argument, and the answer echoes their digest.
+  const hostNotice = document.getElementById("approval-host-notice");
+  const isHostScoped = !!(hostAccess && typeof hostAccess.notice === "string" && hostAccess.notice);
+  hostNotice.textContent = isHostScoped ? hostAccess.notice : "";
+  hostNotice.style.display = isHostScoped ? "block" : "none";
+  dialog.dataset.argsDigest = isHostScoped && typeof hostAccess.argsDigest === "string" ? hostAccess.argsDigest : "";
+  document.getElementById("approval-args").textContent = isHostScoped ? formatHostScopedArguments(args) : formatToolRequestSummary(tool, args);
   // The workspace this task runs in (from the request), not the current setting.
   dialog.dataset.hasWorkspace = workspaceRoot ? "1" : "0";
   dialog.dataset.approvalWorkspace = workspaceRoot || "";

@@ -19,7 +19,11 @@ describe("evaluateCommandPolicy", () => {
     expect(evaluateCommandPolicy("pwd", policy).category).toBe("safe");
   });
 
-  it("auto-approves read-only shell command chains", () => {
+  // Stage 2.1: this chain used to run without asking. Its names are all
+  // "read-only", but a chain is shell syntax, `git` runs programs the
+  // repository's own configuration names, and nothing confines any of it to
+  // the workspace — so it is still classified safe, and the user is asked.
+  it("classifies a read-only command chain as safe but does not run it unattended", () => {
     const policy = createSandboxPolicy();
     const result = evaluateCommandPolicy(
       "cd C:\\Orca && echo %cd% && git status --short && git log -3 --oneline && cat package.json",
@@ -27,7 +31,8 @@ describe("evaluateCommandPolicy", () => {
     );
 
     expect(result.category).toBe("safe");
-    expect(result.requiresApproval).toBe(false);
+    expect(result.requiresApproval).toBe(true);
+    expect(result.hostAccessWarning).toMatch(/not sandboxed/i);
   });
 
   it("does not let a safe first segment hide a dangerous segment", () => {
@@ -37,15 +42,18 @@ describe("evaluateCommandPolicy", () => {
     expect(evaluateCommandPolicy("git status && git push origin main", policy).requiresApproval).toBe(true);
   });
 
-  it("requires approval for write redirection but allows stderr-to-null redirection", () => {
+  it("requires approval for write redirection, and does not treat stderr-to-null as a write", () => {
     const policy = createSandboxPolicy();
 
     // The null device depends on the shell the command runs in, so each case
     // names its dialect instead of inheriting the host platform's default.
     expect(evaluateCommandPolicy("echo ok > out.txt", policy, "cmd").requiresApproval).toBe(true);
     expect(evaluateCommandPolicy("echo ok > out.txt", policy, "posix").requiresApproval).toBe(true);
-    expect(evaluateCommandPolicy("dir missing 2>nul", policy, "cmd").requiresApproval).toBe(false);
-    expect(evaluateCommandPolicy("ls missing 2>/dev/null", policy, "posix").requiresApproval).toBe(false);
+    // Stage 2.1: a redirection to the null device writes no file, so it is not
+    // classified as a write (category stays safe) — but any redirection is
+    // shell syntax, so the command is no longer run without asking.
+    expect(evaluateCommandPolicy("dir missing 2>nul", policy, "cmd")).toMatchObject({ category: "safe", requiresApproval: true });
+    expect(evaluateCommandPolicy("ls missing 2>/dev/null", policy, "posix")).toMatchObject({ category: "safe", requiresApproval: true });
     // In a POSIX shell `nul` is an ordinary file in the working directory: writing it needs approval.
     expect(evaluateCommandPolicy("ls missing 2>nul", policy, "posix").requiresApproval).toBe(true);
   });

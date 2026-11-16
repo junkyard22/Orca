@@ -29,7 +29,7 @@ import { isAbortError, throwIfAborted, untilAborted } from "./abort.js";
 import { WorkspaceProtectedError } from "./workspaceGuard.js";
 import { guardDispatch } from "./dispatchGuard.js";
 import { buildQCGateContext, recordAfterQCGateDiagnostic } from "./qcGateDiagnostics.js";
-import { BudgetRefusedError, TaskBudgetLedger, composeMirandaGates, createMirandaGate, currentBudgetLedger } from "@clawde/miranda-core";
+import { BudgetRefusedError, TaskBudgetLedger, WORKSPACE_REQUIRED_PREFIX, assessWorkspaceRoot, composeMirandaGates, createMirandaGate, createWorkspaceAuthorityGate, currentBudgetLedger } from "@clawde/miranda-core";
 import { TaskLifecycle } from "./lifecycle.js";
 import { accountPass, budgetStopReason, formatBudgetStop, withPassAccounting } from "./budget/passAccounting.js";
 import {
@@ -250,7 +250,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
           connectorTools: deps.connectorTools,
         })
       : undefined;
-    const effectiveGate = composeMirandaGates(deps.gate, taskPermissionGate);
+    // Miranda's workspace-authority rule goes in front of whatever gates the
+    // host and the task bring: a filesystem tool is refused unless the task
+    // has a usable, explicitly established workspace. It only ever refuses.
+    const hostAndTaskGate = composeMirandaGates(deps.gate, taskPermissionGate);
+    const effectiveGate = hostAndTaskGate ? composeMirandaGates(createWorkspaceAuthorityGate(), hostAndTaskGate) : undefined;
     const workspaceContext = deps.getWorkspaceContext?.();
     const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec);
     const effectiveWorkspaceRoot = explicitWorkspaceRoot ?? deps.workspaceRoot ?? workspaceContext?.cwd;
@@ -273,7 +277,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     // real before/after contents and host-observed test runs rather than what
     // the worker reports. The collector also watches the trace for test
     // commands and fingerprints the source as each one finishes.
-    const evidence = effectiveWorkspaceRoot ? createWorkspaceEvidenceCollector(effectiveWorkspaceRoot) : undefined;
+    // Only a usable workspace is ever read: a root that is missing, is not a
+    // folder, or is a filesystem root carries no authority, is not scanned,
+    // and has nothing substituted for it.
+    const workspaceAuthority = assessWorkspaceRoot(effectiveWorkspaceRoot);
+    const evidence = workspaceAuthority.status === "ok" && effectiveWorkspaceRoot ? createWorkspaceEvidenceCollector(effectiveWorkspaceRoot) : undefined;
     if (evidence) await evidence.ready;
 
     const recordTrace = (stage: string, detail?: unknown): void => {
@@ -445,6 +453,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             return collected;
           }
         : undefined,
+      // What a tool execution changed is read from the workspace itself.
+      observeToolFilesystemEffects: evidence ? (info, run) => evidence.observeExecution(info, run) : undefined,
       verificationReceipts: [],
       passLog: [],
     };
@@ -456,6 +466,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       context: workspaceContext?.cwd ?? null,
       explicit: explicitWorkspaceRoot ?? null,
       effective: effectiveWorkspaceRoot ?? null,
+      authority: workspaceAuthority.status,
     });
     recordTrace("task.permissions", {
       toolsAllowed: normalizedTaskSpec.permissions?.toolsAllowed ?? null,
@@ -888,6 +899,16 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             userFacingText: maestroResult.outputText,
             summary: qcResult.internalSummary,
           };
+        } else if (workspaceRequired(maestroResult.toolEvents)) {
+          // Miranda refused a filesystem tool because no usable workspace is
+          // established. Only the user can establish one; a repair pass would
+          // be refused the same way. Pappy's FAIL stands.
+          recordTrace("repair.skipped", { reason: "workspace_required", authority: workspaceAuthority.status });
+          result = {
+            status: "FAIL",
+            userFacingText: maestroResult.outputText,
+            summary: `Workspace required: ${workspaceAuthority.message} ${qcResult.internalSummary ?? ""}`.trim(),
+          };
         } else if (budgetStopReason(budgetLedger, initialPass.accounting) || legacyBudgetStop(budgetLedger, budgetUsd, initialSpendUsd)) {
           // The ledger decides; a Maestro that reports its own cost without
           // going through a budgeted adapter keeps the legacy cap check.
@@ -1296,6 +1317,16 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       }
     }
 
+    // A filesystem tool was refused for lack of a usable workspace: say so in
+    // fixed words, with what establishes one. This is the host's statement,
+    // not a model's account of it.
+    if (workspaceAuthority.status !== "ok" && (ctx.passLog ?? []).some((p) => workspaceRequired(p.toolEvents))) {
+      result = {
+        ...result,
+        followUpQuestion: `I can't read, change or run anything in a project yet: ${workspaceAuthority.message} Then send your request again.`,
+      };
+    }
+
     // If the agent tried tools that weren't available, surface that to the user.
     if (unknownTools && unknownTools.length > 0 && !result.followUpQuestion) {
       const toolList = unknownTools.map((t) => `\`${t}\``).join(", ");
@@ -1316,6 +1347,11 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     on: (type: OrcaEventType, handler: (event: OrcaEvent) => void) =>
       emitter.on(type, handler),
   };
+}
+
+/** Whether a pass's recorded events include a tool Miranda refused for lack of a usable workspace. */
+function workspaceRequired(events: readonly OrcaToolEvent[] | undefined): boolean {
+  return (events ?? []).some((e) => !e.ok && typeof e.summary === "string" && e.summary.includes(WORKSPACE_REQUIRED_PREFIX));
 }
 
 /**

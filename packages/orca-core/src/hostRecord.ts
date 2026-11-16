@@ -20,6 +20,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { WorkspaceEvidence } from "@clawde/pappy-core";
 import type { OrcaToolEvent } from "./types.js";
+import { recordedFilesystemEvidence } from "./helpers.js";
 
 /** One worker pass of the task and the tool events the host recorded for it. */
 export interface PassLogEntry {
@@ -62,6 +63,13 @@ export interface HostRecord {
   finalSourceTested: boolean;
   /** The task's worker passes in order ("first pass", "repair pass 1", …). */
   passLabels: string[];
+  /**
+   * Tool executions that ran as host processes with nothing confining them to
+   * the workspace (shell commands, MCP process tools), as recorded on their
+   * events. What such a process did outside the watched workspace files is
+   * not in this record. Absent when the record is unavailable.
+   */
+  unconfinedExecutions?: number;
   /** Plain-language account, a few lines. */
   text: string;
 }
@@ -76,10 +84,20 @@ function normalize(path: string, root: string | undefined): string {
   return process.platform === "win32" ? forward.toLowerCase() : forward;
 }
 
+/** An execution the host recorded as a host-level process with no confinement (`raw._execAuthority`, set by the agent loop — never by a model). */
+function isUnconfinedExecution(event: OrcaToolEvent): boolean {
+  const authority = ((event.raw ?? {}) as Record<string, unknown>)["_execAuthority"];
+  if (!authority || typeof authority !== "object") return false;
+  const { filesystemScope, confinement } = authority as Record<string, unknown>;
+  return confinement === "none" && (filesystemScope === "host" || filesystemScope === "unknown");
+}
+
 /** Paths a tool event wrote, as the host recorded them. */
 function writtenPaths(event: OrcaToolEvent): string[] {
   const raw = (event.raw ?? {}) as Record<string, unknown>;
   if (!event.ok) return [];
+  const observed = recordedFilesystemEvidence(raw);
+  if (observed && observed.status !== "unverified") return observed.changes.map((c) => c.path);
   if (WRITE_TOOLS.test(event.tool)) {
     return ["path", "file", "target", "destination"].map((k) => raw[k]).filter((v): v is string => typeof v === "string" && v.length > 0);
   }
@@ -130,7 +148,7 @@ export function buildHostRecord(evidence: WorkspaceEvidence | undefined, passLog
   const finalSourceTested = (evidence.testRuns ?? []).some((r) => r.sourceState === "final" && r.fullSuite && r.ok);
 
   const lines: string[] = ["Host record of this task so far (recorded by Orca's runtime, not any worker's account):"];
-  if (changes.length === 0) lines.push("- No file in the workspace has changed since the task started.");
+  if (changes.length === 0) lines.push("- No file in the workspace has changed since the task started (among the files Orca watches: Git-ignored files and dependency or build directories are not watched).");
   for (const c of changes) {
     const who = c.attribution === "this_task"
       ? `changed by this task${c.passes.length ? ` in the ${c.passes.join(" and the ")}` : ""}${c.writers.length ? ` (${c.writers.join(", ")})` : ""}`
@@ -145,7 +163,14 @@ export function buildHostRecord(evidence: WorkspaceEvidence | undefined, passLog
     lines.push(`- Test runs: ${runs.join("; ")}.`);
     if (!testRuns.some((r) => r.sourceState === "final")) lines.push("- No test has run on the current source.");
   }
-  return { available: true, changes, testRuns, finalSourceTested, passLabels: passLog.map((p) => p.label), text: lines.join("\n") };
+  // Executions the host recorded as unconfined: this record covers the
+  // watched workspace files only, so it says when something ran that could
+  // have acted elsewhere.
+  const unconfinedExecutions = passLog.reduce((n, p) => n + p.toolEvents.filter((e) => isUnconfinedExecution(e)).length, 0);
+  if (unconfinedExecutions > 0) {
+    lines.push(`- ${unconfinedExecutions} tool execution(s) ran as host processes that nothing confined to the workspace (shell commands or process tools). This record covers the watched workspace files only; anything such a process did elsewhere on the computer is not recorded.`);
+  }
+  return { available: true, changes, testRuns, finalSourceTested, passLabels: passLog.map((p) => p.label), unconfinedExecutions, text: lines.join("\n") };
 }
 
 // ── Checking an explanation against the record ──────────────────────────────

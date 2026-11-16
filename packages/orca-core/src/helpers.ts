@@ -262,6 +262,37 @@ export function extractFilesChangedFromCommandOutput(
   return [...byPath.values()];
 }
 
+/**
+ * The copy of a tool call's arguments kept on its recorded event. Keys that
+ * start with an underscore are reserved for what the host observed
+ * (`_outputForProof`, `_exitCodeForProof`, `_contentForDiff`,
+ * `_filesChangedForDiff`, `_fsEvidence`): a model that puts one in its own
+ * arguments must not be able to write the host's evidence, so they are left
+ * out of the record. The tool itself still receives the arguments unchanged.
+ */
+export function toolInputForRecord(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([key]) => !key.startsWith("_")));
+}
+
+type RecordedFsEvidence = { status: "confirmed" | "no_change" | "unverified"; changes: Array<{ path: string; changeType: "A" | "M" | "D" }> };
+
+/** The host's filesystem evidence on a recorded tool event, when it took any. */
+export function recordedFilesystemEvidence(raw: unknown): RecordedFsEvidence | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const evidence = (raw as Record<string, unknown>)["_fsEvidence"];
+  if (!evidence || typeof evidence !== "object") return undefined;
+  const { status, changes } = evidence as Record<string, unknown>;
+  if (status !== "confirmed" && status !== "no_change" && status !== "unverified") return undefined;
+  const list = Array.isArray(changes)
+    ? changes.flatMap((c) => {
+        const path = c && typeof c === "object" ? (c as Record<string, unknown>)["path"] : undefined;
+        const changeType = c && typeof c === "object" ? (c as Record<string, unknown>)["changeType"] : undefined;
+        return typeof path === "string" && path && (changeType === "A" || changeType === "M" || changeType === "D") ? [{ path, changeType }] : [];
+      })
+    : [];
+  return { status, changes: list as RecordedFsEvidence["changes"] };
+}
+
 export function deriveFilesChangedFromToolEvents(
   toolEvents: OrcaToolEvent[] | undefined,
   existingFilesChanged: OrcaFileChange[] = [],
@@ -274,6 +305,22 @@ export function deriveFilesChangedFromToolEvents(
 
   for (const event of toolEvents ?? []) {
     if (!event.ok) continue;
+
+    // Where the host watched the workspace while this tool ran, that is the
+    // account: confirmed changes are the tool's changes, and "no change"
+    // means none — whatever the tool's name or its own result suggests.
+    const observed = recordedFilesystemEvidence(event.raw);
+    if (observed && observed.status !== "unverified") {
+      const argumentPath = extractToolPath(event.raw);
+      const content = (event.raw as Record<string, unknown>)["_contentForDiff"];
+      for (const change of observed.changes) {
+        const diff = change.changeType !== "D" && typeof content === "string" && argumentPath && pathMatches(argumentPath.replace(/\\/g, "/"), change.path)
+          ? truncateDiff(content)
+          : undefined;
+        mergeFileChange(byPath, { path: change.path, changeType: change.changeType, diff });
+      }
+      continue;
+    }
 
     for (const file of extractEmbeddedFileChanges(event.raw)) {
       mergeFileChange(byPath, file);

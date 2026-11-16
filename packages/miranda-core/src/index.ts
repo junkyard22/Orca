@@ -71,7 +71,15 @@ export {
   classifyToolVerb,
   composeMirandaGates,
   transitionAHPLifecycle,
+  assessWorkspaceRoot,
+  createWorkspaceAuthorityGate,
+  collectExplicitPathArguments,
+  toolExecutionAuthority,
+  toolMayModifyFilesystem,
+  WORKSPACE_REQUIRED_CODE,
+  WORKSPACE_REQUIRED_PREFIX,
 } from "./gate/mirandaGate.js";
+export type { ToolExecutionAuthority, WorkspaceAuthority, WorkspaceAuthorityStatus } from "./gate/mirandaGate.js";
 export type {
   ToolVerbClass,
   MirandaGate,

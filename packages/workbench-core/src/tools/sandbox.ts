@@ -1,9 +1,25 @@
 import { redirectionsRequireApproval, runCommandShellDialect, type ShellDialect } from "./shellRedirection.js";
+import { resolveWorkspacePath } from "./workspacePath.js";
+import * as path from "node:path";
 /**
- * Tool Sandbox - security policy for tool execution.
+ * Command policy for the run_command tool.
  *
- * Provides command allowlisting/denylisting for the run_command tool,
- * and a policy framework that can be extended for other tools.
+ * This is NOT a sandbox in the operating-system sense, whatever the file is
+ * called: run_command starts a host shell as the current user, and nothing
+ * here confines that process to the workspace. What this module decides is
+ * whether a command may run WITHOUT ASKING the user:
+ *
+ *   - blocked patterns never run;
+ *   - a command runs unattended only when it is a "confined read" (a plain
+ *     invocation of a single-purpose reader, nothing for the shell to
+ *     interpret, every operand resolving inside the workspace with links
+ *     followed — see `isConfinedRead`), or the host configured an explicit
+ *     allowance for it (`extraAllowedCommands`);
+ *   - everything else needs the user's approval, and the request says that
+ *     the command has the user's access to the whole computer.
+ *
+ * The name lists below are a judgement about which commands are worth asking
+ * for; they are not a confinement and must not be described as one.
  */
 
 /**
@@ -117,6 +133,106 @@ export interface CommandPolicyResult {
   allowed: boolean;
   /** If true, the command requires explicit user approval. */
   requiresApproval: boolean;
+  /**
+   * Why a command may run without asking, when it may: `confined_read` (its
+   * structure and operands were validated against the workspace) or
+   * `host_policy` (the host configured an allowance for it). Absent when
+   * approval is required or the command is blocked.
+   */
+  unattended?: "confined_read" | "host_policy";
+  /** What the user is told when asked: approval grants host-level access, not workspace-only access. */
+  hostAccessWarning?: string;
+}
+
+/** Where the command will run; without it no operand can be vouched for. */
+export interface CommandLocation {
+  workspaceRoot?: string;
+  /** Absolute working directory of the command (inside the workspace). */
+  cwd?: string;
+}
+
+export const HOST_ACCESS_WARNING =
+  "Not sandboxed: this command runs as a process with your account's access to the whole computer (files outside the workspace, the network, other programs); the workspace is only where it starts.";
+
+/**
+ * Single-purpose readers and the option tokens accepted for each. Anything a
+ * command needs beyond this — another option, a tool that can execute, write
+ * or load configuration from the repository (git, find, grep -R, npm, less…) —
+ * is simply not a confined read and is put to the user.
+ */
+const CONFINED_READERS: Record<string, { options?: RegExp; numericAfter?: RegExp; operands: "paths" | "words" | "none" }> = {
+  cat: { operands: "paths" },
+  head: { options: /^-[nc]$/, numericAfter: /^-[nc]$/, operands: "paths" },
+  tail: { options: /^-[nc]$/, numericAfter: /^-[nc]$/, operands: "paths" },
+  wc: { options: /^-[lwcm]{1,4}$/, operands: "paths" },
+  ls: { options: /^-[lah1tSrAFp]{1,8}$/, operands: "paths" },
+  dir: { operands: "paths" },
+  stat: { operands: "paths" },
+  file: { operands: "paths" },
+  type: { operands: "paths" },
+  echo: { operands: "words" },
+  which: { operands: "words" },
+  where: { operands: "words" },
+  pwd: { operands: "none" },
+  whoami: { operands: "none" },
+  hostname: { operands: "none" },
+  date: { operands: "none" },
+  uname: { options: /^-[asrm]{1,4}$/, operands: "none" },
+};
+const VERSION_CHECKS = new Set([
+  "node --version", "node -v", "npm --version", "npm -v",
+  "python --version", "python -V", "python3 --version", "python3 -V", "pip --version", "pip3 --version",
+]);
+
+/**
+ * Whether a command can run without asking because it can be vouched for:
+ *
+ *  1. it contains nothing a shell interprets — only letters, digits, `_ . / -`
+ *     and single spaces (plus `\` and `:` for Windows paths) — so the shell
+ *     does no more than split it into words. No quoting, expansion,
+ *     substitution, globbing, redirection, chaining or line break is parsed
+ *     here; any of them simply disqualifies the command;
+ *  2. its first word is a listed single-purpose reader and every option is
+ *     one listed for it;
+ *  3. every operand that is a path resolves inside the workspace, with links
+ *     followed, from the command's working directory.
+ *
+ * This validates arguments. It does not confine the process: it is the reason
+ * these commands are not asked about, not a sandbox.
+ */
+export function isConfinedRead(command: string, dialect: ShellDialect, location: CommandLocation = {}): boolean {
+  const plain = dialect === "posix" ? /^[A-Za-z0-9_.\/-]+(?: [A-Za-z0-9_.\/-]+)*$/ : /^[A-Za-z0-9_.\/\\:-]+(?: [A-Za-z0-9_.\/\\:-]+)*$/;
+  if (!plain.test(command)) return false;
+  if (VERSION_CHECKS.has(command)) return true;
+  const [name, ...rest] = command.split(" ");
+  const reader = name ? CONFINED_READERS[name] : undefined;
+  if (!reader) return false;
+  let previous = "";
+  for (const token of rest) {
+    const wasNumericOption = reader.numericAfter?.test(previous) === true;
+    previous = token;
+    if (wasNumericOption) {
+      if (!/^[0-9]+$/.test(token)) return false;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      if (!reader.options?.test(token)) return false;
+      continue;
+    }
+    if (reader.operands === "none") return false;
+    if (reader.operands === "words") {
+      if (!/^[A-Za-z0-9_.-]+$/.test(token)) return false;
+      continue;
+    }
+    if (!location.workspaceRoot || !location.cwd) return false;
+    try {
+      resolveWorkspacePath(location.workspaceRoot, path.resolve(location.cwd, token));
+    } catch {
+      return false;
+    }
+  }
+  if (reader.numericAfter?.test(previous)) return false; // an option left without its number
+  return true;
 }
 
 function splitShellSegments(command: string): string[] {
@@ -306,12 +422,38 @@ function evaluateSingleCommandPolicy(
 }
 
 /**
- * Evaluate a command against the sandbox policy.
+ * Evaluate a command against the policy: blocked, runs unattended, or needs
+ * the user's approval. The name-based classification below decides the
+ * category and the reason shown; whether the command may run WITHOUT asking
+ * additionally requires that it can be vouched for (`isConfinedRead`) or that
+ * the host configured an allowance for it.
  */
 export function evaluateCommandPolicy(
   command: string,
   policy: SandboxPolicy,
   dialect: ShellDialect = runCommandShellDialect(),
+  location: CommandLocation = {},
+): CommandPolicyResult {
+  const named = classifyByName(command, policy, dialect);
+  if (!named.allowed) return named;
+  if (named.requiresApproval) return { ...named, hostAccessWarning: HOST_ACCESS_WARNING };
+  if (isConfinedRead(command, dialect, location)) return { ...named, unattended: "confined_read" };
+  // Unattended only because the host listed it: would the built-in names alone have asked?
+  if (policy.extraAllowedCommands.length > 0 && classifyByName(command, { ...policy, extraAllowedCommands: [] }, dialect).requiresApproval) {
+    return { ...named, unattended: "host_policy" };
+  }
+  return {
+    ...named,
+    requiresApproval: true,
+    reason: `${named.reason}, but it cannot be confirmed to stay inside the workspace (it uses shell syntax, an option or tool that is not a plain read, or a path outside the workspace)`,
+    hostAccessWarning: HOST_ACCESS_WARNING,
+  };
+}
+
+function classifyByName(
+  command: string,
+  policy: SandboxPolicy,
+  dialect: ShellDialect,
 ): CommandPolicyResult {
   if (command.length > policy.maxCommandLength) {
     return {
@@ -335,7 +477,7 @@ export function evaluateCommandPolicy(
 
   const segments = splitShellSegments(command);
   if (segments.length > 1) {
-    return combineSegmentResults(segments.map((segment) => evaluateCommandPolicy(segment, policy, dialect)));
+    return combineSegmentResults(segments.map((segment) => classifyByName(segment, policy, dialect)));
   }
 
   return evaluateSingleCommandPolicy(command, policy, dialect);

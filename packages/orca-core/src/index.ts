@@ -5,6 +5,8 @@ export {
   deriveFilesChangedFromToolEvents,
   extractFilesChangedFromCommandOutput,
   normalizeMaestroResult,
+  recordedFilesystemEvidence,
+  toolInputForRecord,
 } from "./helpers.js";
 export { extractAuditTargetPath, formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 export { createFilteredToolService, extractToolNamesFromPrompt } from "./toolFilter.js";
@@ -27,7 +29,7 @@ export {
   diffWorkspaceInventories,
   DEFAULT_EVIDENCE_LIMITS,
 } from "./workspaceEvidence.js";
-export type { EvidenceLimits, WorkspaceEvidenceCollector, WorkspaceInventory } from "./workspaceEvidence.js";
+export type { EvidenceLimits, ToolFilesystemEvidence, WorkspaceEvidenceCollector, WorkspaceInventory } from "./workspaceEvidence.js";
 
 // Extension / adapter system (Phase 7)
 export {

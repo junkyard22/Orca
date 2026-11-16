@@ -9,6 +9,7 @@ import { createOrcaRuntime, extractExplicitWorkspaceRoot } from "./runtime.js";
 import { AHPLifecycle, AHPVerdict, appendAHPTrace, createChildPacket } from "./ahp/types.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createPappyPort } from "./adapters/pappyPort.js";
+import { createMirandaGate } from "@clawde/miranda-core";
 import { tmpdir } from "node:os";
 import { join, parse as parsePath } from "node:path";
 import type { PappyResult } from "@clawde/pappy-core";
@@ -506,6 +507,140 @@ describe("createOrcaRuntime", () => {
         expect(extractExplicitWorkspaceRoot(createTaskSpec({ originalUserMessage: `Look at ${fsRoot}` }))).toBeUndefined();
         expect(await rootsSeen({ workspaceRoot: configuredRoot }, [{ context: { workspaceRoot: missing } }])).toEqual([configuredRoot]);
       });
+    });
+
+    // Stage 2: filesystem tools need an explicitly established, usable
+    // workspace. Miranda refuses them otherwise — nothing (not the process's
+    // working directory) is substituted — and the user is told what to do.
+    describe("workspace authority", () => {
+      const fixtures: string[] = [];
+      const fixture = (name: string) => { const d = mkdtempSync(join(tmpdir(), `orca-${name}-`)); fixtures.push(d); return d; };
+      afterEach(() => { for (const d of fixtures.splice(0)) rmSync(d, { recursive: true, force: true }); });
+
+      /** A worker that tries one file write exactly as an agent loop does: Miranda first, then (if allowed) the write. */
+      function writingWorker(written: string[]) {
+        return {
+          run: vi.fn(async (_task: OrcaTaskSpec, ctx: Parameters<MaestroPort["run"]>[1]) => {
+            const args = { path: "notes.txt", content: "hello" };
+            const decision = ctx.gate!.beforeToolRun({ tool: "write_file", args, workspaceRoot: ctx.workspaceRoot });
+            if (!decision.allowed) {
+              return {
+                outputText: "I could not save notes.txt.",
+                toolEvents: [{ tool: "write_file", ok: false, summary: `write_file: blocked - ${decision.reason}`, raw: args }],
+                filesChanged: [],
+                metadata: { role: "strong_model", stoppedBecause: "done" as const },
+              };
+            }
+            writeFileSync(join(ctx.workspaceRoot!, "notes.txt"), "hello");
+            written.push(join(ctx.workspaceRoot!, "notes.txt"));
+            return {
+              outputText: "Saved notes.txt.",
+              toolEvents: [{ tool: "write_file", ok: true, summary: "write_file: ok", raw: args }],
+              filesChanged: [{ path: "notes.txt", changeType: "A" as const }],
+              metadata: { role: "strong_model", stoppedBecause: "done" as const },
+            };
+          }),
+        } satisfies MaestroPort;
+      }
+      const run = async (deps: Partial<OrcaRuntimeDeps>, spec: Partial<OrcaTaskSpec> = {}) => {
+        const written: string[] = [];
+        const maestro = writingWorker(written);
+        const runtime = createOrcaRuntime({ maestro, pappy: createPappyPort(), llm: createMockLLM(), gate: createMirandaGate(), maxRepairPasses: 2, ...deps });
+        const result = await runtime.executeTask(createTaskSpec({ originalUserMessage: "Save a note to notes.txt", intent: "save note", goals: ["Save a note to notes.txt"], ...spec }));
+        return { result, written, passes: maestro.run.mock.calls.length };
+      };
+
+      it("refuses a file write when no workspace is configured, without using the process directory, and tells the user", async () => {
+        const before = existsSync(join(process.cwd(), "notes.txt"));
+        const { result, written, passes } = await run({});
+        expect(written).toEqual([]);
+        expect(existsSync(join(process.cwd(), "notes.txt"))).toBe(before);
+        expect(result.status).toBe("FAIL");
+        expect(result.followUpQuestion).toMatch(/workspace/i);
+        expect(result.followUpQuestion).toMatch(/Settings/);
+        // Choosing a workspace is the user's move: no repair pass can do it.
+        expect(passes).toBe(1);
+      });
+
+      it("refuses a file write when the configured workspace does not exist, naming it", async () => {
+        const missing = join(fixture("parent"), "not-created");
+        const { result, written, passes } = await run({ workspaceRoot: missing });
+        expect(written).toEqual([]);
+        expect(existsSync(missing)).toBe(false);
+        expect(result.followUpQuestion).toContain(missing);
+        expect(passes).toBe(1);
+      });
+
+      it("does not let prose or a missing structured selection establish the workspace", async () => {
+        const outside = fixture("outside");
+        const viaProse = await run({}, { originalUserMessage: `Save a note to notes.txt\n${outside}` });
+        expect(viaProse.written).toEqual([]);
+        expect(existsSync(join(outside, "notes.txt"))).toBe(false);
+        const viaMissing = await run({}, { context: { workspaceRoot: join(outside, "nope") } });
+        expect(viaMissing.written).toEqual([]);
+        expect(viaMissing.result.followUpQuestion).toMatch(/workspace/i);
+      });
+
+      it("allows the write in a configured workspace and in a structured selection", async () => {
+        const configured = fixture("configured");
+        const first = await run({ workspaceRoot: configured });
+        expect([...new Set(first.written)]).toEqual([join(configured, "notes.txt")]);
+        expect(first.result.followUpQuestion).toBeUndefined();
+        const selected = fixture("selected");
+        const second = await run({}, { context: { workspaceRoot: selected } });
+        expect([...new Set(second.written)]).toEqual([join(selected, "notes.txt")]);
+      });
+
+      it("runs a task that touches no files without any workspace", async () => {
+        const maestro = { run: vi.fn(async () => ({ outputText: "The capital of France is Paris.", toolEvents: [], filesChanged: [], metadata: { role: "narrator", stoppedBecause: "done" as const } })) } satisfies MaestroPort;
+        const runtime = createOrcaRuntime({ maestro, pappy: { evaluate: vi.fn(() => createMockPappyResult("PASS")) } satisfies PappyPort, llm: createMockLLM(), gate: createMirandaGate() });
+        const result = await runtime.executeTask(createTaskSpec({ originalUserMessage: "What is the capital of France?" }));
+        expect(result.status).toBe("SUCCESS");
+        expect(result.followUpQuestion).toBeUndefined();
+      });
+    });
+
+    // Stage 2: what Pappy is told about a tool's effect on the workspace comes
+    // from the host's snapshots around that execution, recorded on its event.
+    it("hands Pappy host-verified changes for an MCP tool, and none for one that only reports success", async () => {
+      const root = mkdtempSync(join(tmpdir(), "orca-pappy-evidence-"));
+      mkdirSync(join(root, "src"));
+      writeFileSync(join(root, "src", "parse.js"), "export const last = (xs) => xs[xs.length];\n");
+      const worker = (reallyWrite: boolean) => ({
+        run: vi.fn(async (_task: OrcaTaskSpec, ctx: Parameters<MaestroPort["run"]>[1]) => {
+          const args = { command: "node scripts/fix.js" };
+          expect(ctx.gate!.beforeToolRun({ tool: "desktop-commander_start_process", args, workspaceRoot: ctx.workspaceRoot }).allowed).toBe(true);
+          const { result, evidence } = await ctx.observeToolFilesystemEffects!({ tool: "desktop-commander_start_process", writer: "strong_model" }, async () => {
+            if (reallyWrite) writeFileSync(join(root, "src", "parse.js"), "export const last = (xs) => xs[xs.length - 1];\n");
+            return { ok: true, output: "patched src/parse.js" };
+          });
+          return {
+            outputText: "I fixed the off-by-one in src/parse.js.",
+            toolEvents: [{ tool: "desktop-commander_start_process", ok: result.ok, summary: "desktop-commander_start_process: ok", raw: { ...args, _fsEvidence: evidence } }],
+            metadata: { role: "strong_model", stoppedBecause: "done" as const },
+          };
+        }),
+      }) satisfies MaestroPort;
+      const real = createPappyPort();
+      const judge = async (reallyWrite: boolean) => {
+        const pappy = { evaluate: vi.fn((input: Parameters<PappyPort["evaluate"]>[0]) => real.evaluate(input)) } satisfies PappyPort;
+        const runtime = createOrcaRuntime({ maestro: worker(reallyWrite), pappy, llm: createMockLLM(), gate: createMirandaGate(), workspaceRoot: root, maxRepairPasses: 0 });
+        const result = await runtime.executeTask(createTaskSpec({ originalUserMessage: "Fix the off-by-one bug in src/parse.js", intent: "fix bug", goals: ["Fix the off-by-one bug in src/parse.js"] }));
+        return { input: pappy.evaluate.mock.calls[0]![0], result };
+      };
+      try {
+        const claimed = await judge(false);
+        expect(claimed.input.filesChanged ?? []).toEqual([]);
+        expect(claimed.input.workspace?.changes).toEqual([]);
+        expect(claimed.result.status).toBe("FAIL");
+
+        const verified = await judge(true);
+        expect(verified.input.filesChanged).toEqual([expect.objectContaining({ path: "src/parse.js", changeType: "M" })]);
+        expect(verified.input.workspace?.changes).toEqual([expect.objectContaining({ path: "src/parse.js", writers: ["strong_model"] })]);
+        expect(verified.result.hostRecord?.changes).toEqual([expect.objectContaining({ path: "src/parse.js", attribution: "this_task", passes: ["first pass"] })]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
 
     // Stage 1.5: a pass whose required write never succeeded is judged on what

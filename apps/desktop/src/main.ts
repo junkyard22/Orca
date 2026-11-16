@@ -88,7 +88,7 @@ import { RoleAgentAdapter } from "./agents/RoleAgentAdapter";
 import type { AgentRunContext, AgentResult, AgentTask } from "./agents/AgentAdapter";
 import { getRepairExecutionRole, getRepairRoutingSourceTask } from "./repairRouting";
 import { normalizeMcpServersForRuntime } from "./mcpRuntimeConfig";
-import { enforceToolAuthorization } from "./toolAuthorization";
+import { enforceToolAuthorization, hostAccessNotice } from "./toolAuthorization";
 import { normalizeDesktopRoutingForExecution } from "./routingPolicy";
 import { buildCommandVerificationSummary, isCommandVerificationCriteria } from "./commandVerificationSummary";
 import { composeMirandaGates, runGatedLLMCall } from "./llmGate";
@@ -2308,6 +2308,9 @@ ipcMain.on("win:close",    () => {
 // calls or across a restart — there is no session-wide approval.
 const approvalBroker = createApprovalBroker({
   send: (request) => win?.webContents.send("tool:request", request),
+  // Shell and process tools are not sandboxed: the card says so, and the
+  // answer is bound to the exact arguments (approvalBroker.ts).
+  hostAccessNotice: (tool) => hostAccessNotice(tool, (_currentSettings?.mcpServers ?? []).map((server) => server.id)),
   isTaskRunning: (taskId) => {
     const session = taskSessions.current;
     return !!session && session.state === "running" && (taskId === undefined || session.id === taskId);
@@ -2346,7 +2349,7 @@ function unlockApp(password: string): { ok: true; auth: AppAuthStatus } | { ok: 
   return { ok: true, auth: refreshAuthStatus(false) };
 }
 
-ipcMain.on("tool:approve", (_ev, response: { id: string; approved: boolean; tool?: string; command?: string; workspace?: string }) => {
+ipcMain.on("tool:approve", (_ev, response: { id: string; approved: boolean; tool?: string; command?: string; workspace?: string; argsDigest?: string }) => {
   // A response to a dialog from a task that is no longer running authorizes
   // nothing; neither does one that names another command, arrives late, or
   // arrives before a person could have read the card (approvalBroker.ts).
@@ -2357,6 +2360,7 @@ ipcMain.on("tool:approve", (_ev, response: { id: string; approved: boolean; tool
     ...(typeof response.tool === "string" ? { tool: response.tool } : {}),
     ...(typeof response.command === "string" ? { command: response.command } : {}),
     ...(typeof response.workspace === "string" ? { workspace: response.workspace } : {}),
+    ...(typeof response.argsDigest === "string" ? { argsDigest: response.argsDigest } : {}),
   });
 });
 

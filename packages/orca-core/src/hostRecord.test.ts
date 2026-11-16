@@ -186,3 +186,29 @@ describe("repair pass gets the host record; the final explanation is checked", (
     expect(result.hostRecord?.changes[0]).toMatchObject({ path: "a.js", attribution: "this_task", passes: ["first pass"] });
   });
 });
+
+// Stage 2.1: the record says when something ran that it cannot fully account for.
+describe("unconfined executions in the host record", () => {
+  const evidence = { available: true, provenance: "runtime-snapshot", changes: [], testRuns: [] } as never;
+  const event = (tool: string, authority: unknown) => ({ tool, ok: true, summary: `${tool}: ok`, raw: { command: "x", _execAuthority: authority } });
+
+  it("counts host-level executions and states the limit of the record", () => {
+    const record = buildHostRecord(evidence, [{ pass: 1, label: "first pass", toolEvents: [
+      event("run_command", { filesystemScope: "host", confinement: "none", approval: "user_approved" }),
+      event("desktop-commander_start_process", { filesystemScope: "host", confinement: "none" }),
+      event("srv_apply_patch", { filesystemScope: "unknown", confinement: "none" }),
+      event("write_file", { filesystemScope: "workspace", confinement: "host_enforced_paths" }),
+      event("desktop-commander_write_file", { filesystemScope: "workspace", confinement: "argument_validation" }),
+    ] }]);
+    expect(record.unconfinedExecutions).toBe(3);
+    expect(record.text).toMatch(/3 tool execution\(s\) ran as host processes that nothing confined to the workspace/);
+    expect(record.text).toMatch(/not recorded/);
+  });
+
+  it("says nothing of the kind when every execution was a path-validated file operation", () => {
+    const record = buildHostRecord(evidence, [{ pass: 1, label: "first pass", toolEvents: [event("write_file", { filesystemScope: "workspace", confinement: "host_enforced_paths" })] }]);
+    expect(record.unconfinedExecutions).toBe(0);
+    expect(record.text).not.toMatch(/host processes/);
+    expect(record.text).toMatch(/among the files Orca watches/);
+  });
+});

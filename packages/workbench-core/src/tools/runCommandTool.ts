@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
-import type { Tool, ToolResult, ToolRunCtx } from "./types.js";
+import type { ExecutionAuthority, Tool, ToolResult, ToolRunCtx } from "./types.js";
 import { evaluateCommandPolicy, createSandboxPolicy } from "./sandbox.js";
 import { createAbortError, throwIfAborted } from "./abort.js";
 import { captureProcessIdentity, findSurvivingDescendants } from "./processIdentity.js";
@@ -146,7 +146,19 @@ export const runCommandTool: Tool = {
 
     // Evaluate command against sandbox policy
     const sandbox = ctx.sandbox ?? createSandboxPolicy();
-    const policyResult = evaluateCommandPolicy(command, sandbox);
+    // Where the command will start is settled first: the policy vouches for a
+    // command's operands relative to it.
+    const rawCwd = input["cwd"];
+    let cwd: string;
+    try {
+      cwd = resolveWorkspacePath(
+        ctx.workspaceRoot,
+        typeof rawCwd === "string" ? rawCwd : ".",
+      );
+    } catch (err) {
+      return { ok: false, output: "", error: err instanceof Error ? err.message : String(err) };
+    }
+    const policyResult = evaluateCommandPolicy(command, sandbox, runCommandShellDialect(), { workspaceRoot: ctx.workspaceRoot, cwd });
     
     if (!policyResult.allowed) {
       return {
@@ -166,7 +178,8 @@ export const runCommandTool: Tool = {
         };
       }
 
-      const approved = await ctx.requestApproval("run_command", input, policyResult.reason);
+      // The user is told what approving grants: host-level access, not workspace-only access.
+      const approved = await ctx.requestApproval("run_command", input, `${policyResult.hostAccessWarning ?? ""} ${policyResult.reason}`.trim());
       throwIfAborted(ctx.abortSignal);
       if (!approved) {
         return {
@@ -177,16 +190,18 @@ export const runCommandTool: Tool = {
       }
     }
 
-    const rawCwd = input["cwd"];
-    let cwd: string;
-    try {
-      cwd = resolveWorkspacePath(
-        ctx.workspaceRoot,
-        typeof rawCwd === "string" ? rawCwd : ".",
-      );
-    } catch (err) {
-      return { ok: false, output: "", error: err instanceof Error ? err.message : String(err) };
-    }
+    // Recorded on the result of anything that runs from here on. The scope is
+    // the host in every case: no operating-system sandbox confines the shell.
+    const executionAuthority: ExecutionAuthority = {
+      filesystemScope: "host",
+      confinement: "none",
+      approval: policyResult.requiresApproval ? "user_approved" : policyResult.unattended ?? "host_policy",
+      note: policyResult.requiresApproval
+        ? "A host shell command the user approved after being told it is not sandboxed; it could reach anything the user's account can."
+        : policyResult.unattended === "confined_read"
+          ? "A host shell command run without asking because it is a plain single-purpose read whose operands were validated inside the workspace. The validation is of its arguments; the process itself was not confined."
+          : "A host shell command run without asking under an allowance the host configured; the process was not confined.",
+    };
 
     // Cap timeout at sandbox max
     const requestedTimeout =
@@ -355,7 +370,7 @@ export const runCommandTool: Tool = {
           const outputWithTimeout = combined
             ? `[${timeoutText}]\n${combined}`
             : `[${timeoutText}]`;
-          finish({ ok: false, output: outputWithTimeout, error: timeoutText });
+          finish({ ok: false, output: outputWithTimeout, error: timeoutText, executionAuthority });
         } else if ((code ?? -1) !== 0) {
           // A non-zero process exit is a failed tool result. Keep stdout/stderr
           // in output so the agent and Pappy can diagnose the failure.
@@ -368,13 +383,14 @@ export const runCommandTool: Tool = {
             output: outputWithCode,
             error: `Command failed with exit code ${exitCode}`,
             exitCode,
+            executionAuthority,
           });
         } else {
           // Include file changes in the output for the caller to parse
           const outputWithChanges = fileChanges.length > 0
             ? `${combined}\n\n<!-- Files changed: ${JSON.stringify(fileChanges)} -->`
             : combined;
-          finish({ ok: true, output: outputWithChanges, exitCode: 0 });
+          finish({ ok: true, output: outputWithChanges, exitCode: 0, executionAuthority });
         }
       });
     });
