@@ -5,7 +5,7 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-11-16 (design documents for intelligent task contracts, on `docs/task-contract-design`; no code changed; PR #107 is merged) · **Machine:** cloud container (Linux, Node 22.23.4) · **By:** Claude
+**Last updated:** 2026-11-16 (adversarial review of the task-contract design; both documents revised on `docs/task-contract-design`; no code changed) · **Machine:** cloud container (Linux, Node 22.23.4) · **By:** Claude
 
 ---
 
@@ -21,7 +21,7 @@ Verified from git and GitHub on 2026-11-16 (after `git fetch origin`). This corr
 
 The clone has one worktree. GitHub: no open pull requests (checked before this session's commit).
 
-**Next work:** implement `docs/ORCA_TASK_CONTRACT_CODEX_HANDOFF.md` assignment by assignment (0 → 8), one branch and PR each. The earlier "Stage 3A" brief (intent-aware routing) is covered by assignments 1–3 and was not started separately. Seven human decisions are listed in the design document §11; assignment 5 (Pappy) needs D1 approved first.
+**Next work:** implement `docs/ORCA_TASK_CONTRACT_CODEX_HANDOFF.md` assignment by assignment (0, 1, [1b], 2 … 8), one branch and PR each. **Four decisions need product-owner authorization and must not be assumed** (design §11): D1 Pappy contract checks (blocks assignment 5), D2 network/connector default (part of assignment 4), D3 removing the keyword audit trigger (assignment 1b), D8 no repair pass for conversation answers (part of assignment 3). The earlier "Stage 3A" brief is covered by assignments 1–3.
 
 ---
 
@@ -299,7 +299,7 @@ Same in all three: Git-ignored-only change → `no_change/0`; new untracked file
 
 ### Design: intelligent task contracts (2026-11-16; branch `docs/task-contract-design`)
 
-Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md` describes one structured task contract (kind, needs, prohibits, expected outcomes, resolved authority, delivery envelope) proposed by Brain inside its existing routing call, bounded by the runtime, enforced by Miranda, judged by Pappy and rendered by Benson/Claire, with no new model call or agent. It lists the nine keyword decision points it replaces (K1–K9, with file and line at `2475092`), a test matrix, estimated cost impact (not measured) and nine phases. `docs/ORCA_TASK_CONTRACT_CODEX_HANDOFF.md` gives the sequenced assignments. Source references were read at `2475092`; no test, build or benchmark was run for this work.
+Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md` describes one structured task contract (kind, needs, prohibits, expected outcomes, resolved authority, delivery envelope) proposed by Brain inside its existing routing call, bounded by the runtime, enforced by Miranda, judged by Pappy and rendered by Benson/Claire, with no new model call or agent. It lists the nine keyword decision points it replaces (K1–K9, with file and line at `2475092`), a test matrix, estimated cost impact (not measured) and nine phases. `docs/ORCA_TASK_CONTRACT_CODEX_HANDOFF.md` gives the sequenced assignments. Source references were read at `2475092`; no test, build or benchmark was run for this work. **Revised the same day after an adversarial review** (design §14): twelve problems in the first version were confirmed against the source — among them that removing Benson's permission inference first would have widened authority until later phases landed, that the `no_file_writes` packet constraint only refuses the tool named `write_file`, that Brain's routing prompt includes untrusted resource summaries, and that a tool-less conversation worker would loop to the turn limit. Corrections are applied in both documents; fifteen acceptance tests (T1–T15) were added; the decision register separates owner-authorized, default and settled decisions.
 
 ## Unverified
 
@@ -462,6 +462,8 @@ Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md`
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-11-16 (task-contract design review)** (cloud container, Claude) — Adversarial review of the two design documents on five points (permission expansion, cost, wrong-outcome verification, delivery concealment, compatibility). Twelve confirmed risks corrected in the design and the Codex handoff; decision register finalised (four items need owner authorization); fifteen acceptance tests added. Documentation only; no code, tests or builds. Not merged.
+
 - **2026-11-16 (task-contract design)** (cloud container, Claude) — PR #107 merged (`main` = `2475092`). Wrote the task-contract design and the Codex implementation handoff on `docs/task-contract-design`; corrected this file's branch table. No production code, tests or builds; contract check CLEAR. Not merged.
 
 - **2026-11-16 (integration PR)** (cloud container, Claude) — Stage 3A was not started: `main` lacked stages 2–2.2. Opened PR #107 from `fix/stage2.2-session-approval` into `main` after verifying ancestry, the 35-file diff, the absence of an equivalent PR and doc consistency. CI: all checks green on `9da0cde`. Windows, packaged-build, human-witnessed, real-MCP and live-provider validation remain release-blocking. Not merged.
@@ -479,5 +481,3 @@ Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md`
 - **2026-11-15 (architecture audit)** (cloud container, Claude) — Read-only principal-engineering audit of the pipeline at `9974e92`. Ran the baseline (build passed; 2,191 tests passed / 3 failed in `survivingProcesses.test.ts`; contract check CLEAR) and reproduced nine defects with scratch probes against the built packages; five more confirmed by inspection. Report with register, dependency map, top-three implementation plan and fault-injection strategy: `docs/ORCA_ARCHITECTURE_AUDIT_2026-11.md`. No production code changed; corrected this file's branch table (PR #101 is merged). Implementation awaits approval.
 
 - **2026-11-02 (November dependency security)** (dev desktop, Codex) — Extended unmerged draft PR #101 with supported Electron 43, Vite/Vitest, Zod 4 and HTTP dependency fixes; updated both lockfiles. Audit policy reports two exact legacy minimatch range mismatches and fails all other findings/errors. All builds/types, MCP/proxy integration and unpacked packaging passed; desktop 358 passed. Broad suite had three workbench process timeouts, all passed in its isolated rerun. No runtime source, test assertions or timeout values changed; no merge or release.
-
-- **2026-10-20 (Dependabot #186/#189)** (dev desktop, Codex) — Locked http-cache-semantics 4.3.0, upgraded Electron's proxy helper to global-agent 4.1.3 to remove sprintf-js, removed the audit suppression, and raised CI to moderate. Audit, builds, typechecks, proxy/checksum integration and Windows packaging passed. Test discovery found an old local demo; desktop source runs stayed red on differing worker assertions, including host process-attribution interference; isolated worker file passed 24/24 with 1 skipped. Refreshed the stale branch inventory from git. Security branch prepared for a draft PR; no merge or release.
