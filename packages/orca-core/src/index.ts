@@ -1,5 +1,13 @@
 // Runtime factory
 export { createOrcaRuntime } from "./runtime.js";
+// Pure task-contract builders; intentionally not wired into the runtime yet (Assignment 0).
+export { validateContractProposal, buildTaskContract, buildFallbackContract } from "./taskContract.js";
+export type {
+  TaskIntentKind, ChangeKind, ExpectedOutcome, ContractOutcome, BrainContractProposal,
+  ResolvedAuthority, TaskContract, BuildTaskContractInput,
+} from "./taskContract.js";
+export { buildDeliveryEnvelope } from "./delivery.js";
+export type { DeliveryOutcome, DeliveryEnvelope, BuildDeliveryEnvelopeInput } from "./delivery.js";
 export {
   buildPappyInput,
   deriveFilesChangedFromToolEvents,

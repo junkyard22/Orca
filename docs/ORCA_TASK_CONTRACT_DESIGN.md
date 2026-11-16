@@ -164,6 +164,8 @@ export interface DeliveryEnvelope {
   body?: string;
   /** Fixed, host-authored lines (Benson's copy, keyed by outcome): what was and was not verified. */
   status: string[];
+  /** Original Pappy evidence status, preserved independently of delivery mapping. */
+  verification?: PappyResult["verification"];
   /** Pappy's issues, verbatim: blocking ones for "failed", MEDIUM and above for "completed_unverified". */
   issues?: Array<{ code: string; description: string }>;
   /** Actions that did not happen: approvals denied or timed out, tools Miranda blocked, tools that were unavailable. */
@@ -304,14 +306,17 @@ Pappy's verdict is computed as today plus the contract checks (handoff assignmen
 
 | Pappy verdict | Evidence status | Contract | Outcome |
 |---|---|---|---|
-| any | — | kind `conversation`, not disputed | `answered` |
+| FAIL | any / absent | any / absent | `failed` (takes precedence over conversational delivery) |
+| PASS / WARN | — | kind `conversation`, not disputed | `answered` (WARN retains its issues and an explicit not-verified status) |
 | PASS / WARN | — | kind `inspect`, inspection outcome met, not disputed | `inspected` |
 | PASS | `verified` | kind `modify` / `execute`, required outcomes met | `verified` |
 | any non-FAIL | — | `kindDisputed` | `completed_unverified`, with the fixed line "Orca treated this as a question and changed nothing." |
 | PASS / WARN | other | — | `completed_unverified` |
-| FAIL | — | — | `failed` |
+| absent | any / absent | any / absent | `completed_unverified` (unless blocked, stopped or the runtime failed) |
 | — | — | capability withheld / no workspace | `blocked` |
 | — | — | cancelled / interrupted | `stopped` |
+
+**Owner-approved correction (2026-11-16):** evaluate `FAIL` before the conversational mapping. Preserve the response body, verification status and Pappy's issues; D8 still skips repair for ordinary conversation without changing a failed verdict. WARN and missing-verdict states can never produce `verified` or a verified-success status. An inspection records reads, not verification of the explanation. A missing verdict uses `completed_unverified`, including for conversation. Lifecycle cancellation/interruption is delivered as `stopped`; otherwise a Pappy FAIL or runtime failure remains `failed` before capability/workspace blocking or kind-specific delivery is considered.
 
 ---
 
