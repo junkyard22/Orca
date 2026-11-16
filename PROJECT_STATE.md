@@ -5,25 +5,23 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-11-16 (integration PR #107 opened for stages 2, 2.1 and 2.2; CI green; not merged) · **Machine:** cloud container (Linux, Node 22.23.4) · **By:** Claude
+**Last updated:** 2026-11-16 (design documents for intelligent task contracts, on `docs/task-contract-design`; no code changed; PR #107 is merged) · **Machine:** cloud container (Linux, Node 22.23.4) · **By:** Claude
 
 ---
 
 ## Where the work lives
 
-Verified from git on 2026-11-15 (after `git fetch origin main`). **Git disagrees with the stage 2 brief and with the previous handoff:** both said stages 1 and 1.5 were unmerged, but `origin/main` is `e0f845b` and contains them (PR #105 merged the audit branch, PR #106 merged `fix/stage1.5-execution-hardening`, which carries the stage 1 commit). Git is trusted. `origin/main`'s tree is identical to `a5d7662`.
+Verified from git and GitHub on 2026-11-16 (after `git fetch origin`). This corrects the previous handoff, which was written just before PR #107 merged and still called it open.
 
 | Branch | Where | Head | Pushed? | Status |
 |---|---|---|---|---|
-| `main` / `origin/main` | GitHub | `e0f845b` | yes | Includes PRs #99–#101, #105 (audit report) and #106 (stages 1 and 1.5). |
-| `fix/stage2-workspace-authority` | GitHub | `696e431` | yes | Stage 2. Not in `main` (checked 2026-11-16: `origin/main` is still `e0f845b`). No PR opened. |
-| `fix/stage2.1-shell-security` | GitHub | `ad2ebd5` | yes | Stage 2.1, on top of stage 2. Not in `main`. No PR opened. |
-| `fix/stage2.2-session-approval` | cloud session clone / GitHub | `9da0cde` + this state update | yes | Contains stages 2, 2.1 and 2.2 in order. **PR #107** into `main` is open (opened 2026-11-16), not merged. |
-| `fix/stage1-execution-integrity`, `fix/stage1.5-execution-hardening`, `ccr-f945f64e-wo02hg` | GitHub | `f374030`, `a5d7662`, `bef7c9b` | yes | All contained in `main`. |
+| `main` / `origin/main` | GitHub | `2475092` | yes | Merge of PR #107: contains the audit report and every security stage (1, 1.5, 2, 2.1, 2.2). |
+| `docs/task-contract-design` | cloud session clone / GitHub | `2475092` + the design commit | yes | Two design documents and this file only. No production code. Not merged, no PR opened. |
+| `fix/stage1-execution-integrity`, `fix/stage1.5-execution-hardening`, `fix/stage2-workspace-authority`, `fix/stage2.1-shell-security`, `fix/stage2.2-session-approval`, `ccr-f945f64e-wo02hg` | GitHub | — | yes | All contained in `main`; can be deleted. |
 
-The clone has one worktree. GitHub (checked 2026-11-16): PR #107 (`fix/stage2.2-session-approval` → `main`) is the only open pull request; #105 and #106 merged; Dependabot PRs #102–#104 are closed unmerged.
+The clone has one worktree. GitHub: no open pull requests (checked before this session's commit).
 
-**Integration:** the single-PR route was taken — PR #107 carries `696e431`, `ad2ebd5`, `9da0cde` in order. Use a merge commit or rebase-merge, not squash, if the stage history is to be kept. The separate stage branches need no PRs of their own. Stage 3A (intent-aware routing) starts from `main` after #107 merges.
+**Next work:** implement `docs/ORCA_TASK_CONTRACT_CODEX_HANDOFF.md` assignment by assignment (0 → 8), one branch and PR each. The earlier "Stage 3A" brief (intent-aware routing) is covered by assignments 1–3 and was not started separately. Seven human decisions are listed in the design document §11; assignment 5 (Pappy) needs D1 approved first.
 
 ---
 
@@ -299,6 +297,10 @@ Same in all three: Git-ignored-only change → `no_change/0`; new untracked file
 
 **Real Electron run (Linux, xvfb, not a person, not Windows).** Electron 43.8.6 binary fetched in this container; the source build was launched with `scripts/desktop-validation/launch-isolated.mjs` (isolated profile, `ELECTRON_DISABLE_SANDBOX=1` because the container runs as root) against `mock-coding.mjs` (scripted model, real tools) and a two-test fixture project. Observed through the DevTools port: the task's first `npm test` opened the real card with the notice, the full arguments and the task workspace, no "always approve" control; a DevTools click on Approve → main log `approved by the user`, the command ran, `write_file` then changed `src/parse.js` with no card (workspace file tool); the second, identical `npm test` opened a **new** card with a new request id; a DevTools click on Deny → `not approved — denied by the user`, cards read "✓ Approved" and "✗ Denied". This exercises the real main process, IPC, preload and renderer. The clicks were automated, so it is not a human-witnessed acceptance, and it says nothing about Windows.
 
+### Design: intelligent task contracts (2026-11-16; branch `docs/task-contract-design`)
+
+Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md` describes one structured task contract (kind, needs, prohibits, expected outcomes, resolved authority, delivery envelope) proposed by Brain inside its existing routing call, bounded by the runtime, enforced by Miranda, judged by Pappy and rendered by Benson/Claire, with no new model call or agent. It lists the nine keyword decision points it replaces (K1–K9, with file and line at `2475092`), a test matrix, estimated cost impact (not measured) and nine phases. `docs/ORCA_TASK_CONTRACT_CODEX_HANDOFF.md` gives the sequenced assignments. Source references were read at `2475092`; no test, build or benchmark was run for this work.
+
 ## Unverified
 
 - Inside the **packaged** release candidate: the approval card, Approve, Deny, the timeout "Denied" card and the override dialog have not been seen by a human (automation observed the card's DOM and the timeout outcome; it never answers dialogs). Behaviour with real MCP servers in the packaged app is unobserved.
@@ -460,6 +462,8 @@ Same in all three: Git-ignored-only change → `no_change/0`; new untracked file
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-11-16 (task-contract design)** (cloud container, Claude) — PR #107 merged (`main` = `2475092`). Wrote the task-contract design and the Codex implementation handoff on `docs/task-contract-design`; corrected this file's branch table. No production code, tests or builds; contract check CLEAR. Not merged.
+
 - **2026-11-16 (integration PR)** (cloud container, Claude) — Stage 3A was not started: `main` lacked stages 2–2.2. Opened PR #107 from `fix/stage2.2-session-approval` into `main` after verifying ancestry, the 35-file diff, the absence of an equivalent PR and doc consistency. CI: all checks green on `9da0cde`. Windows, packaged-build, human-witnessed, real-MCP and live-provider validation remain release-blocking. Not merged.
 
 - **2026-11-16 (audit follow-up, stage 2.2)** (cloud container, Claude) — Found that session-wide approval was already removed in 1.7.0 (corrected the stage 2.1 note). Fixed what was actually open: the approval card now shows the not-sandboxed notice and the full arguments for shell and process tools, and an approval is bound to a digest of those arguments. Ran the real Electron app under xvfb with the mock provider and observed the card, an approval and a denial of a repeated identical command. Stages 2 → 2.1 → 2.2 merge cleanly into `main`; no open PRs; merge order recorded above. Not merged.
@@ -477,5 +481,3 @@ Same in all three: Git-ignored-only change → `no_change/0`; new untracked file
 - **2026-11-02 (November dependency security)** (dev desktop, Codex) — Extended unmerged draft PR #101 with supported Electron 43, Vite/Vitest, Zod 4 and HTTP dependency fixes; updated both lockfiles. Audit policy reports two exact legacy minimatch range mismatches and fails all other findings/errors. All builds/types, MCP/proxy integration and unpacked packaging passed; desktop 358 passed. Broad suite had three workbench process timeouts, all passed in its isolated rerun. No runtime source, test assertions or timeout values changed; no merge or release.
 
 - **2026-10-20 (Dependabot #186/#189)** (dev desktop, Codex) — Locked http-cache-semantics 4.3.0, upgraded Electron's proxy helper to global-agent 4.1.3 to remove sprintf-js, removed the audit suppression, and raised CI to moderate. Audit, builds, typechecks, proxy/checksum integration and Windows packaging passed. Test discovery found an old local demo; desktop source runs stayed red on differing worker assertions, including host process-attribution interference; isolated worker file passed 24/24 with 1 skipped. Refreshed the stale branch inventory from git. Security branch prepared for a draft PR; no merge or release.
-
-- **2026-10-15, evening (Orca 1.7.0 packaged acceptance H1–H4)** (dev desktop, with the human) — Added the scripted coding mock (`scripts/desktop-validation/mock-coding.mjs`, with pass, repair and repair-a6 modes; tests show it scripts the model only). H1 on `0fd63222` **FAILED**: after a Deny, an automatic repair asked for the same command again. The fix, approved by the human, landed in `71ced38`: "no means no" (`orca-core/authorization.ts`; refusals are never re-asked; no repair around a refusal; denial, timeout and cancellation reported distinctly). Regression 2,137 / 0 / 3. Rebuilt the candidate as `71ced381` (unsigned). The human witnessed **H1, H2, H3 and H4 all PASS**. Status: PACKAGED CANDIDATE VALIDATED; not merged; the PR is not yet opened (the branch on origin is at `5f5c503`).
