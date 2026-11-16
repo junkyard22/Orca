@@ -35,6 +35,32 @@ function writeJson(path: string, value: unknown): void {
 }
 
 describe("project audit pipeline", () => {
+  it("does not select the static audit from request wording, goals or an audit path alone", () => {
+    const root = tempRoot();
+    try {
+      for (const mode of [undefined, "default"] as const) {
+        const spec: OrcaTaskSpec = { ...task(root), mode,
+          originalUserMessage: `Review my project and fix the failing login test\n${root}` };
+        expect(isProjectAuditTask(spec)).toBe(false);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("preserves a structured static audit without keyword wording and keeps commands read-only", () => {
+    const root = tempRoot();
+    writeJson(join(root, "package.json"), { name: "structured-audit", scripts: { test: "vitest", build: "tsc" } });
+    try {
+      const spec: OrcaTaskSpec = { ...task(root), originalUserMessage: "Summarize the selected target", intent: "summarize", goals: [] };
+      expect(spec.mode).toBe("project_audit");
+      expect(isProjectAuditTask(spec)).toBe(true);
+      const result = runProjectAudit({ taskSpec: spec });
+      expect(result.mode).toBe("project_audit");
+      expect(result.preflight.targetPath).toBe(root);
+      expect(result.preflight.exists).toBe(true);
+      expect(result.classification.primary).toBe("node_app");
+      expect(result.commandPolicy.decisions.every((decision) => decision.status === "allowed_not_run")).toBe(true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   it("extracts unquoted Windows paths without trailing prose", () => {
     const targetPath = extractAuditTargetPath(messageTask("Use the workspace at C:\\Orca and verify the app can use its core tools."));
 

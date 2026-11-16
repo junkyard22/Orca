@@ -9,6 +9,36 @@ import { createBenson } from "./benson.js";
 import { parseIntent } from "./intent.js";
 import type { ExecutionResult, BensonReply, TaskSpec, Message } from "./types.js";
 
+describe("Assignment 1b keyword audit removal", () => {
+  it("keeps a mixed project review and fix request in default mode without changing inferred permissions", () => {
+    const message = "Review my project and fix the failing login test";
+    const result = parseIntent(message);
+    expect(result.kind).toBe("TASK");
+    if (result.kind !== "TASK") throw new Error("Expected task intake");
+    expect(result.spec.mode).toBe("default");
+    expect(result.spec.permissions).toEqual(["read"]);
+    expect(result.spec.originalUserMessage).toBe(message);
+  });
+
+  it.each([
+    ["Review my project and fix the failing login test", ["read"]],
+    ["Review this repo and tell me production readiness\nC:\\Orca\\Orca", ["read"]],
+    ["Is this production ready?\nC:\\Orca\\Orca", ["read"]],
+    ["Fix the failing login test", ["read", "write"]],
+    ["Run the unit tests", ["read", "shell"]],
+    ["Fetch data from the API", ["read", "network"]],
+    ["Create a file named README.md", ["read", "write"]],
+    ["Review my project and run tests", ["read", "shell"]],
+    ["What is in package.json?", ["read"]],
+  ] as const)("preserves existing permissions and selects default intake mode: %s", (message, permissions) => {
+    const result = parseIntent(message);
+    expect(result.kind).toBe("TASK");
+    if (result.kind !== "TASK") throw new Error("Expected task intake");
+    expect(result.spec.mode).toBe("default");
+    expect(result.spec.permissions).toEqual(permissions);
+  });
+});
+
 function createSuccessResult(output?: string): ExecutionResult {
   return {
     status: "SUCCESS",
@@ -153,7 +183,7 @@ describe("createBenson", () => {
         expect(reply.kind).toBe("RESULT");
       });
 
-      it("routes local app readiness requests into read-only project audit mode", async () => {
+      it("keeps textual readiness requests in default mode with existing read-only permissions", async () => {
         const executeTask = vi.fn().mockResolvedValue(createSuccessResult([
           "Readiness: insufficient evidence",
           "Observed from files/config:",
@@ -170,7 +200,7 @@ describe("createBenson", () => {
         const spec = executeTask.mock.calls[0]?.[0] as TaskSpec | undefined;
 
         expect(reply.kind).toBe("RESULT");
-        expect(spec?.mode).toBe("project_audit");
+        expect(spec?.mode).toBe("default");
         expect(spec?.permissions).toEqual(["read"]);
         expect(spec?.context?.auditPath).toBe("C:\\Orca\\Orca");
         expect(reply.text).toContain("Missing or unverified:");
@@ -439,11 +469,11 @@ describe("parseIntent", () => {
     }
   });
 
-  it("parses local project assessment prompts as project_audit", () => {
+  it("parses textual project assessment prompts in default mode without changing formatting or permissions", () => {
     const result = parseIntent("Review this repo and tell me production readiness\nC:\\Orca\\Orca");
     expect(result.kind).toBe("TASK");
     if (result.kind === "TASK") {
-      expect(result.spec.mode).toBe("project_audit");
+      expect(result.spec.mode).toBe("default");
       expect(result.spec.permissions).toEqual(["read"]);
       expect(result.spec.outputFormat).toBe("bullets");
       expect(result.spec.context?.auditPath).toBe("C:\\Orca\\Orca");

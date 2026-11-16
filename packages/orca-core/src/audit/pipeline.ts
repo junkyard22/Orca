@@ -68,16 +68,7 @@ const APPROVED_RECIPES: Partial<Record<ProjectCategory, string[]>> = {
 export function isProjectAuditTask(taskSpec: OrcaTaskSpec): boolean {
   if (asksForRuntimeVerification(taskSpec)) return false;
 
-  if (taskSpec.mode === "project_audit") return true;
-
-  const text = [taskSpec.originalUserMessage, taskSpec.intent, ...(taskSpec.goals ?? [])].join(" ");
-  const asksForAudit =
-    /\b(check|review|audit|inspect|assess|evaluate)\b.{0,80}\b(app|repo|repository|project|codebase|code base)\b/i.test(text) ||
-    /\b(app|repo|repository|project|codebase|code base)\b.{0,80}\b(check|review|audit|inspect|assess|evaluate)\b/i.test(text) ||
-    /\b(production|prod|ship|release)\s+read(?:y|iness)\b/i.test(text) ||
-    /\bready\s+for\s+(production|prod|release|ship|shipping)\b/i.test(text);
-
-  return asksForAudit && !!extractAuditTargetPath(taskSpec, undefined);
+  return taskSpec.mode === "project_audit";
 }
 
 function asksForRuntimeVerification(taskSpec: OrcaTaskSpec): boolean {

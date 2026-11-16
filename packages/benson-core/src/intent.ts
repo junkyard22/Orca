@@ -278,16 +278,17 @@ function buildClarify(): ParseResult {
 
 function buildTaskSpec(message: string, history?: Message[]): TaskSpec {
   const extractedContext = extractContext(message, history);
-  const auditMode = isProjectAuditRequest(message);
+  const auditFormatting = isProjectAuditRequest(message);
 
   return {
     originalUserMessage: message,
     intent: extractIntent(message),
     goals: extractGoals(message),
-    mode: auditMode ? "project_audit" : "default",
+    // Static audit dispatch requires a structured caller, never wording from the user.
+    mode: "default",
     constraints: extractConstraints(message),
     permissions: extractPermissions(message),
-    outputFormat: auditMode ? "bullets" : extractOutputFormat(message),
+    outputFormat: auditFormatting ? "bullets" : extractOutputFormat(message),
     context: {
       ...extractedContext,
       conversationHistory: history ?? [],
