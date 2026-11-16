@@ -5,23 +5,30 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-11-16 (adversarial review of the task-contract design; both documents revised on `docs/task-contract-design`; no code changed) · **Machine:** cloud container (Linux, Node 22.23.4) · **By:** Claude
+**Last updated:** 2026-11-16 (Codex Assignment 0 preflight; stopped on delivery-table conflict before code) / **Machine:** dev desktop (Windows, Node 24.11.1 / pnpm 10.30.2) / **By:** Codex
 
 ---
 
 ## Where the work lives
 
-Verified from git and GitHub on 2026-11-16 (after `git fetch origin`). This corrects the previous handoff, which was written just before PR #107 merged and still called it open.
+Verified after fetching origin on 2026-11-16. Git ancestry and GitHub PR #107 metadata agree; GitHub reports no open pull requests.
 
 | Branch | Where | Head | Pushed? | Status |
 |---|---|---|---|---|
-| `main` / `origin/main` | GitHub | `2475092` | yes | Merge of PR #107: contains the audit report and every security stage (1, 1.5, 2, 2.1, 2.2). |
-| `docs/task-contract-design` | cloud session clone / GitHub | `2475092` + the design commit | yes | Two design documents and this file only. No production code. Not merged, no PR opened. |
-| `fix/stage1-execution-integrity`, `fix/stage1.5-execution-hardening`, `fix/stage2-workspace-authority`, `fix/stage2.1-shell-security`, `fix/stage2.2-session-approval`, `ccr-f945f64e-wo02hg` | GitHub | — | yes | All contained in `main`; can be deleted. |
+| `main` | local ref | `713b0dd` | behind remote by 13 commits | Left unchanged. |
+| `origin/main` | GitHub | `2475092` | yes | Contains dependency updates and security stages 1 through 2.2, including `9da0cde`; PR #107 merged. |
+| `fix/dependabot-cache-sprintf` | original checkout / GitHub | `26ac523` | yes | Clean original checkout preserved; already contained in remote main. |
+| `origin/docs/task-contract-design` | GitHub | `0fe3828` | yes | Two documentation commits beyond remote main (`8f7ffbe`, `0fe3828`); not in main. |
+| `origin/fix/stage2.2-session-approval` | GitHub | `59144ea` | yes | Includes `9da0cde`; entire branch already contained in remote main. |
+| `codex/task-contract-assignment-0` | isolated implementation worktree | `0fe3828` + this state-only commit | no | Design and security ancestors present; no implementation changes. |
 
-The clone has one worktree. GitHub: no open pull requests (checked before this session's commit).
+Two worktrees are registered. No security commit needs replaying: the non-state tree at `9da0cde` is identical to remote main, and the design branch adds only the two design documents and project state.
 
-**Next work:** implement `docs/ORCA_TASK_CONTRACT_CODEX_HANDOFF.md` assignment by assignment (0, 1, [1b], 2 … 8), one branch and PR each. **Four decisions need product-owner authorization and must not be assumed** (design §11): D1 Pappy contract checks (blocks assignment 5), D2 network/connector default (part of assignment 4), D3 removing the keyword audit trigger (assignment 1b), D8 no repair pass for conversation answers (part of assignment 3). The earlier "Stage 3A" brief is covered by assignments 1–3.
+**Safest integration sequence:** start Assignment 0 from the corrected design tip (done), resolve the delivery conflict below, write regression tests before implementing only Assignment 0, run the documented checks, then review the design commits and Assignment 0 together or land the design first. No merge into main is authorized. Assignment 1 must wait for Assignment 0 to merge.
+
+**Owner decisions approved in this session:** D1 additive deterministic Pappy checks; D2 connector reads only when needed, attached, enabled and independently authorized (availability grants nothing); D3 removal of keyword audit while preserving structured and genuine requested audits; D8 skip ordinary-conversation repair without turning failed verification into success; remove unnecessary conversation narrator rewrites; optional model lead-ins only for verified results. These authorize future assignments but do not expand Assignment 0.
+
+**Next work:** resolve the contradictory delivery requirements before writing Assignment 0 code. No runtime, authorization, schema, test or dependency file was changed.
 
 ---
 
@@ -311,6 +318,8 @@ Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md`
 
 ## Outstanding problems
 
+- **Assignment 0 stopped before code:** design section 5.8 maps undisputed conversation with any verdict (including FAIL) to `answered`, while matrix E3 requires FAIL issues and failure presentation, D8 preserves failed verification, and Assignment 0 requires every table row to be tested. Proposed correction, awaiting owner resolution: give `FAIL -> failed` precedence over conversation, retain body and failure details, and skip repair under approved D8. Do not silently rewrite the architecture.
+
 - **Architecture audit 2026-11-15 — F-06, F-08, F-09 fixed and merged (stages 1 / 1.5); F-02 and the boundary item of F-14 fixed on `fix/stage2-workspace-authority` (unmerged); F-01, F-03, F-04, F-05, F-07, F-10, F-11, F-12, F-13 and the rest of F-14 are open** (`docs/ORCA_ARCHITECTURE_AUDIT_2026-11.md`; implementation awaits approval). Reproduced by running the built code at `9974e92`: F-01 codebase questions classified CONVERSATIONAL are answered by the narrator with no tools and no QC; F-02 Miranda's type check blocks every tool call with an array argument (MCP); F-03 a provider error produces an empty pass that `before_qc` stops with no Pappy, no repair and no retry; F-04 Claire's post-QC narration loses a completed result when the narrator call fails, hides Pappy's issues on FAIL and presents WARN as done; F-05 keyword-inferred permissions make edits such as "Correct the typo…" read-only, and audit phrasing replaces the task with the static audit; F-06 the desktop agent loop discards tool calls on its "2 turns remaining" turn; F-08 the workspace root is taken from path-like prose (CLI exposed; desktop only if the configured folder is missing); F-13 `intent` can be a three-word stub and is exported as the training prompt. Confirmed by inspection only: F-07 saving Settings mid-task disposes MCP connections and recovers the live task's budget journal; F-09 the post-loop write rescue skips `beforeToolRun`; F-10 Dewey `observe()` is never called on the desktop and its context file is written non-atomically; F-11 an exhausted repair persists first-pass artifacts with last-pass text.
 - **Stage 2.2 — integration status:** no blocker found in this environment. Ready for a Windows/Electron smoke test, which is still required before release because none of the following could be done here: anything on Windows (cmd/PowerShell dialects of the confined-read rule, Windows path and junction handling in the link-aware boundary, `Get-CimInstance` process scans), a packaged build, a human answering the card, a real MCP server (desktop-commander) producing a process-tool card, a live provider. Remaining risks are unchanged from stage 2.1: approval is the only control on a host process; MCP servers are unconfined; evidence is limited to its observed scope. The card's redaction hides credential-looking values, so for those the user approves arguments they cannot fully read (the digest still binds the answer to the real ones).
 - **Stage 2.1 — boundaries that are NOT enforced (stated, not mitigated):** (1) No shell execution is confined: an approved `run_command`, a `host_policy` command and any MCP process tool can read and write anything the user's account can. Approval is the control; there is no OS sandbox. (2) A confined read validates arguments only; the listed readers are trusted to do nothing else (a hostile `PATH`, shell startup file or replaced binary on the host is out of scope). (3) MCP servers are unconfined host processes; Orca validates the arguments it sends them and nothing more. (4) ~~Session-wide "always approve"~~ — **this item was wrong** (stage 2.2 check): the checkbox and the renderer's own approvals were removed in 1.7.0 (`approvalBroker.ts`); every approval is bound to one pending request. (5) The runner CLI has no approval handler: it now runs only confined reads and host-policy commands and refuses MCP shell tools; it still has no desktop-style authorization layer for other MCP tools. (6) `ext-github`'s clone runs `git clone` without a shell into a validated destination, behind approval; git itself is not confined. (7) Evidence: `no_change` is scoped (see `observedScope`); changes outside the workspace or to unnamed ignored paths are never detected; files over 25 MB in the inventory are compared by size only. **Behaviour change for users:** `git status`/`git diff`/`find`/`grep`, pipes, chains and redirections now ask for approval where they used to run silently.
@@ -363,6 +372,7 @@ Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md`
 
 | Date | Commit | Machine | Command | Result |
 |---|---|---|---|---|
+| 2026-11-16 | `0fe3828` (Assignment 0 preflight) | Windows, Node 24.11.1 | `pnpm.cmd install --offline --frozen-lockfile`; `pnpm.cmd contract:check`; `pnpm.cmd contract:check:strict`; `git diff --check` | Install passed without lockfile changes; both contract checks Status: CLEAR, 3 documentation files scanned; diff whitespace check passed. No tests, build or typecheck run: stopped before implementation. |
 | 2026-11-16 | `9da0cde` (PR #107 head) | GitHub Actions, ubuntu-latest | CI on the pull request: Build & Test (strict contract check, builds, `pnpm -r exec tsc --noEmit`, `pnpm -r --if-present test`), Dependency Audit, Scan for secrets | all three checks concluded success (read from the check runs; job logs were not inspected, so whether the three `survivingProcesses.test.ts` cases ran and passed there is inferred from the job's success) |
 | 2026-11-16 | `9da0cde` | cloud container (Linux, Node 22.23.4) | `pnpm -r exec tsc --noEmit` | passed (exit 0) |
 | 2026-11-16 | stage 2.2 commit on `fix/stage2.2-session-approval` | cloud container (Linux, Node 22.23.4 / pnpm 10.30.2) | `pnpm -r build`; `pnpm typecheck:scripts`; `pnpm contract:check:strict` | build and typecheck passed; contract check Status: CLEAR (35 changed files scanned), exit 0 |
@@ -462,6 +472,8 @@ Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md`
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-11-16 (Codex Assignment 0 preflight)** (Windows, Codex) - Fetched origin; verified local/remote main divergence, all security ancestry through `9da0cde`, design `0fe3828`, merged PR #107 and no open PRs. Created an isolated branch/worktree from design tip, installed offline and obtained contract CLEAR. Stopped before code on section 5.8 conversation/FAIL conflict; only this state record changed. Original checkout preserved; no merge or deployment.
+
 - **2026-11-16 (task-contract design review)** (cloud container, Claude) — Adversarial review of the two design documents on five points (permission expansion, cost, wrong-outcome verification, delivery concealment, compatibility). Twelve confirmed risks corrected in the design and the Codex handoff; decision register finalised (four items need owner authorization); fifteen acceptance tests added. Documentation only; no code, tests or builds. Not merged.
 
 - **2026-11-16 (task-contract design)** (cloud container, Claude) — PR #107 merged (`main` = `2475092`). Wrote the task-contract design and the Codex implementation handoff on `docs/task-contract-design`; corrected this file's branch table. No production code, tests or builds; contract check CLEAR. Not merged.
@@ -479,5 +491,3 @@ Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md`
 - **2026-11-15 (audit follow-up, stage 1)** (cloud container, Claude) — On `fix/stage1-execution-integrity`: regression tests first, then fixes for the workspace-root resolution (F-08), tool calls dropped at the turn limit (F-06), `done` reported without a successful required write, and the write rescue bypassing Miranda (F-09, now reproduced). Affected suites, build and contract check all pass. Not merged; the remaining audit findings are untouched pending instruction.
 
 - **2026-11-15 (architecture audit)** (cloud container, Claude) — Read-only principal-engineering audit of the pipeline at `9974e92`. Ran the baseline (build passed; 2,191 tests passed / 3 failed in `survivingProcesses.test.ts`; contract check CLEAR) and reproduced nine defects with scratch probes against the built packages; five more confirmed by inspection. Report with register, dependency map, top-three implementation plan and fault-injection strategy: `docs/ORCA_ARCHITECTURE_AUDIT_2026-11.md`. No production code changed; corrected this file's branch table (PR #101 is merged). Implementation awaits approval.
-
-- **2026-11-02 (November dependency security)** (dev desktop, Codex) — Extended unmerged draft PR #101 with supported Electron 43, Vite/Vitest, Zod 4 and HTTP dependency fixes; updated both lockfiles. Audit policy reports two exact legacy minimatch range mismatches and fails all other findings/errors. All builds/types, MCP/proxy integration and unpacked packaging passed; desktop 358 passed. Broad suite had three workbench process timeouts, all passed in its isolated rerun. No runtime source, test assertions or timeout values changed; no merge or release.
