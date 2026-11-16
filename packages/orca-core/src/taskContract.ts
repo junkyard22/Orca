@@ -181,11 +181,14 @@ function outside(root: string, candidate: string): boolean {
   return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
 
-/** Same nearest-existing-ancestor/link boundary as stage 2, including not-yet-created files. */
-function boundedPath(raw: string, root: string | undefined): string | undefined {
+/** Internal shared boundary, never an authority source. Brain outcomes use the relative-only default. */
+export function boundedWorkspacePath(raw: string, root: string | undefined, allowAbsolute = false): string | undefined {
   const normalized = raw.replace(/\\/g, "/");
-  if (!root || !path.isAbsolute(root) || path.posix.isAbsolute(normalized) || path.win32.isAbsolute(raw) ||
-      normalized.includes(":") || normalized.split("/").includes("..")) return undefined;
+  const absolute = path.isAbsolute(normalized);
+  if (!root || !path.isAbsolute(root) || (!allowAbsolute && absolute) ||
+      (!absolute && path.win32.isAbsolute(raw)) || normalized.split("/").includes("..")) return undefined;
+  // Only a native absolute drive prefix may contain a colon; reject drive-relative paths and ADS.
+  if (normalized.includes(":") && !(absolute && /^[A-Za-z]:\//.test(normalized) && !normalized.slice(2).includes(":"))) return undefined;
   const candidate = path.resolve(root, normalized);
   if (outside(root, candidate)) return undefined;
   try {
@@ -213,7 +216,7 @@ function requestPaths(request: string, root: string | undefined): string[] {
   const tokens = request.matchAll(/`([^`]+)`|"([^"]+)"|'([^']+)'|([^\s`"'()[\]{},;!?]+)/g);
   for (const match of tokens) {
     const token = (match[1] ?? match[2] ?? match[3] ?? match[4]!).replace(/[.:]+$/, "");
-    const bounded = boundedPath(token, root);
+    const bounded = boundedWorkspacePath(token, root, true);
     if (bounded && (/[./\\]/.test(token) || existsSync(path.resolve(root!, bounded)))) paths.push(bounded);
   }
   return [...new Set(paths)];
@@ -221,11 +224,11 @@ function requestPaths(request: string, root: string | undefined): string[] {
 
 function boundOutcome(expected: ExpectedOutcome, root: string | undefined): ExpectedOutcome | undefined {
   if (expected.type === "file_change" && expected.path !== undefined) {
-    const path = boundedPath(expected.path, root);
+    const path = boundedWorkspacePath(expected.path, root);
     return path === undefined ? undefined : { ...expected, path };
   }
   if (expected.type === "inspection" && expected.paths !== undefined) {
-    const paths = expected.paths.map((p) => boundedPath(p, root));
+    const paths = expected.paths.map((p) => boundedWorkspacePath(p, root));
     return paths.some((p) => p === undefined) ? undefined : { ...expected, paths: paths as string[] };
   }
   return expected;

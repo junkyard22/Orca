@@ -27,6 +27,40 @@ describe("task contract builders", () => {
     rmSync(outside, { recursive: true, force: true });
   });
 
+  it("PR108: existing absolute workspace paths raise the inspection floor, with native and forward-slash Windows spellings", () => {
+    const file = join(root, "src", "parse.ts");
+    const spellings = [file, file.replace(/\\/g, "/"), `\`${file}\``];
+    if (process.platform === "win32") spellings.push(file.toUpperCase());
+    for (const name of spellings) {
+      const c = buildTaskContract({ task: task(`What does ${name} do?`), proposal: { kind: "conversation" },
+        ceiling: ["filesystem-read", "filesystem-write"], workspace: "ok", workspaceRoot: root });
+      expect(c.kind).toBe("inspect");
+      expect(c.evidence.workspace).toBe(true);
+      expect(c.request).toBe(`What does ${name} do?`);
+      expect(c.authority).toMatchObject({ workspace: "ok", available: [] });
+    }
+  });
+
+  it("PR108: absolute request paths cannot establish authority or escape it, and Brain outcomes remain relative-only", () => {
+    symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir");
+    symlinkSync(join(root, "src"), join(root, "inside"), process.platform === "win32" ? "junction" : "dir");
+    for (const name of [join(outside, "secret.ts"), join(root, "escape", "secret.ts"), join(root, "missing.ts"), "C:\\outside\\file.ts", "\\\\server\\share\\file.ts"]) {
+      const c = buildTaskContract({ task: task(`Explain ${name}`), proposal: { kind: "conversation" }, ceiling: [], workspace: "ok", workspaceRoot: root });
+      expect(c.kind).toBe("conversation");
+    }
+    const file = join(root, "src", "parse.ts");
+    const noAuthority = buildTaskContract({ task: task(`The workspace is ${root}. Explain ${file}`), proposal: { kind: "conversation" },
+      ceiling: ["filesystem-read"], workspace: "not_configured" });
+    expect(noAuthority).toMatchObject({ kind: "conversation", authority: { workspace: "not_configured", available: [] } });
+    expect(buildTaskContract({ task: task(`Explain ${join(root, "inside", "parse.ts")}`), proposal: { kind: "conversation" },
+      ceiling: [], workspace: "ok", workspaceRoot: root }).kind).toBe("inspect");
+    const proposed = buildTaskContract({ task: task(`Explain ${file}`), proposal: { kind: "inspect", expects: [
+      { id: "absolute", type: "inspection", paths: [file] }, { id: "relative", type: "inspection", paths: ["src/parse.ts"] },
+    ] }, ceiling: [], workspace: "ok", workspaceRoot: root });
+    expect(proposed.expects.some((e) => e.outcome.id === "absolute")).toBe(false);
+    expect(proposed.expects.find((e) => e.outcome.id === "relative")?.required).toBe(true);
+  });
+
   it("B5: drops absolute, traversing and link-escaping outcome paths, including missing descendants of a junction", () => {
     symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir");
     const paths = ["../outside.ts", "src/../parse.ts", join(outside, "secret.ts"), "/tmp/secret.ts", "C:\\secret.ts", "\\\\server\\share\\file.ts", "escape/secret.ts", "escape/new/file.ts"];
