@@ -524,6 +524,8 @@
             <span class="approval-label">Tool</span>
             <code class="approval-value" id="approval-tool-name"></code>
           </div>
+          <!-- Shown for shell and process tools only: they are not sandboxed, and an approval covers one execution. -->
+          <div class="approval-host-notice" id="approval-host-notice" role="alert" style="display:none; margin: 6px 0 10px; padding: 8px 10px; border: 1px solid #c0392b; border-radius: 6px; color: #c0392b; font-size: 12px; line-height: 1.45;"></div>
           <div class="approval-row approval-args-row">
             <span class="approval-label">Args</span>
             <pre class="approval-args" id="approval-args"></pre>

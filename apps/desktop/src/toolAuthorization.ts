@@ -19,7 +19,7 @@
  * records it as a failure and nothing downstream can mistake it for execution.
  */
 import { isAbsolute, relative, resolve } from "node:path";
-import { classifyToolVerb } from "@clawde/miranda-core";
+import { classifyToolVerb, toolExecutionAuthority } from "@clawde/miranda-core";
 
 export type ToolCapability =
   | "workspace_read"
@@ -214,6 +214,20 @@ export function authorizeToolCall(
     default:
       return { capability, decision: "approve", reason: `"${tool}" is not a recognised tool capability` };
   }
+}
+
+/**
+ * What the approval card must say for a tool that runs as a host process
+ * (run_command, MCP shell and process tools): it is not sandboxed, and the
+ * approval covers this one execution. Undefined for every other tool.
+ */
+export function hostAccessNotice(tool: string, mcpServerIds?: readonly string[]): string | undefined {
+  const capability = classifyTool(tool, mcpServerIds);
+  const hostScoped = capability === "shell_policy" || capability === "process_exec" || toolExecutionAuthority(tool).filesystemScope === "host";
+  if (!hostScoped) return undefined;
+  const what = capability === "shell_policy" ? "command" : "call";
+  return `Not sandboxed. If you approve, this runs as a process with your account's access to the whole computer — files outside the workspace, the network, other programs. `
+    + `The workspace is only where it starts. Approval authorizes this one ${what}, exactly as shown; every later one is asked again.`;
 }
 
 export type ApprovalRequester = (tool: string, args: Record<string, unknown>, reason: string) => Promise<boolean>;
