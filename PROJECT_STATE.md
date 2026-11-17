@@ -5,7 +5,7 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-11-17 (Assignment 2 implemented on `codex/task-contract-assignment-2` after the approved validator-ownership correction; PR opened; not merged) / **Machine:** cloud container (Linux, Node 22.23.4 / pnpm 10.30.2) / **By:** Claude
+**Last updated:** 2026-11-17 (Assignment 3 partial implementation paused on T6/dispute conflict; draft PR #112) / **Machine:** Windows, Node 24.11.1 / pnpm 10.30.2 / **By:** Codex
 
 ---
 
@@ -17,9 +17,15 @@
 - **Still pending:** resolve T6/dispute conflict; zero-tool unknown-tool follow-up suppression and regressions; repair identity/acceptance preservation coverage; Cargo and additional conversation guards; desktop declaration synchronization; replace the Assignment 2 source assertion that consumption has not begun. No failing assertion was weakened to obtain green.
 - **Regression-first:** Claire direct-delivery test failed (rewritten output), then passed; zero-tool create/list worker test failed (4 calls instead of 1), then passed; failed-conversation delivery test failed, then passed. Desktop integration first had 4 failures / 1 pass; after pre-worker construction/workspace handling it has 1 failure / 4 passes, retaining T6's conflict. It imports the real desktop Maestro adapter with Electron startup/IPC mocked and exercises real runtime, worker loop, Pappy and Claire.
 - **Validation actually run on this working tree:** Claire 5/5; desktop 399 passed / 2 failed / 1 skipped (402 total: T6 plus obsolete Assignment 2 no-consumption assertion); orca-core 491 passed / 2 failed (493 total: previously documented Windows symlink EPERM setup failures in `toolFilesystemEvidence.test.ts`). `pnpm -r build`, `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts`, `pnpm contract:check:strict` (CLEAR) and `git diff --check` passed. Dependencies installed offline with frozen lockfile. No benchmarks or unrelated suites run.
-- This is an incomplete review snapshot, not a completed assignment or a release candidate. Draft PR requested by owner; no merge, deploy or release.
+- This is an incomplete review snapshot, not a completed assignment or a release candidate. Draft PR [#112](https://github.com/junkyard22/Orca/pull/112) is open. Implementation snapshot `da40155` is pushed; this documentation follow-up records the PR. No merge, deploy or release.
 
-## Where the work lives
+| Current session branch | Head | Pushed? | Worktree status |
+|---|---|---|---|
+| `codex/task-contract-assignment-3` | `da40155` plus this documentation follow-up | yes (follow-up pushed before handoff) | Clean after committing this state update; draft PR #112, implementation blocked. |
+| `origin/main` | `af035c8` | yes | Fetched; Assignment 2 merged via PR #111. |
+| local `main` | `133a36e` | behind origin | Left unchanged. |
+
+## Where the work lives (prior-session history)
 
 Verified after fetching origin on 2026-11-16. The owner explicitly accepted Assignment 1b's Rule 5 finding and authorized PR [#110](https://github.com/junkyard22/Orca/pull/110). It was merged with method `merge`, pinned to approved head `27dff96`, as `133a36e` (parents `b501de9` and `27dff96`). Git verifies head ancestry and an identical source tree. Post-merge push CI [43955038766](https://github.com/junkyard22/Orca/actions/runs/43955038766) passed builds, workspace/script typechecks, tests and Dependency Audit; Secret Scan [43955038913](https://github.com/junkyard22/Orca/actions/runs/43955038913) passed. The inspected test log reports 2,407 passed / 3 skipped. The original PR Rule 5 warning remains documented and explicitly accepted; no check rules were modified. The post-merge baseline check scans no changed files and reports CLEAR, which does not erase the PR warning.
 
