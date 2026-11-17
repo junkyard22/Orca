@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { assessAudit, assessNpmAudit } from './audit-dependencies.mjs';
 
 function report(versions, id = 'GHSA-g3hv-75wg-m249', name = 'minimatch') {
@@ -61,8 +62,10 @@ function pnpmReport(findings, extra = {}) {
     pico: { github_advisory_id: GHSA, module_name: 'picomatch', severity: 'high', findings },
     ...extra,
   };
-  const high = Object.values(advisories).reduce((n, a) => n + a.findings.length, 0);
-  return { metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high, critical: 0 } }, advisories };
+  // pnpm (registry quick audit) counts one vulnerability per finding, per severity.
+  const vulnerabilities = { info: 0, low: 0, moderate: 0, high: 0, critical: 0 };
+  for (const advisory of Object.values(advisories)) vulnerabilities[advisory.severity] += advisory.findings.length;
+  return { metadata: { vulnerabilities }, advisories };
 }
 const ctx = (overrides = {}) => ({ now: BEFORE, manifests, prodReport: CLEAN, ...overrides });
 
@@ -231,4 +234,54 @@ test('npm: malformed and failed reports fail closed', () => {
   for (const invalid of invalids) assert.throws(() => assessNpmAudit(invalid, npmCtx()), JSON.stringify(invalid)?.slice(0, 80));
   assert.throws(() => assessNpmAudit(good, npmCtx({ prodReport: { error: 'x' } })));
   assert.deepEqual(assessNpmAudit(NPM_CLEAN, npmCtx()), { actionable: [], unaffected: [], accepted: [] });
+});
+
+// ── pnpm metadata must be fully explained by the advisory details ──
+// pnpm forwards the registry quick-audit response; metadata.vulnerabilities
+// counts one per finding (advisory x installed version) per severity. pnpm
+// --json always drops `info` advisories from the details, so info is not
+// reconciled. Fixtures are real pnpm 10.30.2 reports, trimmed to the fields
+// the policy reads.
+
+const realMulti = JSON.parse(readFileSync(new globalThis.URL('./fixtures/pnpm-audit-real-multi-advisory.json', import.meta.url), 'utf8'));
+const realOrca = JSON.parse(readFileSync(new globalThis.URL('./fixtures/pnpm-audit-real-orca.json', import.meta.url), 'utf8'));
+
+test('pnpm: a report declaring more vulnerabilities than its details explain cannot pass', () => {
+  const incomplete = pnpmReport([{ version: '4.0.4', paths: [DEV_PATH] }]);
+  incomplete.metadata.vulnerabilities.high = 2;
+  assert.throws(() => assessAudit(incomplete, ctx()), /do not match/);
+  for (const severity of ['low', 'moderate', 'critical']) {
+    const extra = pnpmReport([{ version: '4.0.4', paths: [DEV_PATH] }]);
+    extra.metadata.vulnerabilities[severity] = 1;
+    assert.throws(() => assessAudit(extra, ctx()), /do not match/, severity);
+  }
+  const hiddenInProd = pnpmReport([{ version: '4.0.4', paths: [DEV_PATH] }]);
+  assert.throws(() => assessAudit(hiddenInProd, ctx({ prodReport: { ...CLEAN, metadata: { vulnerabilities: { ...CLEAN.metadata.vulnerabilities, high: 1 } } } })));
+});
+
+test('pnpm: fewer declared vulnerabilities than findings, or an unknown severity, is also invalid', () => {
+  const undercount = pnpmReport([{ version: '4.0.4', paths: [DEV_PATH] }, { version: '4.0.7', paths: [TEST_PATH] }]);
+  undercount.metadata.vulnerabilities.high = 1;
+  assert.throws(() => assessAudit(undercount, ctx()), /do not match/);
+  const unknown = pnpmReport([{ version: '4.0.4', paths: [DEV_PATH] }]);
+  unknown.advisories.pico.severity = 'severe';
+  assert.throws(() => assessAudit(unknown, ctx()));
+});
+
+test('pnpm: real reports reconcile; counts are per finding, not per advisory', () => {
+  // 9 advisories, 10 findings: picomatch has two findings (2.3.2 and 4.0.4) and counts twice.
+  assert.equal(Object.keys(realMulti.advisories).length, 9);
+  assert.deepEqual(realMulti.metadata.vulnerabilities, { info: 0, low: 0, moderate: 3, high: 6, critical: 1 });
+  const multi = assessAudit(realMulti, ctx({ manifests: { '.': { dependencies: { picomatch: '4.0.4' } } } }));
+  assert.equal(multi.actionable.length, 10);
+  assert.equal(multi.accepted.length, 0);
+  const orca = assessAudit(realOrca, ctx());
+  assert.equal(orca.actionable.length, 0);
+  assert.deepEqual(orca.accepted.map(f => `${f.package}@${f.version}`), ['picomatch@4.0.4']);
+});
+
+test('pnpm: info is not reconciled, because pnpm --json drops info advisories by design', () => {
+  const withInfo = pnpmReport([{ version: '4.0.4', paths: [DEV_PATH] }]);
+  withInfo.metadata.vulnerabilities.info = 3;
+  assert.equal(assessAudit(withInfo, ctx()).accepted.length, 1);
 });

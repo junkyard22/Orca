@@ -57,8 +57,22 @@ function validatePnpmReport(report) {
   if (Object.values(report.metadata.vulnerabilities).some(count => count > 0) && !advisories.length) {
     throw new Error('Audit reports vulnerabilities without advisory details');
   }
+  // pnpm forwards the registry's quick-audit response, whose metadata counts one
+  // vulnerability per finding (advisory x installed version) per severity.
+  // Every counted vulnerability must therefore appear in the details, or the
+  // report is incomplete. pnpm --json always drops `info` advisories from the
+  // details (they are below every audit level), so info is not reconciled.
+  const findingsBySeverity = { low: 0, moderate: 0, high: 0, critical: 0 };
   for (const advisory of advisories) {
     if (!Array.isArray(advisory?.findings) || !advisory.findings.length) throw new Error('Audit advisory has no findings');
+    if (!SEVERITIES.includes(advisory.severity)) throw new Error('Audit advisory has an unknown severity');
+    if (advisory.severity !== 'info') findingsBySeverity[advisory.severity] += advisory.findings.length;
+  }
+  for (const [severity, findings] of Object.entries(findingsBySeverity)) {
+    if (report.metadata.vulnerabilities[severity] !== findings) {
+      throw new Error(`Audit vulnerability counts do not match its advisory details (${severity}: ` +
+        `${report.metadata.vulnerabilities[severity]} reported, ${findings} detailed)`);
+    }
   }
   return advisories;
 }

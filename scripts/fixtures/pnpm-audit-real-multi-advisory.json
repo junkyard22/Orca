@@ -1,0 +1,165 @@
+{
+ "metadata": {
+  "vulnerabilities": {
+   "info": 0,
+   "low": 0,
+   "moderate": 3,
+   "high": 6,
+   "critical": 1
+  },
+  "dependencies": 16,
+  "totalDependencies": 16
+ },
+ "advisories": {
+  "1096465": {
+   "id": 1096465,
+   "github_advisory_id": "GHSA-vh95-rmgr-6w4m",
+   "module_name": "minimist",
+   "severity": "moderate",
+   "vulnerable_versions": ">=1.0.0 <1.2.3",
+   "patched_versions": ">=1.2.3",
+   "findings": [
+    {
+     "version": "1.2.0",
+     "paths": [
+      ".>minimist"
+     ]
+    }
+   ]
+  },
+  "1096544": {
+   "id": 1096544,
+   "github_advisory_id": "GHSA-9c47-m6qq-7p4h",
+   "module_name": "json5",
+   "severity": "high",
+   "vulnerable_versions": ">=2.0.0 <2.2.2",
+   "patched_versions": ">=2.2.2",
+   "findings": [
+    {
+     "version": "2.2.1",
+     "paths": [
+      ".>json5"
+     ]
+    }
+   ]
+  },
+  "1097678": {
+   "id": 1097678,
+   "github_advisory_id": "GHSA-xvch-5gv4-984h",
+   "module_name": "minimist",
+   "severity": "critical",
+   "vulnerable_versions": ">=1.0.0 <1.2.6",
+   "patched_versions": ">=1.2.6",
+   "findings": [
+    {
+     "version": "1.2.0",
+     "paths": [
+      ".>minimist"
+     ]
+    }
+   ]
+  },
+  "1106913": {
+   "id": 1106913,
+   "github_advisory_id": "GHSA-35jh-r3h4-6jhm",
+   "module_name": "lodash",
+   "severity": "high",
+   "vulnerable_versions": "<4.17.21",
+   "patched_versions": ">=4.17.21",
+   "findings": [
+    {
+     "version": "4.17.15",
+     "paths": [
+      ".>lodash"
+     ]
+    }
+   ]
+  },
+  "1106920": {
+   "id": 1106920,
+   "github_advisory_id": "GHSA-p6mc-m468-83gw",
+   "module_name": "lodash",
+   "severity": "high",
+   "vulnerable_versions": ">=3.7.0 <4.17.19",
+   "patched_versions": ">=4.17.19",
+   "findings": [
+    {
+     "version": "4.17.15",
+     "paths": [
+      ".>lodash"
+     ]
+    }
+   ]
+  },
+  "1108258": {
+   "id": 1108258,
+   "github_advisory_id": "GHSA-29mw-wpgm-hmr9",
+   "module_name": "lodash",
+   "severity": "moderate",
+   "vulnerable_versions": ">=4.0.0 <4.17.21",
+   "patched_versions": ">=4.17.21",
+   "findings": [
+    {
+     "version": "4.17.15",
+     "paths": [
+      ".>lodash"
+     ]
+    }
+   ]
+  },
+  "1115806": {
+   "id": 1115806,
+   "github_advisory_id": "GHSA-r5fr-rjxr-66jc",
+   "module_name": "lodash",
+   "severity": "high",
+   "vulnerable_versions": ">=4.0.0 <=4.17.23",
+   "patched_versions": ">=4.18.0",
+   "findings": [
+    {
+     "version": "4.17.15",
+     "paths": [
+      ".>lodash"
+     ]
+    }
+   ]
+  },
+  "1244531": {
+   "id": 1244531,
+   "github_advisory_id": "GHSA-xxjr-mmjv-4gpg",
+   "module_name": "lodash",
+   "severity": "moderate",
+   "vulnerable_versions": ">=4.0.0 <=4.17.22",
+   "patched_versions": ">=4.17.23",
+   "findings": [
+    {
+     "version": "4.17.15",
+     "paths": [
+      ".>lodash"
+     ]
+    }
+   ]
+  },
+  "1247710": {
+   "id": 1247710,
+   "github_advisory_id": "GHSA-fc5q-39xc-vjpf",
+   "module_name": "picomatch",
+   "severity": "high",
+   "vulnerable_versions": "<=4.0.7",
+   "patched_versions": "<0.0.0",
+   "findings": [
+    {
+     "version": "2.3.2",
+     "paths": [
+      ".>anymatch>picomatch"
+     ]
+    },
+    {
+     "version": "4.0.4",
+     "paths": [
+      ".>picomatch"
+     ]
+    }
+   ]
+  }
+ }
+}

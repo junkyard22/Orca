@@ -66,6 +66,15 @@ are development and build tooling only.
   - and the package manager's own production-only audit (`pnpm audit --prod`,
     `npm audit --omit=dev`) does not report the package at all.
 
+A pnpm report is accepted as complete only when its `metadata.vulnerabilities`
+count for each of low, moderate, high and critical equals the number of
+findings of that severity in its details. pnpm forwards the registry's
+quick-audit response, which counts one vulnerability per finding (advisory ×
+installed version); this was verified against real pnpm 10.30.2 reports,
+now kept as test fixtures. `info` is not reconciled, because pnpm `--json`
+always drops info advisories from the details. A count the details do not
+explain makes the report invalid, which fails the audit.
+
 Every accepted finding prints an `ACCEPTED (expires 2026-12-17)` line with the
 advisory, package, version and this justification. Any other advisory,
 package or version, any production path, a second unexpected copy, and any

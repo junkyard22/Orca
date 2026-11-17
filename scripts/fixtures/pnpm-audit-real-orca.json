@@ -1,0 +1,31 @@
+{
+ "metadata": {
+  "vulnerabilities": {
+   "info": 0,
+   "low": 0,
+   "moderate": 0,
+   "high": 1,
+   "critical": 0
+  },
+  "dependencies": 479,
+  "totalDependencies": 479
+ },
+ "advisories": {
+  "1247710": {
+   "id": 1247710,
+   "github_advisory_id": "GHSA-fc5q-39xc-vjpf",
+   "module_name": "picomatch",
+   "severity": "high",
+   "vulnerable_versions": "<=4.0.7",
+   "patched_versions": "<0.0.0",
+   "findings": [
+    {
+     "version": "4.0.4",
+     "paths": [
+      "apps__desktop>electron-builder>app-builder-lib>@electron/rebuild>node-gyp>tinyglobby>picomatch"
+     ]
+    }
+   ]
+  }
+ }
+}

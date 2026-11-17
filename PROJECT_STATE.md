@@ -5,11 +5,13 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-11-17 (picomatch risk-acceptance activation PR prepared; activation and merge await separate final approval) / **Machine:** Windows, Node 24.11.1 / pnpm 10.30.2 / **By:** Claude Code
+**Last updated:** 2026-11-17 (PR #115 review correction: pnpm report count reconciliation; activation and merge await separate final approval) / **Machine:** Windows, Node 24.11.1 / pnpm 10.30.2 / **By:** Claude Code
 
 ---
 
 ## Picomatch risk-acceptance activation (2026-11-17, Claude Code / Windows)
+
+- **PR #115 review correction (reviewed head `c9e50e1`):** `validatePnpmReport()` accepted positive vulnerability counts that the advisory details did not account for. A report declaring 2 highs with only 1 accepted picomatch finding passed. Investigated pnpm 10.30.2 first. It forwards the registry quick-audit response and, with `--json`, filters only the details (always dropping `info`; also `auditConfig` ignores, which this repo does not use and the policy forbids). Probe reports show the count is one per finding (advisory × installed version), not per advisory: 9 advisories, 10 findings, high 6. New rule: for low/moderate/high/critical, the count must equal the detailed findings of that severity, and info is excluded. Regression-first: 2 failed before, 23/23 after. Real-structure fixtures are in `scripts/fixtures/`.
 
 - The owner approved *implementing* the PR #114 proposal. Branch `fix/picomatch-dev-risk-acceptance` from `origin/main` `3cc27eb` carries the approved spec (cherry-picked) and the implementation. **Activation and merge require separate final approval.** PR #113 and Assignment 4 code are untouched.
 - `scripts/audit-dependencies.mjs` accepts only `GHSA-fc5q-39xc-vjpf` / `picomatch` at exactly 4.0.4 or 4.0.7, before 2026-12-17 UTC (fail closed at and after; no override), when every path is proven development-only twice: by manifest/lockfile, and by the package manager's own production-only audit not reporting the package. The pnpm tree and workbench-core's npm lockfile share the policy, which replaces `npm audit --audit-level low` and also makes info findings actionable. Every accepted finding prints `ACCEPTED (expires 2026-12-17)` with the advisory, package, version and justification. Docs: `docs/SECURITY_DEPENDENCIES.md`.
@@ -444,6 +446,8 @@ Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md`
 
 ## Last verified tests
 
+2026-11-17, Windows, `fix/picomatch-dev-risk-acceptance` on `c9e50e1` plus the reconciliation fix: `pnpm test:audit-policy` 23/23 (reconciliation cases 2 failed before); `pnpm audit:dependencies` exit 0 (1 accepted, 0 actionable, real report reconciles); `pnpm audit:workbench` exit 0 (5 accepted); `pnpm -r build`, `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts` and `pnpm contract:check:strict` (CLEAR) passed.
+
 2026-11-17, Windows, branch `fix/picomatch-dev-risk-acceptance` (base `3cc27eb`): `pnpm test:audit-policy` 19/19 (12 failed before); `pnpm audit:dependencies` exit 0 (1 accepted, 0 actionable); `pnpm audit:workbench` exit 0 (5 accepted, 0 actionable); `pnpm -r build`, `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts` and `pnpm contract:check:strict` (CLEAR) passed. Full `pnpm -r --no-bail test`: only the 11 known Windows symlink EPERM setup failures (orca-core 2, Miranda 3, workbench 6); all other packages passed (desktop 409 / 1 skipped, orca-core 510).
 
 2026-11-16 session evidence (no local tests/builds/typechecks rerun because Assignment 2 stopped before code):
@@ -575,6 +579,8 @@ Previous session results retain their original attribution below.
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-11-17 (PR #115 review correction)** (Windows, Claude Code) - Verified pnpm's audit count semantics from its source and from real probe reports (one per finding, info dropped from the details), then added an exact per-severity reconciliation for low to critical, regression-first. Exception scope, expiry, dev-only proof, npm behavior and ACCEPTED output unchanged. Not merged; no deploy, release or Assignment 5.
+
 - **2026-11-17 (picomatch acceptance activation PR)** (Windows, Claude Code) - Implemented the owner-approved, 30-day, dev-only picomatch acceptance regression-first for both pnpm and npm audits (exact match, double dev-only proof, hard expiry, visible notices). Activation PR opened for independent review; not merged. No PR #113 or Assignment 4 change, no deploy, release or Assignment 5.
 
 - **2026-11-17 (PR #112 review correction, Codex / Windows)** - Reproduced both coordinated explicit-request misses first (2 failed / 45 passed), then narrowed the clause split to retain `for me` actions while preserving instructional guards. Targeted core 136 passed; full core 510 passed / 2 known Windows EPERM failures; desktop guards 22 passed. Builds/types/scripts/strict contract CLEAR. Only builder/tests/state changed; PR #112 updated for final review. No Assignment 4 or merge.
@@ -592,5 +598,3 @@ Previous session results retain their original attribution below.
 - **2026-11-16 (PR #108 merge and Assignment 1)** (Windows, Codex) — Merged PR #108 with the owner's explicit approval as `592708e`; verified ancestry, tree equality to approved `91d2ea0`, and all-green post-merge CI (2,333 passed / 3 skipped). Started a new isolated Assignment 1 branch from that baseline; implemented and pushed as `7dd018f`, with local and remote heads verified equal. Five routing regressions reproduced first; removed only seven open-ended regexes; 52-row corpus, 62 targeted and 195 full Benson tests pass. Build/types/scripts/strict contract pass. Permission/audit/clarification behavior and existing tests untouched. No Assignment 1b, additional merge, deployment or release.
 
 - **2026-11-16 (PR #108 narrow corrections)** (Windows, Codex) — Regression-first fixes to inspection evidence and absolute-path kind floor on the existing Assignment 0 branch. Targeted 79/79 (21 added); full orca-core 479 passed / same 2 baseline EPERM setup failures. Builds/types/scripts/strict contract and built-export smoke pass. Only four builder/test files plus state changed. PR description will track new-head CI. No Miranda, routing, protection, merge, deployment or Assignment 1 changes.
-
-- **2026-11-16 (Codex Assignment 0)** (Windows, Codex) — Owner approved FAIL precedence; corrected section 5.8, added pure contract/delivery builders and exports with regression-first tests (58 passed), committed and pushed as `1f92b41`. Workspace build/types/scripts, built-export smoke and strict contract check pass. Full orca-core suite: 458 passed, 2 existing symlink EPERM failures, reproduced on untouched `0fe3828` and outside sandbox. No existing tests, runtime call sites or Miranda boundaries changed. Assignment 1 not started; no PR, merge or deployment. Full validation remains blocked by Windows symlink support.
