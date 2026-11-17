@@ -44,6 +44,11 @@ import { serializeAHPPacketGraph, formatAHPPacketGraphSummary, formatAHPPacketGr
 import type { AHPPacketGraph } from "./ahp/graph.js";
 import { createFilteredToolService } from "./toolFilter.js";
 import { createWorkspaceEvidenceCollector } from "./workspaceEvidence.js";
+import { buildFallbackContract, buildTaskContract } from "./taskContract.js";
+import type { TaskContract } from "./taskContract.js";
+import { classifyToolCapability } from "maestro-core";
+import type { CapabilityGroup } from "maestro-core";
+import type { WorkspaceAuthorityStatus } from "@clawde/miranda-core";
 
 function generateRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -711,6 +716,13 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       // verdict (first pass, repairs) — a repair cannot change the standard.
       ctx.acceptanceContract ??= buildAcceptanceContract(normalizedTaskSpec, maestroResult.doneCriteria);
       recordTrace("acceptance.contract", ctx.acceptanceContract);
+      // The task contract: built once, from Brain's proposal when the decision
+      // carried a valid one, otherwise the fallback. Recorded and returned;
+      // nothing below reads it yet, and a repair pass never rebuilds it.
+      if (!ctx.taskContract) {
+        ctx.taskContract = resolveTaskContract(normalizedTaskSpec, maestroResult.metadata, ctx.toolNamesAllowed, workspaceAuthority.status, effectiveWorkspaceRoot, recordTrace);
+        recordTrace("task.contract", ctx.taskContract);
+      }
       ctx.passLog?.push({ pass: 1, label: "first pass", ...(maestroResult.metadata?.role ? { role: maestroResult.metadata.role } : {}), toolEvents: maestroResult.toolEvents ?? [] });
       const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
 
@@ -1339,7 +1351,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
     // The caller sees the lifecycle the trace and the summary saw: a result
     // alone cannot say whether the task settled quietly.
-    return { ...result, lifecycle: finalLifecycle, ...(persistedQcResult && !result.qcResult ? { qcResult: persistedQcResult } : {}) };
+    return { ...result, lifecycle: finalLifecycle, ...(ctx.taskContract ? { contract: ctx.taskContract } : {}), ...(persistedQcResult && !result.qcResult ? { qcResult: persistedQcResult } : {}) };
   }
 
   return {
@@ -1347,6 +1359,35 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     on: (type: OrcaEventType, handler: (event: OrcaEvent) => void) =>
       emitter.on(type, handler),
   };
+}
+
+/**
+ * The task contract for a first pass. The ceiling is the capabilities of the
+ * tools the task may actually use — the task's own allowlist when it has one,
+ * else the tools the adapter says the routed role was given — never "every
+ * capability": with nothing reported, nothing is assumed available. A proposal
+ * that does not validate here is dropped for the fallback; it cannot fail the
+ * task and cannot contribute a field.
+ */
+function resolveTaskContract(
+  task: OrcaTaskSpec,
+  metadata: OrcaMaestroResult["metadata"],
+  toolNamesAllowed: readonly string[] | undefined,
+  workspace: WorkspaceAuthorityStatus,
+  workspaceRoot: string | undefined,
+  recordTrace: (stage: string, detail?: unknown) => void,
+): TaskContract {
+  const toolNames = toolNamesAllowed ?? metadata?.roleToolNames ?? [];
+  const ceiling = [...new Set(toolNames.map((name) => classifyToolCapability(name)).filter((c): c is CapabilityGroup => c !== null))];
+  const proposal = metadata?.contractProposal;
+  if (proposal !== undefined) {
+    try {
+      return buildTaskContract({ task, proposal, ceiling, workspace, ...(workspaceRoot ? { workspaceRoot } : {}) });
+    } catch (error) {
+      recordTrace("task.contract.proposal_rejected", { reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return buildFallbackContract(task, workspace, ceiling);
 }
 
 /** Whether a pass's recorded events include a tool Miranda refused for lack of a usable workspace. */

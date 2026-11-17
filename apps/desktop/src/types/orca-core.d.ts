@@ -36,6 +36,15 @@ declare module '@clawde/orca-core' {
     artifacts?: unknown;
     qcResult?: PappyResult;
     followUpQuestion?: string;
+    /** The task contract fixed for this run (recorded only; nothing enforces it yet). */
+    contract?: {
+      version: 1;
+      source: "intake" | "brain" | "fallback";
+      request: string;
+      kind: "conversation" | "inspect" | "execute" | "modify";
+      kindDisputed?: boolean;
+      [key: string]: unknown;
+    };
   }
 
   export interface OrcaFileChange {
@@ -137,6 +146,10 @@ declare module '@clawde/orca-core' {
     metadata?: {
       role?: string;
       brainDecision?: string;
+      /** Brain's contract proposal as its decision carried it; the runtime builds the task contract from it. */
+      contractProposal?: import("maestro-core").BrainContractProposal;
+      /** Names of the tools the routed role was given. */
+      roleToolNames?: string[];
       decomposition?: {
         synthesisHint?: string;
       };

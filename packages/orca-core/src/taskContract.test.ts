@@ -229,3 +229,34 @@ describe("task contract builders", () => {
     expect(Object.isFrozen(spec.goals)).toBe(false);
   });
 });
+
+// Assignment 2 ownership correction: the proposal schema and its validator are
+// maestro-core's (where Brain's decision is parsed). orca-core re-exports them.
+describe("proposal validation has one owner", () => {
+  it("orca-core's validateContractProposal is maestro-core's, not a second implementation", async () => {
+    const maestro = await import("maestro-core");
+    const entry = await import("./index.js");
+    expect(validateContractProposal).toBe(maestro.validateContractProposal);
+    expect(entry.validateContractProposal).toBe(maestro.validateContractProposal);
+  });
+
+  it("the public exports that existed before the move are still there", async () => {
+    const entry = await import("./index.js");
+    for (const name of ["validateContractProposal", "buildTaskContract", "buildFallbackContract", "buildDeliveryEnvelope"]) {
+      expect(typeof (entry as Record<string, unknown>)[name], name).toBe("function");
+    }
+  });
+
+  it("maestro-core does not depend on orca-core (no cycle)", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const root = join(__dirname, "..", "..", "maestro-core");
+    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Record<string, Record<string, string> | undefined>;
+    for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
+      expect(Object.keys(manifest[field] ?? {}).filter((d) => /orca-core/.test(d)), field).toEqual([]);
+    }
+    const sources = readdirSync(join(root, "src")).filter((f) => f.endsWith(".ts"));
+    for (const file of sources) {
+      expect(readFileSync(join(root, "src", file), "utf8"), file).not.toMatch(/from ['"]@clawde\/orca-core['"]/);
+    }
+  });
+});

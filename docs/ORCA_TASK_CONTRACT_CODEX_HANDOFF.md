@@ -104,9 +104,21 @@ Skip this assignment entirely unless the product owner has authorized D3. It can
 
 ## Assignment 2 — Brain proposes the contract; the runtime fixes it **[DESIGN]**
 
+> **Approved ownership correction (product owner, 2026-11-17).** As first written, this assignment had `maestro-core`'s `parseBrainDecision` call `validateContractProposal`, which assignment 0 had placed in `orca-core`. `orca-core` depends on `maestro-core`, so that import would have been a cycle. The approved resolution:
+>
+> - The **pure proposal schema and its validator** — `TaskIntentKind`, `ChangeKind`, `ExpectedOutcome`, `BrainContractProposal`, `validateContractProposal` and its private helpers — live in `packages/maestro-core/src/contractProposal.ts`, use Maestro's own `CapabilityGroup` / `isCapabilityGroup`, and are exported from `maestro-core`'s index.
+> - The **resolved `TaskContract`**, authority resolution, workspace path bounding, the kind floor and dispute rules, and acceptance-contract handling stay in `packages/orca-core/src/taskContract.ts`, which imports the proposal definitions from `maestro-core` and re-exports them unchanged, so existing `orca-core` importers are unaffected.
+> - There is exactly one validator. Do not copy it, and do not add a package dependency or change a manifest to get around a direction problem — stop and report instead.
+> - This moves code; it grants nothing and changes no rule. Miranda and Pappy are untouched.
+>
+> Two smaller clarifications made while implementing, both within the listed files:
+> - The routing-context filter is a pure function, `routingPromptContext`, in `maestro-core/src/decompose.ts` (testable there; `main.ts` cannot be imported by a unit test). `brainRoute` calls `buildTaskPrompt({ ...task, context: routingPromptContext(task.context) })`.
+> - `ctx.acceptanceContract` is left **exactly as it was** (`buildAcceptanceContract(task, doneCriteria)`), not replaced by `contract.acceptance`: assignment 0's builder has no input for Brain's derived criteria, so `contract.acceptance` currently holds the user goals only. Reconciling the two is deferred to assignment 5, which is the first consumer; do not change Pappy's goals before then.
+
 **Goal:** the contract exists, is validated, fixed once, traced and returned. Nothing consumes it yet.
 
 **Files**
+- `packages/maestro-core/src/contractProposal.ts` (new) — proposal schema and validator, moved from `orca-core` (see the correction above); `packages/maestro-core/src/index.ts`; `packages/orca-core/src/taskContract.ts` (imports and re-exports them).
 - `packages/maestro-core/src/decompose.ts` — types, prompt, parser.
 - `apps/desktop/src/main.ts` — `brainRoute` and the two places it builds the Maestro result (`metadata`).
 - `packages/orca-core/src/types.ts` — `OrcaRunCtx.taskContract`, `OrcaMaestroResult.metadata.contractProposal`, `OrcaExecutionResult.contract`.
