@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "audit:dependencies": "node scripts/audit-dependencies.mjs",
+    "audit:workbench": "node scripts/audit-dependencies.mjs --npm packages/workbench-core",
     "test:audit-policy": "node --test scripts/audit-dependencies.test.mjs",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",

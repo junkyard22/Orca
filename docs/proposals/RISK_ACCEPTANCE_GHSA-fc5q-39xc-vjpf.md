@@ -1,6 +1,6 @@
 # Proposal: 30-day development-only risk acceptance for GHSA-fc5q-39xc-vjpf (picomatch)
 
-**Status: PROPOSED — NOT ACTIVE.** Nothing in this document changes audit behavior. The exception below must not be implemented or enabled without explicit owner approval. If approved, activation is a separate PR with its own code, tests and CI.
+**Status: APPROVED FOR IMPLEMENTATION (2026-11-17). Activation and merge require separate final owner approval.** The implementation is in the activation PR: `scripts/audit-dependencies.mjs`, its tests, the CI audit steps and `docs/SECURITY_DEPENDENCIES.md`. Until that PR is approved and merged, `main` keeps reporting this finding as actionable.
 
 | | |
 |---|---|
