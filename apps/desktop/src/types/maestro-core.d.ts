@@ -32,6 +32,8 @@ declare module 'maestro-core' {
   }
 
   export type TaskIntentKind = 'conversation' | 'inspect' | 'execute' | 'modify';
+  export type CapabilityGroup = 'filesystem-read' | 'filesystem-write' | 'shell' | 'web' | 'github-read' | 'github-write' | 'documentation' | 'document-editing';
+  export function classifyToolCapability(tool: string): CapabilityGroup | null;
   export type ChangeKind = 'bugfix' | 'feature' | 'refactor' | 'docs' | 'other';
   export type ExpectedOutcome =
     | { id: string; type: 'answer'; text: string }

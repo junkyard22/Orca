@@ -12,7 +12,7 @@ import { ReactAgentAdapter } from "./ReactAgentAdapter";
 import type { AgentTask } from "./AgentAdapter";
 
 function fakeAdapter() {
-  const complete = vi.fn(async (_r: LLMRequest): Promise<LLMResponse> => ({ text: "FINAL ANSWER:\ndone" }));
+  const complete = vi.fn(async (_r: LLMRequest): Promise<LLMResponse> => ({ content: "FINAL ANSWER:\ndone" }));
   return { adapter: { name: "fake", complete } as unknown as LLMAdapter, complete };
 }
 const task: AgentTask = { intent: "say done", goals: ["say done"], doneCriteria: ["done"] };
@@ -26,6 +26,29 @@ function ctx(lifecycle: TaskLifecycle, gate: { beforeLLMCall: ReturnType<typeof 
 }
 
 describe("worker model dispatch and the task lifecycle", () => {
+  it("does not demand a write or report an incomplete write when no tools were provided", async () => {
+    const { adapter, complete } = fakeAdapter();
+    const lifecycle = new TaskLifecycle({ taskId: "instruction" }); lifecycle.transition("RUNNING", "x");
+    const result = await new ReactAgentAdapter(adapter, "system", "narrator", 4).run(
+      { intent: "Explain how to create example.txt", goals: [], doneCriteria: [] }, [],
+      ctx(lifecycle, { beforeLLMCall: vi.fn(() => ({ allowed: true })) }),
+    );
+    expect(result.stoppedBecause).toBe("done");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(complete.mock.calls)).not.toContain("ACTION REQUIRED");
+  });
+  it("answers a create/list question in one worker call when given zero tools", async () => {
+    const { adapter, complete } = fakeAdapter();
+    const lifecycle = new TaskLifecycle({ taskId: "conversation" });
+    lifecycle.transition("RUNNING", "x");
+    const result = await new ReactAgentAdapter(adapter, "system", "narrator", 4).run(
+      { intent: "How do I create a list in Python?", goals: [], doneCriteria: [] }, [],
+      ctx(lifecycle, { beforeLLMCall: vi.fn(() => ({ allowed: true })) }),
+    );
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.outputText).toBe("done");
+    expect(result.stoppedBecause).toBe("done");
+  });
   it("a running task's model call goes through Miranda's gate and the adapter", async () => {
     const { adapter, complete } = fakeAdapter();
     const gate = { beforeLLMCall: vi.fn(() => ({ allowed: true })) };

@@ -717,8 +717,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       ctx.acceptanceContract ??= buildAcceptanceContract(normalizedTaskSpec, maestroResult.doneCriteria);
       recordTrace("acceptance.contract", ctx.acceptanceContract);
       // The task contract: built once, from Brain's proposal when the decision
-      // carried a valid one, otherwise the fallback. Recorded and returned;
-      // nothing below reads it yet, and a repair pass never rebuilds it.
+      // carried a valid one, otherwise the fallback. The desktop fixes it
+      // before dispatch; legacy adapters still use this post-pass fallback.
       if (!ctx.taskContract) {
         ctx.taskContract = resolveTaskContract(normalizedTaskSpec, maestroResult.metadata, ctx.toolNamesAllowed, workspaceAuthority.status, effectiveWorkspaceRoot, recordTrace);
         recordTrace("task.contract", ctx.taskContract);
@@ -727,7 +727,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
 
       // Detect tools the agent tried to call but weren't available.
-      unknownTools = [
+      unknownTools = maestroResult.metadata?.roleToolNames?.length === 0 ? [] : [
         ...new Set(
           (maestroResult.toolEvents ?? [])
             .filter((e) => !e.ok && typeof e.summary === "string" && e.summary.startsWith("Unknown tool:"))
@@ -899,6 +899,15 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             userFacingText: maestroResult.outputText,
             summary: qcResult.internalSummary,
             artifacts: maestroResult,
+          };
+        } else if (ctx.taskContract?.kind === "conversation" && !ctx.taskContract.kindDisputed) {
+          // D8: ordinary conversation keeps Pappy's failed verdict and findings,
+          // but does not dispatch a repair worker.
+          recordTrace("repair.skipped", { reason: "conversation" });
+          result = {
+            status: "FAIL",
+            userFacingText: maestroResult.outputText,
+            summary: qcResult.internalSummary,
           };
         } else if (
           !qcResult.repairTask &&

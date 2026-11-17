@@ -13,6 +13,33 @@ const task = (request = "Explain the parser"): OrcaTaskSpec => ({
 });
 
 describe("task contract builders", () => {
+  it.each([
+    ["How do I create a list in Python?", false],
+    ["Explain how to fix a failing test.", false],
+    ["Explain how to fix the tests and fix them for me.", true],
+    ["Explain how to fix the tests and update the code for me.", true],
+    ["Explain how to fix the tests.", false],
+    ["Explain how to fix the tests and how to update the code.", false],
+    ["How do I create and modify lists?", false],
+    ["Fix the failing test.", true],
+    ["Can you fix the failing test?", true],
+    ["How do I create a list in Python? Then update src/parse.ts to use one.", true],
+    ["Explain how to fix a failing test, then fix src/parse.ts.", true],
+    ["How do I modify an array? Please change README.md.", true],
+    ["Explain how to fix a failing test and fix src/parse.ts.", true],
+    ["Can you explain how to create a list?", false],
+    ["How do I create and modify lists? Thanks!", false],
+    ["Update src/parse.ts.", true],
+    ["Fix src/parse.ts.", true],
+  ])("disputes requested changes, not instructional verbs: %s", (request, disputed) => {
+    for (const kind of ["conversation", "inspect", "execute"] as const) {
+      const contract = buildTaskContract({ task: task(request), proposal: { kind, needs: ["filesystem-write"] },
+        ceiling: ["filesystem-write"], workspace: "ok" });
+      expect(contract.kindDisputed === true, kind).toBe(disputed);
+      expect(contract.authority.available).not.toContain("filesystem-write");
+      expect(contract.authority.withheld).toContainEqual({ capability: "filesystem-write", reason: "task_kind" });
+    }
+  });
   let root: string;
   let outside: string;
   beforeEach(() => {
