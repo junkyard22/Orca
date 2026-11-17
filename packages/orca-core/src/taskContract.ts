@@ -7,6 +7,7 @@ import { classifyTaskKind } from "@clawde/pappy-core";
 import { buildAcceptanceContract, relatesToRequest } from "./acceptanceContract.js";
 import type { AcceptanceContract } from "./acceptanceContract.js";
 import type { OrcaTaskSpec } from "./types.js";
+import { explicitUserProhibitions } from "./userProhibitions.js";
 
 // Brain's proposal — its shape and its validator — is owned by maestro-core,
 // where Brain's decision is parsed (maestro-core cannot import this package).
@@ -189,7 +190,9 @@ export function buildTaskContract(input: BuildTaskContractInput): TaskContract {
   const changeDirective = /^(?:(?:then|also|please)\s+)*(?:(?:can|could|would|will)\s+you\s+)?(?:fix|correct|update|modify|change|edit|create|add|implement|build|write|remove|delete|replace|refactor)\b/im.test(changeRequest);
   const kindDisputed = proposal.kind !== "modify" && ((classified !== "inspect" && classified !== "other") || changeDirective);
   const needs = [...new Set(proposal.needs ?? [])];
-  const prohibits = [...new Set(proposal.prohibits ?? [])];
+  // Brain's prohibitions are a proposal; the user's explicit ones are not.
+  // The trusted parser can only add to this list, never remove from it.
+  const prohibits = [...new Set([...(proposal.prohibits ?? []), ...explicitUserProhibitions(request)])];
   const authority: ResolvedAuthority = { workspace, available: [], withheld: [] };
   for (const capability of new Set([...needs, ...prohibits, ...(kind === "modify" ? [] : WRITE_CAPABILITIES)])) {
     const reason = prohibits.includes(capability) ? "user_prohibition"

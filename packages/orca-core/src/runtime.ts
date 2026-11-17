@@ -13,6 +13,7 @@ import type {
   OrcaToolEvent,
   OrcaPipelineTrace,
   OrcaPipelineTraceEntry,
+  TaskPermissions,
 } from "./types.js";
 import type { AHPPacket } from "./ahp/types.js";
 import type { PappyResult } from "@clawde/pappy-core";
@@ -21,10 +22,12 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, parse as parsePath, resolve as resolvePath } from "node:path";
 import type { RunRecord } from "./persistence/types.js";
 import { OrcaEmitter } from "./emitter.js";
-import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec } from "./helpers.js";
+import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec, normalizeTaskPermissions } from "./helpers.js";
 import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
+import { userRestrictions } from "./userProhibitions.js";
+import { createUserRestrictionGate } from "./userRestrictionGate.js";
 import { isAbortError, throwIfAborted, untilAborted } from "./abort.js";
 import { WorkspaceProtectedError } from "./workspaceGuard.js";
 import { guardDispatch } from "./dispatchGuard.js";
@@ -240,17 +243,34 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
 
   async function executeTask(
     taskSpec: OrcaTaskSpec,
-    options?: { abortSignal?: AbortSignal },
+    options?: { abortSignal?: AbortSignal; permissionsSource?: "benson"; inferredPermissions?: unknown },
   ): Promise<OrcaExecutionResult> {
     throwIfAborted(options?.abortSignal);
-    const normalizedTaskSpec = normalizeTaskSpec(taskSpec);
-    const taskPermissionGate = normalizedTaskSpec.permissions
+    const callerTaskSpec = normalizeTaskSpec(taskSpec);
+    const inferredPermissions = options?.permissionsSource === "benson" ? normalizeTaskPermissions(options.inferredPermissions) : undefined;
+    if (options?.permissionsSource === "benson" && !inferredPermissions) throw new Error("Trusted Benson permission input is missing or invalid");
+    const callerPermissions = callerTaskSpec.permissions;
+    // The legacy/first-stage task still sees the intersection. Only the
+    // independently supplied inferred gate can later be replaced by Maestro.
+    const normalizedTaskSpec = inferredPermissions ? {
+      ...callerTaskSpec,
+      permissions: callerPermissions ? {
+        fileRead: callerPermissions.fileRead && inferredPermissions.fileRead,
+        fileWrite: callerPermissions.fileWrite && inferredPermissions.fileWrite,
+        shellExec: callerPermissions.shellExec && inferredPermissions.shellExec,
+        networkAccess: !!callerPermissions.networkAccess && !!inferredPermissions.networkAccess,
+        toolsAllowed: callerPermissions.toolsAllowed && inferredPermissions.toolsAllowed
+          ? callerPermissions.toolsAllowed.filter((name) => inferredPermissions.toolsAllowed!.includes(name))
+          : callerPermissions.toolsAllowed ?? inferredPermissions.toolsAllowed,
+      } : inferredPermissions,
+    } : callerTaskSpec;
+    const permissionGate = (permissions: TaskPermissions | undefined) => permissions
       ? createMirandaGate({
           taskPermissions: {
-            fileRead: normalizedTaskSpec.permissions.fileRead,
-            fileWrite: normalizedTaskSpec.permissions.fileWrite,
-            shellExec: normalizedTaskSpec.permissions.shellExec,
-            networkAccess: normalizedTaskSpec.permissions.networkAccess ?? false,
+            fileRead: permissions.fileRead,
+            fileWrite: permissions.fileWrite,
+            shellExec: permissions.shellExec,
+            networkAccess: permissions.networkAccess ?? false,
           },
           connectorTools: deps.connectorTools,
         })
@@ -258,8 +278,16 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     // Miranda's workspace-authority rule goes in front of whatever gates the
     // host and the task bring: a filesystem tool is refused unless the task
     // has a usable, explicitly established workspace. It only ever refuses.
-    const hostAndTaskGate = composeMirandaGates(deps.gate, taskPermissionGate);
-    const effectiveGate = hostAndTaskGate ? composeMirandaGates(createWorkspaceAuthorityGate(), hostAndTaskGate) : undefined;
+    const callerPermissionGate = permissionGate(callerPermissions);
+    const inferredPermissionGate = permissionGate(inferredPermissions);
+    // The user's explicit prohibitions and write scope, read deterministically
+    // from the verbatim request. Refuse-only. It belongs to the host side, so
+    // it survives when Maestro replaces the inferred gate with the contract
+    // gate, and it covers fallback, decomposed and repair work.
+    const userProhibitionGate = createUserRestrictionGate(userRestrictions(callerTaskSpec.originalUserMessage), deps.connectorTools);
+    const hostAndTaskGate = composeMirandaGates(deps.gate, callerPermissionGate, userProhibitionGate, inferredPermissionGate);
+    const hostGate = hostAndTaskGate ? composeMirandaGates(createWorkspaceAuthorityGate(), deps.gate, callerPermissionGate, userProhibitionGate) : undefined;
+    const effectiveGate = hostAndTaskGate ? composeMirandaGates(hostGate, inferredPermissionGate) : undefined;
     const workspaceContext = deps.getWorkspaceContext?.();
     const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec);
     const effectiveWorkspaceRoot = explicitWorkspaceRoot ?? deps.workspaceRoot ?? workspaceContext?.cwd;
@@ -410,6 +438,9 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       workspaceContext: effectiveWorkspaceContext,
       workspaceRoot: effectiveWorkspaceRoot,
       gate: effectiveGate,
+      hostGate,
+      permissionsSource: options?.permissionsSource === "benson" ? "benson" : undefined,
+      taskPermissions: callerPermissions,
       model: deps.model,
       requestToolApproval,
       authorization,

@@ -223,6 +223,19 @@ Supporting Assignment 3 edits include the runtime's D8 and zero-tool unknown-too
 
 **Stop if:** giving the worker a gate that omits the task-permission gate would also drop any check other than Benson's inferred permissions. The composed gate must still contain the workspace-authority gate and the host gate; verify by test, and report if `ctx.gate` carries anything else.
 
+### Approved security clarification (2026-11-17)
+
+The owner approved the Assignment 4 security preflight at `6c04ba3`, with binding decisions that supersede the permissive defaults and provenance assumptions in items 1–4 above. Assignment 4 implementation is authorized; Assignment 5 remains unauthorized.
+
+- The desktop application separates known Benson inference into the runtime invocation's `permissionsSource: "benson"` and `inferredPermissions` inputs. `TaskSpec.permissions` always means explicit caller restrictions. Content, permission-array shape, Cargo attachments and model-writable context cannot establish provenance. The retained `hostGate` includes workspace authority, original host gates and explicit caller restrictions. The full original `ctx.gate` remains available for fallback and legacy callers.
+- Construct the replacement gate before selecting the retained chain. Replace only the inferred gate, only for trusted Benson input and a validated Brain contract. Keep all six host hooks, task/role allowlists, AHP constraints, lifecycle, budgets, approvals and refusal records. Explicitly empty role or task lists deny every tool; omission keeps its existing meaning.
+- `modify` and a declared need never grant a capability. Write eligibility requires modify kind, positive filesystem-write need, the existing role/caller ceiling and no prohibition. Shell requires a positive shell need and its ceiling. Keep the existing confined-read policy and exact-call host-process approvals. A shell is host access and is not an OS sandbox, even when file/network tool flags are false.
+- Narrow both the actual worker tool list and Miranda's `allowedTools`. Classify known local readers, local writers and process tools with the existing execution-authority mapping. An unknown tool or external connector cannot inherit local-read/write/shell authority from a broad capability classifier or alias. Apply the same decision to direct and decomposed workers, model fallback and repairs, retaining the original contract.
+- External connectors require independent, trusted, resource-specific authorization as well as need, attachment, availability and role/caller eligibility. The current application has **no such authorization source**. Brain-contract workers therefore cannot call web, GitHub, mail or other external/unknown connector tools; credentials, loading, attached repositories/URLs and approval prompts are not substitutes. Unclassified process/session metadata tools are also excluded. No new grant source or permission UI is introduced.
+- Delay automatic Cargo resource resolution until the original contract and workspace precheck are fixed. Brain-contract URL fetches fail closed for the same missing authorization source. Preserve existing fallback resolution and connector behavior. Explicit network false survives Cargo enrichment and blocks URL prefetch; explicit file-read false blocks previous-run reads. Resource preparation runs once and its brief is reused in repairs.
+
+These are an atomic desktop migration. Benson inference remains physically intact for fallback, legacy and runner behavior. Miranda's core rules, command policy, Pappy and conversation delivery are unchanged. D8 continues to retain ordinary conversation FAIL and findings while skipping repair. See [implementation evidence and matrix coverage](ORCA_TASK_CONTRACT_ASSIGNMENT_4_IMPLEMENTATION.md).
+
 ---
 
 ## Assignment 5 — Pappy judges the contract **[DESIGN — requires human approval D1]**
@@ -367,7 +380,7 @@ Full register: design §11.
 | ID | Needs product-owner authorization | Until authorized |
 |---|---|---|
 | D1 Pappy contract checks | **Yes** | Do not start assignment 5 |
-| D2 Network / connector default | **Yes** | Keep today's keyword rule for `networkAccess` (assignment 4, item 1) |
+| D2 Network / connector default | Approved for Assignment 4 desktop Brain path, 2026-11-17 | Require trusted resource-specific authorization; absent source fails closed. Fallback/legacy/runner inference remains. |
 | D3 Remove keyword audit trigger | **Yes** | Skip assignment 1b |
 | D8 No repair for `conversation` | **Yes** | Leave repair as it is (assignment 3, item 2) |
 | D4 Conversation answers skip the rewrite | No — proceed | — |

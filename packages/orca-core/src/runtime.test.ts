@@ -110,6 +110,54 @@ function createTaskSpec(overrides: Partial<OrcaTaskSpec> = {}): OrcaTaskSpec {
   };
 }
 
+describe("trusted permission provenance and retained host boundary", () => {
+  it("rejects missing trusted inference before any worker execution", async () => {
+    const maestro = createMockMaestro("answer");
+    const run = vi.spyOn(maestro, "run");
+    const runtime = createOrcaRuntime({ maestro, llm: createMockLLM() });
+    await expect(runtime.executeTask(createTaskSpec(), { permissionsSource: "benson" })).rejects.toThrow("Trusted Benson permission input is missing or invalid");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("does not activate trusted provenance from inferred flags alone", async () => {
+    let seen: Parameters<MaestroPort["run"]>[1] | undefined;
+    const runtime = createOrcaRuntime({ llm: createMockLLM(), maestro: { run: async (_task, ctx) => {
+      seen = ctx; return { outputText: "answer" };
+    } } });
+    await runtime.executeTask(createTaskSpec({ permissions: ["read"] as never }), { inferredPermissions: ["read", "write", "shell", "network"] });
+    expect(seen?.permissionsSource).toBeUndefined();
+    expect(seen?.taskPermissions?.fileWrite).toBe(false);
+    expect(seen?.gate?.beforeToolRun({ tool: "write_file", args: { path: "README.md", content: "x" } }).allowed).toBe(false);
+  });
+  it.each(["beforeLLMCall", "afterLLMCall", "beforeToolRun", "afterToolRun", "beforeQC", "afterQC"] as const)("retains the original host %s hook in the separated gate", async (hook) => {
+    const host = createMirandaGate();
+    const deny = vi.spyOn(host, hook).mockReturnValue({ allowed: false, reason: "original host refusal" });
+    let seen: Parameters<MaestroPort["run"]>[1] | undefined;
+    const runtime = createOrcaRuntime({ gate: host, llm: createMockLLM(), maestro: { run: async (_task, ctx) => {
+      seen = ctx;
+      return { outputText: "answer" };
+    } } });
+    await runtime.executeTask(createTaskSpec({ permissions: { fileRead: true, fileWrite: false, shellExec: false } }), { permissionsSource: "benson", inferredPermissions: ["read"] });
+    expect(seen).toBeDefined();
+    const probe = { tool: "unclassified_probe", args: {}, stage: "probe", model: "fake", budgetUsed: 0, budgetLimit: Infinity };
+    const result = (seen.hostGate![hook] as (...args: any[]) => { allowed: boolean })(probe, { ok: true }, { ok: true });
+    expect(result.allowed).toBe(false);
+    expect(deny).toHaveBeenCalled();
+    expect(seen.permissionsSource).toBe("benson");
+  });
+
+  it("does not infer provenance from arrays or model-writable context", async () => {
+    let seen: Parameters<MaestroPort["run"]>[1] | undefined;
+    const runtime = createOrcaRuntime({ gate: createMirandaGate(), llm: createMockLLM(), maestro: { run: async (_task, ctx) => {
+      seen = ctx; return { outputText: "answer" };
+    } } });
+    await runtime.executeTask(createTaskSpec({ permissions: ["read"] as never, context: { permissionsSource: "benson", hostGate: { allowed: true } } }));
+    expect(seen?.permissionsSource).toBeUndefined();
+    expect(seen?.taskPermissions).toMatchObject({ fileWrite: false, shellExec: false, networkAccess: false });
+    expect(seen?.gate?.beforeToolRun({ tool: "write_file", args: { path: "README.md", content: "x" } }).allowed).toBe(false);
+  });
+});
+
 function createAbortError(message = "Stopped."): Error {
   const error = new Error(message);
   error.name = "AbortError";

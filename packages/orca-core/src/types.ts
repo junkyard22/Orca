@@ -326,6 +326,12 @@ export interface OrcaRunCtx {
    * must invoke before_llm_call and after_llm_call around the provider call.
    */
   gate?: MirandaGate;
+  /** Host/workspace gates before inferred task restrictions. Never read from task content. */
+  hostGate?: MirandaGate;
+  /** Set only by the trusted application invocation, never by task/context/model data. */
+  permissionsSource?: "benson";
+  /** Explicit normalized caller limits, always retained when inferred restrictions are replaced. */
+  taskPermissions?: TaskPermissions;
   /**
    * Model ID the LLM service is targeting (e.g. "deepseek/deepseek-chat").
    * Used by the agent loop to populate LLMCallGateContext for before_llm_call.
@@ -519,7 +525,8 @@ export interface OrcaRuntimeDeps {
 export interface OrcaRuntime {
   executeTask(
     taskSpec: OrcaTaskSpec,
-    options?: { abortSignal?: AbortSignal },
+    /** Application-only inference channel. TaskSpec.permissions always remains an explicit caller limit. */
+    options?: { abortSignal?: AbortSignal; permissionsSource?: "benson"; inferredPermissions?: unknown },
   ): Promise<OrcaExecutionResult>;
   /** Subscribe to internal progress events. Returns an unsubscribe fn. */
   on(eventType: OrcaEventType, handler: (e: OrcaEvent) => void): () => void;

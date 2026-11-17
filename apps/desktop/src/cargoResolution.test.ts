@@ -28,6 +28,27 @@ function manifestWithResources() {
 }
 
 describe('Cargo resource resolution', () => {
+  it('does not load previous runs across an explicit file-read denial', async () => {
+    const getPreviousRun = vi.fn(async () => ({ id: 'run-1', intent: 'Earlier task', status: 'SUCCESS', outputText: 'private' }));
+    const result = await resolveCargoResources(manifestWithResources(), {
+      enabled: true, fileReadsDenied: true, contractSource: 'brain', allToolNames: [],
+      fetchUrl: vi.fn(), getPreviousRun, completeSummary: vi.fn(async () => '{}'),
+    });
+    expect(getPreviousRun).not.toHaveBeenCalled();
+    expect(result.resolvedCount).toBe(0);
+  });
+  it.each([
+    { contractSource: 'brain' as const, networkDenied: false },
+    { contractSource: 'fallback' as const, networkDenied: true },
+  ])('does not fetch URLs without independent authority or across an explicit denial: %j', async (policy) => {
+    const fetchUrl = vi.fn(async () => ({ ok: true, output: 'unauthorized' }));
+    const result = await resolveCargoResources(manifestWithResources(), {
+      enabled: true, allToolNames: ['web_fetch'], fetchUrl,
+      getPreviousRun: vi.fn(async () => null), completeSummary: vi.fn(async () => '{}'), ...policy,
+    });
+    expect(fetchUrl).not.toHaveBeenCalled();
+    expect(result.resolvedCount).toBe(0);
+  });
   it('describes the loaded tools behind an attached connector', () => {
     expect(connectorCapabilityLines(manifestWithResources(), [
       'github_list_issues',

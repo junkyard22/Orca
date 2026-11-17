@@ -14,11 +14,53 @@
  * edit it attempted was refused. Routing had been taught the difference in
  * phase 5 (`requestsChanges`); this second copy of the rule had not.
  */
-import type { AHPPacket, OrcaTaskSpec } from "@clawde/orca-core";
+import type { AHPPacket, OrcaTaskSpec, TaskContract } from "@clawde/orca-core";
 import { appendAHPTrace, AHPVerdict } from "@clawde/orca-core";
 import { createMirandaGate } from "@clawde/miranda-core";
 import type { MirandaGate } from "@clawde/miranda-core";
 import { requestsChanges } from "./routingPolicy";
+import { classifyTool } from "./toolAuthorization";
+import { classifyToolCapability } from "maestro-core";
+import type { RoleName } from "maestro-core";
+
+export function buildRoleStaticAllowLists(roles: Record<string, { toolsAllowed?: string[] } | undefined>): Map<RoleName, Set<string>> {
+  const lists = new Map<RoleName, Set<string>>();
+  for (const [role, entry] of Object.entries(roles)) {
+    if (entry?.toolsAllowed !== undefined) lists.set(role as RoleName, new Set(
+      Array.isArray(entry.toolsAllowed) ? entry.toolsAllowed.filter((name) => typeof name === "string") : [],
+    ));
+  }
+  return lists;
+}
+
+/** Needs only narrow a host/caller ceiling; they never grant one. */
+export function taskPermissionsForContract(contract: TaskContract) {
+  const eligible = (capability: "filesystem-write" | "shell") => contract.needs.includes(capability) &&
+    contract.authority.available.includes(capability) && !contract.prohibits.includes(capability);
+  return {
+    fileRead: contract.kind !== "conversation" && !contract.prohibits.includes("filesystem-read"),
+    fileWrite: contract.kind === "modify" && eligible("filesystem-write"),
+    shellExec: contract.kind !== "conversation" && eligible("shell"),
+    // No trusted resource-specific connector authorization source exists.
+    // Loading, credentials, attachment and a proposed need are not grants.
+    networkAccess: false,
+  };
+}
+
+/** Authoritative per-tool narrowing also covers classifier disagreements. */
+export function contractToolNames(names: string[], permissions: ReturnType<typeof taskPermissionsForContract>, contract: TaskContract, serverIds: readonly string[] = []): string[] {
+  return names.filter((name) => {
+    const capability = classifyToolCapability(name);
+    if (capability && contract.prohibits.includes(capability)) return false;
+    switch (classifyTool(name, serverIds)) {
+      case "workspace_read": return permissions.fileRead;
+      case "workspace_write": return permissions.fileWrite;
+      case "shell_policy":
+      case "process_exec": return permissions.shellExec;
+      default: return false;
+    }
+  });
+}
 
 /** The objective text describes running a build, test or lint pipeline. */
 export function isCommandExecutionObjective(objective: string): boolean {
