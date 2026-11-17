@@ -73,6 +73,15 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
       return result.followUpQuestion;
     }
 
+    if (result.contract?.kind === "conversation" && !result.contract.kindDisputed) {
+      if (result.status === "FAIL") {
+        return [result.userFacingText ?? "", "This answer was not verified.",
+          ...(result.qcResult?.issues?.map((issue) => issue.description) ?? [result.summary ?? "Verification failed."])]
+          .filter(Boolean).join("\n\n");
+      }
+      return `${result.userFacingText ?? ""}\n\nAnswered without reading any files.`;
+    }
+
     const chat = historyToMessages(history);
 
     const facts = result.hostRecord?.available ? result.hostRecord.text : undefined;

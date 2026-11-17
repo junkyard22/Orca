@@ -28,6 +28,8 @@ export interface ExecutionResult {
   summary?: string;
   artifacts?: unknown;
   followUpQuestion?: string;
+  contract?: { kind: string; kindDisputed?: boolean };
+  qcResult?: { issues?: Array<{ description: string }> };
   /** What the host recorded the task doing (changes, who made them, tests on which source). */
   hostRecord?: { available?: boolean; text?: string };
 }

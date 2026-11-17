@@ -1121,7 +1121,7 @@ export class ReactAgentAdapter implements AgentAdapter {
               /\b(analyz|investigat|examin|read|list|search|find|save|write|creat)\w*/i.test(allTaskText) ||
               /\b\w+\.\w{2,5}\b/.test(allTaskText)
             );
-            if (taskImpliesToolUse && cumulativeToolCallCount === 0) {
+            if (tools.length > 0 && taskImpliesToolUse && cumulativeToolCallCount === 0) {
               messages.push({
                 role: "user",
                 content:
@@ -1135,7 +1135,7 @@ export class ReactAgentAdapter implements AgentAdapter {
             }
             const taskImpliesFileSave = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskText);
             const writeFileCalled = toolsUsed.some((e) => isWriteToolName(e.tool)) || filesChanged.length > 0;
-            if (taskImpliesFileSave && !writeFileCalled) {
+            if (tools.length > 0 && taskImpliesFileSave && !writeFileCalled) {
               lastRejectedFinalAnswer = finalAnswer;
               messages.push({
                 role: "user",

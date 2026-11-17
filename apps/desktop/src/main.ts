@@ -22,7 +22,7 @@ import {
   parseCargoSyntax,
 } from "@clawde/benson-core";
 import type { CargoSlashCommand } from "@clawde/benson-core";
-import { createMirandaGate, KNOWN_ANTHROPIC_MODELS } from "@clawde/miranda-core";
+import { createMirandaGate, KNOWN_ANTHROPIC_MODELS, assessWorkspaceRoot, WORKSPACE_REQUIRED_PREFIX } from "@clawde/miranda-core";
 import type { LLMAdapter, LLMMessage as Message } from "@clawde/miranda-core";
 import {
   createOrcaRuntime,
@@ -36,6 +36,8 @@ import {
   AHPVerdict,
   deriveFilesChangedFromToolEvents,
   SqliteStore,
+  buildTaskContract,
+  buildFallbackContract,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -57,6 +59,7 @@ import type { ClaireMessage } from "@clawde/claire-core";
 import { verificationGuidance } from "./verificationGuidance";
 import {
   createMaestroCore,
+  classifyToolCapability,
   getRolePrompt,
   BRAIN_DECOMPOSE_SYSTEM,
   parseBrainDecision,
@@ -687,7 +690,7 @@ async function brainRoute(
 // Tier 3: RoleAgentAdapter (role-aware wrapper)
 
 
-function buildMaestroAdapter(
+export function buildMaestroAdapter(
   /** Per-role LLM adapters. Falls back to ctx.llm (brain) when a role has no dedicated entry. */
   configuredAdapters: Map<RoleName, LLMAdapter>,
   availableTools: AgentTool[],
@@ -968,7 +971,7 @@ function buildMaestroAdapter(
     }
 
     const { agent, selectedModelId } = selectAgentForRole(role, ctx);
-    const taskTools = selectToolsForRole(ctx, role);
+    const taskTools = ctx.taskContract?.kind === "conversation" ? [] : selectToolsForRole(ctx, role);
     if (taskTools.length === 0) {
       logger.warn(`[Maestro] WARNING: No tools passed to ${role} agent — tool calls will not be available`);
     }
@@ -1333,6 +1336,31 @@ function buildMaestroAdapter(
             decision: { routing: "direct", role: repairOriginalRole },
           }
         : await brainRoute(routingSourceTask, ctx, roleAdapters);
+
+      // Fix the original request's contract before any worker can run. Repairs
+      // reuse this object; their instructions are never a contract input.
+      if (!ctx.taskContract && task.intent !== "repair") {
+        const roles = routing.path === "direct" ? [routing.role] : routing.departments.map((department) => department.head as RoleName);
+        const ceiling = [...new Set(roles.flatMap((role) => selectToolsForRole(ctx, role))
+          .map((tool) => classifyToolCapability(tool.name)).filter((capability) => capability !== null))];
+        const root = ctx.workspaceRoot ?? workspaceRoot;
+        const workspace = assessWorkspaceRoot(root);
+        const manifest = task.context?.contextManifest as ContextManifest | undefined;
+        ctx.taskContract = routing.contractProposal
+          ? buildTaskContract({ task, proposal: routing.contractProposal, ceiling, workspace: workspace.status, workspaceRoot: root,
+              attachedFiles: Boolean(manifest?.files?.length || manifest?.workspace?.repository) })
+          : buildFallbackContract(task, workspace.status, ceiling);
+        ctx.recordTrace?.("task.contract", ctx.taskContract);
+      }
+
+      if (ctx.taskContract?.evidence.workspace && ctx.taskContract.authority.workspace !== "ok") {
+        return {
+          outputText: "",
+          toolEvents: [{ tool: "workspace_precheck", ok: false,
+            summary: `${WORKSPACE_REQUIRED_PREFIX}${assessWorkspaceRoot(ctx.workspaceRoot ?? workspaceRoot).message}` }],
+          doneCriteria: routing.doneCriteria,
+        };
+      }
 
       // Dewey brief — inject user context into the pipeline event stream.
       // Skip on repair passes: tone preferences don't change between attempts.

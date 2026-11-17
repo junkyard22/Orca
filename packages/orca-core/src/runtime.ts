@@ -900,6 +900,15 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
             summary: qcResult.internalSummary,
             artifacts: maestroResult,
           };
+        } else if (ctx.taskContract?.kind === "conversation" && !ctx.taskContract.kindDisputed) {
+          // D8: ordinary conversation keeps Pappy's failed verdict and findings,
+          // but does not dispatch a repair worker.
+          recordTrace("repair.skipped", { reason: "conversation" });
+          result = {
+            status: "FAIL",
+            userFacingText: maestroResult.outputText,
+            summary: qcResult.internalSummary,
+          };
         } else if (
           !qcResult.repairTask &&
           !maestroResult.ahpPacket?.repairPrompt &&
