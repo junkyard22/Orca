@@ -5,9 +5,27 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-11-17 (PR #112 coordinated-request review correction implemented; awaiting final review) / **Machine:** Windows, Node 24.11.1 / pnpm 10.30.2 / **By:** Codex
+**Last updated:** 2026-11-17 (PR #112 merged and post-merge CI verified; Assignment 4 security preflight only, awaiting review) / **Machine:** Windows, Node 24.11.1 / pnpm 10.30.2 / **By:** Codex
 
 ---
+
+## Current handoff: Assignment 3 merged; Assignment 4 preflight only
+
+- Owner authorized a merge commit for PR #112 pinned to reviewed head `d225975b9300ba6c2e6c55dd7a2f455167b57051`. GitHub merged it as `3cc27eb5867b0716e4d0c04c65548f79d40c654d`, with parents `af035c82a3aecefc7f02de4bbf6577350d176f37` and the exact approved head. Git confirms approved-head ancestry, identical full tree `c0f84cdd65c367e4d13aa54620ac48202d608b0d`, and empty `git diff d225975 3cc27eb`.
+- **Post-merge verification:** push CI [44130409187](https://github.com/junkyard22/Orca/actions/runs/44130409187) passed both Build & Test and Dependency Audit, including strict contract check, builds, typechecks and repository tests. Push Secret Scan [44130408987](https://github.com/junkyard22/Orca/actions/runs/44130408987) passed. Verified these runs belong to the merge SHA and `push` event using read-only GitHub CLI because the connector workflow lookup filters PR-triggered runs. Individual jobs/steps were also inspected through the connector.
+- Fetched and fast-forwarded local `main` to `origin/main` at `3cc27eb`. Created a separate `codex/task-contract-assignment-4-preflight` documentation worktree from that baseline; all previous worktrees are preserved (eight total). The owner confirmed the handoff on merged main is the authoritative corrected version.
+- **Preflight artifact:** [Assignment 4 security preflight](docs/ORCA_TASK_CONTRACT_ASSIGNMENT_4_SECURITY_PREFLIGHT.md) traces Benson arrays, Cargo enrichment, normalization, runtime/host/workspace gates, role ceilings, AHP constraints, Miranda checks, approvals and final tool dispatch, including alternate resource/shared-loop/runner paths. It contains an implementation sequence and regression-test matrix for review; none of those new tests or permission changes is implemented.
+- **Findings requiring preflight review:** distinguish trusted inferred-permission provenance from explicit structured restrictions; replace permissive missing-needs defaults with positive write/shell/external eligibility; preserve complete connector identity and classification; retain explicit network denials across Cargo; keep exact-call host-process approvals and acknowledge shell is unconfined; resolve the handoff's `ctx.gate` versus retained-host composition. Unknown classification and empty role allowlists require explicit fail-closed decisions. Physical inference deletion remains Assignment 8.
+- **Existing baseline tests actually run this session:** desktop authorization/constraints/verified execution/integrity/approval/contract routing: 120 passed (6 files); core helpers/runtime/authorization/tool filter: 70 passed (4 files); Miranda gate/workspace/MCP argument checks: 104 passed / 3 Windows EPERM symlink setup failures at unchanged `mcpArguments.test.ts:108,116,123` (3 files, 107 cases). These ran from preserved `d225975`, whose tracked source tree equals the merged baseline. No policy assertion failed; no test was changed or skipped to hide those setup failures. Gate-only classification probes made no model, tool, process or network execution.
+- Contract check on the clean merged baseline was CLEAR. Documentation-only strict check and whitespace validation are run before committing this record. No production code, test source, permission behavior, Miranda, Pappy, lockfile, deployment or release changed. Assignment 4 implementation is explicitly withheld until this preflight is reviewed.
+
+| Current branch/ref | Head | Pushed? | Status |
+|---|---|---|---|
+| `main` / `origin/main` | `3cc27eb` | matches remote | Approved Assignment 3 merge; all post-merge jobs green. |
+| `codex/task-contract-assignment-3` | `d225975` | yes | Preserved reviewed source; PR #112 merged. |
+| `codex/task-contract-assignment-4-preflight` | `3cc27eb` plus this documentation commit | pushed before final handoff | Plan and state only; no Assignment 4 implementation. |
+
+The sections below preserve the earlier review/implementation history; the table above supersedes their branch and pending-CI statements.
 
 ## PR #112 review correction (2026-11-17, Codex / Windows)
 
@@ -382,6 +400,8 @@ Design only — nothing here is implemented. `docs/ORCA_TASK_CONTRACT_DESIGN.md`
 
 ## Outstanding problems
 
+- **Assignment 4 security preflight awaits owner review.** See the current handoff and dedicated matrix above. Do not remove inferred permission behavior or implement the worker authority replacement before that review. PR #112 itself is merged and post-merge green.
+
 - **Task contracts, after Assignment 2:** (1) `contract.acceptance` holds the user goals only, while `ctx.acceptanceContract` (what Pappy judges) also includes Brain's related criteria — assignment 0's `buildTaskContract` has no input for them. Left as is; reconcile in assignment 5. (2) The routing prompt grew by ≈558 tokens per task, not the estimated 250–350; no measurement against a live model was made. (3) `buildFallbackContract` takes no workspace root, so a fallback contract does not apply the kind floor for paths that exist — it already defaults to `inspect` or `modify`, never `conversation`. (4) The desktop wiring in `main.ts` is covered by source assertions only. (5) The runner CLI passes no proposal yet (assignment 8).
 - **Baseline Windows validation limitation:** the same two `toolFilesystemEvidence.test.ts` cases fail before assertions with symlink-creation `EPERM` (lines 67 and 183), previously reproduced on baseline `0fe3828` and outside the sandbox. Recurred in Assignment 1b's full orca-core suite; no new package-test failure. Merged main's Linux CI passes their 13-case file. No test was weakened or skipped.
 - **Assignment 2 package-direction blocker:** handoff behavior 1 requires Maestro `parseBrainDecision` to call `validateContractProposal`, currently exported only by orca-core. Maestro has no runtime dependency on orca-core; orca-core already depends on and references maestro-core, and taskContract.ts imports its runtime `isCapabilityGroup`. Adding the reverse dependency creates a cycle and requires package/lockfile changes forbidden by handoff rule 4. A source-relative import crosses both composite rootDir boundaries; Maestro emits CommonJS while orca-core is ESM. No approved shared validator or injection seam is specified. Handoff rule 10 requires stopping rather than choosing a replacement design. No tests or implementation changed; a corrected handoff is needed. Assignment 1b Rule 5 review is closed by explicit owner acceptance, with the original warning preserved.
@@ -565,6 +585,8 @@ Previous session results retain their original attribution below.
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-11-17 (PR #112 merge / Assignment 4 security preflight, Codex / Windows)** - Merged exact approved `d225975` using merge commit `3cc27eb`; parent/ancestry/tree equality and all-green post-merge push CI verified. Prepared documentation-only authorization trace, implementation plan and regression matrix on a fresh preflight branch. Existing desktop/core security selections: 120/70 passed; Miranda 104 passed / 3 Windows symlink EPERM setup failures. No permission behavior, Assignment 4 implementation, deployment or release.
+
 - **2026-11-17 (PR #112 review correction, Codex / Windows)** - Reproduced both coordinated explicit-request misses first (2 failed / 45 passed), then narrowed the clause split to retain `for me` actions while preserving instructional guards. Targeted core 136 passed; full core 510 passed / 2 known Windows EPERM failures; desktop guards 22 passed. Builds/types/scripts/strict contract CLEAR. Only builder/tests/state changed; PR #112 updated for final review. No Assignment 4 or merge.
 
 - **2026-11-17 (Assignment 3 completed, Codex / Windows)** - Owner approved Option 2 dispute clarification. Regression-first builder correction plus pre-worker contract, tool-less conversation/direct delivery, workspace precheck and D8 preserving FAIL/findings. Desktop 409 passed / 1 skipped; Claire 9 passed; core 505 passed / 2 known Windows EPERM failures, with transient timeout cleared by full rerun. Builds/types/scripts/strict contract CLEAR. PR #112 updated for review; no Assignment 4, merge, deployment or release.
@@ -582,5 +604,3 @@ Previous session results retain their original attribution below.
 - **2026-11-16 (PR #108 narrow corrections)** (Windows, Codex) — Regression-first fixes to inspection evidence and absolute-path kind floor on the existing Assignment 0 branch. Targeted 79/79 (21 added); full orca-core 479 passed / same 2 baseline EPERM setup failures. Builds/types/scripts/strict contract and built-export smoke pass. Only four builder/test files plus state changed. PR description will track new-head CI. No Miranda, routing, protection, merge, deployment or Assignment 1 changes.
 
 - **2026-11-16 (Codex Assignment 0)** (Windows, Codex) — Owner approved FAIL precedence; corrected section 5.8, added pure contract/delivery builders and exports with regression-first tests (58 passed), committed and pushed as `1f92b41`. Workspace build/types/scripts, built-export smoke and strict contract check pass. Full orca-core suite: 458 passed, 2 existing symlink EPERM failures, reproduced on untouched `0fe3828` and outside sandbox. No existing tests, runtime call sites or Miranda boundaries changed. Assignment 1 not started; no PR, merge or deployment. Full validation remains blocked by Windows symlink support.
-
-- **2026-11-16 (Codex Assignment 0 preflight)** (Windows, Codex) - Fetched origin; verified local/remote main divergence, all security ancestry through `9da0cde`, design `0fe3828`, merged PR #107 and no open PRs. Created an isolated branch/worktree from design tip, installed offline and obtained contract CLEAR. Stopped before code on section 5.8 conversation/FAIL conflict; only this state record changed. Original checkout preserved; no merge or deployment.
