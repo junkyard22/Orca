@@ -35,6 +35,21 @@ New executor tests use real runtime/Maestro/worker dispatch, real Miranda and ex
 
 Observed red phases before the corresponding implementation: inspect MCP write changed the real file; positive trusted write was still blocked by inference; an empty role list allowed a write; explicit network false was replaced during enrichment; Brain/explicit-denial URL fetches ran; preparation timing violated fixed-contract/workspace ordering; and separate caller/inferred plus fallback regressions failed 2/36 before the provenance API correction. No existing security assertion was weakened.
 
+## Security review Finding 1 — explicit user prohibitions (reviewed head `07e893d`)
+
+**Defect.** On the Brain path the worker gate replaced Benson's inferred gate with the contract gate, and the contract's `prohibits` came only from Brain's proposal. An explicit user restriction therefore depended on Brain reproducing it. With "Explain how to correct the bug, but do not modify any files." and a Brain proposal of `{kind:"modify", needs:["filesystem-write"], prohibits:[]}`, a real write executed. Benson's keyword inference reads "modify" as a write grant, so the fallback path wrote as well.
+
+**Correction (narrowing only).** `orca-core/src/userProhibitions.ts` is a deterministic parser over the verbatim request. It returns only capabilities to withhold (`filesystem-write`, `shell`) and has no grant path. It recognises only whole-capability prohibitions whose object ends the phrase. Object-specific ("don't modify the tests") and exception-scoped ("other than README.md") wording is not treated as a blanket prohibition. A later "go ahead" does not lift a prohibition. The result is applied twice:
+
+1. `buildTaskContract` unions it into `prohibits`. Withheld authority then records `user_prohibition`, and the existing `taskPermissionsForContract`/`contractToolNames` narrowing removes the tools. Brain cannot remove an entry. The contract is frozen and reused by decomposed and repair workers.
+2. The runtime builds a refuse-only Miranda task-permission gate from it and composes it into both the retained host chain (`hostGate`) and the full gate. It therefore survives inference replacement and covers fallback, decomposed and repair work. All other flags stay open, so it adds no refusal the user did not ask for.
+
+Host gates, explicit caller denials, workspace authority, AHP and exact-call approval are unchanged. Removing either layer fails tests: without the contract union the contract misreports authority; without the gate the fallback path writes.
+
+**Tests (failing before / passing after).** `contractAuthority.test.ts` has 10 new integration cases on the real runtime, Maestro, Miranda and core tools. Before the fix: **6 failed / 4 passed**, and in four of the failures the real `README.md` was rewritten. After the fix: **10/10**. Cases: no-write vs Brain modify+write; no-execute vs Brain execute+shell, with approval pre-granted, where neither a write-capable process nor a confined read runs and approval is never requested; no-write followed by an unrelated how-to question; decomposed workers; a real Pappy repair pass; the fallback path; three ordinary authorized writes, which still succeed; and host/caller denials preserved. `userProhibitions.test.ts` (33) covers positive phrasings, false-positive guards and contract merging, including the fallback contract.
+
+**Residual, for owner decision.** A no-write prohibition does not also withhold shell. A shell command that the contract permits still requires exact-call user approval, but once approved it is host access and can modify files. Making "no writes" imply "no shell" would block approved diagnostic commands, so it is left as an owner decision rather than changed unilaterally.
+
 ## Validation
 
 Local Windows results are recorded in `PROJECT_STATE.md`; the separate PR records exact-head CI. Known unchanged symlink tests require Windows privileges unavailable here and fail with EPERM during setup. They remain enabled, with Linux CI responsible for their assertions. No lockfile, Benson, runner, Pappy, Miranda, command-policy or permission UI change is included. No Assignment 5, merge, deployment or release is authorized by this work.

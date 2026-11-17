@@ -284,6 +284,104 @@ describe("contract authority at the real runtime/desktop execution boundary", ()
     expect(readFileSync(join(h.root, "README.md"), "utf8")).toBe("corrected\n");
     expect(h.executed).toEqual(["write_file"]);
   });
+  describe("explicit user prohibitions survive an over-broad Brain proposal (PR #113 Finding 1)", () => {
+    const NO_WRITE = "Explain how to correct the bug, but do not modify any files.";
+    const NO_SHELL = "Don't execute commands. Explain why the tests fail.";
+    const shellWrite = 'node -e "require(\'fs\').writeFileSync(\'shell.txt\',\'bad\')"';
+    const writeCalls: Call[] = [
+      { tool: "write_file", path: "README.md", content: "bad" },
+      { tool: "desktop-commander_write_file", path: "README.md", content: "bad" },
+      { tool: "desktop-commander_edit_block", path: "README.md", content: "bad" },
+    ];
+    const unchanged = (h: ReturnType<typeof harness>) => {
+      expect(readFileSync(join(h.root, "README.md"), "utf8")).toBe("original\n");
+      for (const tool of ["write_file", "desktop-commander_write_file", "desktop-commander_edit_block"]) {
+        expect(h.executed).not.toContain(tool);
+      }
+    };
+
+    it("a no-write instruction holds when Brain proposes modify + filesystem-write", async () => {
+      const h = harness({ kind: "modify", needs: ["filesystem-write"], prohibits: [] }, writeCalls);
+      const result = await h.run(NO_WRITE);
+      expect(result.contract?.source).toBe("brain");
+      expect(result.contract?.prohibits).toContain("filesystem-write");
+      expect(result.contract?.authority.available).not.toContain("filesystem-write");
+      expect(result.contract?.authority.withheld).toContainEqual({ capability: "filesystem-write", reason: "user_prohibition" });
+      unchanged(h);
+    });
+
+    it("a no-execute instruction holds when Brain proposes execute + shell, even if the user would approve", async () => {
+      const h = harness({ kind: "execute", needs: ["shell"] }, [
+        { tool: "run_command", command: shellWrite },
+        { tool: "shell", command: shellWrite },
+        { tool: "desktop-commander_start_process", command: shellWrite },
+        { tool: "run_command", command: process.platform === "win32" ? "type README.md" : "cat README.md" },
+      ]);
+      h.approve.mockResolvedValue(true);
+      const result = await h.run(NO_SHELL);
+      expect(result.contract?.prohibits).toContain("shell");
+      expect(h.approve).not.toHaveBeenCalled();
+      expect(h.executed).toEqual([]);
+      expect(existsSync(join(h.root, "shell.txt"))).toBe(false);
+    });
+
+    it("a no-write instruction still holds when followed by an unrelated instructional question", async () => {
+      const h = harness({ kind: "modify", needs: ["filesystem-read", "filesystem-write"] }, writeCalls);
+      await h.run("Do not modify any files. How do I add a new section to README.md?");
+      unchanged(h);
+    });
+
+    it("holds for every decomposed worker", async () => {
+      const h = harness({ kind: "modify", needs: ["filesystem-write", "shell"] }, [...writeCalls, { tool: "run_command", command: shellWrite }], { decompose: true });
+      h.approve.mockResolvedValue(true);
+      await h.run("Describe the project, but don't change any files and don't run any commands.");
+      expect(h.requests.length).toBeGreaterThanOrEqual(2);
+      unchanged(h);
+      expect(existsSync(join(h.root, "shell.txt"))).toBe(false);
+      expect(h.approve).not.toHaveBeenCalled();
+    });
+
+    it("holds through a real Pappy repair pass", async () => {
+      const h = harness({ kind: "modify", needs: ["filesystem-read", "filesystem-write"] }, [
+        { tool: "read_file", path: "README.md" }, undefined as never, ...writeCalls,
+      ], { qc: true });
+      const result = await h.run(NO_WRITE);
+      expect(h.contexts).toHaveLength(2);
+      expect(h.contexts[1].taskContract).toBe(result.contract);
+      expect(h.executed).toEqual(["read_file"]);
+      unchanged(h);
+    });
+
+    it("holds on the fallback path, where Benson's keyword inference reads 'modify' as a write grant", async () => {
+      const h = harness({ kind: "modify", needs: ["filesystem-write"] }, writeCalls, { fallback: true });
+      const result = await h.run(NO_WRITE);
+      expect(result.contract?.source).toBe("fallback");
+      unchanged(h);
+    });
+
+    it.each([
+      "Correct the typo in README.md",
+      "Fix the typo in README.md, but don't modify the tests.",
+      "Do not modify any files other than README.md. Correct the typo there.",
+    ])("ordinary authorized writes still work: %s", async (message) => {
+      const h = harness({ kind: "modify", needs: ["filesystem-write"] }, [{ tool: "write_file", path: "README.md", content: "corrected\n" }], { permissions: ["read"] });
+      const result = await h.run(message);
+      expect(result.contract?.prohibits).not.toContain("filesystem-write");
+      expect(readFileSync(join(h.root, "README.md"), "utf8")).toBe("corrected\n");
+      expect(h.executed).toEqual(["write_file"]);
+    });
+
+    it("preserves host and caller denials alongside the trusted restriction", async () => {
+      const host = createMirandaGate({ allowedTools: ["read_file"] });
+      const h = harness({ kind: "execute", needs: ["filesystem-read", "shell"] }, [{ tool: "read_file", path: "README.md" }, { tool: "run_command", command: shellWrite }], {
+        hostGate: host, explicitPermissions: { fileRead: false, fileWrite: true, shellExec: true, networkAccess: false },
+      });
+      await h.run(NO_SHELL);
+      expect(h.executed).toEqual([]);
+      expect(h.approve).not.toHaveBeenCalled();
+    });
+  });
+
   it("refuses MCP writes for inspect even when inferred flags allowed writes (T1)", async () => {
     const h = harness({ kind: "inspect", needs: ["filesystem-read"] }, [{ tool: "desktop-commander_write_file", path: "README.md", content: "bad" }]);
     await h.run();

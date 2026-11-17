@@ -26,6 +26,7 @@ import { buildPappyInput, normalizeMaestroResult, normalizeTaskSpec, normalizeTa
 import { formatProjectAuditResult, isProjectAuditTask, runProjectAudit } from "./audit/index.js";
 import type { ProjectAuditResult } from "./audit/index.js";
 import { handleRepairLoop } from "./repairLoop.js";
+import { explicitUserProhibitions } from "./userProhibitions.js";
 import { isAbortError, throwIfAborted, untilAborted } from "./abort.js";
 import { WorkspaceProtectedError } from "./workspaceGuard.js";
 import { guardDispatch } from "./dispatchGuard.js";
@@ -278,8 +279,25 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
     // has a usable, explicitly established workspace. It only ever refuses.
     const callerPermissionGate = permissionGate(callerPermissions);
     const inferredPermissionGate = permissionGate(inferredPermissions);
-    const hostAndTaskGate = composeMirandaGates(deps.gate, callerPermissionGate, inferredPermissionGate);
-    const hostGate = hostAndTaskGate ? composeMirandaGates(createWorkspaceAuthorityGate(), deps.gate, callerPermissionGate) : undefined;
+    // The user's explicit prohibitions, read deterministically from the
+    // verbatim request. Refuse-only: every other flag is left open so this
+    // gate never adds a refusal the user did not ask for. It belongs to the
+    // host side, so it survives when Maestro replaces the inferred gate with
+    // the contract gate, and it covers fallback, decomposed and repair work.
+    const userProhibitions = explicitUserProhibitions(callerTaskSpec.originalUserMessage);
+    const userProhibitionGate = userProhibitions.length > 0
+      ? createMirandaGate({
+          taskPermissions: {
+            fileRead: true,
+            fileWrite: !userProhibitions.includes("filesystem-write"),
+            shellExec: !userProhibitions.includes("shell"),
+            networkAccess: true,
+          },
+          connectorTools: deps.connectorTools,
+        })
+      : undefined;
+    const hostAndTaskGate = composeMirandaGates(deps.gate, callerPermissionGate, userProhibitionGate, inferredPermissionGate);
+    const hostGate = hostAndTaskGate ? composeMirandaGates(createWorkspaceAuthorityGate(), deps.gate, callerPermissionGate, userProhibitionGate) : undefined;
     const effectiveGate = hostAndTaskGate ? composeMirandaGates(hostGate, inferredPermissionGate) : undefined;
     const workspaceContext = deps.getWorkspaceContext?.();
     const explicitWorkspaceRoot = extractExplicitWorkspaceRoot(normalizedTaskSpec);
