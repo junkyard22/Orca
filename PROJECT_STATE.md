@@ -5,9 +5,15 @@
 > in the code, in git, or by running tests. Anything reported but not verified
 > goes under **Unverified**, with who reported it.
 
-**Last updated:** 2026-11-17 (Assignment 3 implemented after owner-approved Option 2 clarification; PR #112 awaiting review) / **Machine:** Windows, Node 24.11.1 / pnpm 10.30.2 / **By:** Codex
+**Last updated:** 2026-11-17 (PR #112 coordinated-request review correction implemented; awaiting final review) / **Machine:** Windows, Node 24.11.1 / pnpm 10.30.2 / **By:** Codex
 
 ---
+
+## PR #112 review correction (2026-11-17, Codex / Windows)
+
+- Fixed only the builder's instructional-clause splitting: a coordinated explicit `for me` request may refer back to tests or code without naming a file and must survive removal of the preceding how-to clause. The two requested positive cases are now disputed. All three requested instructional negatives remain undisputed. The table checks all non-modify proposal kinds and keeps write authority withheld.
+- Regression-first: **2 failed / 45 passed** before the one-condition correction; builder/runtime/delivery suites then **136/136 passed** (builder 47/47). Full core suite **510 passed / 2 failed** (512), only the unchanged, previously documented Windows symlink EPERM setup failures. Desktop routing/dispatch/prompt guards **22/22 passed**. `pnpm -r build`, `pnpm -r exec tsc --noEmit`, `pnpm typecheck:scripts`, `pnpm contract:check:strict` (CLEAR) and `git diff --check` passed on this review correction.
+- Review delta is limited to `taskContract.ts`, its regression table and this state record. Pappy, Miranda, authorization, capability ceilings and conversation delivery semantics are unchanged. No Assignment 4, merge, deployment or release. Prior review head `b29a622` had green CI [44124192050](https://github.com/junkyard22/Orca/actions/runs/44124192050) and Secret Scan [44124192083](https://github.com/junkyard22/Orca/actions/runs/44124192083). The correction is committed and pushed to the same PR; latest-head CI is checked before final handoff and reported on PR #112.
 
 ## Assignment 3 session status (2026-11-17, Codex / Windows)
 
@@ -21,7 +27,7 @@
 
 | Current session branch | Head | Pushed? | Worktree status |
 |---|---|---|---|
-| `codex/task-contract-assignment-3` | `934625f` plus this documentation follow-up | implementation pushed; follow-up pushed before handoff | Completed Assignment 3; PR #112 awaits review. |
+| `codex/task-contract-assignment-3` | `b29a622` plus this review correction | pushed before final handoff | Completed Assignment 3; PR #112 awaits review. |
 | `origin/main` | `af035c8` | yes | Assignment 2 merged via PR #111. |
 | local `main` | `133a36e` | behind origin | Left unchanged. |
 
@@ -559,6 +565,8 @@ Previous session results retain their original attribution below.
 
 ## Session log (newest first, keep the last 10)
 
+- **2026-11-17 (PR #112 review correction, Codex / Windows)** - Reproduced both coordinated explicit-request misses first (2 failed / 45 passed), then narrowed the clause split to retain `for me` actions while preserving instructional guards. Targeted core 136 passed; full core 510 passed / 2 known Windows EPERM failures; desktop guards 22 passed. Builds/types/scripts/strict contract CLEAR. Only builder/tests/state changed; PR #112 updated for final review. No Assignment 4 or merge.
+
 - **2026-11-17 (Assignment 3 completed, Codex / Windows)** - Owner approved Option 2 dispute clarification. Regression-first builder correction plus pre-worker contract, tool-less conversation/direct delivery, workspace precheck and D8 preserving FAIL/findings. Desktop 409 passed / 1 skipped; Claire 9 passed; core 505 passed / 2 known Windows EPERM failures, with transient timeout cleared by full rerun. Builds/types/scripts/strict contract CLEAR. PR #112 updated for review; no Assignment 4, merge, deployment or release.
 
 - **2026-11-17 (Assignment 3, Codex / Windows)** - Fresh branch from fetched `af035c8`; regression-first partial conversation/workspace implementation. Paused on required T6 versus the existing dispute tripwire; clarification requested. Claire 5 passed, desktop 399 passed / 2 failed / 1 skipped, orca 491 passed / 2 known Windows EPERM failures. Build/types/scripts/strict contract CLEAR. Incomplete draft review snapshot; no merge, deployment, release or Assignment 4.
@@ -576,5 +584,3 @@ Previous session results retain their original attribution below.
 - **2026-11-16 (Codex Assignment 0)** (Windows, Codex) — Owner approved FAIL precedence; corrected section 5.8, added pure contract/delivery builders and exports with regression-first tests (58 passed), committed and pushed as `1f92b41`. Workspace build/types/scripts, built-export smoke and strict contract check pass. Full orca-core suite: 458 passed, 2 existing symlink EPERM failures, reproduced on untouched `0fe3828` and outside sandbox. No existing tests, runtime call sites or Miranda boundaries changed. Assignment 1 not started; no PR, merge or deployment. Full validation remains blocked by Windows symlink support.
 
 - **2026-11-16 (Codex Assignment 0 preflight)** (Windows, Codex) - Fetched origin; verified local/remote main divergence, all security ancestry through `9da0cde`, design `0fe3828`, merged PR #107 and no open PRs. Created an isolated branch/worktree from design tip, installed offline and obtained contract CLEAR. Stopped before code on section 5.8 conversation/FAIL conflict; only this state record changed. Original checkout preserved; no merge or deployment.
-
-- **2026-11-16 (task-contract design review)** (cloud container, Claude) — Adversarial review of the two design documents on five points (permission expansion, cost, wrong-outcome verification, delivery concealment, compatibility). Twelve confirmed risks corrected in the design and the Codex handoff; decision register finalised (four items need owner authorization); fifteen acceptance tests added. Documentation only; no code, tests or builds. Not merged.

@@ -165,7 +165,10 @@ function related(expected: ExpectedOutcome, request: string, paths: string[], ki
  */
 function disputeRequestText(request: string): string {
   const instructional = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:how\s+(?:(?:do|can|could|should|would)\s+(?:i|we|one|you)\b|to\b)|(?:explain|describe|show\s+me|tell\s+me)\s+how\b)/i;
-  return request.split(/(?<=[.!?;])\s+|[\r\n]+|\s+(?:and\s+)?then\s+|\s+but\s+|,\s*(?=(?:then|please|also)\b)|\s+and\s+(?=(?:please\b|(?:can|could|would|will)\s+you\b)|[^.!?;\n]*\b[\w/-]+\.[a-z0-9]{1,8}\b)/i)
+  // An explicit "for me" request can refer back to tests/code without a
+  // filename. Split it before filtering the instructional part; a second
+  // "how to" clause still remains instructional and is filtered separately.
+  return request.split(/(?<=[.!?;])\s+|[\r\n]+|\s+(?:and\s+)?then\s+|\s+but\s+|,\s*(?=(?:then|please|also)\b)|\s+and\s+(?=(?:please\b|(?:can|could|would|will)\s+you\b)|[^.!?;\n]*\bfor\s+me\b|[^.!?;\n]*\b[\w/-]+\.[a-z0-9]{1,8}\b)/i)
     .map((clause) => clause.trim())
     .filter((clause) => !instructional.test(clause))
     .join("\n");

@@ -16,6 +16,11 @@ describe("task contract builders", () => {
   it.each([
     ["How do I create a list in Python?", false],
     ["Explain how to fix a failing test.", false],
+    ["Explain how to fix the tests and fix them for me.", true],
+    ["Explain how to fix the tests and update the code for me.", true],
+    ["Explain how to fix the tests.", false],
+    ["Explain how to fix the tests and how to update the code.", false],
+    ["How do I create and modify lists?", false],
     ["Fix the failing test.", true],
     ["Can you fix the failing test?", true],
     ["How do I create a list in Python? Then update src/parse.ts to use one.", true],
