@@ -48,7 +48,25 @@ Host gates, explicit caller denials, workspace authority, AHP and exact-call app
 
 **Tests (failing before / passing after).** `contractAuthority.test.ts` has 10 new integration cases on the real runtime, Maestro, Miranda and core tools. Before the fix: **6 failed / 4 passed**, and in four of the failures the real `README.md` was rewritten. After the fix: **10/10**. Cases: no-write vs Brain modify+write; no-execute vs Brain execute+shell, with approval pre-granted, where neither a write-capable process nor a confined read runs and approval is never requested; no-write followed by an unrelated how-to question; decomposed workers; a real Pappy repair pass; the fallback path; three ordinary authorized writes, which still succeed; and host/caller denials preserved. `userProhibitions.test.ts` (33) covers positive phrasings, false-positive guards and contract merging, including the fallback contract.
 
-**Residual, for owner decision.** A no-write prohibition does not also withhold shell. A shell command that the contract permits still requires exact-call user approval, but once approved it is host access and can modify files. Making "no writes" imply "no shell" would block approved diagnostic commands, so it is left as an owner decision rather than changed unilaterally.
+## Final review — shell under no-write, and scoped write restrictions
+
+**No-write implies no shell (fail closed).** An approved command is host access and can change files, so a blanket no-write prohibition now also withholds `shell`. This is recorded in the contract (`withheld: shell / user_prohibition`). `createUserRestrictionGate` refuses every Miranda `shell_exec` tool (`run_command` and its aliases, MCP `start_process` / `interact_with_process` / …) in `beforeToolRun`. The gate runs before execution, so an exact-call approval is never requested and cannot override the prohibition. Confined-read commands are also refused. They add nothing over `read_file`/`list_directory`, and keeping them would need either a new orca-core dependency on workbench-core's `isConfinedRead` or a new runtime interface. Miranda core policy is unchanged.
+
+**Scoped writes.** "Modify README.md, but do not change any other files.", "only edit X", "don't touch any files except X" and "leave all other files unchanged" produce a `writeScope` of the files the user named. Under "don't change anything else", that is the files named in the clauses that ask for a change; a file mentioned only for context is excluded. The gate allows a write only when the tool is a Miranda `file_write` tool and every path argument resolves, after links are followed, to a scoped file under the workspace root. A write with no path argument, a connector write, an unclassified write-verb tool, or any shell tool is refused. A scope that names no file permits no writes. The contract's write authority is unchanged, because the scope narrows inside it, and `shell` is withheld for the reason above. Not covered: a scope given only as a directory or glob ("only change files in src/") is not recognised and is left to the existing gates.
+
+**Enforcement placement.** `userRestrictions(request)` replaces the earlier task-permission gate in the runtime's retained host chain. That covers direct, decomposed, repair and fallback workers and survives inference replacement. Host, caller, workspace, AHP and approval gates are unchanged, and the contract object stays identical across repair passes.
+
+**Tests.** 13 new executor-level cases in `contractAuthority.test.ts`: **12 failed / 1 passed before**, **13/13 after**. The failures were real: an approved write-capable command ran under "do not modify any files", and `other.txt` was overwritten under each scoped wording. Coverage:
+- run_command, the `shell` alias and MCP start_process under no-write, with approval pre-granted
+- the fallback shell path
+- scoped README.md edits succeeding while `other.txt` (relative, `sub/../`, absolute, MCP write and edit_block) and a new file stay untouched
+- four scoped phrasings
+- an absolute in-scope path
+- scoped shell with approval
+- scoped decomposed, repair and fallback paths
+- an ordinary write plus approved shell still working when nothing is prohibited
+
+The 11 parser and gate unit cases are new as well. Disabling the gate fails 9 of the 23 prohibition cases; the Brain-path shell cases also hold through the contract's `prohibits`.
 
 ## Validation
 

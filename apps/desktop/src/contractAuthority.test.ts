@@ -382,6 +382,105 @@ describe("contract authority at the real runtime/desktop execution boundary", ()
     });
   });
 
+  describe("final authorization boundaries (PR #113 final review)", () => {
+    const NO_WRITE = "Explain how to correct the bug, but do not modify any files.";
+    const SCOPED = "Modify README.md, but do not change any other files.";
+    const shellWrite = (file: string) => `node -e "require('fs').writeFileSync('${file}','bad')"`;
+    const withOther = (h: ReturnType<typeof harness>) => { writeFileSync(join(h.root, "other.txt"), "keep\n"); return h; };
+    const other = (h: ReturnType<typeof harness>) => readFileSync(join(h.root, "other.txt"), "utf8");
+
+    it.each(["run_command", "shell", "desktop-commander_start_process"])("no-write denies write-capable %s even when Brain proposes shell and the user would approve", async (tool) => {
+      const h = harness({ kind: "modify", needs: ["filesystem-write", "shell"] }, [{ tool, command: shellWrite("shell.txt") }]);
+      h.approve.mockResolvedValue(true);
+      const result = await h.run(NO_WRITE);
+      expect(result.contract?.prohibits).toEqual(expect.arrayContaining(["filesystem-write", "shell"]));
+      expect(h.approve).not.toHaveBeenCalled();
+      expect(h.executed).toEqual([]);
+      expect(existsSync(join(h.root, "shell.txt"))).toBe(false);
+    });
+
+    it("no-write also fails closed on shell on the fallback path", async () => {
+      const h = harness({ kind: "modify", needs: ["shell"] }, [{ tool: "run_command", command: shellWrite("shell.txt") }], { fallback: true });
+      h.approve.mockResolvedValue(true);
+      await h.run(NO_WRITE);
+      expect(h.approve).not.toHaveBeenCalled();
+      expect(existsSync(join(h.root, "shell.txt"))).toBe(false);
+    });
+
+    it("a scoped prohibition lets README.md change and leaves every other file untouched", async () => {
+      const h = withOther(harness({ kind: "modify", needs: ["filesystem-write"] }, [
+        { tool: "write_file", path: "README.md", content: "corrected\n" },
+        { tool: "write_file", path: "other.txt", content: "bad" },
+        { tool: "desktop-commander_write_file", path: "other.txt", content: "bad" },
+        { tool: "desktop-commander_edit_block", path: "other.txt", content: "bad" },
+        { tool: "write_file", path: "sub/../other.txt", content: "bad" },
+        { tool: "write_file", path: "new.txt", content: "bad" },
+      ]));
+      await h.run(SCOPED);
+      expect(readFileSync(join(h.root, "README.md"), "utf8")).toBe("corrected\n");
+      expect(other(h)).toBe("keep\n");
+      expect(existsSync(join(h.root, "new.txt"))).toBe(false);
+      expect(h.executed).toEqual(["write_file"]);
+    });
+
+    it.each([
+      "Modify README.md, but do not change any other files.",
+      "Only edit README.md.",
+      "Fix the typo. Don't touch any files except README.md.",
+      "Leave all other files unchanged and correct README.md",
+    ])("scoped wording is enforced at the executor: %s", async (message) => {
+      const h = withOther(harness({ kind: "modify", needs: ["filesystem-write"] }, [
+        { tool: "write_file", path: "README.md", content: "corrected\n" },
+        { tool: "write_file", path: "other.txt", content: "bad" },
+      ]));
+      await h.run(message);
+      expect(readFileSync(join(h.root, "README.md"), "utf8")).toBe("corrected\n");
+      expect(other(h)).toBe("keep\n");
+    });
+
+    it("a scoped prohibition accepts the in-scope file by absolute path and refuses another by absolute path", async () => {
+      const calls: Call[] = [];
+      const h = withOther(harness({ kind: "modify", needs: ["filesystem-write"] }, calls));
+      calls.push({ tool: "write_file", path: join(h.root, "README.md"), content: "absolute\n" },
+        { tool: "write_file", path: join(h.root, "other.txt"), content: "bad" });
+      await h.run(SCOPED);
+      expect(readFileSync(join(h.root, "README.md"), "utf8")).toBe("absolute\n");
+      expect(other(h)).toBe("keep\n");
+    });
+
+    it("a scoped prohibition denies write-capable shell even with approval", async () => {
+      const h = withOther(harness({ kind: "modify", needs: ["filesystem-write", "shell"] }, [{ tool: "run_command", command: shellWrite("other.txt") }]));
+      h.approve.mockResolvedValue(true);
+      await h.run(SCOPED);
+      expect(h.approve).not.toHaveBeenCalled();
+      expect(other(h)).toBe("keep\n");
+    });
+
+    it("a scoped prohibition holds for decomposed workers, a real repair pass and fallback", async () => {
+      for (const options of [{ decompose: true }, { qc: true }, { fallback: true }]) {
+        const h = withOther(harness({ kind: "modify", needs: ["filesystem-read", "filesystem-write"] }, [
+          { tool: "read_file", path: "README.md" }, { tool: "write_file", path: "other.txt", content: "bad" },
+          { tool: "desktop-commander_write_file", path: "other.txt", content: "bad" },
+        ], options));
+        const result = await h.run(SCOPED);
+        expect(other(h)).toBe("keep\n");
+        if (options.qc) expect(h.contexts.every((ctx) => ctx.taskContract === result.contract)).toBe(true);
+      }
+    });
+
+    it("ordinary authorized writes and approved shell are unchanged without a prohibition", async () => {
+      const h = withOther(harness({ kind: "modify", needs: ["filesystem-write", "shell"] }, [
+        { tool: "write_file", path: "other.txt", content: "changed\n" },
+        { tool: "run_command", command: shellWrite("shell.txt") },
+      ], { permissions: ["read"] }));
+      h.approve.mockResolvedValue(true);
+      await h.run("Update other.txt and run the build");
+      expect(other(h)).toBe("changed\n");
+      expect(h.approve).toHaveBeenCalledTimes(1);
+      expect(readFileSync(join(h.root, "shell.txt"), "utf8")).toBe("bad");
+    });
+  });
+
   it("refuses MCP writes for inspect even when inferred flags allowed writes (T1)", async () => {
     const h = harness({ kind: "inspect", needs: ["filesystem-read"] }, [{ tool: "desktop-commander_write_file", path: "README.md", content: "bad" }]);
     await h.run();
