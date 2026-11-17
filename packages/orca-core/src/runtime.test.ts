@@ -539,6 +539,26 @@ describe("createOrcaRuntime", () => {
       const request = (message: string) => createTaskSpec({ originalUserMessage: message, intent: "label", goals: [message] });
       const contractTraces = (traces: Array<{ stage: string; detail: unknown }>) => traces.filter((t) => t.stage === "task.contract");
 
+      it("D8 keeps an ordinary conversation FAIL and Pappy findings without dispatching repair", async () => {
+        const h = harness({ contractProposal: { kind: "conversation", needs: [] }, roleToolNames: [] }, { verdicts: ["FAIL", "PASS"] });
+        const result = await h.runtime.executeTask(request("Explain how to fix a failing test."));
+        expect(h.maestro.run).toHaveBeenCalledTimes(1);
+        expect(h.pappy.evaluate).toHaveBeenCalledTimes(1);
+        expect(result.status).toBe("FAIL");
+        expect(result.qcResult?.verdict).toBe("FAIL");
+        expect(result.qcResult?.issues).toContainEqual(expect.objectContaining({ description: "test issue" }));
+        expect(h.traces).toContainEqual({ stage: "repair.skipped", detail: { reason: "conversation" } });
+      });
+
+      it("D8 leaves repair behavior intact for a genuinely disputed conversation", async () => {
+        const h = harness({ contractProposal: { kind: "conversation", needs: [] }, roleToolNames: [] }, { verdicts: ["FAIL", "PASS"] });
+        const result = await h.runtime.executeTask(request("Can you fix the failing test?"));
+        expect(result.contract?.kindDisputed).toBe(true);
+        expect(h.maestro.run).toHaveBeenCalledTimes(2);
+        expect(h.pappy.evaluate).toHaveBeenCalledTimes(2);
+        expect(h.traces).not.toContainEqual({ stage: "repair.skipped", detail: { reason: "conversation" } });
+      });
+
       it("builds the contract from Brain's proposal, traces it once and returns it", async () => {
         const h = harness({ contractProposal: { kind: "inspect", needs: ["filesystem-read"] }, roleToolNames: ["read_file", "list_directory"] });
         const result = await h.runtime.executeTask(request("Why is src/parse.js exporting nothing?"));

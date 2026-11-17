@@ -36,16 +36,43 @@ declare module '@clawde/orca-core' {
     artifacts?: unknown;
     qcResult?: PappyResult;
     followUpQuestion?: string;
-    /** The task contract fixed for this run (recorded only; nothing enforces it yet). */
-    contract?: {
-      version: 1;
-      source: "intake" | "brain" | "fallback";
-      request: string;
-      kind: "conversation" | "inspect" | "execute" | "modify";
-      kindDisputed?: boolean;
-      [key: string]: unknown;
+    /** The original task's immutable contract. */
+    contract?: TaskContract;
+  }
+
+  export interface AcceptanceContract {
+    objective: string;
+    userGoals: string[];
+    derivedCriteria: string[];
+    advisoryCriteria: string[];
+    goals: string[];
+  }
+  export interface TaskContract {
+    version: 1;
+    source: "intake" | "brain" | "fallback";
+    request: string;
+    kind: import("maestro-core").TaskIntentKind;
+    kindDisputed?: boolean;
+    changeKind?: import("maestro-core").ChangeKind;
+    needs: import("maestro-core").CapabilityGroup[];
+    prohibits: import("maestro-core").CapabilityGroup[];
+    evidence: { workspace: boolean; external: boolean };
+    expects: Array<{ outcome: import("maestro-core").ExpectedOutcome; source: "user" | "brain" | "runtime"; required: boolean }>;
+    acceptance: AcceptanceContract;
+    authority: {
+      workspace: import("@clawde/miranda-core").WorkspaceAuthorityStatus;
+      available: import("maestro-core").CapabilityGroup[];
+      withheld: Array<{ capability: import("maestro-core").CapabilityGroup; reason: "settings" | "user_prohibition" | "task_kind" | "no_workspace" }>;
     };
   }
+  export function buildTaskContract(input: {
+    task: OrcaTaskSpec; proposal: import("maestro-core").BrainContractProposal;
+    ceiling: import("maestro-core").CapabilityGroup[];
+    workspace: import("@clawde/miranda-core").WorkspaceAuthorityStatus;
+    workspaceRoot?: string; attachedFiles?: boolean;
+  }): TaskContract;
+  export function buildFallbackContract(task: OrcaTaskSpec, workspace: import("@clawde/miranda-core").WorkspaceAuthorityStatus, ceiling: import("maestro-core").CapabilityGroup[]): TaskContract;
+  export function buildAcceptanceContract(task: OrcaTaskSpec, derived?: string[]): AcceptanceContract;
 
   export interface OrcaFileChange {
     path: string;
@@ -215,6 +242,8 @@ declare module '@clawde/orca-core' {
   }
 
   export interface OrcaRunCtx {
+    taskContract?: TaskContract;
+    acceptanceContract?: AcceptanceContract;
     llm: OrcaLLMService;
     runId: string;
     abortSignal?: AbortSignal;
@@ -250,7 +279,7 @@ declare module '@clawde/orca-core' {
   /** Pappy result from quality control evaluation */
   export interface PappyResult {
     verdict: "PASS" | "WARN" | "FAIL";
-    issues?: string[];
+    issues?: Array<{ description: string }>;
   }
 
   export interface PappyPort {

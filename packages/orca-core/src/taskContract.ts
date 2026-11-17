@@ -157,7 +157,21 @@ function related(expected: ExpectedOutcome, request: string, paths: string[], ki
   }
 }
 
-/** Builds a detached, immutable standard; no production caller uses it yet. */
+/**
+ * The dispute tripwire checks requests to act, not verbs inside a how-to.
+ * Keep independent instructions after a question (including a coordinated
+ * named-file request). This only filters the tripwire's input: Pappy's
+ * classifier, fallback routing, the kind floor and authority stay unchanged.
+ */
+function disputeRequestText(request: string): string {
+  const instructional = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:how\s+(?:(?:do|can|could|should|would)\s+(?:i|we|one|you)\b|to\b)|(?:explain|describe|show\s+me|tell\s+me)\s+how\b)/i;
+  return request.split(/(?<=[.!?;])\s+|[\r\n]+|\s+(?:and\s+)?then\s+|\s+but\s+|,\s*(?=(?:then|please|also)\b)|\s+and\s+(?=(?:please\b|(?:can|could|would|will)\s+you\b)|[^.!?;\n]*\b[\w/-]+\.[a-z0-9]{1,8}\b)/i)
+    .map((clause) => clause.trim())
+    .filter((clause) => !instructional.test(clause))
+    .join("\n");
+}
+
+/** Builds a detached, immutable standard before worker execution. */
 export function buildTaskContract(input: BuildTaskContractInput): TaskContract {
   const { task, ceiling, workspace } = input;
   const proposal = validateContractProposal(input.proposal);
@@ -165,8 +179,12 @@ export function buildTaskContract(input: BuildTaskContractInput): TaskContract {
   const paths = requestPaths(request, input.workspaceRoot);
   const hasExistingPath = paths.some((p) => existsSync(path.resolve(input.workspaceRoot!, p)));
   const kind = proposal.kind === "conversation" && (hasExistingPath || input.attachedFiles) ? "inspect" : proposal.kind;
-  const classified = classifyTaskKind(request);
-  const kindDisputed = proposal.kind !== "modify" && classified !== "inspect" && classified !== "other";
+  const changeRequest = disputeRequestText(request);
+  const classified = classifyTaskKind(changeRequest);
+  // Pappy's classifier can call an explicit file edit "other" (for example,
+  // "Fix src/parse.ts"). Preserve the dispute for an independent directive.
+  const changeDirective = /^(?:(?:then|also|please)\s+)*(?:(?:can|could|would|will)\s+you\s+)?(?:fix|correct|update|modify|change|edit|create|add|implement|build|write|remove|delete|replace|refactor)\b/im.test(changeRequest);
+  const kindDisputed = proposal.kind !== "modify" && ((classified !== "inspect" && classified !== "other") || changeDirective);
   const needs = [...new Set(proposal.needs ?? [])];
   const prohibits = [...new Set(proposal.prohibits ?? [])];
   const authority: ResolvedAuthority = { workspace, available: [], withheld: [] };

@@ -879,7 +879,7 @@ export class ReactAgentAdapter implements AgentAdapter {
     const conversationHistory = task.conversationHistory || [];
     const contract = buildTaskPromptContract(task, ctx.ahpPacket);
     const intentAndGoals = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
-    const needsFileWrite = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(intentAndGoals);
+    const needsFileWrite = tools.length > 0 && task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(intentAndGoals);
     const fileWriteDirective = needsFileWrite
       ? "**ACTION REQUIRED: Call write_file to save the file content to disk. Do NOT output the file content inline - use the tool.**\n\n"
       : "";
@@ -1097,7 +1097,7 @@ export class ReactAgentAdapter implements AgentAdapter {
         // then reported actions that had never run.
         const buildTurnLimitWarning = (): string => {
           const allTaskTextForWarn = `${contract.intent} ${contract.goals.join(" ")} ${contract.doneCriteria.join(" ")}`;
-          const taskImpliesFileSaveForWarn = task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskTextForWarn);
+          const taskImpliesFileSaveForWarn = tools.length > 0 && task.sourceChangeRequired !== false && taskExplicitlyRequestsFileSave(allTaskTextForWarn);
           const writeSucceededForWarn = toolsUsed.some((e) => e.ok && isWriteToolName(e.tool)) || filesChanged.length > 0;
           const writeFileReminder = taskImpliesFileSaveForWarn && !writeSucceededForWarn
             ? "\n\nCRITICAL: Your task requires saving a file. You MUST call write_file with the complete file content in your NEXT response - before writing your final answer."
@@ -1615,6 +1615,7 @@ export class ReactAgentAdapter implements AgentAdapter {
       // write-tool event counts as before.
       const fsStatusOf = (e: ToolEvent) => recordedFilesystemEvidence(e.raw)?.status;
       const requiredWriteOutstanding =
+        tools.length > 0 &&
         task.sourceChangeRequired !== false &&
         taskRequiresFileSave &&
         filesChanged.length === 0 &&

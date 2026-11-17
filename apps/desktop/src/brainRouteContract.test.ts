@@ -1,8 +1,8 @@
 /**
  * Task contracts, assignment 2 — desktop wiring of Brain's routing call.
  *
- * main.ts cannot be imported in a unit test (it starts Electron), so these
- * are assertions about its source, in the style of the other main.ts checks.
+ * These source assertions preserve the original routing-prompt checks.
+ * contractRouting.test.ts imports the adapter with Electron startup mocked.
  * They confirm the wiring is present; the behaviour itself is tested where it
  * lives: `routingPromptContext` and the parser in maestro-core, the contract
  * in orca-core's runtime tests.
@@ -36,8 +36,9 @@ describe("the Maestro result", () => {
     expect(main).toMatch(/\.\.\.deweyBriefLines\(task\)\.map/);
   });
 
-  it("nothing in the desktop reads the task contract yet (no enforcement in this assignment)", () => {
-    expect(main).not.toMatch(/taskContract/);
+  it("keeps proposal parsing out of the worker loop; routing behavior is covered by contractRouting", () => {
+    // Assignment 3 consumes the fixed contract in Maestro. Workers still do
+    // not parse proposals or grant themselves authority from a contract.
     expect(readFileSync(join(__dirname, "agents", "ReactAgentAdapter.ts"), "utf8")).not.toMatch(/taskContract|contractProposal/);
   });
 });

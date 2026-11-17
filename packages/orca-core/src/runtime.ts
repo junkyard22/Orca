@@ -717,8 +717,8 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       ctx.acceptanceContract ??= buildAcceptanceContract(normalizedTaskSpec, maestroResult.doneCriteria);
       recordTrace("acceptance.contract", ctx.acceptanceContract);
       // The task contract: built once, from Brain's proposal when the decision
-      // carried a valid one, otherwise the fallback. Recorded and returned;
-      // nothing below reads it yet, and a repair pass never rebuilds it.
+      // carried a valid one, otherwise the fallback. The desktop fixes it
+      // before dispatch; legacy adapters still use this post-pass fallback.
       if (!ctx.taskContract) {
         ctx.taskContract = resolveTaskContract(normalizedTaskSpec, maestroResult.metadata, ctx.toolNamesAllowed, workspaceAuthority.status, effectiveWorkspaceRoot, recordTrace);
         recordTrace("task.contract", ctx.taskContract);
@@ -727,7 +727,7 @@ export function createOrcaRuntime(deps: OrcaRuntimeDeps): OrcaRuntime {
       const initialSpendUsd = (maestroResult.metadata?.costUsd ?? 0) + (maestroResult.metadata?.costUnreconciledUsd ?? 0);
 
       // Detect tools the agent tried to call but weren't available.
-      unknownTools = [
+      unknownTools = maestroResult.metadata?.roleToolNames?.length === 0 ? [] : [
         ...new Set(
           (maestroResult.toolEvents ?? [])
             .filter((e) => !e.ok && typeof e.summary === "string" && e.summary.startsWith("Unknown tool:"))

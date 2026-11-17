@@ -20,6 +20,26 @@ function claireWith(result: ExecutionResult, reply: string, review?: (reply: str
 }
 
 describe("Claire and the host record", () => {
+  it("keeps WARN conversation findings and an unverified notice without a narrator", async () => {
+    const result: ExecutionResult = { status: "SUCCESS", userFacingText: "An explanation.", contract: { kind: "conversation" }, qcResult: { verdict: "WARN", issues: [{ description: "Some proof is missing." }] } };
+    const { claire, prompts } = claireWith(result, "rewritten");
+    const reply = await claire.handleUserMessage("Explain how to fix a failing test.");
+    expect(reply).toContain("An explanation.");
+    expect(reply).toContain("Answered without reading any files.");
+    expect(reply).toContain("not verified");
+    expect(reply).toContain("Some proof is missing.");
+    expect(prompts).toHaveLength(0);
+  });
+  it.each(["SUCCESS", "FAIL"] as const)("preserves legacy presentation for disputed conversations: %s", async (status) => {
+    const { claire, prompts } = claireWith({ status, userFacingText: "No changes made.", contract: { kind: "conversation", kindDisputed: true } }, "Unverified: no changes made.");
+    expect(await claire.handleUserMessage("Can you fix the failing test?")).toBe("Unverified: no changes made.");
+    expect(prompts).toHaveLength(1);
+  });
+  it("leaves the closed social shortcut unchanged", async () => {
+    const { claire, prompts } = claireWith({ status: "FAIL" }, "Hello!");
+    expect(await claire.handleUserMessage("hi")).toBe("Hello!");
+    expect(prompts).toHaveLength(1);
+  });
   it("preserves failed conversation output and findings without a rewrite or success disclosure", async () => {
     const result = { status: "FAIL", userFacingText: "Use `[]`.", contract: { kind: "conversation" }, qcResult: { issues: [{ description: "The requested proof is missing." }] } } as ExecutionResult;
     const { claire, prompts } = claireWith(result, "rewritten");

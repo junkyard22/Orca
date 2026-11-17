@@ -26,6 +26,17 @@ function ctx(lifecycle: TaskLifecycle, gate: { beforeLLMCall: ReturnType<typeof 
 }
 
 describe("worker model dispatch and the task lifecycle", () => {
+  it("does not demand a write or report an incomplete write when no tools were provided", async () => {
+    const { adapter, complete } = fakeAdapter();
+    const lifecycle = new TaskLifecycle({ taskId: "instruction" }); lifecycle.transition("RUNNING", "x");
+    const result = await new ReactAgentAdapter(adapter, "system", "narrator", 4).run(
+      { intent: "Explain how to create example.txt", goals: [], doneCriteria: [] }, [],
+      ctx(lifecycle, { beforeLLMCall: vi.fn(() => ({ allowed: true })) }),
+    );
+    expect(result.stoppedBecause).toBe("done");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(complete.mock.calls)).not.toContain("ACTION REQUIRED");
+  });
   it("answers a create/list question in one worker call when given zero tools", async () => {
     const { adapter, complete } = fakeAdapter();
     const lifecycle = new TaskLifecycle({ taskId: "conversation" });

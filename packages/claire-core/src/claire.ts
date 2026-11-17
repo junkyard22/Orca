@@ -79,7 +79,11 @@ export function createClaire(deps: ClaireDeps): ClaireInstance {
           ...(result.qcResult?.issues?.map((issue) => issue.description) ?? [result.summary ?? "Verification failed."])]
           .filter(Boolean).join("\n\n");
       }
-      return `${result.userFacingText ?? ""}\n\nAnswered without reading any files.`;
+      const reply = `${result.userFacingText ?? ""}\n\nAnswered without reading any files.`;
+      if (result.status === "WARN" || result.qcResult?.verdict === "WARN") {
+        return [reply, "This answer was not verified.", ...(result.qcResult?.issues?.map((issue) => issue.description) ?? [])].join("\n\n");
+      }
+      return reply;
     }
 
     const chat = historyToMessages(history);

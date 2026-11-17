@@ -38,6 +38,7 @@ import {
   SqliteStore,
   buildTaskContract,
   buildFallbackContract,
+  buildAcceptanceContract,
 } from "@clawde/orca-core";
 import type {
   OrcaRuntime,
@@ -1230,7 +1231,7 @@ export function buildMaestroAdapter(
             brainDecision: params.brainDecision,
             // Recorded for the runtime's task contract; nothing here acts on them.
             ...(params.contractProposal ? { contractProposal: params.contractProposal } : {}),
-            roleToolNames: [...new Set(params.workerRuns.flatMap((run) => selectToolsForRole(ctx, run.role).map((tool) => tool.name)))],
+            roleToolNames: ctx.taskContract?.kind === "conversation" ? [] : [...new Set(params.workerRuns.flatMap((run) => selectToolsForRole(ctx, run.role).map((tool) => tool.name)))],
             decomposition: {
               synthesisHint: params.synthesisHint,
             },
@@ -1327,7 +1328,7 @@ export function buildMaestroAdapter(
       throwIfAborted(ctx.abortSignal);
       const repairOriginalRole = getRepairExecutionRole(task);
       const routingSourceTask = getRepairRoutingSourceTask(task);
-      const routing: DesktopBrainRouting = repairOriginalRole
+      let routing: DesktopBrainRouting = repairOriginalRole
         ? {
             path: "direct",
             role: repairOriginalRole,
@@ -1346,11 +1347,24 @@ export function buildMaestroAdapter(
         const root = ctx.workspaceRoot ?? workspaceRoot;
         const workspace = assessWorkspaceRoot(root);
         const manifest = task.context?.contextManifest as ContextManifest | undefined;
-        ctx.taskContract = routing.contractProposal
+        const contract = routing.contractProposal
           ? buildTaskContract({ task, proposal: routing.contractProposal, ceiling, workspace: workspace.status, workspaceRoot: root,
               attachedFiles: Boolean(manifest?.files?.length || manifest?.workspace?.repository) })
           : buildFallbackContract(task, workspace.status, ceiling);
+        // Keep Brain's first-pass criteria in the existing acceptance standard,
+        // fixed before dispatch and shared with every later Pappy evaluation.
+        const acceptance = buildAcceptanceContract(task, routing.doneCriteria);
+        for (const value of Object.values(acceptance)) if (Array.isArray(value)) Object.freeze(value);
+        Object.freeze(acceptance);
+        ctx.taskContract = Object.freeze({ ...contract, acceptance });
+        ctx.acceptanceContract ??= ctx.taskContract.acceptance;
         ctx.recordTrace?.("task.contract", ctx.taskContract);
+      }
+
+      if (ctx.taskContract?.kind === "conversation" && routing.path === "decompose") {
+        // A conversation needs one answer, not department workers and synthesis.
+        routing = { path: "direct", role: "narrator", doneCriteria: routing.doneCriteria,
+          brainDecision: routing.brainDecision, contractProposal: routing.contractProposal, decision: routing.decision };
       }
 
       if (ctx.taskContract?.evidence.workspace && ctx.taskContract.authority.workspace !== "ok") {
@@ -1455,9 +1469,9 @@ export function buildMaestroAdapter(
         metadata: {
           role: routing.role,
           brainDecision: routing.brainDecision,
-          // Recorded for the runtime's task contract; nothing here acts on them.
+          // Proposal and the actual tools dispatched, retained for the runtime.
           ...(routing.contractProposal ? { contractProposal: routing.contractProposal } : {}),
-          roleToolNames: selectToolsForRole(ctx, routing.role).map((tool) => tool.name),
+          roleToolNames: ctx.taskContract?.kind === "conversation" ? [] : selectToolsForRole(ctx, routing.role).map((tool) => tool.name),
           thoughts: result.thoughts,
           iterationCount: result.iterationCount,
           stoppedBecause: result.stoppedBecause,
