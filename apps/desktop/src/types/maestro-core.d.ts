@@ -27,7 +27,28 @@ declare module 'maestro-core' {
     role?: RoleName;
     done_criteria?: string[];
     departments?: DepartmentTask[];
+    /** Brain's contract proposal: descriptive or restrictive, never a grant. */
+    contract?: BrainContractProposal;
   }
+
+  export type TaskIntentKind = 'conversation' | 'inspect' | 'execute' | 'modify';
+  export type ChangeKind = 'bugfix' | 'feature' | 'refactor' | 'docs' | 'other';
+  export type ExpectedOutcome =
+    | { id: string; type: 'answer'; text: string }
+    | { id: string; type: 'inspection'; paths?: string[] }
+    | { id: string; type: 'file_change'; change: 'create' | 'modify' | 'delete' | 'any'; path?: string }
+    | { id: string; type: 'no_file_change' }
+    | { id: string; type: 'command'; purpose: 'test' | 'build' | 'lint' | 'typecheck' | 'other'; mustPass: boolean };
+  export interface BrainContractProposal {
+    kind: TaskIntentKind;
+    change_kind?: ChangeKind;
+    needs?: string[];
+    prohibits?: string[];
+    expects?: ExpectedOutcome[];
+  }
+  export function validateContractProposal(raw: unknown): BrainContractProposal;
+  /** A task's context as Brain may see it for routing: without text the user did not write. */
+  export function routingPromptContext<T extends Record<string, unknown>>(context: T | undefined): Partial<T> | undefined;
 
   export interface DepartmentTask {
     department: string;

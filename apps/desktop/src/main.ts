@@ -60,6 +60,7 @@ import {
   getRolePrompt,
   BRAIN_DECOMPOSE_SYSTEM,
   parseBrainDecision,
+  routingPromptContext,
   buildSynthesisPrompt,
   BrainDecisionValidationError,
   ModelFallbackPoolManager,
@@ -373,6 +374,8 @@ type DesktopBrainRouting =
       role: RoleName;
       doneCriteria: string[];
       brainDecision?: string;
+      /** Brain's contract proposal, when its own decision (not a fallback route) carried a valid one. */
+      contractProposal?: DecomposeDecision["contract"];
       decision: DecomposeDecision;
     }
   | {
@@ -381,6 +384,8 @@ type DesktopBrainRouting =
       doneCriteria: string[];
       synthesisHint?: string;
       brainDecision?: string;
+      /** Brain's contract proposal, when its own decision (not a fallback route) carried a valid one. */
+      contractProposal?: DecomposeDecision["contract"];
       decision: DecomposeDecision;
     };
 
@@ -557,7 +562,10 @@ async function brainRoute(
   const brainLLM = roleAdapters['brain'] ?? ctx.llm;
 
   // Small, fast JSON call to decide routing. One repair pass on schema validation failure.
-  const basePrompt = `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt(task)}`;
+  // Brain decides the task's kind here, and the kind decides whether writing
+  // is withheld — so the routing prompt leaves out context the user did not
+  // write (Dewey's resolved resource summaries). Workers still receive it.
+  const basePrompt = `${BRAIN_DECOMPOSE_SYSTEM}\n\n---\n\n${buildTaskPrompt({ ...task, context: routingPromptContext(task.context) })}`;
   let decision: DecomposeDecision | null = null;
   let repairReason: string | null = null;
   let brainDecision: string | undefined;
@@ -574,7 +582,8 @@ async function brainRoute(
         ctx,
         { stage: "brain_route", role: "brain", outputOf: (result) => result.text },
         () => brainLLM.complete(prompt, {
-          maxTokens: 512,
+          // 768: a decompose decision that also carries a contract did not fit in 512.
+          maxTokens: 768,
           temperature: 0,
           abortSignal: ctx.abortSignal,
         }),
@@ -629,6 +638,9 @@ async function brainRoute(
     });
   }
   const doneCriteria = resolved.done_criteria ?? [];
+  // The proposal is Brain's own, validated when its decision was parsed. A
+  // fallback route means Brain gave no usable decision: no proposal either.
+  const contractProposal = route.fallback ? undefined : decision?.contract;
   if (resolved.routing === "decompose") {
     const departments = resolved.departments.slice(0, 3);
     ctx.recordTrace?.("brain.route.final", {
@@ -644,6 +656,7 @@ async function brainRoute(
       synthesisHint: resolved.synthesis_hint,
       doneCriteria,
       brainDecision,
+      ...(contractProposal ? { contractProposal } : {}),
       decision: resolved,
     };
   }
@@ -661,6 +674,7 @@ async function brainRoute(
     role: resolved.role as RoleName,
     doneCriteria,
     brainDecision,
+    ...(contractProposal ? { contractProposal } : {}),
     decision: resolved,
   };
 }
@@ -1092,6 +1106,7 @@ function buildMaestroAdapter(
         requestText: string;
         doneCriteria: string[];
         brainDecision?: string;
+        contractProposal?: DecomposeDecision["contract"];
         synthesisHint?: string;
         summaryPrefix: string;
       }): Promise<OrcaMaestroResult> => {
@@ -1210,6 +1225,9 @@ function buildMaestroAdapter(
           metadata: {
             role: "brain",
             brainDecision: params.brainDecision,
+            // Recorded for the runtime's task contract; nothing here acts on them.
+            ...(params.contractProposal ? { contractProposal: params.contractProposal } : {}),
+            roleToolNames: [...new Set(params.workerRuns.flatMap((run) => selectToolsForRole(ctx, run.role).map((tool) => tool.name)))],
             decomposition: {
               synthesisHint: params.synthesisHint,
             },
@@ -1371,6 +1389,7 @@ function buildMaestroAdapter(
           requestText: task.originalUserMessage ?? task.intent,
           doneCriteria: routing.doneCriteria,
           brainDecision: routing.brainDecision,
+          contractProposal: routing.contractProposal,
           synthesisHint: routing.synthesisHint,
           summaryPrefix: "brain decomposed to",
         });
@@ -1408,6 +1427,9 @@ function buildMaestroAdapter(
         metadata: {
           role: routing.role,
           brainDecision: routing.brainDecision,
+          // Recorded for the runtime's task contract; nothing here acts on them.
+          ...(routing.contractProposal ? { contractProposal: routing.contractProposal } : {}),
+          roleToolNames: selectToolsForRole(ctx, routing.role).map((tool) => tool.name),
           thoughts: result.thoughts,
           iterationCount: result.iterationCount,
           stoppedBecause: result.stoppedBecause,

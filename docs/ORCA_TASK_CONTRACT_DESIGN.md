@@ -69,7 +69,7 @@ K1, K2, K3 and K4 are **confirmed defects** (reproduced in the audit). K5–K9 a
 
 ### 3.1 Interfaces
 
-New file `packages/orca-core/src/taskContract.ts`. Types only depend on existing ones.
+The resolved contract lives in `packages/orca-core/src/taskContract.ts`. **Ownership (approved 2026-11-17):** the pure proposal types — `TaskIntentKind`, `ChangeKind`, `ExpectedOutcome`, `BrainContractProposal` — and `validateContractProposal` live in `packages/maestro-core/src/contractProposal.ts`, because Brain's decision is parsed in `maestro-core` and that package cannot import `orca-core`. `orca-core` imports and re-exports them; there is one validator. They are shown together below for reading.
 
 ```ts
 import type { CapabilityGroup } from "maestro-core";           // "filesystem-read" | "filesystem-write" | "shell" | "github-read" | "github-write" | "web" | "documentation" | …

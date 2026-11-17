@@ -48,6 +48,8 @@ export interface OrcaExecutionResult {
   /** Final QC verdict for this run when available (including repair-loop success). */
   qcResult?: PappyResult;
   followUpQuestion?: string;
+  /** The task contract fixed for this run, when a worker pass ran. */
+  contract?: import("./taskContract.js").TaskContract;
   /**
    * Root AHP packet for this run.
    * Present when AHP is enabled (i.e. when the runtime created one).
@@ -128,6 +130,14 @@ export interface OrcaMaestroResult {
      * Populated only when Brain made a successful LLM routing call.
      * Used by exportTrainingData to emit Moonshiner examples tagged role:"brain". */
     brainDecision?: string;
+    /**
+     * Brain's contract proposal for this task, exactly as its decision carried
+     * it (validated when the decision was parsed). The runtime builds the
+     * task contract from it once; it grants nothing by itself.
+     */
+    contractProposal?: import("maestro-core").BrainContractProposal;
+    /** Names of the tools the routed role was given: the ceiling the contract's authority is resolved against. */
+    roleToolNames?: string[];
     decomposition?: {
       synthesisHint?: string;
     };
@@ -384,6 +394,13 @@ export interface OrcaRunCtx {
   passLog?: import("./hostRecord.js").PassLogEntry[];
   /** The task's acceptance contract, fixed after the first pass and used by every verdict. */
   acceptanceContract?: import("./acceptanceContract.js").AcceptanceContract;
+  /**
+   * The task contract (kind, needs, expected outcomes, resolved authority),
+   * built once after Brain's first decision and never rebuilt — a repair pass
+   * sees the same object. Recorded and returned only: nothing enforces or
+   * judges by it yet (task contracts, assignment 2).
+   */
+  taskContract?: import("./taskContract.js").TaskContract;
   /** The workspace evidence most recently collected (what the last verdict was judged on). */
   lastWorkspaceEvidence?: import("@clawde/pappy-core").WorkspaceEvidence;
 }

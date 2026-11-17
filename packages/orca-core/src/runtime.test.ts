@@ -509,6 +509,102 @@ describe("createOrcaRuntime", () => {
       });
     });
 
+    // Task contracts, assignment 2: the contract is built once from Brain's
+    // proposal (or the fallback), traced once and returned. Nothing enforces
+    // or consumes it yet.
+    describe("task contract is fixed, traced and returned", () => {
+      const fixtures: string[] = [];
+      afterEach(() => { for (const d of fixtures.splice(0)) rmSync(d, { recursive: true, force: true }); });
+      const workspace = () => { const d = mkdtempSync(join(tmpdir(), "orca-contract-")); fixtures.push(d); mkdirSync(join(d, "src")); writeFileSync(join(d, "src", "parse.js"), "export {};\n"); return d; };
+
+      type Seen = { contracts: unknown[]; gateAllowsWrite: boolean[] };
+      function harness(metadata: Record<string, unknown>, opts: { verdicts?: Array<"PASS" | "FAIL">; root?: string } = {}) {
+        const seen: Seen = { contracts: [], gateAllowsWrite: [] };
+        const traces: Array<{ stage: string; detail: unknown }> = [];
+        const verdicts = [...(opts.verdicts ?? ["PASS"])];
+        const maestro = {
+          run: vi.fn(async (_task: OrcaTaskSpec, ctx: Parameters<MaestroPort["run"]>[1]) => {
+            seen.contracts.push(ctx.taskContract);
+            seen.gateAllowsWrite.push(ctx.gate!.beforeToolRun({ tool: "write_file", args: { path: "src/parse.js", content: "x" }, workspaceRoot: ctx.workspaceRoot }).allowed);
+            return { outputText: "Looked at src/parse.js.", toolEvents: [], filesChanged: [], doneCriteria: ["Output names src/parse.js"], metadata: { role: "debugger", stoppedBecause: "done" as const, ...metadata } };
+          }),
+        } satisfies MaestroPort;
+        const pappy = { evaluate: vi.fn(() => ({ ...createMockPappyResult(verdicts.length > 1 ? verdicts.shift()! : verdicts[0]!, "Fix it"), repairTask: "Fix it" })) } satisfies PappyPort;
+        const runtime = createOrcaRuntime({
+          maestro, pappy, llm: createMockLLM(), gate: createMirandaGate(), maxRepairPasses: 1, workspaceRoot: opts.root ?? workspace(),
+          writeTrace: (trace) => { traces.push(...trace.entries.map((e) => ({ stage: e.stage, detail: e.detail }))); },
+        });
+        return { runtime, maestro, pappy, seen, traces };
+      }
+      const request = (message: string) => createTaskSpec({ originalUserMessage: message, intent: "label", goals: [message] });
+      const contractTraces = (traces: Array<{ stage: string; detail: unknown }>) => traces.filter((t) => t.stage === "task.contract");
+
+      it("builds the contract from Brain's proposal, traces it once and returns it", async () => {
+        const h = harness({ contractProposal: { kind: "inspect", needs: ["filesystem-read"] }, roleToolNames: ["read_file", "list_directory"] });
+        const result = await h.runtime.executeTask(request("Why is src/parse.js exporting nothing?"));
+        expect(result.contract).toMatchObject({ version: 1, source: "brain", kind: "inspect", request: "Why is src/parse.js exporting nothing?" });
+        expect(Object.isFrozen(result.contract)).toBe(true);
+        expect(contractTraces(h.traces)).toHaveLength(1);
+        expect(contractTraces(h.traces)[0]!.detail).toMatchObject({ source: "brain", kind: "inspect" });
+      });
+
+      it("uses the fallback contract when Brain proposed none", async () => {
+        const h = harness({});
+        const result = await h.runtime.executeTask(request("Explain src/parse.js"));
+        expect(result.contract).toMatchObject({ source: "fallback", kind: "inspect" });
+        expect(contractTraces(h.traces)).toHaveLength(1);
+      });
+
+      it("falls back, without failing the task, when the proposal that reaches it is not valid (T15)", async () => {
+        for (const bad of [{ kind: "inspect", authority: { available: ["shell"] } }, { kind: "inspect", workspaceRoot: "/" }, { kind: "modify", approved: true }, "modify", { kind: "root" }]) {
+          const h = harness({ contractProposal: bad });
+          const result = await h.runtime.executeTask(request("Explain src/parse.js"));
+          expect(result.status).toBe("SUCCESS");
+          expect(result.contract, JSON.stringify(bad)).toMatchObject({ source: "fallback" });
+          expect(JSON.stringify(result.contract)).not.toMatch(/approved|"authority":\{"available":\["shell"\]/);
+        }
+      });
+
+      it("derives the ceiling from the role's actual tools, never from every capability (R11)", async () => {
+        const proposal = { kind: "modify", needs: ["filesystem-read", "filesystem-write", "shell"] };
+        const readOnlyRole = harness({ contractProposal: proposal, roleToolNames: ["read_file", "list_directory"] });
+        const limited = (await readOnlyRole.runtime.executeTask(request("Add a guard to src/parse.js"))).contract!;
+        expect(limited.authority.available).toEqual(["filesystem-read"]);
+        expect(limited.authority.withheld).toEqual(expect.arrayContaining([{ capability: "filesystem-write", reason: "settings" }, { capability: "shell", reason: "settings" }]));
+        const fullRole = harness({ contractProposal: proposal, roleToolNames: ["read_file", "write_file", "run_command"] });
+        expect([...(await fullRole.runtime.executeTask(request("Add a guard to src/parse.js"))).contract!.authority.available].sort()).toEqual(["filesystem-read", "filesystem-write", "shell"]);
+        // Nothing reported about the role's tools: nothing is assumed available.
+        const unknownRole = harness({ contractProposal: proposal });
+        expect((await unknownRole.runtime.executeTask(request("Add a guard to src/parse.js"))).contract!.authority.available).toEqual([]);
+      });
+
+      it("flags a narrower reading of a change request as disputed, with write withheld (T7)", async () => {
+        const h = harness({ contractProposal: { kind: "inspect", needs: ["filesystem-read"] }, roleToolNames: ["read_file", "write_file"] });
+        const contract = (await h.runtime.executeTask(request("Fix the off-by-one bug in src/parse.js"))).contract!;
+        expect(contract.kindDisputed).toBe(true);
+        expect(contract.authority.withheld).toEqual(expect.arrayContaining([{ capability: "filesystem-write", reason: "task_kind" }]));
+      });
+
+      it("keeps the same contract object for a repair pass and does not trace it again", async () => {
+        const h = harness({ contractProposal: { kind: "inspect", needs: ["filesystem-read"] }, roleToolNames: ["read_file"] }, { verdicts: ["FAIL", "PASS"] });
+        const result = await h.runtime.executeTask(request("Explain src/parse.js"));
+        expect(h.maestro.run).toHaveBeenCalledTimes(2);
+        expect(h.seen.contracts[0]).toBeUndefined();          // not known before Brain has answered
+        expect(h.seen.contracts[1]).toBe(result.contract);    // the repair pass sees the fixed contract
+        expect(contractTraces(h.traces)).toHaveLength(1);
+      });
+
+      it("does not enforce anything yet: an inspect contract leaves the gate, the acceptance contract and Pappy's input as they were", async () => {
+        const h = harness({ contractProposal: { kind: "inspect", needs: ["filesystem-read"] }, roleToolNames: ["read_file"] }, { verdicts: ["FAIL", "PASS"] });
+        await h.runtime.executeTask(request("Explain src/parse.js"));
+        expect(h.seen.gateAllowsWrite).toEqual([true, true]);
+        const acceptance = h.traces.find((t) => t.stage === "acceptance.contract")!.detail as { goals: string[]; derivedCriteria: string[] };
+        expect(acceptance.goals).toEqual(["Explain src/parse.js", "Output names src/parse.js"]);
+        expect(acceptance.derivedCriteria).toEqual(["Output names src/parse.js"]);
+        for (const [input] of h.pappy.evaluate.mock.calls as unknown as Array<[Record<string, unknown>]>) expect("contract" in input).toBe(false);
+      });
+    });
+
     // Stage 2: filesystem tools need an explicitly established, usable
     // workspace. Miranda refuses them otherwise — nothing (not the process's
     // working directory) is substituted — and the user is told what to do.

@@ -117,8 +117,10 @@ export type {
 export { ROLE_PROMPTS, getRolePrompt } from './prompts/rolePrompts';
 
 // ── Brain Decompose ───────────────────────────────────────────────────────────
-export { BRAIN_DECOMPOSE_SYSTEM, parseBrainDecision, buildSynthesisPrompt, BrainDecisionValidationError, VALID_HEAD_NAMES } from './decompose';
+export { BRAIN_DECOMPOSE_SYSTEM, parseBrainDecision, buildSynthesisPrompt, BrainDecisionValidationError, VALID_HEAD_NAMES, routingPromptContext } from './decompose';
 export type { HeadName, DirectRouting, DepartmentTask, DecomposeRouting, DecomposeDecision } from './decompose';
+export { validateContractProposal } from './contractProposal';
+export type { TaskIntentKind, ChangeKind, ExpectedOutcome, BrainContractProposal } from './contractProposal';
 export type {
   NormalizedModelId,
   RoleEffectiveConfig,
