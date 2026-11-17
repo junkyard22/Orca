@@ -106,7 +106,8 @@ export function enrichTaskWithCargo<T extends CargoTaskLike>(
   if (Array.isArray(permissions)) {
     if (manifest.files.length > 0 && !permissions.includes('read')) permissions.push('read');
     if (hasNetworkResource && !permissions.includes('network')) permissions.push('network');
-  } else if (permissions && typeof permissions === 'object' && hasNetworkResource) {
+  } else if (permissions && typeof permissions === 'object' && hasNetworkResource &&
+      (permissions as Record<string, unknown>).networkAccess !== false) {
     Object.assign(permissions = { ...(permissions as Record<string, unknown>) }, { networkAccess: true });
   }
 

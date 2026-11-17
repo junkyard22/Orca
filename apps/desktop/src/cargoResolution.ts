@@ -22,6 +22,10 @@ export interface CargoResolutionSource {
 }
 
 export interface CargoResolutionDependencies {
+  /** Fixed host-owned routing result, not a value from task context. No independent external grant exists yet. */
+  contractSource?: 'brain' | 'fallback' | 'intake';
+  networkDenied?: boolean;
+  fileReadsDenied?: boolean;
   enabled: boolean;
   allToolNames: string[];
   fetchUrl(url: string): Promise<{ ok: boolean; output?: string }>;
@@ -120,6 +124,7 @@ export async function resolveCargoResources(
   const sources: CargoResolutionSource[] = [];
 
   const urlResults = await Promise.all(manifest.urls.slice(0, MAX_URLS).map(async (resource) => {
+    if (deps.contractSource === 'brain' || deps.networkDenied) return { resource, result: { ok: false } };
     try {
       return { resource, result: await deps.fetchUrl(resource.url) };
     } catch {
@@ -136,6 +141,7 @@ export async function resolveCargoResources(
   }
 
   const runResults = await Promise.all(manifest.previousRuns.slice(0, MAX_RUNS).map(async (resource) => {
+    if (deps.fileReadsDenied) return { resource, run: null };
     try {
       return { resource, run: await deps.getPreviousRun(resource.runId) };
     } catch {

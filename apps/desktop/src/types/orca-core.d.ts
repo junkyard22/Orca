@@ -15,6 +15,7 @@ declare module '@clawde/orca-core' {
     fileRead: boolean;
     fileWrite: boolean;
     shellExec: boolean;
+    networkAccess?: boolean;
     toolsAllowed?: string[];
   }
 
@@ -242,6 +243,9 @@ declare module '@clawde/orca-core' {
   }
 
   export interface OrcaRunCtx {
+    hostGate?: MirandaGate;
+    permissionsSource?: "benson";
+    taskPermissions?: TaskPermissions;
     taskContract?: TaskContract;
     acceptanceContract?: AcceptanceContract;
     llm: OrcaLLMService;
@@ -301,7 +305,7 @@ declare module '@clawde/orca-core' {
   }
 
   export interface OrcaRuntime {
-    executeTask(taskSpec: OrcaTaskSpec, options?: { abortSignal?: AbortSignal }): Promise<OrcaExecutionResult>;
+    executeTask(taskSpec: OrcaTaskSpec, options?: { abortSignal?: AbortSignal; permissionsSource?: "benson"; inferredPermissions?: unknown }): Promise<OrcaExecutionResult>;
     on(eventType: OrcaEventType, handler: (e: OrcaEvent) => void): () => void;
   }
 

@@ -9,6 +9,13 @@ import {
 } from './cargoContext';
 
 describe('desktop Cargo actions', () => {
+  it('preserves an explicit network denial when external resources are attached', () => {
+    const manifest = applyContextManifestAction(createEmptyContextManifest(), { type: 'attach_repository', locator: 'junkyard22/Orca' });
+    const permissions = { fileRead: true, fileWrite: false, shellExec: false, networkAccess: false, toolsAllowed: [] };
+    const task = enrichTaskWithCargo({ permissions }, manifest, summarizeContextManifest(manifest));
+    expect(task.permissions).toEqual(permissions);
+    expect(permissions.networkAccess).toBe(false);
+  });
   it('keeps workspace and connector synchronization owned by Settings/the host', () => {
     expect(isClientCargoAction({ type: 'attach_file', path: 'README.md' })).toBe(true);
     expect(isClientCargoAction({ type: 'set_workspace', rootPath: 'C:\\Other' })).toBe(false);
