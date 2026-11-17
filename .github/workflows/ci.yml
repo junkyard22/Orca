@@ -113,6 +113,10 @@ jobs:
       # Check all severities. The audit policy reports the exact legacy
       # minimatch range mismatch documented in docs/SECURITY_DEPENDENCIES.md;
       # vulnerable modern copies and all other advisories still fail.
+      # It also prints, never hides, the time-boxed development-only acceptance
+      # of GHSA-fc5q-39xc-vjpf (picomatch 4.0.4/4.0.7; no patched release),
+      # which expires 2026-12-17 and then fails closed with no code change.
+      # Spec: docs/proposals/RISK_ACCEPTANCE_GHSA-fc5q-39xc-vjpf.md
       - name: Audit dependencies
         run: |
           pnpm test:audit-policy
@@ -123,7 +127,9 @@ jobs:
       # That blind spot let a high-severity postcss advisory sit unreported, so
       # the second lockfile gets its own gate.  --no-workspaces stops npm from
       # trying to resolve the repo's `workspace:*` specifiers, which it cannot
-      # parse.
+      # parse.  It runs through the same audit policy as the pnpm tree: every
+      # severity is actionable (stricter than the previous --audit-level low),
+      # and only the same time-boxed development-only picomatch acceptance
+      # applies.  Failed or malformed npm reports fail the step.
       - name: Audit workbench-core lockfile
-        working-directory: packages/workbench-core
-        run: npm audit --no-workspaces --audit-level low
+        run: pnpm audit:workbench

@@ -39,3 +39,51 @@ both majors. Undici 8.12.2 requires Node 22.19.0 or later, so the root engine
 requirement now matches that minimum. Vitest 4.1.12 and Vite 8.1.6 or later
 are required in all workspace manifests and in the independent workbench
 lockfile. The latter must be regenerated separately with npm.
+
+## Time-boxed accepted risk: GHSA-fc5q-39xc-vjpf (picomatch), expires 2026-12-17
+
+Owner-approved for implementation on 2026-11-17. Activation and merge
+require separate final approval. Specification and justification:
+[docs/proposals/RISK_ACCEPTANCE_GHSA-fc5q-39xc-vjpf.md](proposals/RISK_ACCEPTANCE_GHSA-fc5q-39xc-vjpf.md).
+
+No patched picomatch release exists (affected range `<= 4.0.7`). The only
+installed copies are 4.0.4 in the pnpm tree (electron-builder → node-gyp, and
+vite/vitest) and 4.0.7 in the workbench-core npm lockfile (vite/vitest). Both
+are development and build tooling only.
+
+`scripts/audit-dependencies.mjs` accepts a finding only when all of these hold:
+
+- advisory `GHSA-fc5q-39xc-vjpf`, package `picomatch`, installed version
+  exactly 4.0.4 or 4.0.7. In npm's report, packages affected only through that
+  copy are covered as well;
+- the date is before 2026-12-17 (UTC). On and after that date the finding is
+  actionable again and CI fails, with no code change. There is no environment
+  variable, flag or configuration that extends it;
+- every dependency path is development-only, proven twice:
+  - pnpm: each path's direct dependency is declared only under
+    `devDependencies` of its importer;
+  - npm: every node is `dev: true` in `package-lock.json`;
+  - and the package manager's own production-only audit (`pnpm audit --prod`,
+    `npm audit --omit=dev`) does not report the package at all.
+
+A pnpm report is accepted as complete only when its `metadata.vulnerabilities`
+count for each of low, moderate, high and critical equals the number of
+findings of that severity in its details. pnpm forwards the registry's
+quick-audit response, which counts one vulnerability per finding (advisory ×
+installed version); this was verified against real pnpm 10.30.2 reports,
+now kept as test fixtures. `info` is not reconciled, because pnpm `--json`
+always drops info advisories from the details. A count the details do not
+explain makes the report invalid, which fails the audit.
+
+Every accepted finding prints an `ACCEPTED (expires 2026-12-17)` line with the
+advisory, package, version and this justification. Any other advisory,
+package or version, any production path, a second unexpected copy, and any
+failed or malformed report still fails. The workbench-core lockfile now goes
+through the same policy instead of `npm audit --audit-level low`, which also
+makes `info` findings actionable there. Global thresholds are otherwise
+unchanged.
+
+Upstream recheck: at least weekly and before any release (advisory
+`first_patched_version`, picomatch releases, the open fix PRs). When a fixed
+release ships, update the overrides and the workbench lockfile, then delete
+this exception in a separate PR.
