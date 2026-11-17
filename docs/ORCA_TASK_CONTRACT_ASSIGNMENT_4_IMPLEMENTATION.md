@@ -68,6 +68,22 @@ Host gates, explicit caller denials, workspace authority, AHP and exact-call app
 
 The 11 parser and gate unit cases are new as well. Disabling the gate fails 9 of the 23 prohibition cases; the Brain-path shell cases also hold through the contract's `prohibits`.
 
+## Known limitations of user-restriction enforcement
+
+The restriction parser is a deterministic, refuse-only safeguard for a fixed set of explicit phrasings. It is **not** universal natural-language restriction enforcement. Do not describe it as such.
+
+- **Recognised:** blanket no-write ("do not modify any files", "don't change anything", "make no changes", "leave the files untouched"); explicit no-execute ("don't execute commands", "don't use the shell"); and file-named scopes ("Modify README.md, but do not change any other files", "only edit X", "don't touch any files except X", "leave all other files unchanged").
+- **Not recognised: directory or glob restriction syntax** ("only change files in src/", "don't touch anything under tests/", "only edit *.md"). These requests get no added path restriction and rely on the existing contract, Miranda, caller and host gates.
+- **Not recognised: other wordings, paraphrases, indirect instructions and non-English text.** An unrecognised restriction falls back to the existing gates. It is never widened, but it is not specifically enforced either.
+- Object-specific prohibitions ("don't modify the tests", "don't run the tests") are deliberately not treated as blanket restrictions. Pappy's existing checks still apply to them.
+- Under a recognised no-write or scoped restriction, all shell and process tools are refused, including confined reads.
+
+Any change to these rules requires a demonstrated regression and separate review.
+
+## Review status
+
+The authorization changes at `d86637c` were approved at code-review level on 2026-11-17. That approval does not cover merging. PR #113 stays unmerged until the dependency-audit gate has a separately reviewed resolution. Dependency remediation is a separate decision. Draft PR #114's risk-acceptance proposal is suitable for owner consideration but **not approved for activation**.
+
 ## Validation
 
 Local Windows results are recorded in `PROJECT_STATE.md`; the separate PR records exact-head CI. Known unchanged symlink tests require Windows privileges unavailable here and fail with EPERM during setup. They remain enabled, with Linux CI responsible for their assertions. No lockfile, Benson, runner, Pappy, Miranda, command-policy or permission UI change is included. No Assignment 5, merge, deployment or release is authorized by this work.
